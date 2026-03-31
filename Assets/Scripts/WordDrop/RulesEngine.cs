@@ -1384,6 +1384,15 @@ namespace WordDrop
         /// </summary>
         public void FinalizeDrop()
         {
+            // Guard: FinalizeDrop is NOT safe to call twice — it increments _globalTurn
+            // and expires primed words. The safe wrapper and Complete phase both call it,
+            // so we must be idempotent.
+            if (_currentPhase == ResolutionPhase.Idle)
+            {
+                Debug.Log("[RulesEngine] FinalizeDrop: already Idle — skipping (idempotent guard).");
+                return;
+            }
+
             // Expire primed words AFTER resolution (not before).
             // This gives players one last chance to detonate on the expiry turn.
             int expired = _primedRegistry.ExpireOldWords(_globalTurn);

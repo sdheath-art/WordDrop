@@ -187,14 +187,11 @@ namespace WordDrop
                                  "This indicates a resolution coroutine got stuck.");
                 _isPlayingBack = false;
 
-                if (RulesEngine.Instance != null)
-                {
-                    try { RulesEngine.Instance.FinalizeDrop(); }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogWarning($"[GameVisualBridge] ForceReset: FinalizeDrop threw: {ex.Message}");
-                    }
-                }
+                // Note: we intentionally do NOT call FinalizeDrop() here.
+                // ForceReset is an escape hatch for stuck playback — it should only
+                // clear the visual lock. FinalizeDrop advances game state (increments
+                // _globalTurn, expires primed words) which is wrong if resolution
+                // never actually completed. The safe wrapper handles finalization.
             }
             else
             {
@@ -227,9 +224,9 @@ namespace WordDrop
                     Debug.LogError($"[GameVisualBridge] Resolution exception caught in safe wrapper: {capturedException}");
                 }
 
-                // Job 5 / Complete phase guarantee: FinalizeDrop is ALWAYS called here
-                // as a safety net, even if the Complete phase already called it.
-                // FinalizeDrop is safe to call twice (it just sets phase to Idle).
+                // Safety net: FinalizeDrop is called here in case the Complete phase
+                // didn't run (e.g. exception). FinalizeDrop is now idempotent —
+                // if already Idle, it's a no-op.
                 if (RulesEngine.Instance != null)
                 {
                     try { RulesEngine.Instance.FinalizeDrop(); }
@@ -504,8 +501,7 @@ namespace WordDrop
                     // Job 5: If step.Triggers is null or empty, skip trigger animation.
                     case RulesEngine.ResolutionPhase.TriggersFound:
                     {
-                        // Let word flash be visible before detonation
-                        yield return new WaitForSeconds(0.25f);
+                        // Detonation fires immediately — scoring display exit overlaps
                         // Null-safe: treat null Triggers as empty list
                         int triggerCount = (step.Triggers != null) ? step.Triggers.Count : 0;
                         Debug.Log($"[GameVisualBridge] Phase=TriggersFound: {triggerCount} trigger(s) found.");

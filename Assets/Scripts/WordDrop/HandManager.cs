@@ -327,6 +327,22 @@ namespace WordDrop
             // ── Per-frame shadow update — tracks card position dynamically ──
             UpdateSelectedCardShadow();
 
+            // Block ALL input when not interactable (during animations, AI turn, etc.)
+            if (!IsInteractable)
+            {
+                if (DropPreview.Instance != null)
+                    DropPreview.Instance.ClearPreview();
+                // Still allow drag-end to clean up if a drag was in progress
+                if ((_isDragging || _dragIndex >= 0) && mouseUp)
+                    HandleDragEnd();
+                return;
+            }
+
+            // ── Drop preview — update when selected tile + finger over board ──
+            // Skip during active drag-rearrange to avoid letter flickering
+            if (!_isDragging)
+                UpdateDropPreview(worldPos, true);
+
             // ── LONG-PRESS tracking for hand cards (drag only, swap removed — use bag icon) ──
             if (_holdIndex >= 0 && mouseHeld && !_holdTriggered)
             {
@@ -465,8 +481,6 @@ namespace WordDrop
                 }
             }
 
-            // Column drops ONLY when interactable
-            if (!IsInteractable) return;
             if (GameVisualBridge.Instance != null && GameVisualBridge.Instance.IsPlayingBack) return;
             TryDropInColumn(worldPos);
         }
@@ -785,7 +799,11 @@ namespace WordDrop
             var grid  = GridManager.Instance;
             var mc    = MatchController.Instance;
 
-            if (rules == null || grid == null || mc == null) yield break;
+            if (rules == null || grid == null || mc == null)
+            {
+                IsInteractable = true;
+                yield break;
+            }
 
             int playerIdx = MatchController.PLAYER_HUMAN;
 
@@ -934,16 +952,11 @@ namespace WordDrop
                         try { grid.SyncToRulesState(rules); }
                         catch (System.Exception ex) { Debug.LogError($"[Rewrite] SyncToRulesState: {ex}"); }
 
-                        // Preserve NEXT tile — rewrite shouldn't change it
-                        PlayerHand hand = mc.GetHand(MatchController.PLAYER_HUMAN);
-                        char savedNext = hand != null ? hand.CachedNextLetter : '\0';
-
-                        // Bookkeeping — consumes turn, switches player
+                        // Bookkeeping — consumes turn, switches player, refills hand slot
+                        // Note: DrawSlot inside bookkeeping consumes the cached next letter
+                        // and pre-caches a new one. Do NOT save/restore the old cached letter
+                        // here — that causes duplication (the same tile appears twice).
                         mc.CompleteDropBookkeeping(playerIdx, finalScore, handSlot);
-
-                        // Restore NEXT tile
-                        if (hand != null && savedNext != '\0')
-                            hand.SetCachedNextLetter(savedNext);
 
                         break;
                     }
@@ -955,15 +968,16 @@ namespace WordDrop
                 if (_cardObjects[i] != null) _cardObjects[i].SetActive(true);
             RefreshHandFromMatchController();
             RefreshAllCardVisuals();
-            IsInteractable = true;
 
-            // AI turn
+            // AI turn — do NOT re-enable input until AI is done
             yield return new WaitForSeconds(0.3f);
             if (mc.IsMatchActive && mc.CurrentPlayer == MatchController.PLAYER_AI)
             {
                 if (GameVisualBridge.Instance != null)
                     yield return StartCoroutine(GameVisualBridge.Instance.ExecuteAITurnCoroutine());
             }
+
+            IsInteractable = true;
         }
 
         /// <summary>Animate all cards except the one being dragged to their correct positions.</summary>
@@ -1207,6 +1221,39 @@ namespace WordDrop
             DropSelectedLetterInColumn(col);
         }
 
+        // ── Drop Preview ─────────────────────────────────────────────────────
+
+        private void UpdateDropPreview(Vector3 worldPos, bool fingerDown)
+        {
+            if (DropPreview.Instance == null) return;
+
+            char letter = GetSelectedLetter();
+
+            // No tile selected → clear
+            if (letter == '\0')
+            {
+                DropPreview.Instance.ClearPreview();
+                return;
+            }
+
+            // Check if finger is over the board area
+            if (_grid == null) return;
+            if (worldPos.y < _grid.GridBottom || worldPos.y > _grid.GridTop + _grid.CellSize)
+            {
+                DropPreview.Instance.ClearPreview();
+                return;
+            }
+
+            int col = _grid.WorldXToColumn(worldPos.x);
+            if (col < 0)
+            {
+                DropPreview.Instance.ClearPreview();
+                return;
+            }
+
+            DropPreview.Instance.UpdatePreview(letter, col);
+        }
+
         /// <summary>
         /// Drops the currently selected letter into the given column.
         /// Routes through GameVisualBridge for visual sequencing.
@@ -1245,6 +1292,10 @@ namespace WordDrop
                 Debug.Log("[HandManager] No letter selected — ignoring drop.");
                 return;
             }
+
+            // Clear preview before committing the drop
+            if (DropPreview.Instance != null)
+                DropPreview.Instance.ClearPreview();
 
             Debug.Log($"[HandManager] Player dropping '{letter}' into column {col} " +
                       $"(slot {_selectedIndex})");
@@ -1288,6 +1339,7 @@ namespace WordDrop
             if (rules == null || grid == null)
             {
                 Debug.LogError("[HandManager] Missing RulesEngine or GridManager");
+                IsInteractable = true;
                 yield break;
             }
 
@@ -1296,6 +1348,7 @@ namespace WordDrop
             if (beginResult == null || beginResult.Row < 0)
             {
                 Debug.LogWarning("[HandManager] BeginDrop failed");
+                IsInteractable = true;
                 yield break;
             }
 

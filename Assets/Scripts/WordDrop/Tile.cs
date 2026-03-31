@@ -518,6 +518,36 @@ namespace WordDrop
         }
 
         // ---------------------------------------------------------------------------
+        // Public API — Preview Highlight (used by DropPreview)
+        // ---------------------------------------------------------------------------
+
+        private bool _hasPreviewHighlight = false;
+        private Color _savedBorderBeforePreview;
+
+        /// <summary>Lightweight tint overlay for drop preview. Does not affect primed glow.</summary>
+        public void SetPreviewHighlight(Color color)
+        {
+            if (!_hasPreviewHighlight)
+                _savedBorderBeforePreview = _currentBorderColor;
+            _hasPreviewHighlight = true;
+
+            if (_spriteRenderer != null)
+                _spriteRenderer.color = new Color(color.r, color.g, color.b, 1f);
+            ApplyBorderColor(new Color(color.r, color.g, color.b, Mathf.Max(color.a, 0.6f)));
+        }
+
+        /// <summary>Restore tile to its state before preview highlight.</summary>
+        public void ClearPreviewHighlight()
+        {
+            if (!_hasPreviewHighlight) return;
+            _hasPreviewHighlight = false;
+
+            if (_spriteRenderer != null)
+                _spriteRenderer.color = Color.white;
+            ApplyBorderColor(_savedBorderBeforePreview);
+        }
+
+        // ---------------------------------------------------------------------------
         // Public API — SetPermanentGlow (backward compat alias for SetPrimedGlow)
         // ---------------------------------------------------------------------------
 

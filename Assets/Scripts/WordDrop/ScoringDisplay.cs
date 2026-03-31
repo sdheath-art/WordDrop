@@ -153,10 +153,12 @@ namespace WordDrop
 
         public static float GetDuration(int wordLength)
         {
-            // Pop in (0.15) + raise (0.18) + wave flip (wordLength * 0.05 + 0.16 + 0.15)
-            // + hold (0.6) + lower (0.25) + exit (0.2)
-            float waveTime = wordLength * 0.05f + 0.31f;
-            return 0.15f + 0.18f + waveTime + 0.6f + 0.25f + 0.2f;
+            // Appear (0.10) + stagger (wordLength * 0.12) + celebrate (0.25)
+            // + lower (0.25) + hold (0.45) + exit (0.20)
+            // The step loop should move on once the word is readable — after celebrate.
+            // The exit animation can overlap with the next phase.
+            float appearTime = CARD_APPEAR_DUR + wordLength * CARD_STAGGER;
+            return appearTime + CELEBRATE_DUR + 0.25f;
         }
 
         /// <summary>Same as GetDuration — all words use wave now.</summary>
@@ -335,7 +337,7 @@ namespace WordDrop
             }
             yield return new WaitForSeconds(0.25f);
 
-            yield return new WaitForSeconds(HOLD_AFTER * 1.5f);
+            yield return new WaitForSeconds(HOLD_AFTER);
 
             // ── Phase 5: Exit — staggered shrink down + fade ──
             for (int i = 0; i < cards.Count; i++)

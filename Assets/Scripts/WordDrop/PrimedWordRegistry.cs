@@ -203,7 +203,7 @@ namespace WordDrop
             for (int i = _primedWords.Count - 1; i >= 0; i--)
             {
                 PrimedWord pw = _primedWords[i];
-                if (pw.ExpiresOnTurn < currentTurn)
+                if (pw.ExpiresOnTurn <= currentTurn)
                 {
                     Debug.Log($"[PrimedWordRegistry] Expiring '{pw.Word}' (id={pw.Id}) — " +
                               $"expiresOnTurn={pw.ExpiresOnTurn} <= currentTurn={currentTurn}");

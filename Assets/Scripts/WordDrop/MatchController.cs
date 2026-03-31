@@ -546,6 +546,13 @@ namespace WordDrop
             char handLetter = _hands[player].GetSlot(handSlot);
             char oldBoardLetter = cell.Letter;
 
+            // Block same-letter rewrite — prevents re-scoring expired words for free
+            if (handLetter == oldBoardLetter)
+            {
+                Debug.Log($"[MatchController] UseRewrite: same letter '{handLetter}' — no-op.");
+                return false;
+            }
+
             // Consume swap charge
             _swapsRemaining[player]--;
 

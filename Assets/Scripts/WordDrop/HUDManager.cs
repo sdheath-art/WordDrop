@@ -281,6 +281,7 @@ namespace WordDrop
         /// <summary>Updates the P1 (human player) score label.</summary>
         public void SetPlayerScore(int pts)
         {
+            _tickAccumPlayer = 0;
             if (_playerScoreNum != null)
                 _playerScoreNum.text = pts.ToString();
         }
@@ -288,13 +289,16 @@ namespace WordDrop
         /// <summary>Updates the AI score number.</summary>
         public void SetAIScore(int pts)
         {
+            _tickAccumAI = 0;
             if (_aiScoreNum != null)
                 _aiScoreNum.text = pts.ToString();
         }
 
         // ── Visual score tick (used by ScoringDisplay to count up per-tile) ─────
-        private int _displayPlayerScore = 0;
-        private int _displayAIScore = 0;
+        // Tick accumulator tracks points added during the current scoring animation.
+        // Display value = ScoreManager (authoritative) + accumulator (visual preview).
+        private int _tickAccumPlayer = 0;
+        private int _tickAccumAI = 0;
 
         /// <summary>
         /// Visually tick the score up by delta points. Does not touch ScoreManager.
@@ -302,21 +306,26 @@ namespace WordDrop
         /// </summary>
         public void TickScore(bool isPlayer, int delta)
         {
+            int basePlayer = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
+            int baseAI = ScoreManager.Instance != null ? ScoreManager.Instance.AIScore : 0;
+
             if (isPlayer)
             {
-                _displayPlayerScore += delta;
+                _tickAccumPlayer += delta;
+                int display = basePlayer + _tickAccumPlayer;
                 if (_playerScoreNum != null)
                 {
-                    _playerScoreNum.text = _displayPlayerScore.ToString();
+                    _playerScoreNum.text = display.ToString();
                     AnimateScorePop(_playerScoreNum.transform);
                 }
             }
             else
             {
-                _displayAIScore += delta;
+                _tickAccumAI += delta;
+                int display = baseAI + _tickAccumAI;
                 if (_aiScoreNum != null)
                 {
-                    _aiScoreNum.text = _displayAIScore.ToString();
+                    _aiScoreNum.text = display.ToString();
                     AnimateScorePop(_aiScoreNum.transform);
                 }
             }
@@ -411,10 +420,14 @@ namespace WordDrop
         /// <summary>Sync display scores to actual ScoreManager values (call after bookkeeping).</summary>
         public void SyncDisplayScores()
         {
+            _tickAccumPlayer = 0;
+            _tickAccumAI = 0;
             if (ScoreManager.Instance != null)
             {
-                _displayPlayerScore = ScoreManager.Instance.PlayerScore;
-                _displayAIScore = ScoreManager.Instance.AIScore;
+                if (_playerScoreNum != null)
+                    _playerScoreNum.text = ScoreManager.Instance.PlayerScore.ToString();
+                if (_aiScoreNum != null)
+                    _aiScoreNum.text = ScoreManager.Instance.AIScore.ToString();
             }
         }
 

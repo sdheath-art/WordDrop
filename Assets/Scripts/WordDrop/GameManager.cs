@@ -43,10 +43,13 @@ namespace WordDrop
         private void Update()
         {
             // Safety net: if match is over OR all turns used, force GameOver
+            // Skip the turn-count check during sudden death — MatchController owns that decision
             if (CurrentState == GameState.Playing && MatchController.Instance != null)
             {
                 bool matchOver = MatchController.Instance.IsGameOver;
-                bool allTurnsUsed = MatchController.Instance.TotalTurnsUsed >= MatchController.MAX_TURNS * 2;
+                bool isSuddenDeath = MatchController.Instance.IsSuddenDeath;
+                bool allTurnsUsed = !isSuddenDeath &&
+                    MatchController.Instance.TotalTurnsUsed >= MatchController.MAX_TURNS * 2;
 
                 if (matchOver || allTurnsUsed)
                 {

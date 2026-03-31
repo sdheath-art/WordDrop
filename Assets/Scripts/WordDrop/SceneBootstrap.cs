@@ -217,6 +217,7 @@ namespace WordDrop
             // SceneBootstrap.Start() transitions directly to Playing, bypassing the menu.
             new GameObject("MenuUI").AddComponent<MenuUI>();
             new GameObject("GameOverUI").AddComponent<GameOverUI>();
+            new GameObject("DropPreview").AddComponent<DropPreview>();
 
             // NOTE: RoundOverUI, RoundManager, WordleEvaluator are NOT created.
             // The Scrabble-drop game does not use round-based flow.
