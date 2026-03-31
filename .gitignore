@@ -33,5 +33,25 @@ Assets/Feel/
 Assets/Plugins/
 Assets/TextMesh Pro/
 
+# Binary assets (fonts, audio, etc.)
+Assets/Fonts/
+Assets/Resources/SFX/
+Assets/Resources/*.ttf
+Assets/Resources/*.ttc
+Assets/Resources/*.otf
+Assets/Resources/*.asset
+
+# Unity project settings
+ProjectSettings/
+
+# Logs
+*.log
+
+# Misc
+debug_log.txt
+SETUP.md
+Assets/SETUP.md
+*.meta
+
 # Crashlytics
 crashlytics-build.properties
