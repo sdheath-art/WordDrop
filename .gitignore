@@ -28,5 +28,10 @@
 .DS_Store
 Thumbs.db
 
+# Third-party assets
+Assets/Feel/
+Assets/Plugins/
+Assets/TextMesh Pro/
+
 # Crashlytics
 crashlytics-build.properties
