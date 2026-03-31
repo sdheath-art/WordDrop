@@ -1,0 +1,2 @@
+# Add one word per line (UPPERCASE)
+# Lines starting with # are comments

@@ -1,0 +1,710 @@
+=== Debug Log Started 2026-03-31 1:56:25 PM ===
+[0] [LOG] [SceneBootstrap] Awake begin
+[0] [LOG] [SceneBootstrap] Camera — halfH=10.00, halfW=5.62  (777x1382)
+[0] [LOG] [SceneBootstrap] EventSystem created
+[0] [LOG] [GameManager] Awake — state: Menu
+[0] [LOG] [ScoreManager] Awake
+[0] [LOG] [MatchManager] Awake (legacy stub)
+[0] [LOG] [PrimedWordRegistry] Cleared 0 primed word(s). ID counter reset.
+[0] [LOG] [RulesEngine] Board cleared.
+[0] [LOG] [RulesEngine] Awake — 7×6 board initialized. Detecting horizontal + vertical words (3–7 letters). NO diagonals.
+[0] [LOG] [MatchController] Awake
+[0] [LOG] [AdManager] Initialized (stub mode).
+[0] [LOG] [AIAgent] Awake — new RulesEngine-based AI
+[0] [LOG] [SceneBootstrap] Core managers created: GameManager, ScoreManager, MatchManager(stub), RulesEngine, MatchController, AdManager, AIAgent
+[0] [LOG] [GridManager] Awake — cellSize=1.446, gridLeft=-5.060, gridBottom=-2.214
+[0] [LOG] [SceneBootstrap] GridManager created
+[0] [LOG] [HandManager] Built 5 card objects at Y=-3.52
+[0] [LOG] [HandManager] Awake complete — cards + shuffle + next-tile + tile-bag built, IsInteractable=false.
+[0] [LOG] [SceneBootstrap] HandManager created
+[0] [LOG] [HUDManager] Awake — HUD built
+[0] [LOG] [SceneBootstrap] HUDManager created
+[0] [LOG] [ColumnArrowManager] Built 7 column arrows at Y=5.66 (fontSize=24, characterSize=0.035)
+[0] [LOG] [ColumnArrowManager] Awake — arrows built and hidden
+[0] [LOG] [SceneBootstrap] ColumnArrowManager created
+[0] [LOG] [GameVisualBridge] Awake
+[0] [LOG] [SceneBootstrap] GameVisualBridge created
+[0] [LOG] [MenuUI] Awake — panel built and hidden
+[0] [LOG] [GameOverUI] Awake — panel built and hidden
+[0] [LOG] [SceneBootstrap] UI screens created (MenuUI hidden, GameOverUI hidden). No RoundManager / WordleEvaluator / RoundOverUI — removed in Job 12.
+[0] [LOG] [SceneBootstrap] Awake complete — all managers created and initialized
+[0] [LOG] [ScoringAudio] Loaded: 7/7 points clips, total=True
+[0] [LOG] [WordDropFX] Auto-created with DOTween.
+[0] [LOG] [Analytics] session_start | t=0 device=Mac16,8 os=Mac OS X 15.1.0 screen=777x1382
+[1] [LOG] [SceneBootstrap] Start — transitioning directly to Playing state
+[1] [LOG] [GameManager] Menu → Playing
+[1] [LOG] [GameManager] Entered Playing
+[1] [LOG] [Analytics] screen_view | t=0 screen=playing
+[1] [LOG] [MatchController] StartMatch()
+[1] [LOG] [TileBag] Initial fill — 120 tiles (no wilds, vowel-rich distribution). Total unique letters: 26
+[1] [LOG] [Hand P0] FillAll: TNMEA vowels=2 playability=5 next=O
+[1] [LOG] [Hand P1] FillAll: EAPLO vowels=3 playability=5 next=X
+[1] [LOG] [PrimedWordRegistry] Cleared 0 primed word(s). ID counter reset.
+[1] [LOG] [RulesEngine] Board cleared.
+[1] [LOG] [OpeningSeed] Applied 'Bridge' (quality=15.5, rank 5/13). Top 3: Frame=20.0, Wings=20.0, Scatter=15.5
+[1] [LOG] [GridManager] All cells cleared.
+[1] [LOG] [Tile] Static sprite cache built (5 sprites).
+[1] [LOG] [GridManager] RebuildFromRulesEngine — created 3 tiles.
+[1] [LOG] [ScoreManager] Scores reset — PlayerScore=0, AIScore=0, Combo=0
+[1] [LOG] [Analytics] game_start | t=0 game_num=1
+[1] [LOG] [MatchController] Match started. Human hand: TNMEA AI hand: EAPLO Bag: 103 tiles  Swaps: 3 each
+[1] [LOG] [GameManager] MatchController.StartMatch() called
+[1] [LOG] [GameManager] First game — starting tutorial.
+[1] [LOG] [TutorialManager] === TUTORIAL BEGIN ===
+[1] [LOG] [GameManager] Subscribed to MatchController.OnMatchEnd
+[1] [LOG] [HandManager] Subscribed to MatchController.OnHandRefilled
+[1] [LOG] [GameVisualBridge] Subscribed to all events
+[2] [LOG] [PrimedWordRegistry] Cleared 0 primed word(s). ID counter reset.
+[2] [LOG] [RulesEngine] Board cleared.
+[2] [LOG] [GridManager] All cells cleared.
+[2] [LOG] [GridManager] RebuildFromRulesEngine — created 2 tiles.
+[2] [LOG] [TutorialManager] Step 1 ready — waiting for CAT at column 0.
+[1286] [LOG] [TutorialManager] Tutorial skipped by player.
+[1286] [LOG] [TutorialManager] === TUTORIAL END ===
+[1286] [LOG] [TutorialManager] Starting normal game after tutorial.
+[1286] [LOG] [GameManager] Playing → Playing
+[1286] [LOG] [GameManager] Entered Playing
+[1286] [LOG] [Analytics] screen_view | t=10.7 screen=playing
+[1286] [LOG] [MatchController] StartMatch()
+[1286] [LOG] [TileBag] Initial fill — 120 tiles (no wilds, vowel-rich distribution). Total unique letters: 26
+[1286] [LOG] [Hand P0] FillAll: BEAMT vowels=2 playability=5 next=H
+[1286] [LOG] [Hand P1] FillAll: DOIPT vowels=2 playability=5 next=C
+[1286] [LOG] [PrimedWordRegistry] Cleared 0 primed word(s). ID counter reset.
+[1286] [LOG] [RulesEngine] Board cleared.
+[1286] [LOG] [OpeningSeed] Applied 'Bridge' (quality=15.5, rank 5/13). Top 3: Frame=20.0, Wings=20.0, Scatter=15.5
+[1286] [LOG] [GridManager] All cells cleared.
+[1286] [LOG] [GridManager] RebuildFromRulesEngine — created 3 tiles.
+[1286] [LOG] [ScoreManager] Scores reset — PlayerScore=0, AIScore=0, Combo=0
+[1286] [LOG] [HandManager] Hand updated from OnHandRefilled: BEAMT
+[1286] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BEAMT
+[1286] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=DOIPT
+[1286] [LOG] [Analytics] game_start | t=10.7 game_num=2
+[1286] [LOG] [MatchController] Match started. Human hand: BEAMT AI hand: DOIPT Bag: 105 tiles  Swaps: 3 each
+[1286] [LOG] [GameManager] MatchController.StartMatch() called
+[1667] [LOG] [HandManager] InitialiseHand complete — hand: BEAMT
+[2147] [LOG] [HandManager] Card 1 selected: 'E'
+[2461] [LOG] [HandManager] Player dropping 'E' into column 4 (slot 1)
+[2461] [LOG] [HandManager] FullTurnSequence BEGIN: CurrentPlayer=0 IsMatchActive=True col=4 letter='E' handSlot=1
+[2461] [LOG] [RulesEngine] BeginDrop: placed 'E' at (4,0) player=0
+[2461] [LOG] [TileSpriteAtlas] Baking 'A': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'B': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'C': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'D': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'E': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'F': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'G': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'H': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'I': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'J': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'K': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'L': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'M': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'N': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'O': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'P': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'Q': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'R': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'S': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'T': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'U': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'V': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'W': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'X': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'Y': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Baking 'Z': cellSize=1.446 tileWorldSize=1.272 captureArea=1.527 tileScale=(0.44, 0.44, 1.00) tilePos=(1000.00, 1000.00, 0.00)
+[2461] [WARN] In the render graph API, the output Render Texture must have a depth buffer. When you select a Render Texture in any camera's Output Texture property, the Depth Stencil Format property of the texture must be set to a value other than None.
+[2461] [LOG] [TileSpriteAtlas] Built 26 baked tile sprites.
+[2730] [LOG] [WordDictionary] Loaded Core tier: 13,553 words from Resources/dict_core.txt
+[2730] [LOG] [RulesEngine] DoDetectWords: found 1 new word(s) at chainDepth=0.
+[2730] [LOG] [RulesEngine] CalculateWordScore('SET'): raw=3 × 1.0 = 3
+[2730] [LOG] [PrimedWordRegistry] Added: PrimedWord[id=1 word=SET owner=0 turns=0→4 cells=[(3,0),(4,0),(5,0)]]  (registry size: 1)
+[2730] [LOG] [RulesEngine] DoScoreAndPrime: 'SET' base=3 = 3 pts  [chain=0] primedId=1
+[2730] [LOG] [ScoringDisplay] ShowWordScore: 'SET' pts=3 chainIdx=1
+[5866] [LOG] [RulesEngine] DoCheckTriggers: 1 new word(s), 1 primed word(s) on board, 1 just-primed this resolution
+[5866] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'SET' (id=1) — was just-primed this resolution
+[5866] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'SET' (id=1) — was just-primed this resolution
+[5866] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'SET' (id=1) — was just-primed this resolution
+[5866] [LOG] [RulesEngine] DoCheckTriggers: no triggers — resolution complete.
+[5866] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 1, phase=Idle.
+[5866] [LOG] [Score] P0 +3 (base=3, chain=0, det=0)
+[5866] [LOG] [ScoreManager] AddPlayerScore(3) → PlayerScore=3
+[5866] [LOG] [Hand P0] DrawSlot(1): BHAMT playability=5 drought=0 next=O
+[5866] [LOG] [HandManager] Hand updated from OnHandRefilled: BHAMT
+[5866] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BHAMT
+[5866] [LOG] [Analytics] milestone | t=14.7 type=drop value=1
+[5866] [LOG] [GameVisualBridge] TurnEnd: player=0 turn=1 global=0
+[5866] [LOG] [MatchController] CompleteDropBookkeeping: player=0 score=3 playerTurns=[1,0] globalTurn=1
+[5866] [LOG] [MatchController] Switched to player 1
+[7180] [LOG] [HandManager] FullTurnSequence AFTER WAIT: CurrentPlayer=1 (was 0 before drop) IsMatchActive=True HumanTurns=1 AiTurns=0 HumanDone=False AiDone=False
+[7180] [LOG] [HandManager] Hand refreshed: BHAMT
+[7180] [LOG] [HandManager] FullTurnSequence AI TURN CHECK: aiShouldAct=True | currentPlayerIsAI=True (CurrentPlayer=1, PLAYER_AI=1) | aiHasTurnsRemaining=True (AiTurns=0/15) | matchStillActive=True
+[7180] [LOG] [HandManager] AI turn should trigger: true — starting AI turn coroutine.
+[7180] [LOG] [HandManager] Triggering AI turn...
+[7180] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.
+[7180] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay 0.30s
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[7745] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[7745] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[7745] [LOG] [AIAgent] Best move (Easy): 'D' → col 4 (score=0, slot=0)
+[7745] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — foundMove=True bestCol=4 bestSlot=0 bestLetter='D'
+[7745] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI dropping 'D' into col 4 (slot=0)
+[7745] [LOG] [GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col=4, letter='D', player=1)
+[7745] [LOG] [RulesEngine] BeginDrop: placed 'D' at (4,1) player=1
+[7745] [LOG] [GameVisualBridge] <<< BeginDrop returned: Phase=TileDropped Row=1
+[8067] [LOG] [GameVisualBridge] Starting NextStep loop for col=4 letter='D' player=1
+[8067] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[8067] [LOG] [GameVisualBridge] NextStep iteration=1 Phase=Complete
+[8067] [LOG] [GameVisualBridge] Phase=Complete: TotalScore=0. Resolution finished cleanly.
+[8067] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 2, phase=Idle.
+[8067] [LOG] [GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).
+[8067] [LOG] [GameVisualBridge]   HUD scores synced: P1=3 AI=0
+[8067] [LOG] [GameVisualBridge]   Waiting 0.20s post-resolution pause.
+[8438] [LOG] [GameVisualBridge]   Invoking onComplete(score=0)
+[8438] [LOG] [GameVisualBridge] NextStep loop exited cleanly after 1 iteration(s).
+[8438] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 3, phase=Idle.
+[8438] [LOG] [GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score=0)
+[8438] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping player=1 score=0 slot=0
+[8438] [LOG] [Hand P1] DrawSlot(0): COIPT playability=5 drought=1 next=E
+[8438] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=COIPT
+[8438] [LOG] [Analytics] milestone | t=16.1 type=drop value=2
+[8438] [LOG] [GameVisualBridge] TurnEnd: player=1 turn=1 global=1
+[8438] [LOG] [MatchController] CompleteDropBookkeeping: player=1 score=0 playerTurns=[1,1] globalTurn=2
+[8438] [LOG] [MatchController] Switched to player 0
+[8438] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false
+[8438] [LOG] [HandManager] AI turn coroutine completed.
+[8438] [LOG] [HandManager] Hand refreshed: BHAMT
+[8438] [LOG] [HandManager] FullTurnSequence END: Player input re-enabled.
+[11975] [LOG] [HandManager] Card 2 selected: 'A'
+[12964] [LOG] [HandManager] Player dropping 'A' into column 4 (slot 2)
+[12964] [LOG] [HandManager] FullTurnSequence BEGIN: CurrentPlayer=0 IsMatchActive=True col=4 letter='A' handSlot=2
+[12964] [LOG] [RulesEngine] BeginDrop: placed 'A' at (4,2) player=0
+[13235] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[13235] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 3, phase=Idle.
+[13235] [LOG] [Hand P0] DrawSlot(2): BHOMT playability=5 drought=1 next=E
+[13235] [LOG] [HandManager] Hand updated from OnHandRefilled: BHOMT
+[13235] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BHOMT
+[13235] [LOG] [Analytics] milestone | t=18.7 type=drop value=3
+[13235] [LOG] [GameVisualBridge] TurnEnd: player=0 turn=2 global=2
+[13235] [LOG] [MatchController] CompleteDropBookkeeping: player=0 score=0 playerTurns=[2,1] globalTurn=3
+[13235] [LOG] [MatchController] Switched to player 1
+[14505] [LOG] [HandManager] FullTurnSequence AFTER WAIT: CurrentPlayer=1 (was 0 before drop) IsMatchActive=True HumanTurns=2 AiTurns=1 HumanDone=False AiDone=False
+[14505] [LOG] [HandManager] Hand refreshed: BHOMT
+[14505] [LOG] [HandManager] FullTurnSequence AI TURN CHECK: aiShouldAct=True | currentPlayerIsAI=True (CurrentPlayer=1, PLAYER_AI=1) | aiHasTurnsRemaining=True (AiTurns=1/15) | matchStillActive=True
+[14505] [LOG] [HandManager] AI turn should trigger: true — starting AI turn coroutine.
+[14505] [LOG] [HandManager] Triggering AI turn...
+[14505] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.
+[14505] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay 0.30s
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'CAD' (vertical) at cells 4,1;4,2;4,3
+[15049] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] CalculateWordScore('CAD'): raw=6 × 1.0 = 6
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'PAD' (vertical) at cells 4,1;4,2;4,3
+[15049] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] CalculateWordScore('PAD'): raw=6 × 1.0 = 6
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] Found word 'TAD' (vertical) at cells 4,1;4,2;4,3
+[15049] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[15049] [LOG] [RulesEngine] CalculateWordScore('TAD'): raw=4 × 1.0 = 4
+[15049] [LOG] [RulesEngine] Found word 'SET' (horizontal) at cells 3,0;4,0;5,0
+[15049] [LOG] [RulesEngine] FindNewWords(6,0) → 1 word(s) found.
+[15049] [LOG] [AIAgent] Best move (Easy): 'C' → col 3 (score=0, slot=0)
+[15049] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — foundMove=True bestCol=3 bestSlot=0 bestLetter='C'
+[15049] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI dropping 'C' into col 3 (slot=0)
+[15049] [LOG] [GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col=3, letter='C', player=1)
+[15049] [LOG] [RulesEngine] BeginDrop: placed 'C' at (3,1) player=1
+[15049] [LOG] [GameVisualBridge] <<< BeginDrop returned: Phase=TileDropped Row=1
+[15394] [LOG] [GameVisualBridge] Starting NextStep loop for col=3 letter='C' player=1
+[15394] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[15394] [LOG] [GameVisualBridge] NextStep iteration=1 Phase=Complete
+[15394] [LOG] [GameVisualBridge] Phase=Complete: TotalScore=0. Resolution finished cleanly.
+[15394] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 4, phase=Idle.
+[15394] [LOG] [GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).
+[15394] [LOG] [GameVisualBridge]   HUD scores synced: P1=3 AI=0
+[15394] [LOG] [GameVisualBridge]   Waiting 0.20s post-resolution pause.
+[15777] [LOG] [GameVisualBridge]   Invoking onComplete(score=0)
+[15777] [LOG] [GameVisualBridge] NextStep loop exited cleanly after 1 iteration(s).
+[15777] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 5, phase=Idle.
+[15777] [LOG] [GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score=0)
+[15777] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping player=1 score=0 slot=0
+[15777] [LOG] [Hand P1] Drought tier reached: 2 turns
+[15777] [LOG] [Hand P1] DrawSlot(0): EOIPT playability=5 drought=2 next=U
+[15777] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=EOIPT
+[15777] [LOG] [Analytics] milestone | t=20.1 type=drop value=4
+[15777] [LOG] [GameVisualBridge] TurnEnd: player=1 turn=2 global=3
+[15777] [LOG] [MatchController] CompleteDropBookkeeping: player=1 score=0 playerTurns=[2,2] globalTurn=4
+[15777] [LOG] [MatchController] Switched to player 0
+[15777] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false
+[15777] [LOG] [HandManager] AI turn coroutine completed.
+[15777] [LOG] [HandManager] Hand refreshed: BHOMT
+[15777] [LOG] [HandManager] FullTurnSequence END: Player input re-enabled.
+[16006] [LOG] [HandManager] Card 3 selected: 'M'
+[17408] [LOG] [HandManager] Player dropping 'M' into column 4 (slot 3)
+[17408] [LOG] [HandManager] FullTurnSequence BEGIN: CurrentPlayer=0 IsMatchActive=True col=4 letter='M' handSlot=3
+[17408] [LOG] [RulesEngine] BeginDrop: placed 'M' at (4,3) player=0
+[17612] [LOG] [RulesEngine] FilterSubstring: 'MAD' removed as substring of longer word
+[17612] [LOG] [RulesEngine] DoDetectWords: found 1 new word(s) at chainDepth=0.
+[17612] [LOG] [RulesEngine] CalculateWordScore('MADE'): raw=7 × 1.5 = 10
+[17612] [LOG] [PrimedWordRegistry] Added: PrimedWord[id=2 word=MADE owner=0 turns=4→8 cells=[(4,3),(4,2),(4,1),(4,0)]]  (registry size: 2)
+[17612] [LOG] [RulesEngine] DoScoreAndPrime: 'MADE' base=10 = 10 pts  [chain=0] primedId=2
+[17612] [LOG] [ScoringDisplay] ShowWordScore: 'MADE' pts=10 chainIdx=1
+[20807] [LOG] [RulesEngine] DoCheckTriggers: 1 new word(s), 2 primed word(s) on board, 1 just-primed this resolution
+[20807] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MADE' (id=2) — was just-primed this resolution
+[20807] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MADE' (id=2) — was just-primed this resolution
+[20807] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MADE' (id=2) — was just-primed this resolution
+[20807] [LOG] [RulesEngine] DoCheckTriggers: 'MADE' triggers primed 'SET' (id=1) at (4,0)
+[20807] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MADE' (id=2) — was just-primed this resolution
+[21271] [LOG] [ScoringDisplay] ShowWordScore: 'SET' pts=2 chainIdx=2
+[21686] [LOG] [RulesEngine] DoExplode: 'SET' (id=1) exploded, +2 pts
+[21686] [LOG] [PrimedWordRegistry] Removed id=1 ('SET'). Registry size: 1
+[21686] [LOG] [RulesEngine] Purged 2 scored keys for 3 removed cells.
+[22184] [WARN] Internal: JobTempAlloc has allocations that are more than the maximum lifespan of 4 frames old - this is not allowed and likely a leak
+[22184] [WARN] To Debug, run app with -diag-job-temp-memory-leak-validation cmd line argument. This will output the callstacks of the leaked allocations.
+[22309] [LOG] [GridManager] RemoveTiles — removed 3 tile(s) from 3 requested positions.
+[22451] [LOG] [RulesEngine] DoGravity: 4 tile(s) moved.
+[22451] [LOG] [RulesEngine] Removing invalid primed word 'MADE' (id=2) — [4,2]:M=M [4,1]:A=A [4,0]:D=D [4,0]:E≠D
+[22451] [LOG] [PrimedWordRegistry] Removed id=2 ('MADE'). Registry size: 0
+[22451] [LOG] [RulesEngine] DoGravity: chainDepth now 1, looping back to detect.
+[22451] [LOG] [GridManager] ApplyGravity — 4 tile(s) falling.
+[22618] [LOG] [GridManager] ApplyGravity — all tiles settled.
+[22752] [LOG] [RulesEngine] DoDetectWords: found 1 new word(s) at chainDepth=1.
+[22752] [LOG] [RulesEngine] CalculateWordScore('MAD'): raw=6 × 1.0 = 6
+[22752] [LOG] [PrimedWordRegistry] Added: PrimedWord[id=3 word=MAD owner=0 turns=4→8 cells=[(4,2),(4,1),(4,0)]]  (registry size: 1)
+[22752] [LOG] [RulesEngine] DoScoreAndPrime: 'MAD' base=6 +chain(3) = 9 pts  [chain=1] primedId=3
+[22752] [LOG] [ScoringDisplay] ShowWordScore: 'MAD' pts=9 chainIdx=3
+[26101] [LOG] [RulesEngine] DoCheckTriggers: 1 new word(s), 1 primed word(s) on board, 2 just-primed this resolution
+[26101] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MAD' (id=3) — was just-primed this resolution
+[26101] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MAD' (id=3) — was just-primed this resolution
+[26101] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'MAD' (id=3) — was just-primed this resolution
+[26101] [LOG] [RulesEngine] DoCheckTriggers: no triggers — resolution complete.
+[26101] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 5, phase=Idle.
+[26101] [LOG] [Score] P0 +21 (base=16, chain=3, det=2)
+[26101] [LOG] [ScoreManager] AddPlayerScore(21) → PlayerScore=24
+[26101] [LOG] [Hand P0] Drought ended after 1 turns
+[26101] [LOG] [Hand P0] DrawSlot(3): BHOET playability=5 drought=0 next=Z
+[26101] [LOG] [HandManager] Hand updated from OnHandRefilled: BHOET
+[26101] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BHOET
+[26101] [LOG] [Analytics] milestone | t=26 type=drop value=5
+[26101] [LOG] [GameVisualBridge] TurnEnd: player=0 turn=3 global=4
+[26101] [LOG] [MatchController] CompleteDropBookkeeping: player=0 score=21 playerTurns=[3,2] globalTurn=5
+[26101] [LOG] [MatchController] Switched to player 1
+[27409] [LOG] [HandManager] FullTurnSequence AFTER WAIT: CurrentPlayer=1 (was 0 before drop) IsMatchActive=True HumanTurns=3 AiTurns=2 HumanDone=False AiDone=False
+[27409] [LOG] [HandManager] Hand refreshed: BHOET
+[27409] [LOG] [HandManager] FullTurnSequence AI TURN CHECK: aiShouldAct=True | currentPlayerIsAI=True (CurrentPlayer=1, PLAYER_AI=1) | aiHasTurnsRemaining=True (AiTurns=2/15) | matchStillActive=True
+[27409] [LOG] [HandManager] AI turn should trigger: true — starting AI turn coroutine.
+[27409] [LOG] [HandManager] Triggering AI turn...
+[27409] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.
+[27409] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay 0.30s
+[27971] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[27971] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[27971] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[27971] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[27971] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[27971] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[27971] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[27971] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[27971] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[27971] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[27971] [LOG] [AIAgent] Best move (Easy): 'E' → col 3 (score=0, slot=0)
+[27971] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — foundMove=True bestCol=3 bestSlot=0 bestLetter='E'
+[27971] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI dropping 'E' into col 3 (slot=0)
+[27971] [LOG] [GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col=3, letter='E', player=1)
+[27971] [LOG] [RulesEngine] BeginDrop: placed 'E' at (3,1) player=1
+[27971] [LOG] [GameVisualBridge] <<< BeginDrop returned: Phase=TileDropped Row=1
+[28316] [LOG] [GameVisualBridge] Starting NextStep loop for col=3 letter='E' player=1
+[28316] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[28316] [LOG] [GameVisualBridge] NextStep iteration=1 Phase=Complete
+[28316] [LOG] [GameVisualBridge] Phase=Complete: TotalScore=0. Resolution finished cleanly.
+[28316] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 6, phase=Idle.
+[28316] [LOG] [GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).
+[28316] [LOG] [GameVisualBridge]   HUD scores synced: P1=24 AI=0
+[28316] [LOG] [GameVisualBridge]   Waiting 0.20s post-resolution pause.
+[28686] [LOG] [GameVisualBridge]   Invoking onComplete(score=0)
+[28686] [LOG] [GameVisualBridge] NextStep loop exited cleanly after 1 iteration(s).
+[28686] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 7, phase=Idle.
+[28686] [LOG] [GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score=0)
+[28686] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping player=1 score=0 slot=0
+[28686] [LOG] [Hand P1] Drought tier reached: 3 turns
+[28686] [LOG] [Hand P1] DrawSlot(0): UOIPT playability=5 drought=3 next=H
+[28686] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=UOIPT
+[28686] [LOG] [Analytics] milestone | t=27.4 type=drop value=6
+[28686] [LOG] [GameVisualBridge] TurnEnd: player=1 turn=3 global=5
+[28686] [LOG] [MatchController] CompleteDropBookkeeping: player=1 score=0 playerTurns=[3,3] globalTurn=6
+[28686] [LOG] [MatchController] Switched to player 0
+[28686] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false
+[28686] [LOG] [HandManager] AI turn coroutine completed.
+[28686] [LOG] [HandManager] Hand refreshed: BHOET
+[28686] [LOG] [HandManager] FullTurnSequence END: Player input re-enabled.
+[32576] [LOG] [HandManager] Card 3 selected: 'E'
+[37052] [LOG] [HandManager] Card 3 deselected
+[38266] [LOG] [HandManager] Card 4 selected: 'T'
+[40310] [LOG] [HandManager] Player dropping 'T' into column 0 (slot 4)
+[40310] [LOG] [HandManager] FullTurnSequence BEGIN: CurrentPlayer=0 IsMatchActive=True col=0 letter='T' handSlot=4
+[40310] [LOG] [RulesEngine] BeginDrop: placed 'T' at (0,0) player=0
+[40718] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[40718] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 7, phase=Idle.
+[40718] [LOG] [Hand P0] DrawSlot(4): BHOEZ playability=3 drought=1 next=C
+[40718] [LOG] [HandManager] Hand updated from OnHandRefilled: BHOEZ
+[40718] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BHOEZ
+[40718] [LOG] [Analytics] milestone | t=34.1 type=drop value=7
+[40718] [LOG] [GameVisualBridge] TurnEnd: player=0 turn=4 global=6
+[40718] [LOG] [MatchController] CompleteDropBookkeeping: player=0 score=0 playerTurns=[4,3] globalTurn=7
+[40718] [LOG] [MatchController] Switched to player 1
+[42000] [LOG] [HandManager] FullTurnSequence AFTER WAIT: CurrentPlayer=1 (was 0 before drop) IsMatchActive=True HumanTurns=4 AiTurns=3 HumanDone=False AiDone=False
+[42000] [LOG] [HandManager] Hand refreshed: BHOEZ
+[42000] [LOG] [HandManager] FullTurnSequence AI TURN CHECK: aiShouldAct=True | currentPlayerIsAI=True (CurrentPlayer=1, PLAYER_AI=1) | aiHasTurnsRemaining=True (AiTurns=3/15) | matchStillActive=True
+[42000] [LOG] [HandManager] AI turn should trigger: true — starting AI turn coroutine.
+[42000] [LOG] [HandManager] Triggering AI turn...
+[42000] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.
+[42000] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay 0.30s
+[42457] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[42457] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] Found word 'TOO' (horizontal) at cells 0,0;1,0;2,0
+[42457] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] CalculateWordScore('TOO'): raw=3 × 1.0 = 3
+[42457] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[42457] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[42457] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] Found word 'TOP' (horizontal) at cells 0,0;1,0;2,0
+[42457] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] CalculateWordScore('TOP'): raw=5 × 1.0 = 5
+[42457] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[42457] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] Found word 'TOT' (horizontal) at cells 0,0;1,0;2,0
+[42457] [LOG] [RulesEngine] FindNewWords(2,0) → 1 word(s) found.
+[42457] [LOG] [RulesEngine] CalculateWordScore('TOT'): raw=3 × 1.0 = 3
+[42457] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[42457] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[42457] [LOG] [AIAgent] Best move (Easy): 'U' → col 3 (score=0, slot=0)
+[42457] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — foundMove=True bestCol=3 bestSlot=0 bestLetter='U'
+[42457] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI dropping 'U' into col 3 (slot=0)
+[42457] [LOG] [GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col=3, letter='U', player=1)
+[42457] [LOG] [RulesEngine] BeginDrop: placed 'U' at (3,2) player=1
+[42457] [LOG] [GameVisualBridge] <<< BeginDrop returned: Phase=TileDropped Row=2
+[42726] [LOG] [GameVisualBridge] Starting NextStep loop for col=3 letter='U' player=1
+[42726] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[42726] [LOG] [GameVisualBridge] NextStep iteration=1 Phase=Complete
+[42726] [LOG] [GameVisualBridge] Phase=Complete: TotalScore=0. Resolution finished cleanly.
+[42726] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 8, phase=Idle.
+[42726] [LOG] [GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).
+[42726] [LOG] [GameVisualBridge]   HUD scores synced: P1=24 AI=0
+[42726] [LOG] [GameVisualBridge]   Waiting 0.20s post-resolution pause.
+[43089] [LOG] [GameVisualBridge]   Invoking onComplete(score=0)
+[43089] [LOG] [GameVisualBridge] NextStep loop exited cleanly after 1 iteration(s).
+[43089] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 9, phase=Idle.
+[43089] [LOG] [GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score=0)
+[43089] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping player=1 score=0 slot=0
+[43089] [LOG] [Hand P1] Drought tier reached: 4 turns
+[43089] [LOG] [DroughtAssist] Picked helper 'R' from 21 candidates
+[43089] [LOG] [Hand P1] L3 board-assist: 'R' (drought=4)
+[43089] [LOG] [Hand P1] DrawSlot(0): HOIPT playability=5 drought=4 next=R
+[43089] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=HOIPT
+[43089] [LOG] [Analytics] milestone | t=35.4 type=drop value=8
+[43089] [LOG] [GameVisualBridge] TurnEnd: player=1 turn=4 global=7
+[43089] [LOG] [MatchController] CompleteDropBookkeeping: player=1 score=0 playerTurns=[4,4] globalTurn=8
+[43089] [LOG] [MatchController] Switched to player 0
+[43089] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false
+[43089] [LOG] [HandManager] AI turn coroutine completed.
+[43089] [LOG] [HandManager] Hand refreshed: BHOEZ
+[43089] [LOG] [HandManager] FullTurnSequence END: Player input re-enabled.
+[44475] [LOG] [HandManager] Card 3 selected: 'E'
+[45262] [LOG] [HandManager] Player dropping 'E' into column 2 (slot 3)
+[45262] [LOG] [HandManager] FullTurnSequence BEGIN: CurrentPlayer=0 IsMatchActive=True col=2 letter='E' handSlot=3
+[45262] [LOG] [RulesEngine] BeginDrop: placed 'E' at (2,0) player=0
+[45656] [LOG] [RulesEngine] DoDetectWords: found 1 new word(s) at chainDepth=0.
+[45656] [LOG] [RulesEngine] CalculateWordScore('TOE'): raw=3 × 1.0 = 3
+[45656] [LOG] [PrimedWordRegistry] Added: PrimedWord[id=4 word=TOE owner=0 turns=8→12 cells=[(0,0),(1,0),(2,0)]]  (registry size: 2)
+[45656] [LOG] [RulesEngine] DoScoreAndPrime: 'TOE' base=3 = 3 pts  [chain=0] primedId=4
+[45656] [LOG] [ScoringDisplay] ShowWordScore: 'TOE' pts=3 chainIdx=1
+[48956] [LOG] [RulesEngine] DoCheckTriggers: 1 new word(s), 2 primed word(s) on board, 1 just-primed this resolution
+[48956] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'TOE' (id=4) — was just-primed this resolution
+[48956] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'TOE' (id=4) — was just-primed this resolution
+[48956] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'TOE' (id=4) — was just-primed this resolution
+[48956] [LOG] [RulesEngine] DoCheckTriggers: no triggers — resolution complete.
+[48956] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 9, phase=Idle.
+[48956] [LOG] [Score] P0 +3 (base=3, chain=0, det=0)
+[48956] [LOG] [ScoreManager] AddPlayerScore(3) → PlayerScore=27
+[48956] [LOG] [Hand P0] Drought ended after 1 turns
+[48956] [LOG] [Hand P0] DrawSlot(3): BHOCZ playability=3 drought=0 next=U
+[48956] [LOG] [HandManager] Hand updated from OnHandRefilled: BHOCZ
+[48956] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BHOCZ
+[48956] [LOG] [Analytics] milestone | t=38.7 type=drop value=9
+[48956] [LOG] [GameVisualBridge] TurnEnd: player=0 turn=5 global=8
+[48956] [LOG] [MatchController] CompleteDropBookkeeping: player=0 score=3 playerTurns=[5,4] globalTurn=9
+[48956] [LOG] [MatchController] Switched to player 1
+[50247] [LOG] [HandManager] FullTurnSequence AFTER WAIT: CurrentPlayer=1 (was 0 before drop) IsMatchActive=True HumanTurns=5 AiTurns=4 HumanDone=False AiDone=False
+[50247] [LOG] [HandManager] Hand refreshed: BHOCZ
+[50247] [LOG] [HandManager] FullTurnSequence AI TURN CHECK: aiShouldAct=True | currentPlayerIsAI=True (CurrentPlayer=1, PLAYER_AI=1) | aiHasTurnsRemaining=True (AiTurns=4/15) | matchStillActive=True
+[50247] [LOG] [HandManager] AI turn should trigger: true — starting AI turn coroutine.
+[50247] [LOG] [HandManager] Triggering AI turn...
+[50247] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.
+[50247] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay 0.30s
+[50798] [LOG] [RulesEngine] Found word 'HUE' (vertical) at cells 3,1;3,2;3,3
+[50798] [LOG] [RulesEngine] FindNewWords(3,3) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] CalculateWordScore('HUE'): raw=6 × 1.0 = 6
+[50798] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[50798] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[50798] [LOG] [RulesEngine] FindNewWords(5,0) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[50798] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[50798] [LOG] [RulesEngine] FindNewWords(5,0) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[50798] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[50798] [LOG] [RulesEngine] FindNewWords(5,0) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'PEA' (horizontal) at cells 2,1;3,1;4,1
+[50798] [LOG] [RulesEngine] FindNewWords(2,1) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] CalculateWordScore('PEA'): raw=5 × 1.0 = 5
+[50798] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[50798] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[50798] [LOG] [RulesEngine] FindNewWords(5,0) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'TEA' (horizontal) at cells 2,1;3,1;4,1
+[50798] [LOG] [RulesEngine] FindNewWords(2,1) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] CalculateWordScore('TEA'): raw=3 × 1.0 = 3
+[50798] [LOG] [RulesEngine] Found word 'MAD' (vertical) at cells 4,0;4,1;4,2
+[50798] [LOG] [RulesEngine] FindNewWords(4,3) → 1 word(s) found.
+[50798] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[50798] [LOG] [RulesEngine] FindNewWords(5,0) → 1 word(s) found.
+[50798] [LOG] [AIAgent] Best move (Easy): 'P' → col 2 (score=5 [TRIGGERS!], slot=3)
+[50798] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — foundMove=True bestCol=2 bestSlot=3 bestLetter='P'
+[50798] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI dropping 'P' into col 2 (slot=3)
+[50798] [LOG] [GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col=2, letter='P', player=1)
+[50798] [LOG] [RulesEngine] BeginDrop: placed 'P' at (2,1) player=1
+[50798] [LOG] [GameVisualBridge] <<< BeginDrop returned: Phase=TileDropped Row=1
+[51126] [LOG] [GameVisualBridge] Starting NextStep loop for col=2 letter='P' player=1
+[51126] [LOG] [RulesEngine] DoDetectWords: found 1 new word(s) at chainDepth=0.
+[51126] [LOG] [GameVisualBridge] NextStep iteration=1 Phase=WordsDetected
+[51126] [LOG] [GameVisualBridge] Phase=WordsDetected: 1 new word(s) found. Words: [PEA]
+[51126] [LOG] [RulesEngine] CalculateWordScore('PEA'): raw=5 × 1.0 = 5
+[51126] [LOG] [PrimedWordRegistry] Added: PrimedWord[id=5 word=PEA owner=1 turns=9→13 cells=[(2,1),(3,1),(4,1)]]  (registry size: 3)
+[51126] [LOG] [RulesEngine] DoScoreAndPrime: 'PEA' base=5 = 5 pts  [chain=0] primedId=5
+[51126] [LOG] [GameVisualBridge] NextStep iteration=2 Phase=WordsScored
+[51126] [LOG] [GameVisualBridge] Phase=WordsScored: 1 word(s) to animate.
+[51126] [LOG] [GameVisualBridge]   Scored word [0]: 'PEA' baseScore=5 finalScore=5 chainStep=0 player=1
+[51126] [LOG] [ScoringDisplay] ShowWordScore: 'PEA' pts=5 chainIdx=1
+[51126] [LOG] [GameVisualBridge]   Waiting 1.84s beat for word 'PEA'
+[54304] [LOG] [RulesEngine] DoCheckTriggers: 1 new word(s), 3 primed word(s) on board, 1 just-primed this resolution
+[54304] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'PEA' (id=5) — was just-primed this resolution
+[54304] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'PEA' (id=5) — was just-primed this resolution
+[54304] [LOG] [RulesEngine] DoCheckTriggers: 'PEA' triggers primed 'MAD' (id=3) at (4,1)
+[54304] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'PEA' (id=5) — was just-primed this resolution
+[54304] [LOG] [GameVisualBridge] NextStep iteration=3 Phase=TriggersFound
+[54697] [LOG] [GameVisualBridge] Phase=TriggersFound: 1 trigger(s) found.
+[54697] [LOG] [GameVisualBridge]   DirectTrigger [0]: 'PEA' triggers primed 'MAD'
+[54697] [LOG] [GameVisualBridge]   Waiting 0.25s for trigger FX. (chainTriggered=0)
+[55151] [LOG] [RulesEngine] DoExplode: 'MAD' (id=3) exploded, +2 pts
+[55151] [LOG] [PrimedWordRegistry] Removed id=3 ('MAD'). Registry size: 2
+[55151] [LOG] [RulesEngine] Purged 2 scored keys for 3 removed cells.
+[55151] [LOG] [GameVisualBridge] NextStep iteration=4 Phase=Exploding
+[55151] [LOG] [GameVisualBridge] Phase=Exploding: 3 cell(s) to remove.
+[55794] [LOG] [GridManager] RemoveTiles — removed 3 tile(s) from 3 requested positions.
+[55934] [LOG] [RulesEngine] Removing invalid primed word 'PEA' (id=5) — [2,1]:P=P [3,1]:E=E [4,1]:A≠?
+[55934] [LOG] [PrimedWordRegistry] Removed id=5 ('PEA'). Registry size: 1
+[55934] [LOG] [RulesEngine] DoGravity: chainDepth now 1, looping back to detect.
+[55934] [LOG] [GameVisualBridge] NextStep iteration=5 Phase=GravityApplied
+[55934] [LOG] [GameVisualBridge] Phase=GravityApplied: running visual gravity (always executes).
+[55934] [LOG] [GridManager] ApplyGravity — no tiles needed to move.
+[55935] [LOG] [GameVisualBridge]   Visual gravity complete.
+[55935] [LOG] [GameVisualBridge]   Waiting 0.10s gravity settle pause.
+[56112] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=1).
+[56112] [LOG] [GameVisualBridge] NextStep iteration=6 Phase=Complete
+[56112] [LOG] [GameVisualBridge] Phase=Complete: TotalScore=7. Resolution finished cleanly.
+[56112] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 10, phase=Idle.
+[56112] [LOG] [GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).
+[56112] [LOG] [GameVisualBridge]   HUD scores synced: P1=27 AI=0
+[56112] [LOG] [GameVisualBridge]   Waiting 0.20s post-resolution pause.
+[56485] [LOG] [GameVisualBridge]   Invoking onComplete(score=7)
+[56485] [LOG] [GameVisualBridge] NextStep loop exited cleanly after 6 iteration(s).
+[56485] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 11, phase=Idle.
+[56485] [LOG] [GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score=7)
+[56485] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping player=1 score=7 slot=3
+[56485] [LOG] [Score] P1 +7 
+[56485] [LOG] [ScoreManager] AddAIScore(7) → AIScore=7
+[56485] [LOG] [Hand P1] Drought ended after 4 turns
+[56485] [LOG] [Hand P1] DrawSlot(3): HOIRT playability=5 drought=0 next=D
+[56485] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=HOIRT
+[56485] [LOG] [Analytics] milestone | t=43 type=drop value=10
+[56485] [LOG] [GameVisualBridge] TurnEnd: player=1 turn=5 global=9
+[56485] [LOG] [MatchController] CompleteDropBookkeeping: player=1 score=7 playerTurns=[5,5] globalTurn=10
+[56485] [LOG] [MatchController] Switched to player 0
+[56485] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false
+[56485] [LOG] [HandManager] AI turn coroutine completed.
+[56485] [LOG] [HandManager] Hand refreshed: BHOCZ
+[56485] [LOG] [HandManager] FullTurnSequence END: Player input re-enabled.
+[61263] [LOG] [HandManager] Card 2 selected: 'O'
+[63173] [LOG] [HandManager] Player dropping 'O' into column 2 (slot 2)
+[63173] [LOG] [HandManager] FullTurnSequence BEGIN: CurrentPlayer=0 IsMatchActive=True col=2 letter='O' handSlot=2
+[63173] [LOG] [RulesEngine] BeginDrop: placed 'O' at (2,2) player=0
+[63434] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=0).
+[63434] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 11, phase=Idle.
+[63434] [LOG] [Hand P0] DrawSlot(2): BHUCZ playability=3 drought=1 next=E
+[63434] [LOG] [HandManager] Hand updated from OnHandRefilled: BHUCZ
+[63434] [LOG] [GameVisualBridge] HandRefilled: player=0 letters=BHUCZ
+[63434] [LOG] [Analytics] milestone | t=46.8 type=drop value=11
+[63434] [LOG] [GameVisualBridge] TurnEnd: player=0 turn=6 global=10
+[63434] [LOG] [MatchController] CompleteDropBookkeeping: player=0 score=0 playerTurns=[6,5] globalTurn=11
+[63434] [LOG] [MatchController] Switched to player 1
+[64714] [LOG] [HandManager] FullTurnSequence AFTER WAIT: CurrentPlayer=1 (was 0 before drop) IsMatchActive=True HumanTurns=6 AiTurns=5 HumanDone=False AiDone=False
+[64714] [LOG] [HandManager] Hand refreshed: BHUCZ
+[64714] [LOG] [HandManager] FullTurnSequence AI TURN CHECK: aiShouldAct=True | currentPlayerIsAI=True (CurrentPlayer=1, PLAYER_AI=1) | aiHasTurnsRemaining=True (AiTurns=5/15) | matchStillActive=True
+[64714] [LOG] [HandManager] AI turn should trigger: true — starting AI turn coroutine.
+[64714] [LOG] [HandManager] Triggering AI turn...
+[64714] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.
+[64714] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay 0.30s
+[65271] [LOG] [RulesEngine] Found word 'HOP' (vertical) at cells 2,1;2,2;2,3
+[65271] [LOG] [RulesEngine] Found word 'HOPE' (vertical) at cells 2,0;2,1;2,2;2,3
+[65271] [LOG] [RulesEngine] FindNewWords(2,3) → 2 word(s) found.
+[65271] [LOG] [RulesEngine] CalculateWordScore('HOP'): raw=8 × 1.0 = 8
+[65271] [LOG] [RulesEngine] CalculateWordScore('HOPE'): raw=9 × 1.5 = 14
+[65271] [LOG] [RulesEngine] Found word 'HUE' (vertical) at cells 3,1;3,2;3,3
+[65271] [LOG] [RulesEngine] FindNewWords(3,3) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] CalculateWordScore('HUE'): raw=6 × 1.0 = 6
+[65271] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[65271] [LOG] [RulesEngine] FindNewWords(4,0) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[65271] [LOG] [RulesEngine] FindNewWords(4,0) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[65271] [LOG] [RulesEngine] FindNewWords(4,0) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] Found word 'ROPE' (vertical) at cells 2,0;2,1;2,2;2,3
+[65271] [LOG] [RulesEngine] FindNewWords(2,3) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] CalculateWordScore('ROPE'): raw=6 × 1.5 = 9
+[65271] [LOG] [RulesEngine] Found word 'RUE' (vertical) at cells 3,1;3,2;3,3
+[65271] [LOG] [RulesEngine] FindNewWords(3,3) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] CalculateWordScore('RUE'): raw=3 × 1.0 = 3
+[65271] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[65271] [LOG] [RulesEngine] FindNewWords(4,0) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] Found word 'TOP' (vertical) at cells 2,1;2,2;2,3
+[65271] [LOG] [RulesEngine] FindNewWords(2,3) → 1 word(s) found.
+[65271] [LOG] [RulesEngine] CalculateWordScore('TOP'): raw=5 × 1.0 = 5
+[65271] [LOG] [RulesEngine] Found word 'TOE' (horizontal) at cells 0,0;1,0;2,0
+[65271] [LOG] [RulesEngine] FindNewWords(4,0) → 1 word(s) found.
+[65271] [LOG] [AIAgent] Difficulty (Easy): ignoring best, playing random.
+[65271] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — foundMove=True bestCol=2 bestSlot=3 bestLetter='R'
+[65271] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI dropping 'R' into col 2 (slot=3)
+[65271] [LOG] [GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col=2, letter='R', player=1)
+[65271] [LOG] [RulesEngine] BeginDrop: placed 'R' at (2,3) player=1
+[65271] [LOG] [GameVisualBridge] <<< BeginDrop returned: Phase=TileDropped Row=3
+[65472] [LOG] [GameVisualBridge] Starting NextStep loop for col=2 letter='R' player=1
+[65472] [LOG] [RulesEngine] DoDetectWords: found 1 new word(s) at chainDepth=0.
+[65472] [LOG] [GameVisualBridge] NextStep iteration=1 Phase=WordsDetected
+[65472] [LOG] [GameVisualBridge] Phase=WordsDetected: 1 new word(s) found. Words: [ROPE]
+[65472] [LOG] [RulesEngine] CalculateWordScore('ROPE'): raw=6 × 1.5 = 9
+[65472] [LOG] [PrimedWordRegistry] Added: PrimedWord[id=6 word=ROPE owner=1 turns=11→15 cells=[(2,3),(2,2),(2,1),(2,0)]]  (registry size: 2)
+[65472] [LOG] [RulesEngine] DoScoreAndPrime: 'ROPE' base=9 = 9 pts  [chain=0] primedId=6
+[65472] [LOG] [GameVisualBridge] NextStep iteration=2 Phase=WordsScored
+[65472] [LOG] [GameVisualBridge] Phase=WordsScored: 1 word(s) to animate.
+[65472] [LOG] [GameVisualBridge]   Scored word [0]: 'ROPE' baseScore=9 finalScore=9 chainStep=0 player=1
+[65472] [LOG] [ScoringDisplay] ShowWordScore: 'ROPE' pts=9 chainIdx=1
+[65472] [LOG] [GameVisualBridge]   Waiting 1.89s beat for word 'ROPE'
+[68720] [LOG] [RulesEngine] DoCheckTriggers: 1 new word(s), 2 primed word(s) on board, 1 just-primed this resolution
+[68720] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'ROPE' (id=6) — was just-primed this resolution
+[68720] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'ROPE' (id=6) — was just-primed this resolution
+[68720] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'ROPE' (id=6) — was just-primed this resolution
+[68720] [LOG] [RulesEngine] DoCheckTriggers: 'ROPE' triggers primed 'TOE' (id=4) at (2,0)
+[68720] [LOG] [RulesEngine] DoCheckTriggers: SKIPPED primed 'ROPE' (id=6) — was just-primed this resolution
+[68720] [LOG] [GameVisualBridge] NextStep iteration=3 Phase=TriggersFound
+[69184] [LOG] [GameVisualBridge] Phase=TriggersFound: 1 trigger(s) found.
+[69184] [LOG] [GameVisualBridge]   DirectTrigger [0]: 'ROPE' triggers primed 'TOE'
+[69184] [LOG] [GameVisualBridge]   Waiting 0.25s for trigger FX. (chainTriggered=0)
+[69627] [LOG] [RulesEngine] DoExplode: 'TOE' (id=4) exploded, +2 pts
+[69627] [LOG] [PrimedWordRegistry] Removed id=4 ('TOE'). Registry size: 1
+[69627] [LOG] [RulesEngine] Purged 2 scored keys for 3 removed cells.
+[69627] [LOG] [GameVisualBridge] NextStep iteration=4 Phase=Exploding
+[69627] [LOG] [GameVisualBridge] Phase=Exploding: 3 cell(s) to remove.
+[70278] [LOG] [GridManager] RemoveTiles — removed 3 tile(s) from 3 requested positions.
+[70427] [LOG] [RulesEngine] DoGravity: 3 tile(s) moved.
+[70427] [LOG] [RulesEngine] Removing invalid primed word 'ROPE' (id=6) — [2,2]:R=R [2,1]:O=O [2,0]:P=P [2,0]:E≠P
+[70427] [LOG] [PrimedWordRegistry] Removed id=6 ('ROPE'). Registry size: 0
+[70427] [LOG] [RulesEngine] DoGravity: chainDepth now 1, looping back to detect.
+[70427] [LOG] [GameVisualBridge] NextStep iteration=5 Phase=GravityApplied
+[70427] [LOG] [GameVisualBridge] Phase=GravityApplied: running visual gravity (always executes).
+[70427] [LOG] [GridManager] ApplyGravity — 3 tile(s) falling.
+[70601] [LOG] [GridManager] ApplyGravity — all tiles settled.
+[70601] [LOG] [GameVisualBridge]   Visual gravity complete.
+[70601] [LOG] [GameVisualBridge]   Waiting 0.10s gravity settle pause.
+[70788] [LOG] [RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth=1).
+[70788] [LOG] [GameVisualBridge] NextStep iteration=6 Phase=Complete
+[70788] [LOG] [GameVisualBridge] Phase=Complete: TotalScore=11. Resolution finished cleanly.
+[70788] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 12, phase=Idle.
+[70788] [LOG] [GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).
+[70788] [LOG] [GameVisualBridge]   HUD scores synced: P1=27 AI=7
+[70788] [LOG] [GameVisualBridge]   Waiting 0.20s post-resolution pause.
+[71158] [LOG] [GameVisualBridge]   Invoking onComplete(score=11)
+[71158] [LOG] [GameVisualBridge] NextStep loop exited cleanly after 6 iteration(s).
+[71158] [LOG] [RulesEngine] FinalizeDrop: turn incremented to 13, phase=Idle.
+[71158] [LOG] [GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score=11)
+[71158] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping player=1 score=11 slot=3
+[71158] [LOG] [Score] P1 +11 
+[71158] [LOG] [ScoreManager] AddAIScore(11) → AIScore=18
+[71158] [LOG] [Hand P1] DrawSlot(3): HOIDT playability=5 drought=0 next=E
+[71158] [LOG] [GameVisualBridge] HandRefilled: player=1 letters=HOIDT
+[71158] [LOG] [Analytics] milestone | t=51.1 type=drop value=12
+[71158] [LOG] [GameVisualBridge] TurnEnd: player=1 turn=6 global=11
+[71158] [LOG] [MatchController] CompleteDropBookkeeping: player=1 score=11 playerTurns=[6,6] globalTurn=12
+[71158] [LOG] [MatchController] Switched to player 0
+[71158] [LOG] [GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false
+[71158] [LOG] [HandManager] AI turn coroutine completed.
+[71158] [LOG] [HandManager] Hand refreshed: BHUCZ
+[71158] [LOG] [HandManager] FullTurnSequence END: Player input re-enabled.
+=== Debug Log Ended 2026-03-31 1:57:23 PM ===

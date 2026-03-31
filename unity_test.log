@@ -1,0 +1,54 @@
+Unity Editor version:    6000.1.15f1 (faa32412f6c9)
+Branch:                  6000.1/staging
+Build type:              Release
+Batch mode:              YES
+macOS version:           Version 15.1 (Build 24B2083)
+Darwin version:          24.1.0
+Architecture:            arm64
+Running under Rosetta:   NO
+Available memory:        24576 MB
+Date:                    2026-03-28T14:35:16Z
+[Licensing::Module] Trying to connect to existing licensing client channel...
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-spencerheath" at "2026-03-28T14:35:16.490705Z"
+[Licensing::Client] Code 1 while verifying Licensing Client signature (process Id: 45616, path: "/Applications/Unity/Hub/Editor/6000.1.15f1/Unity.app/Contents/Frameworks/UnityLicensingClient.app/Contents/MacOS/Unity.Licensing.Client")
+[Licensing::Module] LicensingClient has failed validation; ignoring
+[Licensing::Client] Handshaking with LicensingClient:
+  Version:                 1.16.2+bdef8f5
+  Session Id:              9047e5020dc14e0ba8ae638176b92b43
+  Correlation Id:          3eebb9a5022407d12cfb3b9f86d50457
+  External correlation Id: 2701945819310643892
+  Machine Id:              Lb+I5qalWVFnuEAzR+8d2mpXmmo=
+[Licensing::Module] Successfully connected to LicensingClient on channel: "LicenseClient-spencerheath" (connect: 0.00s, validation: 0.01s, handshake: 0.01s)
+[Licensing::IpcConnector] Successfully connected to: "LicenseClient-spencerheath-notifications" at "2026-03-28T14:35:16.512371Z"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+[Licensing::Client] Successfully resolved entitlement details
+[Licensing::Module] Serial number assigned to: "3574349193375-UnityPersXXXX"
+[Licensing::Client] Successfully updated license, isAync: True, time: 0.40
+[Licensing::Client] Successfully resolved entitlement details
+Pro License: NO
+Launching external process: /Applications/Unity/Hub/Editor/6000.1.15f1/Unity.app/Contents/Resources/PackageManager/Server/UnityPackageManager
+
+COMMAND LINE ARGUMENTS:
+/Applications/Unity/Hub/Editor/6000.1.15f1/Unity.app/Contents/MacOS/Unity
+-batchmode
+-projectPath
+/Users/spencerheath/GameHarness/output/wordrop/UnityProject
+-executeMethod
+GameHarness.PlayModeStarter.Run
+-outputDir
+/Users/spencerheath/GameHarness/output/wordrop/UnityProject/TestOutput
+-logFile
+/Users/spencerheath/GameHarness/output/wordrop/UnityProject/unity_test.log
+Successfully changed project path to: /Users/spencerheath/GameHarness/output/wordrop/UnityProject
+/Users/spencerheath/GameHarness/output/wordrop/UnityProject
+It looks like another Unity instance is running with this project open.
+
+Multiple Unity instances cannot open the same project.
+
+Project: /Users/spencerheath/GameHarness/output/wordrop/UnityProject
+Fatal Error! It looks like another Unity instance is running with this project open.
+
+Multiple Unity instances cannot open the same project.
+
+Project: /Users/spencerheath/GameHarness/output/wordrop/UnityProject
+[Package Manager] Server process was shutdown

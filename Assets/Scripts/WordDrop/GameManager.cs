@@ -1,0 +1,295 @@
+using UnityEngine;
+
+namespace WordDrop
+{
+    public enum GameState
+    {
+        Menu,
+        Playing,
+        RoundOver,
+        GameOver
+    }
+
+    /// <summary>
+    /// Central state machine for the Scrabble-drop game.
+    /// Shows/hides UI screens on state transitions.
+    /// States: Menu → Playing → GameOver → Playing (restart)
+    ///
+    /// Job 12 changes:
+    ///   - Wires MatchController.OnMatchEnd → TransitionTo(GameOver) in Start()
+    ///   - Removed all RoundManager references
+    ///   - RoundOver state redirects to GameOver (legacy compatibility)
+    ///   - Playing state starts via MatchController.StartMatch() directly
+    /// </summary>
+    public class GameManager : MonoBehaviour
+    {
+        public static GameManager Instance { get; private set; }
+
+        public GameState CurrentState { get; private set; } = GameState.Menu;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+            Debug.Log("[GameManager] Awake — state: Menu");
+        }
+
+        private float _gameOverCheckTimer = 0f;
+
+        private void Update()
+        {
+            // Safety net: if match is over OR all turns used, force GameOver
+            if (CurrentState == GameState.Playing && MatchController.Instance != null)
+            {
+                bool matchOver = MatchController.Instance.IsGameOver;
+                bool allTurnsUsed = MatchController.Instance.TotalTurnsUsed >= MatchController.MAX_TURNS * 2;
+
+                if (matchOver || allTurnsUsed)
+                {
+                    _gameOverCheckTimer += Time.deltaTime;
+                    if (_gameOverCheckTimer > 0.5f)
+                    {
+                        Debug.LogWarning($"[GameManager] Safety: forcing GameOver. " +
+                            $"IsGameOver={matchOver} TotalTurns={MatchController.Instance.TotalTurnsUsed}/{MatchController.MAX_TURNS * 2}");
+                        if (!matchOver)
+                            MatchController.Instance.ForceGameOver();
+                        TransitionTo(GameState.GameOver);
+                        _gameOverCheckTimer = 0f;
+                    }
+                }
+                else
+                {
+                    _gameOverCheckTimer = 0f;
+                }
+            }
+        }
+
+        private void Start()
+        {
+            // Wire MatchController.OnMatchEnd → TransitionTo(GameOver)
+            // This must be done in Start() because MatchController.Instance
+            // is set in MatchController.Awake(), which runs before GameManager.Start().
+            if (MatchController.Instance != null)
+            {
+                MatchController.Instance.OnMatchEnd += OnMatchEnded;
+                Debug.Log("[GameManager] Subscribed to MatchController.OnMatchEnd");
+            }
+            else
+            {
+                Debug.LogWarning("[GameManager] MatchController.Instance is null in Start() — " +
+                                 "OnMatchEnd will not be wired. Check creation order in SceneBootstrap.");
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (MatchController.Instance != null)
+                MatchController.Instance.OnMatchEnd -= OnMatchEnded;
+        }
+
+        private void OnMatchEnded(MatchEndEvent evt)
+        {
+            if (CurrentState == GameState.GameOver) return;
+
+            Debug.Log($"[GameManager] OnMatchEnded received: winner={evt.WinnerPlayerIndex} " +
+                      $"P={evt.PlayerScore} AI={evt.AIScore} turns={evt.TotalTurnsEach} each");
+
+            TransitionTo(GameState.GameOver);
+        }
+
+        public void TransitionTo(GameState newState)
+        {
+            // Allow re-entering Playing to restart the match
+            if (CurrentState == newState && newState != GameState.Playing)
+            {
+                Debug.Log($"[GameManager] Already in {newState} — ignoring.");
+                return;
+            }
+
+            Debug.Log($"[GameManager] {CurrentState} → {newState}");
+
+            HideAllScreens();
+
+            CurrentState = newState;
+            OnStateEntered(newState);
+        }
+
+        private void HideAllScreens()
+        {
+            if (MenuUI.Instance     != null) MenuUI.Instance.SetVisible(false);
+            if (GameOverUI.Instance != null) GameOverUI.Instance.SetVisible(false);
+        }
+
+        private void OnStateEntered(GameState state)
+        {
+            switch (state)
+            {
+                // ── Menu ──────────────────────────────────────────────────────────
+                case GameState.Menu:
+                    Debug.Log("[GameManager] Entered Menu");
+                    AnalyticsManager.ScreenView("main_menu");
+
+                    if (MenuUI.Instance != null)
+                        MenuUI.Instance.SetVisible(true);
+                    break;
+
+                // ── Playing ───────────────────────────────────────────────────────
+                case GameState.Playing:
+                    Debug.Log("[GameManager] Entered Playing");
+                    AnalyticsManager.ScreenView("playing");
+
+                    // Start or restart the match via MatchController
+                    if (MatchController.Instance != null)
+                    {
+                        MatchController.Instance.StartMatch();
+                        Debug.Log("[GameManager] MatchController.StartMatch() called");
+                    }
+                    else if (MatchManager.Instance != null)
+                    {
+                        MatchManager.Instance.StartMatch();
+                        Debug.LogWarning("[GameManager] Using legacy MatchManager.StartMatch()");
+                    }
+                    else
+                    {
+                        Debug.LogError("[GameManager] Neither MatchController nor MatchManager found!");
+                        AnalyticsManager.GameStart();
+                    }
+
+                    // Check for first-time tutorial
+                    if (TutorialManager.ShouldRunTutorial() && TutorialManager.Instance != null)
+                    {
+                        Debug.Log("[GameManager] First game — starting tutorial.");
+                        TutorialManager.Instance.BeginTutorial();
+                        break; // Tutorial manages hand/input itself
+                    }
+
+                    // Normal flow: init hand + enable input
+                    if (HandManager.Instance != null)
+                        HandManager.Instance.InitialiseHand();
+
+                    if (HandManager.Instance != null)
+                        HandManager.Instance.SetInteractable(true);
+
+                    // Show column drop arrows
+                    if (ColumnArrowManager.Instance != null)
+                        ColumnArrowManager.Instance.ShowArrows(true);
+
+                    break;
+
+                // ── Round Over (legacy redirect) ─────────────────────────────────
+                case GameState.RoundOver:
+                    // Round-based flow removed in Job 12. Redirect to GameOver.
+                    Debug.LogWarning("[GameManager] RoundOver state is deprecated — " +
+                                     "redirecting to GameOver.");
+                    TransitionTo(GameState.GameOver);
+                    break;
+
+                // ── Game Over ─────────────────────────────────────────────────────
+                case GameState.GameOver:
+                    Debug.Log("[GameManager] Entered GameOver");
+
+                    int playerScore = ScoreManager.Instance != null
+                        ? ScoreManager.Instance.PlayerScore : 0;
+                    int aiScore = ScoreManager.Instance != null
+                        ? ScoreManager.Instance.AIScore : 0;
+
+                    AnalyticsManager.GameOver(playerScore, cause: "match_end");
+                    AnalyticsManager.ScreenView("game_over");
+
+                    // Disable player input
+                    if (HandManager.Instance != null)
+                        HandManager.Instance.SetInteractable(false);
+
+                    // Hide column arrows
+                    if (ColumnArrowManager.Instance != null)
+                        ColumnArrowManager.Instance.ShowArrows(false);
+
+                    // Show game over screen
+                    if (GameOverUI.Instance != null)
+                        GameOverUI.Instance.Show();
+                    else
+                        Debug.LogError("[GameManager] GameOverUI.Instance is null in GameOver state!");
+
+                    break;
+            }
+        }
+
+        // ── Public helpers for UI buttons ─────────────────────────────────────────
+
+        /// <summary>
+        /// Restarts the entire game from the GameOver screen.
+        /// Called by the "PLAY AGAIN" button in GameOverUI.
+        /// </summary>
+        public void RequestRestartGame()
+        {
+            if (CurrentState != GameState.GameOver)
+            {
+                Debug.Log("[GameManager] RequestRestartGame ignored — not in GameOver state.");
+                return;
+            }
+
+            AnalyticsManager.ButtonTap("play_again");
+            AnalyticsManager.EngagementEvent("play_again");
+
+            TransitionTo(GameState.Playing);
+        }
+
+        /// <summary>
+        /// Resets the current match in-place without leaving the Playing state.
+        /// Called by the reset (↺) button in HUDManager.
+        /// </summary>
+        public void RequestReset()
+        {
+            if (CurrentState != GameState.Playing)
+            {
+                Debug.Log("[GameManager] RequestReset ignored — not in Playing state.");
+                return;
+            }
+
+            Debug.Log("[GameManager] RequestReset — resetting match in-place.");
+
+            // Reset via MatchController (full board + score + hand clear)
+            if (MatchController.Instance != null)
+            {
+                MatchController.Instance.StartMatch();
+            }
+            else
+            {
+                // Legacy fallback
+                if (GridManager.Instance != null)
+                    GridManager.Instance.ClearAllCells();
+                if (ScoreManager.Instance != null)
+                    ScoreManager.Instance.ResetScore();
+                if (MatchManager.Instance != null)
+                    MatchManager.Instance.StartMatch();
+            }
+
+            // Refresh hand display
+            if (HandManager.Instance != null)
+                HandManager.Instance.InitialiseHand();
+
+            // Sync HUD
+            if (HUDManager.Instance != null)
+            {
+                HUDManager.Instance.SetPlayerScore(0);
+                HUDManager.Instance.SetAIScore(0);
+            }
+
+            // Re-enable input
+            if (HandManager.Instance != null)
+                HandManager.Instance.SetInteractable(true);
+
+            if (ColumnArrowManager.Instance != null)
+                ColumnArrowManager.Instance.ShowArrows(true);
+
+            AnalyticsManager.ButtonTap("reset");
+            AnalyticsManager.EngagementEvent("mid_game_reset");
+
+            Debug.Log("[GameManager] RequestReset complete.");
+        }
+    }
+}
