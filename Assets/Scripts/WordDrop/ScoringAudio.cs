@@ -41,7 +41,7 @@ namespace WordDrop
 
             _source = gameObject.AddComponent<AudioSource>();
             _source.playOnAwake = false;
-            _source.mute = true; // Disabled for now
+            _source.mute = false;
 
             // Load RTT points clips (points1.wav through points7.wav)
             _pointsClips = new AudioClip[7];

@@ -45,15 +45,16 @@ namespace WordDrop
 
         private void Start()
         {
-            Debug.Log("[SceneBootstrap] Start — transitioning directly to Playing state");
-
-            if (GameManager.Instance != null)
+            // Show menu instead of auto-starting — let the player choose when to play
+            if (MenuUI.Instance != null)
             {
-                GameManager.Instance.TransitionTo(GameState.Playing);
+                MenuUI.Instance.SetVisible(true);
+                Debug.Log("[SceneBootstrap] Start — showing menu");
             }
-            else
+            else if (GameManager.Instance != null)
             {
-                Debug.LogError("[SceneBootstrap] GameManager.Instance is null in Start!");
+                // Fallback if MenuUI doesn't exist
+                GameManager.Instance.TransitionTo(GameState.Playing);
             }
         }
 

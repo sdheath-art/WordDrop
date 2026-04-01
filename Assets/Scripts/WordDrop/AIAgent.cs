@@ -27,16 +27,37 @@ namespace WordDrop
 
         private const float AI_DELAY = 0.3f;
 
-        // Heuristic weights — adjust to shift AI personality
-        private const float W_IMMEDIATE    = 1.0f;   // direct word score
-        private const float W_TRIGGER      = 8.0f;   // detonation trigger value
-        private const float W_BLOCK        = 3.0f;   // denying human opportunities
-        private const float W_SETUP        = 1.5f;   // creating partial words
-        private const float W_CENTER       = 0.5f;   // early center control
-        private const float W_ANTISTALL    = 2.0f;   // connectivity when nothing scores
+        // ── AI Profiles ────────────────────────────────────────────────────────
+        public enum AIProfile { Scorer, Blocker, TriggerHunter }
+        public static AIProfile CurrentProfile { get; set; } = AIProfile.Scorer;
+
+        public static string ProfileName => CurrentProfile.ToString();
+
+        private struct ProfileWeights
+        {
+            public float Immediate, Trigger, Block, Setup, Center, AntiStall;
+        }
+
+        private static readonly ProfileWeights[] PROFILES = new ProfileWeights[]
+        {
+            // Scorer: maximizes immediate points
+            new ProfileWeights { Immediate = 1.3f, Trigger = 6.0f, Block = 0.5f, Setup = 0.8f, Center = 0.3f, AntiStall = 0.3f },
+            // Blocker: denies human opportunities, plays defensively
+            new ProfileWeights { Immediate = 0.9f, Trigger = 5.0f, Block = 4.0f, Setup = 1.0f, Center = 0.2f, AntiStall = 0.4f },
+            // TriggerHunter: lives for detonation chains
+            new ProfileWeights { Immediate = 0.7f, Trigger = 12.0f, Block = 0.5f, Setup = 1.5f, Center = 0.2f, AntiStall = 0.3f },
+        };
+
+        private static ProfileWeights Weights => PROFILES[(int)CurrentProfile];
+        private static float W_IMMEDIATE => Weights.Immediate;
+        private static float W_TRIGGER   => Weights.Trigger;
+        private static float W_BLOCK     => Weights.Block;
+        private static float W_SETUP     => Weights.Setup;
+        private static float W_CENTER    => Weights.Center;
+        private static float W_ANTISTALL => Weights.AntiStall;
 
         // Center bias decays as board fills
-        private const float CENTER_DECAY_THRESHOLD = 0.3f; // board occupancy where center bias fades
+        private const float CENTER_DECAY_THRESHOLD = 0.3f;
 
         // ── Difficulty ──────────────────────────────────────────────────────────
 

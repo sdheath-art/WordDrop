@@ -1730,7 +1730,8 @@ namespace WordDrop
                     for (int c = 0; c < pw.Cells.Count; c++)
                     {
                         Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
-                        if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel);
+                        int fuse = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
+                        if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse);
                     }
                 }
             }

@@ -349,6 +349,27 @@ namespace WordDrop
             // 1. Apply score — MatchController is the SOLE ScoreManager writer
             if (totalScore > 0 && ScoreManager.Instance != null)
             {
+                // Match arc bonuses
+                int turnsLeft = (MAX_TURNS * NUM_PLAYERS) - TotalTurnsUsed;
+                int arcBonus = 0;
+                int finalPush = MatchArcRules.GetFinalPushBonus(turnsLeft);
+                if (finalPush > 0)
+                {
+                    arcBonus += finalPush;
+                    Debug.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
+                }
+                int opponentScore = (playerIndex == PLAYER_HUMAN)
+                    ? (ScoreManager.Instance.AIScore) : (ScoreManager.Instance.PlayerScore);
+                int myScore = (playerIndex == PLAYER_HUMAN)
+                    ? (ScoreManager.Instance.PlayerScore) : (ScoreManager.Instance.AIScore);
+                int comeback = MatchArcRules.GetComebackBonus(myScore, opponentScore, turnsLeft);
+                if (comeback > 0)
+                {
+                    arcBonus += comeback;
+                    Debug.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
+                }
+                totalScore += arcBonus;
+
                 if (playerIndex == PLAYER_HUMAN)
                     ScoreManager.Instance.AddPlayerScore(totalScore);
                 else

@@ -52,8 +52,8 @@ namespace WordDrop
         //   Scaled:       MULTIPLIER=0.5, BONUS=1  (rewards big-word primes)
         //   Full double:  MULTIPLIER=1.0, BONUS=0  (maximum detonation reward)
         //   Hybrid:       MULTIPLIER=0.5, BONUS=2  (scaled + flat floor)
-        public const float DETONATION_SCORE_MULTIPLIER = 0f;
-        public const int   BREAKER_BONUS               = 5;
+        public const float DETONATION_SCORE_MULTIPLIER = 1f;  // re-score original word value on detonation
+        public const int   BREAKER_BONUS               = 2;  // flat bonus on top
 
         // Heat Fuse: primed words gain +1 detonation bonus per survived turn, capped
         public const int   HEAT_FUSE_PER_TURN          = 1;

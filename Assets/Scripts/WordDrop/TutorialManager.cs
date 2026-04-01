@@ -106,7 +106,9 @@ namespace WordDrop
         public static bool ShouldRunTutorial()
         {
             if (_skipForSession) return false;
-            return true; // always run — player can skip
+            // Only run tutorial on first ever launch
+            if (PlayerPrefs.GetInt("tutorial_complete", 0) == 1) return false;
+            return true;
         }
 
         /// <summary>

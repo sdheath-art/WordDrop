@@ -56,7 +56,7 @@ namespace WordDrop
 
         // Stub properties kept for compile compatibility
         public bool IsWild => false;
-        public TileColorState ColorState { get; private set; } = TileColorState.None;
+        // ColorState removed (was for Wordle mode)
 
         private SpriteRenderer _spriteRenderer;
         private TextMeshPro    _letterTMP;
@@ -353,9 +353,11 @@ namespace WordDrop
         /// </summary>
         private Coroutine _primedPulseCoroutine;
 
-        private int _heatLevel = 0; // 0=fresh, 1-3=survived turns
+        private int _heatLevel = 0;
+        private TextMeshPro _fuseTMP; // small countdown number on primed tiles
+        private int _fuseRemaining = 0;
 
-        public void SetPrimedGlow(Color color, bool playFlash = false, int heatLevel = 0)
+        public void SetPrimedGlow(Color color, bool playFlash = false, int heatLevel = 0, int fuseRemaining = 0)
         {
             bool wasAlreadyPrimed = _hasPrimedGlow;
             _hasPrimedGlow   = true;
@@ -370,9 +372,50 @@ namespace WordDrop
             if (_primedPulseCoroutine == null)
                 _primedPulseCoroutine = StartCoroutine(PrimedPulseLoop());
 
-            // Flash gold when first primed so the player notices
+            // Flash when first primed so the player notices
             if (playFlash && !wasAlreadyPrimed)
-                FlashHighlight(new Color(1f, 0.85f, 0.3f, 1f));
+                FlashHighlight(PRIMED_GLOW);
+
+            // Show fuse countdown
+            _fuseRemaining = fuseRemaining;
+            UpdateFuseDisplay();
+        }
+
+        private void UpdateFuseDisplay()
+        {
+            if (!_hasPrimedGlow || _fuseRemaining <= 0)
+            {
+                if (_fuseTMP != null) _fuseTMP.gameObject.SetActive(false);
+                return;
+            }
+
+            if (_fuseTMP == null)
+            {
+                GameObject fuseGO = new GameObject("FuseCount");
+                fuseGO.transform.SetParent(transform, false);
+
+                float invScale = 1f / Mathf.Max(transform.localScale.x, 0.01f);
+                int ts = Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512);
+                float nativeSize = ts / 100f;
+
+                fuseGO.transform.localPosition = new Vector3(-nativeSize * 0.30f, nativeSize * 0.28f, -0.1f);
+                fuseGO.transform.localScale = new Vector3(invScale, invScale, 1f);
+
+                _fuseTMP = fuseGO.AddComponent<TextMeshPro>();
+                var font = GameFont.GetTMP();
+                if (font != null) _fuseTMP.font = font;
+                _fuseTMP.fontSize = 3.0f;
+                _fuseTMP.fontStyle = FontStyles.Bold;
+                _fuseTMP.alignment = TextAlignmentOptions.Center;
+                _fuseTMP.sortingOrder = 8;
+                _fuseTMP.rectTransform.sizeDelta = new Vector2(1f, 1f);
+                _fuseTMP.enableWordWrapping = false;
+                _fuseTMP.overflowMode = TextOverflowModes.Overflow;
+            }
+
+            _fuseTMP.gameObject.SetActive(true);
+            _fuseTMP.text = _fuseRemaining.ToString();
+            _fuseTMP.color = PRIMED_GLOW;
         }
 
         /// <summary>
@@ -567,6 +610,8 @@ namespace WordDrop
             transform.localScale = new Vector3(correctScale, correctScale, 1f);
 
             _heatLevel = 0;
+            _fuseRemaining = 0;
+            if (_fuseTMP != null) _fuseTMP.gameObject.SetActive(false);
         }
 
         // ---------------------------------------------------------------------------
@@ -646,15 +691,7 @@ namespace WordDrop
         // Public API — Wordle coloring stubs (no-op, kept for compile compat)
         // ---------------------------------------------------------------------------
 
-        /// <summary>
-        /// No-op stub kept for compile compatibility with WordleEvaluator.
-        /// Wordle coloring has been removed in Job 6.
-        /// </summary>
-        public void SetColorState(TileColorState state)
-        {
-            ColorState = state;
-            // No-op: Wordle coloring removed. State tracked for compatibility only.
-        }
+        // SetColorState removed (was for Wordle mode)
 
         /// <summary>
         /// Sets the border color directly. Respects primed glow priority.

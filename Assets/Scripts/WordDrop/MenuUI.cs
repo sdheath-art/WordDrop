@@ -94,13 +94,12 @@ namespace WordDrop
             Text rulesText        = rulesGO.AddComponent<Text>();
             rulesText.font        = GetFont();
             rulesText.text        =
-                "Draw letters from a Scrabble bag.\n" +
-                "Tap a column to drop your tile — it falls\n" +
-                "to the lowest empty row, Connect Four style.\n\n" +
-                "Spell valid words (3+ letters) in any line\n" +
-                "to score points equal to their Scrabble values.\n\n" +
-                "You vs AI — 30 turns each.\n" +
-                "Highest score wins!";
+                "Drop letters into a shared board.\n" +
+                "Form words to score and PRIME them.\n\n" +
+                "Primed words are bombs — reuse a\n" +
+                "primed tile in a new word to DETONATE.\n\n" +
+                "Chains react. Longer fuses pay more.\n" +
+                "12 turns each. Highest score wins!";
             rulesText.fontSize    = 26;
             rulesText.color       = new Color(0.85f, 0.85f, 0.88f, 1f);
             rulesText.alignment   = TextAnchor.MiddleCenter;
@@ -125,14 +124,91 @@ namespace WordDrop
             hintText.alignment = TextAnchor.MiddleCenter;
 
             // PLAY button
+            // Difficulty selector
+            _difficultyText = CreateLabel(_panel.transform, "DifficultyLabel",
+                anchorMin: new Vector2(0.15f, 0.22f),
+                anchorMax: new Vector2(0.85f, 0.30f),
+                text: "Difficulty: Easy",
+                fontSize: 28,
+                color: new Color(0.85f, 0.85f, 0.90f, 1f));
+
+            CreateButton(_panel.transform, "DiffEasy",
+                anchorMin: new Vector2(0.08f, 0.13f),
+                anchorMax: new Vector2(0.36f, 0.22f),
+                label: "EASY", bgColor: new Color(0.25f, 0.65f, 0.35f, 1f),
+                textColor: Color.white, fontSize: 24,
+                onClick: () => SetDifficulty(0, "Easy"));
+
+            CreateButton(_panel.transform, "DiffMedium",
+                anchorMin: new Vector2(0.37f, 0.13f),
+                anchorMax: new Vector2(0.63f, 0.22f),
+                label: "MEDIUM", bgColor: new Color(0.80f, 0.65f, 0.15f, 1f),
+                textColor: Color.white, fontSize: 24,
+                onClick: () => SetDifficulty(1, "Medium"));
+
+            CreateButton(_panel.transform, "DiffHard",
+                anchorMin: new Vector2(0.64f, 0.13f),
+                anchorMax: new Vector2(0.92f, 0.22f),
+                label: "HARD", bgColor: new Color(0.80f, 0.25f, 0.20f, 1f),
+                textColor: Color.white, fontSize: 24,
+                onClick: () => SetDifficulty(2, "Hard"));
+
+            // AI profile selector
+            _profileText = CreateLabel(_panel.transform, "ProfileLabel",
+                anchorMin: new Vector2(0.15f, 0.06f),
+                anchorMax: new Vector2(0.85f, 0.12f),
+                text: "AI Style: Scorer",
+                fontSize: 22,
+                color: new Color(0.75f, 0.75f, 0.80f, 1f));
+
+            float profBtnY0 = -0.01f, profBtnY1 = 0.06f;
+            CreateButton(_panel.transform, "ProfScorer",
+                anchorMin: new Vector2(0.05f, profBtnY0),
+                anchorMax: new Vector2(0.35f, profBtnY1),
+                label: "SCORER", bgColor: new Color(0.30f, 0.55f, 0.75f, 1f),
+                textColor: Color.white, fontSize: 18,
+                onClick: () => SetProfile(AIAgent.AIProfile.Scorer));
+            CreateButton(_panel.transform, "ProfBlocker",
+                anchorMin: new Vector2(0.36f, profBtnY0),
+                anchorMax: new Vector2(0.64f, profBtnY1),
+                label: "BLOCKER", bgColor: new Color(0.60f, 0.35f, 0.60f, 1f),
+                textColor: Color.white, fontSize: 18,
+                onClick: () => SetProfile(AIAgent.AIProfile.Blocker));
+            CreateButton(_panel.transform, "ProfHunter",
+                anchorMin: new Vector2(0.65f, profBtnY0),
+                anchorMax: new Vector2(0.95f, profBtnY1),
+                label: "HUNTER", bgColor: new Color(0.75f, 0.30f, 0.25f, 1f),
+                textColor: Color.white, fontSize: 18,
+                onClick: () => SetProfile(AIAgent.AIProfile.TriggerHunter));
+
+            // PLAY button
             CreateButton(_panel.transform, "PlayButton",
-                anchorMin: new Vector2(0.20f, 0.10f),
-                anchorMax: new Vector2(0.80f, 0.22f),
+                anchorMin: new Vector2(0.15f, -0.06f),
+                anchorMax: new Vector2(0.85f, 0.00f),
                 label:     "PLAY",
                 bgColor:   new Color(0.20f, 0.72f, 0.35f, 1f),
                 textColor: Color.white,
                 fontSize:  44,
                 onClick:   OnPlayClicked);
+        }
+
+        private Text _difficultyText;
+        private Text _profileText;
+
+        private void SetProfile(AIAgent.AIProfile profile)
+        {
+            AIAgent.CurrentProfile = profile;
+            if (_profileText != null)
+                _profileText.text = $"AI Style: {profile}";
+            Debug.Log($"[MenuUI] AI profile set to {profile}");
+        }
+
+        private void SetDifficulty(int level, string name)
+        {
+            AIAgent.Difficulty = level;
+            if (_difficultyText != null)
+                _difficultyText.text = $"Difficulty: {name}";
+            Debug.Log($"[MenuUI] Difficulty set to {name} ({level})");
         }
 
         private void OnPlayClicked()
@@ -163,6 +239,25 @@ namespace WordDrop
             img.color = color;
 
             return go;
+        }
+
+        private static Text CreateLabel(Transform parent, string name,
+            Vector2 anchorMin, Vector2 anchorMax, string text, int fontSize, Color color)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            RectTransform rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = anchorMin;
+            rt.anchorMax = anchorMax;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            Text t = go.AddComponent<Text>();
+            t.font = GetFont();
+            t.text = text;
+            t.fontSize = fontSize;
+            t.color = color;
+            t.alignment = TextAnchor.MiddleCenter;
+            return t;
         }
 
         internal static void CreateButton(

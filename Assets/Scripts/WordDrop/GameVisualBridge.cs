@@ -797,7 +797,8 @@ namespace WordDrop
                     Tile tile = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
                     if (tile != null)
                     {
-                        try { tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel); }
+                        int fuse = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
+                        try { tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse); }
                         catch { /* ignore */ }
                     }
                 }
