@@ -53,7 +53,15 @@ namespace WordDrop
         //   Full double:  MULTIPLIER=1.0, BONUS=0  (maximum detonation reward)
         //   Hybrid:       MULTIPLIER=0.5, BONUS=2  (scaled + flat floor)
         public const float DETONATION_SCORE_MULTIPLIER = 0f;
-        public const int   BREAKER_BONUS               = 2;
+        public const int   BREAKER_BONUS               = 5;
+
+        // Heat Fuse: primed words gain +1 detonation bonus per survived turn, capped
+        public const int   HEAT_FUSE_PER_TURN          = 1;
+        public const int   HEAT_FUSE_MAX_BONUS         = 5;
+
+        // Overlap Fuse Extension: existing primed words get +1 fuse when a new prime overlaps them
+        public const int   OVERLAP_FUSE_EXTENSION      = 1;
+        public const int   MAX_OVERLAP_FUSE_BONUS      = 2;
 
         // TWO directions only — matches how humans read:
         // Horizontal: left to right
@@ -426,6 +434,41 @@ namespace WordDrop
                     }
                 }
 
+                // 5c-overlap. Overlap Fuse Extension for non-triggered existing primed words
+                {
+                    HashSet<int> alreadyExtended = new HashSet<int>();
+                    foreach (int newId in justPrimedThisResolution)
+                    {
+                        var newPw = _primedRegistry.GetById(newId);
+                        if (newPw == null || newPw.Cells == null) continue;
+                        for (int p = 0; p < _primedRegistry.Count; p++)
+                        {
+                            var oldPw = _primedRegistry.GetByIndex(p);
+                            if (oldPw == null) continue;
+                            if (justPrimedThisResolution.Contains(oldPw.Id)) continue;
+                            if (primedIdsToExplode.Contains(oldPw.Id)) continue; // already detonating
+                            if (alreadyExtended.Contains(oldPw.Id)) continue;
+                            if (oldPw.OverlapFuseBonusGranted >= MAX_OVERLAP_FUSE_BONUS) continue;
+
+                            bool overlaps = false;
+                            for (int c = 0; c < newPw.Cells.Count && !overlaps; c++)
+                                for (int d = 0; d < oldPw.Cells.Count && !overlaps; d++)
+                                    if (newPw.Cells[c] == oldPw.Cells[d])
+                                        overlaps = true;
+
+                            if (overlaps)
+                            {
+                                oldPw.ExpiresOnTurn += OVERLAP_FUSE_EXTENSION;
+                                oldPw.OverlapFuseBonusGranted += OVERLAP_FUSE_EXTENSION;
+                                alreadyExtended.Add(oldPw.Id);
+                                Debug.Log($"[OverlapFuse] Legacy: NewPrimed={newPw.Word} overlapped Existing={oldPw.Word} " +
+                                          $"-> +{OVERLAP_FUSE_EXTENSION} fuse (expires={oldPw.ExpiresOnTurn}, " +
+                                          $"bonusGranted={oldPw.OverlapFuseBonusGranted})");
+                            }
+                        }
+                    }
+                }
+
                 // 5c-b. Expand triggers to connected primed group
                 if (primedIdsToExplode.Count > 0)
                 {
@@ -458,11 +501,13 @@ namespace WordDrop
                         for (int c = 0; c < pw.Cells.Count; c++)
                             allCellsToRemove.Add(pw.Cells[c]);
 
-                        // Detonation bonus: tunable via DETONATION_SCORE_MULTIPLIER and BREAKER_BONUS above.
-                        int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS;
+                        // Detonation bonus: base + heat fuse
+                        int survivedTurns = Mathf.Max(0, _globalTurn - pw.PrimedOnTurn);
+                        int heatBonus = Mathf.Min(survivedTurns * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
+                        int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
                         detonationBonus += bonus;
                         Debug.Log($"[RulesEngine] DETONATION BONUS: '{pw.Word}' explodes for +{bonus} pts " +
-                                  $"(mult={DETONATION_SCORE_MULTIPLIER} * {pw.Score} + flat {BREAKER_BONUS})");
+                                  $"(base={BREAKER_BONUS} heat={heatBonus} survived={survivedTurns})");
 
                         // Remove from registry
                         _primedRegistry.RemovePrimedWord(pid);
@@ -1510,6 +1555,46 @@ namespace WordDrop
                           $" = {finalScore} pts  [chain={_stepChainDepth}] primedId={primedId}");
             }
 
+            // ── Overlap Fuse Extension ──────────────────────────────────────────
+            // Newly primed words can extend the fuse of already-existing primed words
+            // that share at least one tile. At most +1 per existing word per resolution.
+            if (_stepJustPrimed.Count > 0)
+            {
+                HashSet<int> alreadyExtended = new HashSet<int>();
+
+                foreach (int newId in _stepJustPrimed)
+                {
+                    var newPw = _primedRegistry.GetById(newId);
+                    if (newPw == null || newPw.Cells == null) continue;
+
+                    for (int p = 0; p < _primedRegistry.Count; p++)
+                    {
+                        var oldPw = _primedRegistry.GetByIndex(p);
+                        if (oldPw == null) continue;
+                        if (_stepJustPrimed.Contains(oldPw.Id)) continue; // skip newly primed
+                        if (alreadyExtended.Contains(oldPw.Id)) continue; // one extension per resolution
+                        if (oldPw.OverlapFuseBonusGranted >= MAX_OVERLAP_FUSE_BONUS) continue; // at cap
+
+                        // Check if they share any tile
+                        bool overlaps = false;
+                        for (int c = 0; c < newPw.Cells.Count && !overlaps; c++)
+                            for (int d = 0; d < oldPw.Cells.Count && !overlaps; d++)
+                                if (newPw.Cells[c] == oldPw.Cells[d])
+                                    overlaps = true;
+
+                        if (overlaps)
+                        {
+                            oldPw.ExpiresOnTurn += OVERLAP_FUSE_EXTENSION;
+                            oldPw.OverlapFuseBonusGranted += OVERLAP_FUSE_EXTENSION;
+                            alreadyExtended.Add(oldPw.Id);
+                            Debug.Log($"[OverlapFuse] NewPrimed={newPw.Word} overlapped Existing={oldPw.Word} " +
+                                      $"-> +{OVERLAP_FUSE_EXTENSION} fuse (expires={oldPw.ExpiresOnTurn}, " +
+                                      $"bonusGranted={oldPw.OverlapFuseBonusGranted})");
+                        }
+                    }
+                }
+            }
+
             _currentPhase = ResolutionPhase.WordsScored;
 
             return new StepResult
@@ -1660,10 +1745,13 @@ namespace WordDrop
                     }
                 }
 
-                int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS;
+                int survivedTurns = Mathf.Max(0, _globalTurn - pw.PrimedOnTurn);
+                int heatBonus = Mathf.Min(survivedTurns * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
+                int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
                 detonationBonus += bonus;
 
-                Debug.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts");
+                Debug.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
+                          $"(heat={heatBonus} survived={survivedTurns})");
 
                 _primedRegistry.RemovePrimedWord(pid);
                 _stepJustPrimed.Remove(pid);

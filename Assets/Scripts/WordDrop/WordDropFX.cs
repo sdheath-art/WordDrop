@@ -57,9 +57,9 @@ namespace WordDrop
         public const float CARD_SHUFFLE_DUR     = 0.15f;
 
         // ── Tuning: Detonation particles ──────────────────────────────────────
-        public const int   PARTICLE_BURST_COUNT  = 12;
-        public const float PARTICLE_LIFETIME_MIN = 0.25f;
-        public const float PARTICLE_LIFETIME_MAX = 0.5f;
+        public const int   PARTICLE_BURST_COUNT  = 6;
+        public const float PARTICLE_LIFETIME_MIN = 0.15f;
+        public const float PARTICLE_LIFETIME_MAX = 0.30f;
         public const float PARTICLE_SPEED        = 3.5f;
         public const float PARTICLE_SIZE          = 0.08f;
 
@@ -236,6 +236,91 @@ namespace WordDrop
         // ═══════════════════════════════════════════════════════════════════════════
         // DETONATION — squeeze → pop → shake
         // ═══════════════════════════════════════════════════════════════════════════
+        // FUSE TRACE — visual line connecting direct triggers to chain triggers
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Draw shimmer lines from direct-triggered primed tiles to chain-triggered tiles.
+        /// Lines fade out over 0.3s. Uses simple LineRenderer per connection.
+        /// </summary>
+        public void PlayFuseTrace(List<PrimedTriggeredEvent> triggers, GridManager grid)
+        {
+            if (triggers == null || grid == null) return;
+
+            // Collect direct trigger tile positions and chain trigger tile positions
+            List<Vector3> directPositions = new List<Vector3>();
+            List<Vector3> chainPositions = new List<Vector3>();
+
+            for (int i = 0; i < triggers.Count; i++)
+            {
+                var trig = triggers[i];
+                if (trig.TriggeredCells == null || trig.TriggeredCells.Count == 0) continue;
+
+                // Use center of triggered word
+                Vector3 center = Vector3.zero;
+                int validCount = 0;
+                for (int c = 0; c < trig.TriggeredCells.Count; c++)
+                {
+                    Tile t = grid.GetTile(trig.TriggeredCells[c].x, trig.TriggeredCells[c].y);
+                    if (t != null) { center += t.transform.position; validCount++; }
+                }
+                if (validCount == 0) continue;
+                center /= validCount;
+
+                if (trig.IsChainTrigger)
+                    chainPositions.Add(center);
+                else
+                    directPositions.Add(center);
+            }
+
+            if (directPositions.Count == 0 || chainPositions.Count == 0) return;
+
+            // Draw a line from each direct trigger to each chain trigger
+            Color fuseColor = new Color(1f, 0.75f, 0.2f, 0.8f);
+            for (int d = 0; d < directPositions.Count; d++)
+            {
+                for (int c = 0; c < chainPositions.Count; c++)
+                {
+                    StartCoroutine(AnimateFuseLine(directPositions[d], chainPositions[c], fuseColor));
+                }
+            }
+
+            Debug.Log($"[FuseTrace] Drew {directPositions.Count * chainPositions.Count} trace(s) " +
+                      $"from {directPositions.Count} direct → {chainPositions.Count} chain");
+        }
+
+        private IEnumerator AnimateFuseLine(Vector3 from, Vector3 to, Color color)
+        {
+            GameObject lineGO = new GameObject("FuseTrace");
+            LineRenderer lr = lineGO.AddComponent<LineRenderer>();
+            lr.positionCount = 2;
+            lr.SetPosition(0, from);
+            lr.SetPosition(1, to);
+            lr.startWidth = 0.06f;
+            lr.endWidth = 0.06f;
+            lr.material = new Material(Shader.Find("Sprites/Default"));
+            lr.startColor = color;
+            lr.endColor = color;
+            lr.sortingOrder = 20;
+            lr.useWorldSpace = true;
+
+            // Fade out over 0.3s
+            float dur = 0.3f;
+            float elapsed = 0f;
+            while (elapsed < dur)
+            {
+                elapsed += Time.deltaTime;
+                float alpha = Mathf.Lerp(0.8f, 0f, elapsed / dur);
+                Color c = new Color(color.r, color.g, color.b, alpha);
+                lr.startColor = c;
+                lr.endColor = c;
+                yield return null;
+            }
+
+            Destroy(lineGO);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
 
         public void PlayDetonation(List<Tile> tiles, int chainStep)
         {
@@ -305,8 +390,8 @@ namespace WordDrop
                 tile.transform.DORotate(new Vector3(0, 0, randomRot), dissolveDur)
                     .SetEase(DG.Tweening.Ease.InQuad);
 
-                // More particles — bigger burst
-                int burstCount = PARTICLE_BURST_COUNT + 6 + chainStep * 4;
+                // Particles — capped to avoid frame drops on mobile
+                int burstCount = Mathf.Min(PARTICLE_BURST_COUNT + chainStep * 2, 14);
                 EmitDetonationBurst(tile.transform.position, burstCount);
 
                 tile.Dissolve(dissolveDur);

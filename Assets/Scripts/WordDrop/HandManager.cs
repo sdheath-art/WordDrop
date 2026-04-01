@@ -78,6 +78,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
+            _intentSlopPx = Mathf.Max(14f, Screen.dpi * 0.08f);
 
             _cam  = Camera.main;
             _grid = GridManager.Instance;
@@ -170,6 +171,10 @@ namespace WordDrop
 
             _selectedIndex  = -1; // Nothing selected at start
             _swapModeActive = false;
+            _inputMode = InputMode.Idle;
+            _touchCardIndex = -1;
+            _dragIndex = -1;
+            _isDragging = false;
 
             RefreshAllCardVisuals();
 
@@ -263,11 +268,20 @@ namespace WordDrop
 
         // ── Input handling ────────────────────────────────────────────────────────
 
-        // ── Drag state ──────────────────────────────────────────────────────
+        // ── Drag state machine ──────────────────────────────────────────
+        private enum InputMode { Idle, PressedCard, CarryToBoard, Reordering }
+        private InputMode _inputMode = InputMode.Idle;
+        private int   _touchCardIndex = -1;
+        private Vector3 _touchStartWorld;
+        private Vector2 _touchStartScreen;
+        private float _intentSlopPx = 14f;
+        private const float DROP_LOCK_RATIO = 1.1f;
+        private const float REORDER_LOCK_RATIO = 1.25f;
+
+        // ── Legacy drag compat ──
         private int  _dragIndex = -1;
         private bool _isDragging = false;
         private float _dragStartX;
-        private float _dragThreshold = 0.3f; // World units before drag activates
 
         // ── Long-press swap state ──────────────────────────────────────────
         private const float LONG_PRESS_TIME = 0.5f;
@@ -324,33 +338,21 @@ namespace WordDrop
             screenPos.z = Mathf.Abs(_cam.transform.position.z);
             Vector3 worldPos = _cam.ScreenToWorldPoint(screenPos);
 
-            // ── Per-frame shadow update — tracks card position dynamically ──
             UpdateSelectedCardShadow();
 
-            // Block ALL input when not interactable (during animations, AI turn, etc.)
+            // Block ALL input when not interactable
             if (!IsInteractable)
             {
                 if (DropPreview.Instance != null)
                     DropPreview.Instance.ClearPreview();
-                // Still allow drag-end to clean up if a drag was in progress
-                if ((_isDragging || _dragIndex >= 0) && mouseUp)
-                    HandleDragEnd();
+                if (_inputMode != InputMode.Idle)
+                    CancelCurrentGesture();
                 return;
             }
 
-            // ── Drop preview — update when selected tile + finger over board ──
-            // Skip during active drag-rearrange to avoid letter flickering
-            if (!_isDragging)
-                UpdateDropPreview(worldPos, true);
-
-            // ── LONG-PRESS tracking for hand cards (drag only, swap removed — use bag icon) ──
-            if (_holdIndex >= 0 && mouseHeld && !_holdTriggered)
-            {
-                _holdTimer += Time.deltaTime;
-            }
-
-            // ── LONG-PRESS tracking for rewrite (board tiles) ──
-            if (_boardHoldCell.x >= 0 && mouseHeld && !_boardHoldTriggered && !_rewriteModeActive)
+            // Board long-press for rewrite (runs in Idle only)
+            if (_boardHoldCell.x >= 0 && mouseHeld && !_boardHoldTriggered && !_rewriteModeActive
+                && _inputMode == InputMode.Idle)
             {
                 _boardHoldTimer += Time.deltaTime;
                 if (_boardHoldTimer >= LONG_PRESS_TIME)
@@ -360,129 +362,282 @@ namespace WordDrop
                 }
             }
 
-            // ── DRAG handling (rearrange tiles) ──
-            if (_dragIndex >= 0 && mouseHeld && !_holdTriggered)
-            {
-                HandleDragMove(worldPos);
-                return;
-            }
+            // ── STATE MACHINE ──────────────────────────────────────────
 
-            if ((_isDragging || _dragIndex >= 0) && mouseUp)
+            switch (_inputMode)
+            {
+                // ── IDLE ────────────────────────────────────────────────
+                case InputMode.Idle:
+                {
+                    if (mouseUp)
+                    {
+                        _boardHoldCell = new Vector2Int(-1, -1);
+                        _boardHoldTimer = 0f;
+                        _boardHoldTriggered = false;
+                    }
+
+                    if (!mouseDown) break;
+
+                    // Modal states first
+                    if (_rewriteModeActive)
+                    {
+                        int rewriteTapped = GetCardIndexAtPosition(worldPos);
+                        if (rewriteTapped >= 0)
+                            TryExecuteRewrite(_rewriteTargetCol, _rewriteTargetRow, rewriteTapped);
+                        else
+                            CancelRewriteMode();
+                        return;
+                    }
+
+                    if (_swapConfirmIndex >= 0)
+                    {
+                        int tappedForSwap = GetCardIndexAtPosition(worldPos);
+                        if (tappedForSwap == _swapConfirmIndex)
+                            ExecuteSwap(_swapConfirmIndex);
+                        CancelSwapConfirmation();
+                        return;
+                    }
+
+                    if (_swapTileConfirmActive)
+                    {
+                        if (_swapTileYesLabel != null && IsWorldPosNearObject(_swapTileYesLabel, worldPos, _cardSize * 0.5f))
+                        {
+                            int savedCard = _selectedIndex;
+                            DismissSwapTilePopup();
+                            if (savedCard >= 0) { ExecuteSwap(savedCard); _selectedIndex = -1; }
+                            return;
+                        }
+                        DismissSwapTilePopup();
+                        return;
+                    }
+
+                    // Action row buttons
+                    if (TryHandleShuffleButton(worldPos)) return;
+                    if (_selectedIndex >= 0 && TryHandleTileBagButton(worldPos))
+                    {
+                        ShowSwapTilePopup();
+                        return;
+                    }
+
+                    // Card touch → begin gesture
+                    int tappedCard = GetCardIndexAtPosition(worldPos);
+                    if (tappedCard >= 0)
+                    {
+                        _inputMode = InputMode.PressedCard;
+                        _touchCardIndex = tappedCard;
+                        _touchStartWorld = worldPos;
+                        _touchStartScreen = screenPos;
+                        _dragStartX = worldPos.x;
+                        return;
+                    }
+
+                    // Board area tapped — either drop (if card selected) or start rewrite hold
+                    if (_selectedIndex >= 0 && worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f)
+                    {
+                        // Tap-to-drop fallback: card already selected, tap board column to drop
+                        int tapCol = _grid.WorldXToColumn(worldPos.x);
+                        if (tapCol >= 0 && _grid.IsColumnAvailable(tapCol))
+                        {
+                            DropSelectedLetterInColumn(tapCol);
+                            break;
+                        }
+                    }
+
+                    // Start rewrite hold tracking
+                    Vector2Int boardCell = _grid.WorldToCell(worldPos);
+                    if (boardCell.x >= 0 && boardCell.y >= 0)
+                    {
+                        _boardHoldCell = boardCell;
+                        _boardHoldTimer = 0f;
+                        _boardHoldTriggered = false;
+                    }
+
+                    break;
+                }
+
+                // ── PRESSED CARD (deciding intent) ──────────────────────
+                case InputMode.PressedCard:
+                {
+                    if (mouseUp)
+                    {
+                        // Quick tap — select/deselect the card
+                        SelectCard(_touchCardIndex);
+                        _inputMode = InputMode.Idle;
+                        _touchCardIndex = -1;
+                        return;
+                    }
+
+                    if (mouseHeld)
+                    {
+                        float dx = Mathf.Abs(screenPos.x - _touchStartScreen.x);
+                        float dy = Mathf.Abs(screenPos.y - _touchStartScreen.y);
+                        float totalMove = Mathf.Max(dx, dy);
+
+                        if (totalMove > _intentSlopPx)
+                        {
+                            if (dy > dx * DROP_LOCK_RATIO)
+                            {
+                                // Lock into CARRY TO BOARD
+                                _inputMode = InputMode.CarryToBoard;
+                                _selectedIndex = _touchCardIndex;
+
+                                if (_cardObjects[_touchCardIndex] != null)
+                                {
+                                    _cardObjects[_touchCardIndex].transform.position = new Vector3(
+                                        worldPos.x, worldPos.y, -3f);
+                                    _cardObjects[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.1f;
+                                }
+
+                                Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
+                            }
+                            else if (dx > dy * REORDER_LOCK_RATIO)
+                            {
+                                // Lock into REORDERING
+                                _inputMode = InputMode.Reordering;
+                                _dragIndex = _touchCardIndex;
+                                _isDragging = true;
+                                _dragStartX = worldPos.x;
+
+                                Debug.Log($"[Input] Reordering: card={_touchCardIndex}");
+                            }
+                        }
+                    }
+                    break;
+                }
+
+                // ── CARRY TO BOARD (drag tile toward board, preview active) ──
+                case InputMode.CarryToBoard:
+                {
+                    if (mouseHeld)
+                    {
+                        // Move card to follow finger
+                        if (_touchCardIndex >= 0 && _cardObjects[_touchCardIndex] != null)
+                        {
+                            _cardObjects[_touchCardIndex].transform.position = new Vector3(
+                                worldPos.x, worldPos.y, -3f);
+
+                            // Shadow follows underneath — offset based on distance from screen center
+                            // simulating a light source above center of the board
+                            if (_touchCardIndex < HAND_SIZE && _cardShadows[_touchCardIndex] != null)
+                            {
+                                float centerX = 0f;
+                                float maxHOffset = _cardSize * 0.15f;
+                                float hOffset = -Mathf.Sign(worldPos.x - centerX)
+                                    * Mathf.Clamp01(Mathf.Abs(worldPos.x - centerX) / 3f) * maxHOffset;
+
+                                float shadowDrop = _cardSize * 0.12f; // how far below the card
+                                _cardShadows[_touchCardIndex].transform.position = new Vector3(
+                                    worldPos.x + hOffset, worldPos.y - shadowDrop, 0f);
+                                _cardShadows[_touchCardIndex].color = new Color(0f, 0f, 0f, 0.5f);
+                                _cardShadows[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.12f;
+                            }
+                        }
+
+                        // Update preview based on column under finger
+                        char letter = (_touchCardIndex >= 0 && _touchCardIndex < HAND_SIZE)
+                            ? _hand[_touchCardIndex] : '\0';
+                        int col = _grid.WorldXToColumn(worldPos.x);
+
+                        if (letter != '\0' && col >= 0 && worldPos.y >= _grid.GridBottom - _grid.CellSize)
+                        {
+                            if (DropPreview.Instance != null)
+                                DropPreview.Instance.UpdatePreview(letter, col);
+
+                            if (ColumnArrowManager.Instance != null)
+                                ColumnArrowManager.Instance.ShowArrows(true);
+                        }
+                        else
+                        {
+                            if (DropPreview.Instance != null)
+                                DropPreview.Instance.ClearPreview();
+                        }
+                    }
+
+                    if (mouseUp)
+                    {
+                        if (DropPreview.Instance != null)
+                            DropPreview.Instance.ClearPreview();
+                        if (ColumnArrowManager.Instance != null)
+                            ColumnArrowManager.Instance.ShowArrows(false);
+
+                        // Check if releasing over a valid column
+                        int dropCol = _grid.WorldXToColumn(worldPos.x);
+                        bool overBoard = worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f;
+
+                        if (dropCol >= 0 && overBoard && _touchCardIndex >= 0
+                            && _grid.IsColumnAvailable(dropCol)
+                            && MatchController.Instance != null
+                            && MatchController.Instance.IsMatchActive
+                            && MatchController.Instance.CurrentPlayer == MatchController.PLAYER_HUMAN
+                            && !MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))
+                        {
+                            _selectedIndex = _touchCardIndex;
+                            DropSelectedLetterInColumn(dropCol);
+                        }
+                        else
+                        {
+                            SnapCardBack(_touchCardIndex);
+                        }
+
+                        _inputMode = InputMode.Idle;
+                        _touchCardIndex = -1;
+                    }
+                    break;
+                }
+
+                // ── REORDERING (horizontal drag within hand) ──────────
+                case InputMode.Reordering:
+                {
+                    if (mouseHeld)
+                    {
+                        HandleDragMove(worldPos);
+                    }
+
+                    if (mouseUp)
+                    {
+                        HandleDragEnd();
+                        _inputMode = InputMode.Idle;
+                        _touchCardIndex = -1;
+                        _dragIndex = -1;
+                        _isDragging = false;
+                    }
+                    break;
+                }
+            }
+        }
+
+        /// <summary>Cancel any in-progress gesture and reset to Idle.</summary>
+        private void CancelCurrentGesture()
+        {
+            if (_inputMode == InputMode.CarryToBoard)
+            {
+                if (DropPreview.Instance != null)
+                    DropPreview.Instance.ClearPreview();
+                SnapCardBack(_touchCardIndex);
+            }
+            else if (_inputMode == InputMode.Reordering)
             {
                 HandleDragEnd();
-                _holdIndex = -1;
-                _holdTimer = 0f;
-                _holdTriggered = false;
-                return;
             }
 
-            if (mouseUp)
-            {
-                _holdIndex = -1;
-                _holdTimer = 0f;
-                _holdTriggered = false;
-                _boardHoldCell = new Vector2Int(-1, -1);
-                _boardHoldTimer = 0f;
-                _boardHoldTriggered = false;
-            }
+            _inputMode = InputMode.Idle;
+            _touchCardIndex = -1;
+            _dragIndex = -1;
+            _isDragging = false;
+            if (ColumnArrowManager.Instance != null)
+                ColumnArrowManager.Instance.ShowArrows(false);
+        }
 
-            if (!mouseDown) return;
-
-            // ── TAP DOWN — check what was tapped ──
-
-            // If rewrite mode is active, tapping a hand card executes the rewrite
-            if (_rewriteModeActive)
-            {
-                int rewriteTapped = GetCardIndexAtPosition(worldPos);
-                if (rewriteTapped >= 0)
-                {
-                    // Hand card tapped — use this card to rewrite the target board tile
-                    TryExecuteRewrite(_rewriteTargetCol, _rewriteTargetRow, rewriteTapped);
-                    return;
-                }
-
-                // Tapping anywhere else cancels
-                CancelRewriteMode();
-                return;
-            }
-
-            // If swap confirmation is pending, check for confirm or cancel
-            if (_swapConfirmIndex >= 0)
-            {
-                int tappedForSwap = GetCardIndexAtPosition(worldPos);
-                if (tappedForSwap == _swapConfirmIndex)
-                {
-                    // Confirmed — execute swap
-                    ExecuteSwap(_swapConfirmIndex);
-                }
-                // Cancel regardless (tap on same tile confirms, anywhere else cancels)
-                CancelSwapConfirmation();
-                return;
-            }
-
-            // Swap Tile confirmation popup active — check Yes/No
-            if (_swapTileConfirmActive)
-            {
-                if (_swapTileYesLabel != null && IsWorldPosNearObject(_swapTileYesLabel, worldPos, _cardSize * 0.5f))
-                {
-                    // YES — execute the hand card swap
-                    int savedCard = _selectedIndex;
-                    DismissSwapTilePopup();
-                    if (savedCard >= 0)
-                    {
-                        ExecuteSwap(savedCard);
-                        _selectedIndex = -1;
-                    }
-                    return;
-                }
-                // Anything else = No / cancel
-                DismissSwapTilePopup();
-                return;
-            }
-
-            // Shuffle button always works
-            if (TryHandleShuffleButton(worldPos)) return;
-
-            // Tile bag button — only works when a card is selected
-            if (_selectedIndex >= 0 && TryHandleTileBagButton(worldPos))
-            {
-                ShowSwapTilePopup();
-                return;
-            }
-
-            // Check if tapping a hand card
-            int tappedCard = GetCardIndexAtPosition(worldPos);
-            if (tappedCard >= 0)
-            {
-                // Start hold timer for long-press swap
-                _holdIndex = tappedCard;
-                _holdTimer = 0f;
-                _holdTriggered = false;
-
-                // Start potential drag
-                _dragIndex = tappedCard;
-                _dragStartX = worldPos.x;
-                _isDragging = false;
-
-                // Treat as tap: select/deselect
-                SelectCard(tappedCard);
-                return;
-            }
-
-            // Start board hold tracking for rewrite (only if NOT tapping a card)
-            if (tappedCard < 0)
-            {
-                Vector2Int boardCell = _grid.WorldToCell(worldPos);
-                if (boardCell.x >= 0 && boardCell.y >= 0)
-                {
-                    _boardHoldCell = boardCell;
-                    _boardHoldTimer = 0f;
-                    _boardHoldTriggered = false;
-                }
-            }
-
-            if (GameVisualBridge.Instance != null && GameVisualBridge.Instance.IsPlayingBack) return;
-            TryDropInColumn(worldPos);
+        /// <summary>Snap a card back to its resting position after a cancelled carry.</summary>
+        private void SnapCardBack(int index)
+        {
+            if (index < 0 || index >= HAND_SIZE || _cardObjects[index] == null) return;
+            float baseY = GetCardRowY();
+            _cardObjects[index].transform.position = new Vector3(GetCardX(index), baseY, -1f);
+            _cardObjects[index].transform.localScale = GetCardBaseScale();
+            // Clear the carry shadow
+            if (index < HAND_SIZE && _cardShadows[index] != null)
+                _cardShadows[index].color = Color.clear;
         }
 
         private int GetCardIndexAtPosition(Vector3 worldPos)
@@ -511,7 +666,7 @@ namespace WordDrop
             float dragDelta = worldPos.x - _dragStartX;
 
             // Activate drag if past threshold
-            if (!_isDragging && Mathf.Abs(dragDelta) > _dragThreshold)
+            if (!_isDragging && Mathf.Abs(dragDelta) > 0.3f)
                 _isDragging = true;
 
             if (!_isDragging) return;
@@ -807,6 +962,10 @@ namespace WordDrop
 
             int playerIdx = MatchController.PLAYER_HUMAN;
 
+            // Rewrite refund tracking
+            bool rewriteScoredWord = false;
+            bool rewriteTriggeredPrimed = false;
+
             // Hide the hand card
             if (handSlot >= 0 && handSlot < HAND_SIZE && _cardObjects[handSlot] != null)
                 _cardObjects[handSlot].SetActive(false);
@@ -880,6 +1039,7 @@ namespace WordDrop
                     {
                         if (step.ScoredWords != null && step.ScoredWords.Count > 0)
                         {
+                            rewriteScoredWord = true;
                             for (int w = 0; w < step.ScoredWords.Count; w++)
                             {
                                 var sw = step.ScoredWords[w];
@@ -911,6 +1071,7 @@ namespace WordDrop
                     }
                     case RulesEngine.ResolutionPhase.TriggersFound:
                     {
+                        rewriteTriggeredPrimed = true;
                         Debug.Log("[Rewrite] Primed word triggered!");
                         yield return new WaitForSeconds(0.15f);
                         break;
@@ -953,10 +1114,19 @@ namespace WordDrop
                         catch (System.Exception ex) { Debug.LogError($"[Rewrite] SyncToRulesState: {ex}"); }
 
                         // Bookkeeping — consumes turn, switches player, refills hand slot
-                        // Note: DrawSlot inside bookkeeping consumes the cached next letter
-                        // and pre-caches a new one. Do NOT save/restore the old cached letter
-                        // here — that causes duplication (the same tile appears twice).
                         mc.CompleteDropBookkeeping(playerIdx, finalScore, handSlot);
+
+                        // Rewrite Refund: if the rewrite scored or triggered, refund 1 swap charge
+                        if (rewriteScoredWord || rewriteTriggeredPrimed)
+                        {
+                            mc.RefundSwapCharge(playerIdx);
+                            Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) " +
+                                      $"scored={rewriteScoredWord} triggered={rewriteTriggeredPrimed} refund=true");
+                        }
+                        else
+                        {
+                            Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) no score/no detonation refund=false");
+                        }
 
                         break;
                     }
@@ -969,12 +1139,35 @@ namespace WordDrop
             RefreshHandFromMatchController();
             RefreshAllCardVisuals();
 
+            // Check if match ended during rewrite resolution
+            if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
+            {
+                Debug.Log("[HandManager] RewriteTurnSequence: match ended during rewrite.");
+                yield break;
+            }
+
             // AI turn — do NOT re-enable input until AI is done
             yield return new WaitForSeconds(0.3f);
             if (mc.IsMatchActive && mc.CurrentPlayer == MatchController.PLAYER_AI)
             {
                 if (GameVisualBridge.Instance != null)
                     yield return StartCoroutine(GameVisualBridge.Instance.ExecuteAITurnCoroutine());
+            }
+
+            // Check again if match ended after AI turn
+            if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
+            {
+                Debug.Log("[HandManager] RewriteTurnSequence: match ended after AI turn.");
+                yield break;
+            }
+
+            // If human has no turns left, force game over
+            if (mc.IsPlayerDone(MatchController.PLAYER_HUMAN))
+            {
+                Debug.Log("[HandManager] RewriteTurnSequence: human has no turns — forcing game over.");
+                IsInteractable = false;
+                mc.ForceGameOver();
+                yield break;
             }
 
             IsInteractable = true;
@@ -1221,39 +1414,6 @@ namespace WordDrop
             DropSelectedLetterInColumn(col);
         }
 
-        // ── Drop Preview ─────────────────────────────────────────────────────
-
-        private void UpdateDropPreview(Vector3 worldPos, bool fingerDown)
-        {
-            if (DropPreview.Instance == null) return;
-
-            char letter = GetSelectedLetter();
-
-            // No tile selected → clear
-            if (letter == '\0')
-            {
-                DropPreview.Instance.ClearPreview();
-                return;
-            }
-
-            // Check if finger is over the board area
-            if (_grid == null) return;
-            if (worldPos.y < _grid.GridBottom || worldPos.y > _grid.GridTop + _grid.CellSize)
-            {
-                DropPreview.Instance.ClearPreview();
-                return;
-            }
-
-            int col = _grid.WorldXToColumn(worldPos.x);
-            if (col < 0)
-            {
-                DropPreview.Instance.ClearPreview();
-                return;
-            }
-
-            DropPreview.Instance.UpdatePreview(letter, col);
-        }
-
         /// <summary>
         /// Drops the currently selected letter into the given column.
         /// Routes through GameVisualBridge for visual sequencing.
@@ -1283,6 +1443,13 @@ namespace WordDrop
             if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))
             {
                 Debug.Log("[HandManager] Human player has no turns remaining.");
+                IsInteractable = false;
+                // Force game over if match should be done
+                if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI) ||
+                    MatchController.Instance.TotalTurnsUsed >= MatchController.MAX_TURNS * 2)
+                {
+                    MatchController.Instance.ForceGameOver();
+                }
                 return;
             }
 
@@ -1458,8 +1625,10 @@ namespace WordDrop
                         break;
 
                     case RulesEngine.ResolutionPhase.TriggersFound:
-                        // Let the word flash be visible before detonation starts
-                        yield return new WaitForSeconds(0.25f);
+                        // Fuse Trace for player path
+                        if (step.Triggers != null && WordDropFX.Instance != null)
+                            WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
+                        yield return new WaitForSeconds(0.15f);
                         if (step.Triggers != null)
                         {
                             foreach (var trig in step.Triggers)
@@ -1548,19 +1717,26 @@ namespace WordDrop
                 }
 
             PrimedWordRegistry registry = rules.PrimedRegistry;
+            int currentTurn = rules.GlobalTurn;
             if (registry != null)
             {
                 for (int p = 0; p < registry.Count; p++)
                 {
                     var pw = registry.GetByIndex(p);
                     if (pw == null) continue;
+                    int survived = Mathf.Max(0, currentTurn - pw.PrimedOnTurn);
+                    int heatLevel = Mathf.Min(survived, RulesEngine.HEAT_FUSE_MAX_BONUS);
+                    bool justPrimed = (pw.PrimedOnTurn == currentTurn - 1 || pw.PrimedOnTurn == currentTurn);
                     for (int c = 0; c < pw.Cells.Count; c++)
                     {
                         Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
-                        if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW);
+                        if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel);
                     }
                 }
             }
+
+            // Let the primed flash animation play before anything else happens
+            yield return new WaitForSeconds(0.4f);
 
             // ── STEP 4: Bookkeeping (refills hand slot with new letter) ──
             MatchController.Instance.CompleteDropBookkeeping(playerIdx, totalScore, handSlot,

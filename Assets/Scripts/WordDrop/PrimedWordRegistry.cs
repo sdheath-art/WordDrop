@@ -30,6 +30,7 @@ namespace WordDrop
             public int OwnerPlayer { get; set; }
             public int PrimedOnTurn { get; set; }
             public int ExpiresOnTurn { get; set; }
+            public int OverlapFuseBonusGranted { get; set; } = 0; // total +turns from overlap extensions
 
             public override string ToString()
                 => $"PrimedWord[id={Id} word={Word} owner={OwnerPlayer} " +

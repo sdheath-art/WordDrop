@@ -539,6 +539,10 @@ namespace WordDrop
                             // If there are chain triggers, brief pause then ignite them
                             if (hasChainTriggers)
                             {
+                                // Fuse Trace: draw shimmer lines from direct triggers to chain triggers
+                                if (WordDropFX.Instance != null)
+                                    WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
+
                                 yield return new WaitForSeconds(0.12f); // staged ignition gap
 
                                 for (int tr = 0; tr < step.Triggers.Count; tr++)
@@ -776,17 +780,24 @@ namespace WordDrop
             PrimedWordRegistry registry = rules.PrimedRegistry;
             if (registry == null) return;
 
+            int currentTurn = rules.GlobalTurn;
+
             for (int p = 0; p < registry.Count; p++)
             {
                 var pw = registry.GetByIndex(p);
                 if (pw == null || pw.Cells == null) continue;
+
+                // Heat Fuse: glow shifts gold → orange → white-hot based on survived turns
+                int survived = Mathf.Max(0, currentTurn - pw.PrimedOnTurn);
+                int heatLevel = Mathf.Min(survived, RulesEngine.HEAT_FUSE_MAX_BONUS);
+                bool justPrimed = (pw.PrimedOnTurn == currentTurn - 1 || pw.PrimedOnTurn == currentTurn);
 
                 for (int c = 0; c < pw.Cells.Count; c++)
                 {
                     Tile tile = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
                     if (tile != null)
                     {
-                        try { tile.SetPrimedGlow(Tile.PRIMED_GLOW); }
+                        try { tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel); }
                         catch { /* ignore */ }
                     }
                 }

@@ -37,7 +37,7 @@ namespace WordDrop
         // Kept as compile stub for any callers that reference it
         public static readonly Color TILE_BORDER_WILD = new Color(0.20f, 0.90f, 1.00f, 1f);
 
-        public static readonly Color PRIMED_GLOW  = new Color(1.000f, 0.720f, 0.180f, 1f);  // bright rich gold-orange #FFB82E
+        public static readonly Color PRIMED_GLOW  = new Color(0.95f, 0.25f, 0.70f, 1f);  // vibrant magenta/pink
         public static readonly Color PLAYER_GLOW = PRIMED_GLOW;
         public static readonly Color AI_GLOW     = PRIMED_GLOW;
 
@@ -353,11 +353,15 @@ namespace WordDrop
         /// </summary>
         private Coroutine _primedPulseCoroutine;
 
-        public void SetPrimedGlow(Color color)
+        private int _heatLevel = 0; // 0=fresh, 1-3=survived turns
+
+        public void SetPrimedGlow(Color color, bool playFlash = false, int heatLevel = 0)
         {
+            bool wasAlreadyPrimed = _hasPrimedGlow;
             _hasPrimedGlow   = true;
-            _primedGlowColor = color;
-            _currentBorderColor = color;
+            _heatLevel       = heatLevel;
+            _primedGlowColor = PRIMED_GLOW;
+            _currentBorderColor = PRIMED_GLOW;
 
             if (!_isHighlighted)
                 ApplyBorderColor(color);
@@ -365,6 +369,10 @@ namespace WordDrop
             // Start subtle primed idle animation
             if (_primedPulseCoroutine == null)
                 _primedPulseCoroutine = StartCoroutine(PrimedPulseLoop());
+
+            // Flash gold when first primed so the player notices
+            if (playFlash && !wasAlreadyPrimed)
+                FlashHighlight(new Color(1f, 0.85f, 0.3f, 1f));
         }
 
         /// <summary>
@@ -389,6 +397,9 @@ namespace WordDrop
             int ts = Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512);
             float baseScale = (_cellSize * 0.88f) / (ts / 100f);
 
+            // Set the heat-appropriate border sprite immediately
+            ApplyHeatSprite();
+
             while (_hasPrimedGlow && _spriteRenderer != null)
             {
                 if (_flashCoroutine != null)
@@ -399,39 +410,69 @@ namespace WordDrop
 
                 baseTime += Time.deltaTime;
 
-                // Pulse cycle: ~1.8s period
-                // Mostly gold (80% of cycle), brief swell to magenta (20%)
-                float cycle = Mathf.Repeat(baseTime, 1.8f) / 1.8f; // 0-1 over 1.8s
+                // Pulse speed ramps with heat — like a bomb about to go off
+                // Heat 0: slow breathe (2.0s), Heat 1: (1.2s), Heat 2: (0.7s), Heat 3: urgent (0.4s)
+                float[] periods = { 2.0f, 1.2f, 0.7f, 0.4f };
+                float period = periods[Mathf.Clamp(_heatLevel, 0, 3)];
+                float cycle = Mathf.Repeat(baseTime, period) / period;
+
+                // Asymmetric pulse: quick bright pop (30% of cycle), slower dim recovery (70%)
+                // Feels like a heartbeat / fuse tick, not an alarm strobe
                 float pulse;
-                if (cycle < 0.7f)
-                {
-                    // Resting in gold — gentle breathing
-                    pulse = 0f;
-                }
+                if (cycle < 0.3f)
+                    pulse = Mathf.Sin((cycle / 0.3f) * Mathf.PI * 0.5f); // quick rise
                 else
+                    pulse = Mathf.Cos(((cycle - 0.3f) / 0.7f) * Mathf.PI * 0.5f); // slow fall
+
+                pulse = Mathf.Clamp01(pulse);
+
+                // Face tint — subtle at low heat, more visible at high
+                float baseTint = 0.08f + _heatLevel * 0.06f; // 8% → 26%
+                float tintAmount = baseTint + pulse * (0.06f + _heatLevel * 0.04f);
+                _spriteRenderer.color = Color.Lerp(Color.white, PRIMED_GLOW, tintAmount);
+
+                // Scale: gentle at low, punchier at high
+                float scalePulse = 0.008f + _heatLevel * 0.006f;
+                float scaleMult = 1f + scalePulse * pulse;
+
+                // Tiny jitter at max heat — nervous energy
+                if (_heatLevel >= 3 && pulse < 0.2f)
                 {
-                    // Swell to magenta and back (0.7 to 1.0)
-                    float t = (cycle - 0.7f) / 0.3f; // 0-1 over the swell
-                    pulse = Mathf.Sin(t * Mathf.PI); // smooth up and down
+                    float jx = Random.Range(-0.003f, 0.003f);
+                    float jy = Random.Range(-0.003f, 0.003f);
+                    scaleMult += jx; // slight asymmetric wobble
                 }
-
-                // Tint: gold base with magenta swell
-                Color tint = Color.Lerp(goldTint, magentaTint, pulse * 0.45f);
-                float tintAmount = 0.06f + pulse * 0.12f; // 6% at rest, up to 18% at peak
-                _spriteRenderer.color = Color.Lerp(Color.white, tint, tintAmount);
-
-                // Micro scale: tiny swell during magenta pulse
-                float scaleMult = 1f + pulse * 0.02f; // 1.00 at rest, 1.02 at peak
 
                 if (!IsAnimating && _flashCoroutine == null)
                     transform.localScale = new Vector3(baseScale * scaleMult, baseScale * scaleMult, 1f);
+
+                // Re-check heat sprite in case _primedGlowColor changed between turns
+                ApplyHeatSprite();
 
                 yield return null;
             }
 
             // Clean up when primed state ends
-            if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+            if (_spriteRenderer != null)
+            {
+                _spriteRenderer.color = Color.white;
+                _spriteRenderer.sprite = s_spriteNormal;
+            }
             _primedPulseCoroutine = null;
+        }
+
+        /// <summary>Swap to the correct border sprite based on heat level (thicker = hotter).</summary>
+        private void ApplyHeatSprite()
+        {
+            if (_spriteRenderer == null) return;
+
+            switch (_heatLevel)
+            {
+                case 0:  _spriteRenderer.sprite = s_spriteGoldThick; break;
+                case 1:  _spriteRenderer.sprite = s_spriteHeat1 ?? s_spriteGoldThick; break;
+                case 2:  _spriteRenderer.sprite = s_spriteHeat2 ?? s_spriteGoldThick; break;
+                default: _spriteRenderer.sprite = s_spriteHeat3 ?? s_spriteGoldThick; break;
+            }
         }
 
         /// <summary>Brief color flash to highlight a scored word tile.</summary>
@@ -514,7 +555,18 @@ namespace WordDrop
                 ApplyBorderColor(TILE_BORDER_NORMAL);
 
             // Reset any pulse-induced tint/scale
-            if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+            if (_spriteRenderer != null)
+            {
+                _spriteRenderer.color = Color.white;
+                _spriteRenderer.sprite = s_spriteNormal;
+            }
+
+            // Reset scale to correct base
+            int ts = Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512);
+            float correctScale = (_cellSize * 0.88f) / (ts / 100f);
+            transform.localScale = new Vector3(correctScale, correctScale, 1f);
+
+            _heatLevel = 0;
         }
 
         // ---------------------------------------------------------------------------
@@ -641,6 +693,9 @@ namespace WordDrop
         private static Sprite s_spriteThick;
         private static Sprite s_spriteGold;
         private static Sprite s_spriteGoldThick;
+        private static Sprite s_spriteHeat1;     // warm orange border
+        private static Sprite s_spriteHeat2;     // hot orange border
+        private static Sprite s_spriteHeat3;     // white-hot border
         private static Sprite s_spriteWhiteThick;
         private static bool s_spriteCacheBuilt;
 
@@ -653,8 +708,12 @@ namespace WordDrop
 
             s_spriteNormal    = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, TILE_BORDER_NORMAL, border);
             s_spriteThick     = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, TILE_BORDER_NORMAL, border + 3);
-            s_spriteGold      = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, TILE_BORDER_GOLD, border);
-            s_spriteGoldThick = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, TILE_BORDER_GOLD, border + 3);
+            s_spriteGold      = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border);
+            s_spriteGoldThick = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border + 3);
+            // Heat fuse border sprites — same magenta, just thicker
+            s_spriteHeat1 = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border + 2);
+            s_spriteHeat2 = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border + 4);
+            s_spriteHeat3 = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border + 7);
             s_spriteWhiteThick= TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, Color.white, border + 3);
             s_spriteCacheBuilt = true;
             Debug.Log("[Tile] Static sprite cache built (5 sprites).");

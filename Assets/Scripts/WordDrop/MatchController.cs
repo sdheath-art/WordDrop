@@ -28,7 +28,7 @@ namespace WordDrop
         // ── Constants ─────────────────────────────────────────────────────────────
 
         // Per-player turn count. Tuning: 12=fast, 15=default, 20=long
-        public const int MAX_TURNS       = 15;
+        public const int MAX_TURNS       = 12;
         public const int INITIAL_SWAPS   = 3;  // per player
         public const int PLAYER_HUMAN    = 0;
         public const int PLAYER_AI       = 1;
@@ -489,6 +489,18 @@ namespace WordDrop
             AnalyticsManager.ButtonTap("swap");
 
             return true;
+        }
+
+        /// <summary>Refund 1 swap/rewrite charge for a player (capped at MAX_SWAPS).</summary>
+        public void RefundSwapCharge(int playerIndex)
+        {
+            if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return;
+            if (_swapsRemaining[playerIndex] < INITIAL_SWAPS)
+            {
+                _swapsRemaining[playerIndex]++;
+                Debug.Log($"[MatchController] Refunded swap charge for P{playerIndex}. " +
+                          $"Remaining: {_swapsRemaining[playerIndex]}");
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
