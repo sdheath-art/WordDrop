@@ -376,46 +376,6 @@ namespace WordDrop
             if (playFlash && !wasAlreadyPrimed)
                 FlashHighlight(PRIMED_GLOW);
 
-            // Show fuse countdown
-            _fuseRemaining = fuseRemaining;
-            UpdateFuseDisplay();
-        }
-
-        private void UpdateFuseDisplay()
-        {
-            if (!_hasPrimedGlow || _fuseRemaining <= 0)
-            {
-                if (_fuseTMP != null) _fuseTMP.gameObject.SetActive(false);
-                return;
-            }
-
-            if (_fuseTMP == null)
-            {
-                GameObject fuseGO = new GameObject("FuseCount");
-                fuseGO.transform.SetParent(transform, false);
-
-                float invScale = 1f / Mathf.Max(transform.localScale.x, 0.01f);
-                int ts = Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512);
-                float nativeSize = ts / 100f;
-
-                fuseGO.transform.localPosition = new Vector3(-nativeSize * 0.30f, nativeSize * 0.28f, -0.1f);
-                fuseGO.transform.localScale = new Vector3(invScale, invScale, 1f);
-
-                _fuseTMP = fuseGO.AddComponent<TextMeshPro>();
-                var font = GameFont.GetTMP();
-                if (font != null) _fuseTMP.font = font;
-                _fuseTMP.fontSize = 3.0f;
-                _fuseTMP.fontStyle = FontStyles.Bold;
-                _fuseTMP.alignment = TextAlignmentOptions.Center;
-                _fuseTMP.sortingOrder = 8;
-                _fuseTMP.rectTransform.sizeDelta = new Vector2(1f, 1f);
-                _fuseTMP.enableWordWrapping = false;
-                _fuseTMP.overflowMode = TextOverflowModes.Overflow;
-            }
-
-            _fuseTMP.gameObject.SetActive(true);
-            _fuseTMP.text = _fuseRemaining.ToString();
-            _fuseTMP.color = PRIMED_GLOW;
         }
 
         /// <summary>

@@ -281,7 +281,6 @@ namespace WordDrop
         /// <summary>Updates the P1 (human player) score label.</summary>
         public void SetPlayerScore(int pts)
         {
-            _tickAccumPlayer = 0;
             if (_playerScoreNum != null)
                 _playerScoreNum.text = pts.ToString();
         }
@@ -289,7 +288,6 @@ namespace WordDrop
         /// <summary>Updates the AI score number.</summary>
         public void SetAIScore(int pts)
         {
-            _tickAccumAI = 0;
             if (_aiScoreNum != null)
                 _aiScoreNum.text = pts.ToString();
         }
@@ -306,29 +304,9 @@ namespace WordDrop
         /// </summary>
         public void TickScore(bool isPlayer, int delta)
         {
-            int basePlayer = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
-            int baseAI = ScoreManager.Instance != null ? ScoreManager.Instance.AIScore : 0;
-
-            if (isPlayer)
-            {
-                _tickAccumPlayer += delta;
-                int display = basePlayer + _tickAccumPlayer;
-                if (_playerScoreNum != null)
-                {
-                    _playerScoreNum.text = display.ToString();
-                    AnimateScorePop(_playerScoreNum.transform);
-                }
-            }
-            else
-            {
-                _tickAccumAI += delta;
-                int display = baseAI + _tickAccumAI;
-                if (_aiScoreNum != null)
-                {
-                    _aiScoreNum.text = display.ToString();
-                    AnimateScorePop(_aiScoreNum.transform);
-                }
-            }
+            // No-op: tick counting removed to prevent score flicker.
+            // HUD totals update immediately via SetPlayerScore/SetAIScore.
+            // The ScoringDisplay popup shows the per-word breakdown instead.
         }
 
         private Coroutine _scorePopCoroutine;

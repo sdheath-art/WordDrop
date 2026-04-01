@@ -357,6 +357,8 @@ namespace WordDrop
                 {
                     arcBonus += finalPush;
                     Debug.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
+                    if (BonusPopup.Instance != null)
+                        BonusPopup.Instance.ShowFinalPush(finalPush, Vector3.up * 2f);
                 }
                 int opponentScore = (playerIndex == PLAYER_HUMAN)
                     ? (ScoreManager.Instance.AIScore) : (ScoreManager.Instance.PlayerScore);
@@ -367,6 +369,8 @@ namespace WordDrop
                 {
                     arcBonus += comeback;
                     Debug.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
+                    if (BonusPopup.Instance != null)
+                        BonusPopup.Instance.ShowComeback(comeback, Vector3.up * 2.5f);
                 }
                 totalScore += arcBonus;
 

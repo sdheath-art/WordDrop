@@ -1122,6 +1122,8 @@ namespace WordDrop
                             mc.RefundSwapCharge(playerIdx);
                             Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) " +
                                       $"scored={rewriteScoredWord} triggered={rewriteTriggeredPrimed} refund=true");
+                            if (BonusPopup.Instance != null && grid != null)
+                                BonusPopup.Instance.ShowRefund(grid.CellToWorld(col, row));
                         }
                         else
                         {

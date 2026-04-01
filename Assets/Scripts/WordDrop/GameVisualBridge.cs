@@ -610,6 +610,20 @@ namespace WordDrop
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                                 yield return WordDropFX.Instance.PlayExplosion(dyingTiles, wordIndex);
 
+                            // Show detonation bonus popup
+                            if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dyingTiles.Count > 0)
+                            {
+                                Vector3 center = Vector3.zero;
+                                for (int d = 0; d < dyingTiles.Count; d++)
+                                    if (dyingTiles[d] != null) center += dyingTiles[d].transform.position;
+                                center /= Mathf.Max(1, dyingTiles.Count);
+
+                                int baseBonus = step.DetonationBonus - step.DetonationHeat;
+                                BonusPopup.Instance.ShowDetonation("", baseBonus, center);
+                                if (step.DetonationHeat > 0)
+                                    BonusPopup.Instance.ShowHeatBonus(step.DetonationHeat, center);
+                            }
+
                             try
                             {
                                 grid.RemoveTiles(step.ExplodedCells);

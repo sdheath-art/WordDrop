@@ -1280,7 +1280,9 @@ namespace WordDrop
             public Dictionary<Vector2Int, Vector2Int> GravityMoves;
             public int TotalScore;
             public bool ChainContinues;
-            public int ChainTriggeredCount; // primed words triggered via chain connectivity
+            public int ChainTriggeredCount;
+            public int DetonationBonus;  // total detonation bonus this step
+            public int DetonationHeat;   // heat portion of detonation bonus
         }
 
         // ── Step-by-step state ───────────────────────────────────────────────────────
@@ -1728,6 +1730,7 @@ namespace WordDrop
         {
             var allExplodedCells = new List<Vector2Int>();
             int detonationBonus = 0;
+            int totalHeat = 0;
 
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
             {
@@ -1749,9 +1752,10 @@ namespace WordDrop
                 int heatBonus = Mathf.Min(survivedTurns * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
                 int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
                 detonationBonus += bonus;
+                totalHeat += heatBonus;
 
                 Debug.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
-                          $"(heat={heatBonus} survived={survivedTurns})");
+                          $"(rescore={Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER)} base={BREAKER_BONUS} heat={heatBonus})");
 
                 _primedRegistry.RemovePrimedWord(pid);
                 _stepJustPrimed.Remove(pid);
@@ -1770,6 +1774,8 @@ namespace WordDrop
                 Phase = ResolutionPhase.Exploding,
                 ExplodedCells = allExplodedCells,
                 TotalScore = _stepTotalScore,
+                DetonationBonus = detonationBonus,
+                DetonationHeat = totalHeat,
             };
         }
 
