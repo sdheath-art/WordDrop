@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -92,12 +93,36 @@ namespace WordDrop
 
         private void SubscribeToRulesEngineEvents()
         {
-            // Step-by-step API: no RulesEngine event subscriptions needed.
+            if (RulesEngine.Instance != null)
+                RulesEngine.Instance.OnNaughtyWord += HandleNaughtyWord;
         }
 
         private void UnsubscribeFromRulesEngineEvents()
         {
-            // No-op
+            if (RulesEngine.Instance != null)
+                RulesEngine.Instance.OnNaughtyWord -= HandleNaughtyWord;
+        }
+
+        private float _lastNaughtyTime;
+
+        private void HandleNaughtyWord(string word, Vector3 worldPos)
+        {
+            // Cooldown — don't spam if multiple naughty substrings detected in one drop
+            if (Time.unscaledTime - _lastNaughtyTime < 1.5f) return;
+            _lastNaughtyTime = Time.unscaledTime;
+
+            string response = WordDictionary.GetNaughtyResponse();
+            Debug.Log($"[GameVisualBridge] Naughty word detected: '{word}' — {response}");
+
+            // Show popup
+            if (BonusPopup.Instance != null)
+            {
+                Color naughtyColor = new Color(1f, 0.3f, 0.5f, 1f); // hot pink
+                BonusPopup.Instance.Show(response, naughtyColor, worldPos + Vector3.up * 0.3f, 1.2f);
+            }
+
+            // Quick side-to-side shake on the tiles that formed the word
+            GameAudio.Instance?.PlayUIClick();
         }
 
         private void SubscribeToMatchControllerEvents()

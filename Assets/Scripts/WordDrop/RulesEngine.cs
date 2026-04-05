@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -315,6 +316,9 @@ namespace WordDrop
         public event RulesEventHandler<GravityCollapseEvent>   OnGravityCollapse;
         public event RulesEventHandler<ChainStepEvent>         OnChainStep;
         public event RulesEventHandler<ResolutionCompleteEvent> OnResolutionComplete;
+
+        /// <summary>Fired when a player forms a naughty word. Args: word, world position.</summary>
+        public event Action<string, Vector3> OnNaughtyWord;
 
         // ── Scored word tracking (prevents re-scoring same word at same cells) ────
 
@@ -1311,7 +1315,18 @@ namespace WordDrop
                         }
 
                         string candidate = new string(wordChars);
-                        if (!WordDictionary.IsValidWord(candidate)) continue;
+                        if (!WordDictionary.IsValidWord(candidate))
+                        {
+                            if (WordDictionary.IsNaughtyWord(candidate))
+                            {
+                                Vector3 center = Vector3.zero;
+                                for (int k = 0; k < wordCells.Count; k++)
+                                    center += GridManager.Instance.CellToWorld(wordCells[k].x, wordCells[k].y);
+                                center /= wordCells.Count;
+                                OnNaughtyWord?.Invoke(candidate, center);
+                            }
+                            continue;
+                        }
 
                         string sortedCellKey = BuildSortedCellKey(wordCells);
                         string dedupKey = candidate + "|" + sortedCellKey;

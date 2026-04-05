@@ -39,6 +39,37 @@ namespace WordDrop
         private static HashSet<string> _wordSet;
         private static int _wordCount;
 
+        // ── Naughty words (easter egg) ───────────────────────────────────────────
+
+        private static readonly HashSet<string> _naughtyWords = new HashSet<string>
+        {
+            "BITCH","CUNT","DAMN","FUCK","SHIT",
+            "BOOB","BOOBS","DILDO","EROTIC","HOOKER",
+            "NUDES","NUDE","ORGASM","PENIS","PORN",
+            "SCROTUM","SEX","SEXY","SLUT","SPUNK",
+            "TOPLESS","VAGINA","WHORE",
+            "COCAINE","ECSTASY","HEROIN","METH",
+            "PIMP","RAPE"
+        };
+
+        private static readonly string[] _naughtyResponses = new string[]
+        {
+            "NAUGHTY!", "Nice try!", "Keep it clean!", "Family game!", "Behave!"
+        };
+
+        /// <summary>Returns true if the word is a known naughty word.</summary>
+        public static bool IsNaughtyWord(string word)
+        {
+            if (string.IsNullOrEmpty(word)) return false;
+            return _naughtyWords.Contains(word.ToUpper().Trim());
+        }
+
+        /// <summary>Returns a random cheeky response for naughty word attempts.</summary>
+        public static string GetNaughtyResponse()
+        {
+            return _naughtyResponses[Random.Range(0, _naughtyResponses.Length)];
+        }
+
         // ── Public API ───────────────────────────────────────────────────────────
 
         /// <summary>Current active dictionary tier.</summary>
