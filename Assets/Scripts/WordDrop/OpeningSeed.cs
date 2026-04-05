@@ -102,15 +102,143 @@ namespace WordDrop
         // ── Public API ──────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Pick a high-quality valid seed and apply it to the board.
-        /// Scores all valid seeds, then randomly picks from the top tier.
-        /// Returns the seed name, or null if disabled/no valid seed found.
+        /// Generate a unique procedural opening, or fall back to curated seeds.
+        /// Daily mode uses seeded RNG for deterministic boards.
+        /// Returns the seed name, or null if disabled.
         /// </summary>
         public static string ApplyRandomSeed(RulesEngine rules)
         {
             if (!Enabled || rules == null) return null;
 
-            // Score all valid seeds
+            // Try procedural generation first — unique every match
+            string proceduralResult = TryProceduralSeed(rules);
+            if (proceduralResult != null) return proceduralResult;
+
+            // Fallback: curated seeds
+            return ApplyCuratedSeed(rules);
+        }
+
+        // ── Procedural seed generation ──────────────────────────────────────
+
+        // Letters weighted by usefulness — vowels + common consonants more likely
+        private static readonly char[] SEED_VOWELS     = { 'A', 'E', 'I', 'O', 'U' };
+        private static readonly char[] SEED_CONSONANTS = {
+            'R', 'S', 'T', 'N', 'L', 'D', 'H', 'C', 'M', 'P',  // common
+            'B', 'F', 'G', 'W', 'K', 'Y'                         // less common
+        };
+
+        private const int PROCEDURAL_MAX_ATTEMPTS = 20;
+
+        private static string TryProceduralSeed(RulesEngine rules)
+        {
+            System.Random rng;
+            if (DailyDropManager.IsDailyMode)
+                rng = new System.Random(DailyDropManager.GetDailySeed() + 7919);
+            else
+                rng = new System.Random(System.Environment.TickCount);
+
+            for (int attempt = 0; attempt < PROCEDURAL_MAX_ATTEMPTS; attempt++)
+            {
+                int letterCount = 2 + rng.Next(0, 3); // 2, 3, or 4 letters
+                var placements = GenerateLayout(letterCount, rng);
+                if (placements == null) continue;
+
+                Seed candidate = new Seed
+                {
+                    Name = $"Proc_{attempt}",
+                    Placements = placements
+                };
+
+                if (ValidateSeed(candidate, rules))
+                {
+                    float quality = ScoreSeed(candidate);
+                    if (quality >= 4f) // minimum quality threshold
+                    {
+                        ApplySeed(candidate, rules);
+                        string letters = "";
+                        for (int i = 0; i < placements.Length; i++)
+                            letters += placements[i].Letter;
+                        Debug.Log($"[OpeningSeed] Procedural '{letters}' (quality={quality:F1}, attempt={attempt + 1})");
+                        return candidate.Name;
+                    }
+                }
+            }
+
+            return null; // fall through to curated
+        }
+
+        private static Placement[] GenerateLayout(int count, System.Random rng)
+        {
+            var placements = new Placement[count];
+            var usedCols = new HashSet<int>();
+
+            // Guarantee at least 1 vowel
+            int vowelSlot = rng.Next(0, count);
+
+            for (int i = 0; i < count; i++)
+            {
+                // Pick column — spread across board, no duplicates on row 0
+                int col;
+                int colAttempts = 0;
+                do
+                {
+                    col = rng.Next(0, RulesEngine.COLS);
+                    colAttempts++;
+                    if (colAttempts > 20) return null;
+                }
+                while (usedCols.Contains(col) || !HasMinSpacing(col, usedCols, count <= 2 ? 3 : 2));
+                usedCols.Add(col);
+
+                // Pick letter
+                char letter;
+                if (i == vowelSlot)
+                    letter = SEED_VOWELS[rng.Next(0, SEED_VOWELS.Length)];
+                else if (rng.Next(0, 100) < 35) // 35% chance of extra vowel
+                    letter = SEED_VOWELS[rng.Next(0, SEED_VOWELS.Length)];
+                else
+                    letter = SEED_CONSONANTS[rng.Next(0, SEED_CONSONANTS.Length)];
+
+                // Most tiles on row 0, occasional row 1 (must be supported)
+                int row = 0;
+                if (i > 0 && rng.Next(0, 100) < 20) // 20% chance of stacking
+                {
+                    // Check if any existing placement is in same column at row 0
+                    for (int j = 0; j < i; j++)
+                    {
+                        if (placements[j].Col == col && placements[j].Row == 0)
+                        {
+                            row = 1;
+                            break;
+                        }
+                    }
+                    // If no support, stay at row 0
+                    if (row == 1)
+                    {
+                        // Already have support — keep row 1
+                    }
+                    else
+                    {
+                        row = 0;
+                    }
+                }
+
+                placements[i] = new Placement(col, row, letter);
+            }
+
+            return placements;
+        }
+
+        private static bool HasMinSpacing(int col, HashSet<int> used, int minDist)
+        {
+            foreach (int c in used)
+                if (Mathf.Abs(col - c) < minDist) return false;
+            return true;
+        }
+
+        // ── Curated seed fallback ───────────────────────────────────────────
+
+        private static string ApplyCuratedSeed(RulesEngine rules)
+        {
             var candidates = new List<(Seed seed, float score)>();
 
             for (int i = 0; i < _seeds.Length; i++)
@@ -128,20 +256,26 @@ namespace WordDrop
                 return null;
             }
 
-            // Sort by quality descending
             candidates.Sort((a, b) => b.score.CompareTo(a.score));
 
-            // Pick randomly from top half (at least 3 candidates for variety)
             int topCount = Mathf.Max(3, candidates.Count / 2);
             topCount = Mathf.Min(topCount, candidates.Count);
-            int pick = Random.Range(0, topCount);
+            int pick;
+            if (DailyDropManager.IsDailyMode)
+            {
+                var seededRng = new System.Random(DailyDropManager.GetDailySeed() + 7919);
+                pick = seededRng.Next(0, topCount);
+            }
+            else
+            {
+                pick = Random.Range(0, topCount);
+            }
 
             Seed chosen = candidates[pick].seed;
             ApplySeed(chosen, rules);
 
-            Debug.Log($"[OpeningSeed] Applied '{chosen.Name}' (quality={candidates[pick].score:F1}, " +
-                      $"rank {pick + 1}/{candidates.Count}). " +
-                      $"Top 3: {FormatTop3(candidates)}");
+            Debug.Log($"[OpeningSeed] Curated '{chosen.Name}' (quality={candidates[pick].score:F1}, " +
+                      $"rank {pick + 1}/{candidates.Count})");
 
             return chosen.Name;
         }

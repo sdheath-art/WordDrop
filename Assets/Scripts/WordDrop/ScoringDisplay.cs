@@ -31,15 +31,15 @@ namespace WordDrop
         private const float CARD_APPEAR_DUR   = 0.10f;
         private const float CARD_STAGGER      = 0.12f;
         private const float CELEBRATE_DUR     = 0.25f;
-        private const float HOLD_AFTER        = 0.30f;
-        private const float EXIT_DUR          = 0.15f;
+        private const float HOLD_AFTER        = 0.15f;
+        private const float EXIT_DUR          = 0.12f;
 
         // ── Point popup — contained energy, not chaos ────────────────────────
         private const float POP_SPAWN_SCALE   = 0.5f;   // start bigger (less extreme pop)
-        private const float POP_PEAK_SCALE    = 1.4f;   // pop to 140% not 220%
+        private const float POP_PEAK_SCALE    = 1.8f;   // pop to 180% — punchier
         private const float POP_SCALE_UP_DUR  = 0.05f;
         private const float POP_JITTER_AMOUNT = 0.02f;   // tight — barely moves off center
-        private const float POP_JITTER_ROT    = 6f;      // subtle wobble not spin
+        private const float POP_JITTER_ROT    = 10f;     // visible wobble
         private const float POP_JITTER_DUR    = 0.15f;   // quick vibration
         private const float POP_SETTLE_SCALE  = 1.06f;
         private const float POP_SETTLE_DUR    = 0.04f;
@@ -117,16 +117,9 @@ namespace WordDrop
 
         public void ShowWordScore(string word, int totalPoints, bool isPlayer)
         {
-            if (string.IsNullOrEmpty(word)) return;
-
+            // Scoring tally disabled — scores now fly to HUD via BonusPopup.
+            // Keep method signature so callers compile.
             _chainIndex++;
-
-            Debug.Log($"[ScoringDisplay] ShowWordScore: '{word}' pts={totalPoints} chainIdx={_chainIndex}");
-
-            _wordQueue.Add(new QueuedWord { Word = word.ToUpper(), Points = totalPoints, IsPlayer = isPlayer });
-
-            if (!_isProcessingQueue)
-                StartCoroutine(ProcessWordQueue());
         }
 
         private IEnumerator ProcessWordQueue()
@@ -229,36 +222,22 @@ namespace WordDrop
                 if (ptsTMP != null) ptsTMP.color = Color.clear;
             }
 
-            // ── Create shadow objects ──
+            // ── Shadow objects disabled — black blobs during board animations ──
             List<SpriteRenderer> shadows = new List<SpriteRenderer>();
-            float centerX = 0f;
+            // Shadows removed: populate with nulls so downstream code doesn't break
             for (int i = 0; i < cards.Count; i++)
-            {
-                GameObject shadowGO = new GameObject($"ScoreShadow_{i}");
-                float sx = startX + i * spacing;
-                float maxHOffset = tileSize * 0.15f;
-                float hOffset = -Mathf.Sign(sx - centerX) * Mathf.Clamp01(Mathf.Abs(sx - centerX) / 3f) * maxHOffset;
-                float vOffset = -tileSize * 0.05f;
-                shadowGO.transform.position = new Vector3(sx + hOffset, yBase + vOffset, -2.9f);
-                shadowGO.transform.localScale = targetScales[i];
-                SpriteRenderer shadowSR = shadowGO.AddComponent<SpriteRenderer>();
-                shadowSR.sprite = _cachedScoringTileSprite;
-                shadowSR.color = Color.clear;
-                shadowSR.sortingOrder = 49;
-                shadows.Add(shadowSR);
-                _activeObjects.Add(shadowGO);
-            }
+                shadows.Add(null);
 
             // ── Phase 1: Staggered pop-in of BLANK tiles ──
             for (int i = 0; i < cards.Count; i++)
             {
                 if (cards[i] == null) continue;
                 cards[i].transform.localScale = Vector3.zero;
-                cards[i].transform.DOScale(targetScales[i], 0.4f)
-                    .SetEase(Ease.OutElastic, 0.6f, 0.25f)
+                cards[i].transform.DOScale(targetScales[i], 0.25f)
+                    .SetEase(Ease.OutBack)
                     .SetDelay(i * 0.04f);
             }
-            yield return new WaitForSeconds(0.3f + cards.Count * 0.04f);
+            yield return new WaitForSeconds(0.2f + cards.Count * 0.04f);
 
             float raiseY = tileSize * 0.15f;
 
@@ -281,7 +260,7 @@ namespace WordDrop
             Color ptsColor = new Color(0.35f, 0.35f, 0.40f, 1f);
 
             // Punchier than RTT defaults
-            float flipDur = 0.15f;
+            float flipDur = 0.10f;
             float halfDur = flipDur * 0.5f;
             float scaleBounce = 1.25f;  // was 1.15 — bigger pop
             float thickness = 3.5f;
@@ -324,18 +303,18 @@ namespace WordDrop
                     HUDManager.Instance.TickScore(isPlayer, pts);
 
                 // Brief gap before next letter
-                yield return new WaitForSeconds(0.05f);
+                yield return new WaitForSeconds(0.03f);
             }
 
             // ── Phase 4: ALL tiles lower together with bounce landing ──
             for (int i = 0; i < cards.Count; i++)
             {
                 if (cards[i] == null) continue;
-                cards[i].transform.DOMoveY(yBase, 0.2f).SetEase(Ease.OutBounce);
+                cards[i].transform.DOMoveY(yBase, 0.12f).SetEase(Ease.OutQuad);
                 if (i < shadows.Count && shadows[i] != null)
                     shadows[i].color = Color.clear;
             }
-            yield return new WaitForSeconds(0.25f);
+            yield return new WaitForSeconds(0.15f);
 
             yield return new WaitForSeconds(HOLD_AFTER);
 
@@ -345,12 +324,12 @@ namespace WordDrop
                 if (cards[i] == null) continue;
                 cards[i].transform.DOKill();
                 cards[i].transform.localScale = targetScales[i]; // reset to clean base
-                cards[i].transform.DOScale(Vector3.zero, 0.2f)
+                cards[i].transform.DOScale(Vector3.zero, 0.12f)
                     .SetEase(Ease.InQuart)
-                    .SetDelay(i * 0.03f);
+                    .SetDelay(i * 0.02f);
                 SpriteRenderer sr = cards[i].GetComponent<SpriteRenderer>();
                 if (sr != null)
-                    sr.DOFade(0f, 0.15f).SetDelay(i * 0.03f);
+                    sr.DOFade(0f, 0.10f).SetDelay(i * 0.02f);
             }
 
             yield return new WaitForSeconds(EXIT_DUR + 0.05f);
@@ -447,11 +426,11 @@ namespace WordDrop
                 cards[i].transform.DOPunchScale(targetScales[i] * 0.15f, 0.2f, 2, 0.5f)
                     .SetEase(Ease.OutBack);
             }
-            yield return new WaitForSeconds(0.15f);
+            yield return new WaitForSeconds(0.10f);
 
             // ── Dealer wave flip — hand sweeping across, each tile flips in sequence ──
             float waveDelay = 0.05f; // slightly slower sweep
-            float flipHalf = 0.08f;
+            float flipHalf = 0.06f;
 
             for (int i = 0; i < len; i++)
             {
@@ -465,28 +444,28 @@ namespace WordDrop
             }
 
             // Wait for last tile's flip + jiggle to finish
-            yield return new WaitForSeconds(flipHalf * 2f + 0.15f);
+            yield return new WaitForSeconds(flipHalf * 2f + 0.08f);
 
             // Tick HUD — all points at once
             if (HUDManager.Instance != null)
                 HUDManager.Instance.TickScore(isPlayer, totalPoints);
 
-            yield return new WaitForSeconds(0.4f); // hold for reading
+            yield return new WaitForSeconds(0.2f); // hold for reading
 
             // Exit — shrink down + fade
             for (int i = 0; i < cards.Count; i++)
             {
                 if (cards[i] == null) continue;
                 cards[i].transform.DOKill();
-                cards[i].transform.DOScale(Vector3.zero, 0.15f)
+                cards[i].transform.DOScale(Vector3.zero, 0.10f)
                     .SetEase(Ease.InQuart)
                     .SetDelay(i * 0.02f);
                 SpriteRenderer sr = cards[i].GetComponent<SpriteRenderer>();
                 if (sr != null)
-                    sr.DOFade(0f, 0.12f).SetDelay(i * 0.02f);
+                    sr.DOFade(0f, 0.08f).SetDelay(i * 0.02f);
             }
 
-            yield return new WaitForSeconds(0.2f);
+            yield return new WaitForSeconds(0.15f);
             // Only destroy this word's tiles, not all active objects
             foreach (var obj in myObjects)
                 if (obj != null) { obj.transform.DOKill(); Destroy(obj); }

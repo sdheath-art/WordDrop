@@ -16,6 +16,13 @@ namespace WordDrop
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Init()
         {
+            // Strip all Debug.Log in release builds — massive perf win on mobile
+            // (460+ log calls across 41 files, each one allocates strings + does IO)
+#if !UNITY_EDITOR && !DEVELOPMENT_BUILD
+            Debug.unityLogger.logEnabled = false;
+            return;
+#endif
+
             _logPath = Path.Combine(Application.dataPath, "..", "debug_log.txt");
             try
             {

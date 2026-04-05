@@ -111,7 +111,7 @@ namespace WordDrop
             float gridWorldHeight = CellSize * ROWS;
 
             float gridCenterX = 0f;
-            float gridCenterY = halfH * 0.14f;  // push grid up to reduce dead space above, make room below
+            float gridCenterY = halfH * 0.22f;  // push grid up more — reduce dead space between HUD and board
 
             GridLeft   = gridCenterX - gridWorldWidth  / 2f;
             GridRight  = gridCenterX + gridWorldWidth  / 2f;
@@ -253,13 +253,18 @@ namespace WordDrop
             _allTileObjects.Add(tileGO);
 
             Tile tile = tileGO.AddComponent<Tile>();
-            tile.Initialise(letter, col, targetRow, CellSize);
+            int ownerIdx = (owner == TileOwner.AI) ? 1 : 0;
+            tile.Initialise(letter, col, targetRow, CellSize, ownerIdx);
 
             _tiles[col, targetRow] = tile;
 
             Vector3 spawnPos  = GetColumnSpawnPosition(col);
             Vector3 targetPos = CellToWorld(col, targetRow);
             tile.AnimateFall(spawnPos, targetPos);
+
+            // Gold bonus: if tile lands on a bonus cell, make it golden
+            if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, targetRow))
+                tile.SetGoldBonus(true);
 
             Debug.Log($"[GridManager] Dropped '{letter}' → col={col}, row={targetRow}");
 
@@ -300,6 +305,10 @@ namespace WordDrop
             };
             _allTileObjects.Add(tileGO);
 
+            // Apply gold if this position is a bonus cell
+            if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, row))
+                tile.SetGoldBonus(true);
+
             return tile;
         }
 
@@ -336,6 +345,11 @@ namespace WordDrop
                     _cells[col, row] = null;
                     _tiles[col, row] = null;
                 }
+
+            // Clear bonus cell overlays
+            for (int i = 0; i < _bonusOverlays.Count; i++)
+                if (_bonusOverlays[i] != null) Destroy(_bonusOverlays[i]);
+            _bonusOverlays.Clear();
 
             Debug.Log("[GridManager] All cells cleared.");
         }
@@ -376,7 +390,7 @@ namespace WordDrop
                     tileGO.transform.position = worldPos;
 
                     Tile tile = tileGO.AddComponent<Tile>();
-                    tile.Initialise(rulesCell.Letter, col, row, CellSize);
+                    tile.Initialise(rulesCell.Letter, col, row, CellSize, rulesCell.PlayerIndex);
 
                     // Store in grid
                     _tiles[col, row] = tile;
@@ -388,6 +402,11 @@ namespace WordDrop
                         Owner = rulesCell.PlayerIndex == 0 ? TileOwner.Player : TileOwner.AI
                     };
                     _allTileObjects.Add(tileGO);
+
+                    // Gold bonus tile
+                    if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, row))
+                        tile.SetGoldBonus(true);
+
                     created++;
                 }
             }
@@ -441,7 +460,7 @@ namespace WordDrop
                         GameObject tileGO = new GameObject($"Tile_{rulesCell.Letter}_{col}_{row}");
                         tileGO.transform.position = worldPos;
                         Tile tile = tileGO.AddComponent<Tile>();
-                        tile.Initialise(rulesCell.Letter, col, row, CellSize);
+                        tile.Initialise(rulesCell.Letter, col, row, CellSize, rulesCell.PlayerIndex);
                         _tiles[col, row] = tile;
                         _cells[col, row] = new CellData
                         {
@@ -553,6 +572,9 @@ namespace WordDrop
 
             Debug.Log($"[GridManager] RemoveTiles — removed {removedCount} tile(s) " +
                       $"from {cells.Count} requested positions.");
+
+            // Refresh bonus overlays in case any were consumed by scoring
+            RefreshBonusCellOverlays();
         }
 
         /// <summary>
@@ -738,6 +760,198 @@ namespace WordDrop
             }
 
             Debug.Log("[GridManager] ApplyGravityFromEvents — complete.");
+        }
+
+        // ---------------------------------------------------------------------------
+        // Rising Row animation
+        // ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Animates all existing tiles shifting up one row, then creates new tiles
+        /// at row 0 with a rise-from-below animation.
+        /// Called by RisingRowManager after RulesEngine data has been shifted.
+        /// </summary>
+        public IEnumerator AnimateRiseRow(
+            RulesEngine rules,
+            Dictionary<Vector2Int, Vector2Int> shiftMoves,
+            char[] newBottomLetters)
+        {
+            const float RISE_DURATION = 0.25f;
+            const float RISE_SPEED = 1f / RISE_DURATION;
+
+            List<Tile> animatingTiles = new List<Tile>();
+
+            // 1. Shift existing visual tiles up using the move dictionary
+            //    Process in reverse row order (top first) to avoid overwriting
+            for (int row = ROWS - 1; row >= 0; row--)
+            {
+                for (int col = 0; col < COLS; col++)
+                {
+                    var oldPos = new Vector2Int(col, row);
+                    if (!shiftMoves.ContainsKey(oldPos)) continue;
+
+                    var newPos = shiftMoves[oldPos];
+                    Tile tile = _tiles[col, row];
+                    CellData cell = _cells[col, row];
+
+                    if (tile == null) continue;
+
+                    // Clear old position in visual grid
+                    _tiles[col, row] = null;
+                    _cells[col, row] = null;
+
+                    // Update tile tracking
+                    tile.UpdateGridPosition(newPos.x, newPos.y);
+                    if (cell != null)
+                    {
+                        cell.Row = newPos.y;
+                        cell.Col = newPos.x;
+                    }
+
+                    // Place in new position
+                    _tiles[newPos.x, newPos.y] = tile;
+                    _cells[newPos.x, newPos.y] = cell;
+
+                    // Animate to new world position
+                    Vector3 targetPos = CellToWorld(newPos.x, newPos.y);
+                    float dist = Vector3.Distance(tile.transform.position, targetPos);
+                    if (dist > 0.01f)
+                    {
+                        float dur = RISE_DURATION;
+                        tile.AnimateGravityFall(targetPos, dur);
+                        animatingTiles.Add(tile);
+                    }
+                }
+            }
+
+            // 2. Create new tiles at row 0 — spawn below the grid and rise up
+            if (newBottomLetters != null)
+            {
+                for (int col = 0; col < COLS && col < newBottomLetters.Length; col++)
+                {
+                    char letter = newBottomLetters[col];
+                    Vector3 targetPos = CellToWorld(col, 0);
+                    Vector3 spawnPos = new Vector3(targetPos.x, GridBottom - CellSize * 0.8f, targetPos.z);
+
+                    GameObject tileGO = new GameObject($"Tile_{letter}_{col}_0_rise");
+                    tileGO.transform.position = spawnPos;
+                    _allTileObjects.Add(tileGO);
+
+                    Tile tile = tileGO.AddComponent<Tile>();
+                    tile.Initialise(letter, col, 0, CellSize, -1); // neutral: ownerIndex = -1
+
+                    _tiles[col, 0] = tile;
+                    _cells[col, 0] = new CellData
+                    {
+                        Letter = letter,
+                        Col = col,
+                        Row = 0,
+                        Owner = TileOwner.Player // neutral tiles display as player style
+                    };
+
+                    // Animate rise from below
+                    tile.AnimateGravityFall(targetPos, RISE_DURATION);
+                    animatingTiles.Add(tile);
+                }
+            }
+
+            // 3. Wait for all animations to complete
+            if (animatingTiles.Count > 0)
+            {
+                Debug.Log($"[GridManager] AnimateRiseRow — {animatingTiles.Count} tile(s) rising.");
+
+                int safety = 0;
+                bool anyAnimating = true;
+                while (anyAnimating && safety < 600)
+                {
+                    safety++;
+                    anyAnimating = false;
+                    for (int i = 0; i < animatingTiles.Count; i++)
+                    {
+                        if (animatingTiles[i] != null && animatingTiles[i].IsAnimating)
+                        {
+                            anyAnimating = true;
+                            break;
+                        }
+                    }
+                    if (anyAnimating) yield return null;
+                }
+
+                Debug.Log("[GridManager] AnimateRiseRow — all tiles settled.");
+            }
+        }
+
+        // ── Board Blessing visual overlays ──────────────────────────────────────
+
+        private List<GameObject> _bonusOverlays = new List<GameObject>();
+
+        /// <summary>
+        /// Refresh bonus cell visual overlays to match RulesEngine bonus state.
+        /// Call after rising rows or board clear.
+        /// </summary>
+        /// <summary>
+        /// Gold status lives on the tile — this only applies gold to NEW tiles on bonus cells.
+        /// Does NOT remove gold from existing tiles (gold persists until used in a word).
+        /// </summary>
+        public void RefreshBonusCellOverlays()
+        {
+            // Clear old overlays (legacy — no longer used)
+            for (int i = 0; i < _bonusOverlays.Count; i++)
+                if (_bonusOverlays[i] != null) Destroy(_bonusOverlays[i]);
+            _bonusOverlays.Clear();
+
+            if (RulesEngine.Instance == null) return;
+
+            // Only SET gold on tiles sitting on bonus cells — never remove it here
+            for (int col = 0; col < COLS; col++)
+            {
+                for (int row = 0; row < ROWS; row++)
+                {
+                    Tile tile = _tiles[col, row];
+                    if (tile == null) continue;
+
+                    if (RulesEngine.Instance.IsBonusCell(col, row) && !tile.IsGoldBonus)
+                        tile.SetGoldBonus(true);
+                }
+            }
+        }
+
+        private Sprite _cachedBonusSprite;
+
+        private Sprite CreateBonusCellSprite()
+        {
+            if (_cachedBonusSprite != null) return _cachedBonusSprite;
+
+            int size = 64;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            float half = size / 2f;
+            float borderWidth = 3f;
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = (x - half) / half;
+                    float dy = (y - half) / half;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy); // circular, not square
+
+                    // Soft radial glow — bright center fading to transparent edges
+                    float glow = Mathf.Clamp01(1f - dist * 1.1f);
+                    glow = glow * glow; // quadratic falloff for softer edges
+                    // Thin border ring
+                    float ring = Mathf.Clamp01(1f - Mathf.Abs(dist - 0.7f) / 0.1f) * 0.4f;
+                    float alpha = Mathf.Clamp01(glow + ring);
+
+                    tex.SetPixel(x, y, new Color(1f, 0.95f, 0.8f, alpha));
+                }
+            }
+            tex.Apply();
+
+            _cachedBonusSprite = Sprite.Create(tex,
+                new Rect(0, 0, size, size),
+                new Vector2(0.5f, 0.5f), 100f);
+            return _cachedBonusSprite;
         }
 
         /// <summary>

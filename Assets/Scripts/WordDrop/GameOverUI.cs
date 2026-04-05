@@ -20,15 +20,40 @@ namespace WordDrop
         private const float STAGGER_DELAY  = 0.08f;
 
         // ── Colors (matching WordDrop palette) ──────────────────────────────────
-        private static readonly Color PANEL_BG       = new Color(0.118f, 0.173f, 0.412f, 0.98f); // board frame dark
-        private static readonly Color OVERLAY_COLOR   = new Color(0f, 0f, 0f, 0.75f);
-        private static readonly Color PLAYER_GREEN    = new Color(0.200f, 0.851f, 0.424f, 1f);
-        private static readonly Color AI_ORANGE       = new Color(1.000f, 0.604f, 0.239f, 1f);
-        private static readonly Color GOLD            = new Color(0.961f, 0.761f, 0.294f, 1f);
-        private static readonly Color DEFEAT_RED      = new Color(0.90f, 0.30f, 0.30f, 1f);
-        private static readonly Color TEXT_WHITE      = new Color(0.95f, 0.95f, 1f, 1f);
-        private static readonly Color TEXT_DIM        = new Color(0.65f, 0.65f, 0.75f, 1f);
-        private static readonly Color BTN_COLOR       = new Color(0.961f, 0.761f, 0.294f, 1f); // gold CTA
+        // Colors — read from UIConfig if available, otherwise use hardcoded defaults
+        private static Color PANEL_BG
+        {
+            get { return new Color(0.22f, 0.14f, 0.38f, 0.97f); } // medium purple — distinct from dark background
+        }
+        private static readonly Color OVERLAY_COLOR   = new Color(0.05f, 0.02f, 0.12f, 0.75f); // dark purple overlay
+        private static Color PLAYER_GREEN
+        {
+            get { return new Color(1.00f, 0.84f, 0.42f, 1f); } // gold (match player)
+        }
+        private static Color AI_ORANGE
+        {
+            get { return new Color(1.00f, 0.56f, 0.67f, 1f); } // pink (match AI)
+        }
+        private static Color GOLD
+        {
+            get { return new Color(1.00f, 0.84f, 0.42f, 1f); } // warm gold
+        }
+        private static Color DEFEAT_RED
+        {
+            get { return new Color(1.00f, 0.40f, 0.40f, 1f); } // soft red
+        }
+        private static Color TEXT_WHITE
+        {
+            get { return new Color(0.94f, 0.90f, 0.84f, 1f); } // warm white
+        }
+        private static Color TEXT_DIM
+        {
+            get { return new Color(0.63f, 0.53f, 0.75f, 0.8f); } // light purple
+        }
+        private static Color BTN_COLOR
+        {
+            get { return new Color(0.91f, 0.72f, 0.29f, 1f); } // amber gold button
+        }
 
         // ── UI refs ─────────────────────────────────────────────────────────────
         private Canvas     _canvas;
@@ -42,6 +67,11 @@ namespace WordDrop
         private TextMeshProUGUI _playerScoreText;
         private TextMeshProUGUI _aiScoreText;
         private TextMeshProUGUI _turnsPlayedText;
+        private TextMeshProUGUI _bestScoreText;
+
+        // Daily mode elements
+        private TextMeshProUGUI _dailyStreakText;
+        private GameObject _shareButton;
 
         // Elements for stagger animation
         private GameObject[] _staggerElements;
@@ -95,7 +125,8 @@ namespace WordDrop
             _panelRT.anchorMin = new Vector2(0.5f, 0.5f);
             _panelRT.anchorMax = new Vector2(0.5f, 0.5f);
             _panelRT.pivot     = new Vector2(0.5f, 0.5f);
-            _panelRT.sizeDelta = new Vector2(460f, 420f);
+            var cfg = UIConfig.Instance;
+            _panelRT.sizeDelta = cfg != null ? cfg.gameOverPanelSize : new Vector2(460f, 420f);
             _panelHomePos = Vector2.zero;
 
             // Panel background with rounded corners
@@ -107,40 +138,69 @@ namespace WordDrop
             // ── Content ──
             var stagger = new System.Collections.Generic.List<GameObject>();
 
+            int titleFS  = cfg != null ? cfg.gameOverTitleFontSize : 48;
+            int winnerFS = cfg != null ? cfg.gameOverWinnerFontSize : 34;
+            int scoreFS  = cfg != null ? cfg.gameOverScoreFontSize : 30;
+            int turnsFS  = cfg != null ? cfg.gameOverTurnsFontSize : 20;
+            int bestFS   = cfg != null ? cfg.gameOverBestFontSize : 22;
+            int playFS   = cfg != null ? cfg.gameOverPlayAgainFontSize : 32;
+            int shareFS  = cfg != null ? cfg.gameOverShareFontSize : 26;
+            Color shareBg = cfg != null ? cfg.gameOverShareColor : new Color(0.40f, 0.65f, 0.90f, 1f);
+
             // Title: "GAME OVER"
             _titleText = MakeLabel(_panel.transform, "Title",
                 new Vector2(0.05f, 0.78f), new Vector2(0.95f, 0.95f),
-                "GAME OVER", 48, FontStyle.Normal, GOLD, TextAnchor.MiddleCenter);
+                "GAME OVER", titleFS, FontStyle.Normal, GOLD, TextAnchor.MiddleCenter);
             stagger.Add(_titleText.gameObject);
 
             // Winner text
             _winnerText = MakeLabel(_panel.transform, "Winner",
                 new Vector2(0.05f, 0.62f), new Vector2(0.95f, 0.78f),
-                "PLAYER WINS!", 34, FontStyle.Normal, PLAYER_GREEN, TextAnchor.MiddleCenter);
+                "PLAYER WINS!", winnerFS, FontStyle.Normal, PLAYER_GREEN, TextAnchor.MiddleCenter);
             stagger.Add(_winnerText.gameObject);
 
             // Player score
             _playerScoreText = MakeLabel(_panel.transform, "PlayerScore",
                 new Vector2(0.05f, 0.48f), new Vector2(0.95f, 0.62f),
-                "Player: 0", 30, FontStyle.Normal, PLAYER_GREEN, TextAnchor.MiddleCenter);
+                "Player: 0", scoreFS, FontStyle.Normal, PLAYER_GREEN, TextAnchor.MiddleCenter);
             stagger.Add(_playerScoreText.gameObject);
 
             // AI score
             _aiScoreText = MakeLabel(_panel.transform, "AIScore",
                 new Vector2(0.05f, 0.36f), new Vector2(0.95f, 0.48f),
-                "AI: 0", 30, FontStyle.Normal, AI_ORANGE, TextAnchor.MiddleCenter);
+                "AI: 0", scoreFS, FontStyle.Normal, AI_ORANGE, TextAnchor.MiddleCenter);
             stagger.Add(_aiScoreText.gameObject);
 
             // Turns played
             _turnsPlayedText = MakeLabel(_panel.transform, "Turns",
-                new Vector2(0.05f, 0.26f), new Vector2(0.95f, 0.36f),
-                "", 20, FontStyle.Normal, TEXT_DIM, TextAnchor.MiddleCenter);
+                new Vector2(0.05f, 0.28f), new Vector2(0.95f, 0.36f),
+                "", turnsFS, FontStyle.Normal, TEXT_DIM, TextAnchor.MiddleCenter);
             stagger.Add(_turnsPlayedText.gameObject);
+
+            // Best score line
+            _bestScoreText = MakeLabel(_panel.transform, "BestScore",
+                new Vector2(0.05f, 0.22f), new Vector2(0.95f, 0.28f),
+                "", bestFS, FontStyle.Normal, GOLD, TextAnchor.MiddleCenter);
+            stagger.Add(_bestScoreText.gameObject);
+
+            // Daily streak text (hidden in classic mode)
+            _dailyStreakText = MakeLabel(_panel.transform, "DailyStreak",
+                new Vector2(0.05f, 0.22f), new Vector2(0.95f, 0.28f),
+                "", bestFS, FontStyle.Normal, new Color(0.40f, 0.70f, 1f, 1f), TextAnchor.MiddleCenter);
+            _dailyStreakText.gameObject.SetActive(false);
+            stagger.Add(_dailyStreakText.gameObject);
+
+            // Share button (daily mode only)
+            _shareButton = MakeButton(_panel.transform, "ShareButton",
+                new Vector2(0.15f, 0.14f), new Vector2(0.85f, 0.22f),
+                "SHARE", shareFS, shareBg, OnShareClicked);
+            _shareButton.SetActive(false);
+            stagger.Add(_shareButton);
 
             // Play Again button
             GameObject btnGO = MakeButton(_panel.transform, "PlayAgain",
-                new Vector2(0.15f, 0.06f), new Vector2(0.85f, 0.22f),
-                "PLAY AGAIN", 32, BTN_COLOR, OnPlayAgainClicked);
+                new Vector2(0.15f, 0.02f), new Vector2(0.85f, 0.16f),
+                "PLAY AGAIN", playFS, BTN_COLOR, OnPlayAgainClicked);
             stagger.Add(btnGO);
 
             _staggerElements = stagger.ToArray();
@@ -150,16 +210,99 @@ namespace WordDrop
         // SHOW — whoosh in from bottom
         // ═══════════════════════════════════════════════════════════════════════════
 
+        private bool _showInProgress = false;
+
         public void Show()
         {
+            // Guard against multiple calls
+            if (_showInProgress) return;
+            _showInProgress = true;
+            GameAudio.Instance?.PlayGameOver();
+            GameAudio.Instance?.PlayWhoosh();
+
+            // Check for detonation replay before showing the panel
+            if (DetonationRecorder.Instance != null && DetonationRecorder.Instance.HasReplay
+                && DetonationReplay.Instance != null)
+            {
+                StartCoroutine(ShowWithReplay());
+                return;
+            }
+
+            ShowPanel();
+        }
+
+        private IEnumerator ShowWithReplay()
+        {
+            Debug.Log("[GameOverUI] Playing detonation replay before showing scores.");
+
+            var chain = DetonationRecorder.Instance.GetBestChain();
+            Coroutine replay = DetonationReplay.Instance.PlayReplay(chain);
+            if (replay != null)
+                yield return replay;
+
+            ShowPanel();
+        }
+
+        private void ShowPanel()
+        {
+            bool isBlitz = BlitzManager.IsBlitzMode;
+            bool isDaily = DailyDropManager.IsDailyMode;
+
             // Gather data
             int playerScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
             int aiScore     = ScoreManager.Instance != null ? ScoreManager.Instance.AIScore : 0;
-            int totalTurns  = MatchController.Instance != null ? MatchController.MAX_TURNS * 2 : 0;
+            int totalTurns  = MatchController.Instance != null
+                ? MatchController.Instance.TotalMaxTurns : 0;
 
-            // Determine winner
+            // ── Daily Drop mode ─────────────────────────────────────────────────
+            if (isDaily)
+            {
+                bool isNewDailyBest = DailyDropManager.MarkPlayedToday(playerScore);
+                int streak = DailyDropManager.GetStreak();
+                int puzzleNum = DailyDropManager.GetPuzzleNumber();
+
+                if (_titleText != null) _titleText.text = $"DAILY DROP #{puzzleNum}";
+                if (_winnerText != null) { _winnerText.text = $"Score: {playerScore}"; _winnerText.color = GOLD; }
+                if (_playerScoreText != null)
+                    _playerScoreText.text = $"{DailyDropManager.DAILY_TURNS} turns played";
+                if (_aiScoreText != null) _aiScoreText.gameObject.SetActive(false);
+
+                // Streak
+                if (_dailyStreakText != null)
+                {
+                    _dailyStreakText.gameObject.SetActive(streak > 1);
+                    _dailyStreakText.text = streak > 1 ? $"Streak: {streak} days" : "";
+                }
+
+                // Best score (already submitted by MarkPlayedToday above)
+                int dailyBest = HighScoreManager.GetBest("daily");
+                if (_bestScoreText != null)
+                {
+                    _bestScoreText.text  = isNewDailyBest ? "NEW DAILY BEST!" : $"Daily Best: {dailyBest}";
+                    _bestScoreText.color = isNewDailyBest ? GOLD : TEXT_DIM;
+                }
+
+                if (_shareButton != null) _shareButton.SetActive(true);
+                if (_turnsPlayedText != null) _turnsPlayedText.text = "";
+
+                SetVisible(true);
+                StartCoroutine(ShowAnimation());
+                return;
+            }
+
+            // ── Classic / Blitz mode — hide daily elements ──────────────────────
+            if (_dailyStreakText != null) _dailyStreakText.gameObject.SetActive(false);
+            if (_shareButton != null) _shareButton.SetActive(false);
+            if (_aiScoreText != null) _aiScoreText.gameObject.SetActive(true);
+
+            // Determine winner / header
             string winnerLabel; Color winnerColor;
-            if (playerScore > aiScore)
+            if (isBlitz)
+            {
+                winnerLabel = "TIME'S UP!";
+                winnerColor = new Color(0.85f, 0.30f, 0.15f, 1f); // blitz red/orange
+            }
+            else if (playerScore > aiScore)
             {
                 winnerLabel = "YOU WIN!";
                 winnerColor = PLAYER_GREEN;
@@ -175,12 +318,58 @@ namespace WordDrop
                 winnerColor = GOLD;
             }
 
+            // Submit score to appropriate mode leaderboard
+            string scoreMode = isBlitz ? "blitz" : "classic";
+            bool isNewBest = HighScoreManager.Submit(playerScore, scoreMode);
+            int bestScore  = HighScoreManager.GetBest(scoreMode);
+
             // Populate
-            if (_titleText != null) _titleText.text = "GAME OVER";
+            if (_titleText != null) _titleText.text = isBlitz ? "BLITZ" : "GAME OVER";
             if (_winnerText != null) { _winnerText.text = winnerLabel; _winnerText.color = winnerColor; }
-            if (_playerScoreText != null) _playerScoreText.text = $"Player:  {playerScore} pts";
-            if (_aiScoreText != null) _aiScoreText.text = $"AI:  {aiScore} pts";
-            if (_turnsPlayedText != null) _turnsPlayedText.text = $"{totalTurns} turns played";
+            if (_playerScoreText != null)
+                _playerScoreText.text = isBlitz ? $"Score:  {playerScore} pts" : $"Player:  {playerScore} pts";
+            if (_aiScoreText != null)
+            {
+                if (isBlitz)
+                {
+                    _aiScoreText.gameObject.SetActive(false); // hide AI score in blitz
+                }
+                else
+                {
+                    _aiScoreText.gameObject.SetActive(true);
+                    _aiScoreText.text = $"AI:  {aiScore} pts";
+                }
+            }
+            if (_turnsPlayedText != null)
+            {
+                if (isBlitz)
+                {
+                    int turnsPlayed = MatchController.Instance != null
+                        ? MatchController.Instance.GetPlayerTurns(MatchController.PLAYER_HUMAN) : 0;
+                    _turnsPlayedText.text = $"{turnsPlayed} drops in 90s";
+                }
+                else
+                {
+                    _turnsPlayedText.text = $"{totalTurns} turns played";
+                }
+            }
+
+            // Best score + best combo line
+            int bestCombo = HighScoreManager.GetBestCombo(scoreMode);
+            if (_bestScoreText != null)
+            {
+                string comboStr = bestCombo > 0 ? $"  |  Best Combo: {bestCombo}" : "";
+                if (isNewBest)
+                {
+                    _bestScoreText.text  = $"NEW BEST!{comboStr}";
+                    _bestScoreText.color = GOLD;
+                }
+                else
+                {
+                    _bestScoreText.text  = $"Best: {bestScore}{comboStr}";
+                    _bestScoreText.color = TEXT_DIM;
+                }
+            }
 
             // Show and animate
             SetVisible(true);
@@ -249,6 +438,19 @@ namespace WordDrop
                     });
                 _winnerText.transform.DOPunchRotation(Vector3.forward * 5f, 0.4f, 10, 0.5f);
             }
+
+            // NEW BEST celebration — extra pop + punch on the best-score line
+            if (_bestScoreText != null && _bestScoreText.text.Contains("NEW BEST"))
+            {
+                yield return new WaitForSeconds(0.15f);
+                _bestScoreText.transform.DOScale(1.25f, 0.15f).SetEase(Ease.OutBack, 4f)
+                    .OnComplete(() =>
+                    {
+                        if (_bestScoreText != null)
+                            _bestScoreText.transform.DOScale(1f, 0.25f).SetEase(Ease.OutElastic, 0.8f, 0.3f);
+                    });
+                _bestScoreText.transform.DOPunchRotation(Vector3.forward * 8f, 0.4f, 12, 0.5f);
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -257,8 +459,48 @@ namespace WordDrop
 
         private void OnPlayAgainClicked()
         {
+            // If daily mode, go back to menu (can't replay daily)
+            if (DailyDropManager.IsDailyMode)
+            {
+                DailyDropManager.IsDailyMode = false;
+                AnalyticsManager.ButtonTap("daily_back_to_menu");
+                StartCoroutine(HideAnimationToMenu());
+                return;
+            }
+
             AnalyticsManager.ButtonTap("play_again");
             StartCoroutine(HideAnimation());
+        }
+
+        private void OnShareClicked()
+        {
+            int playerScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
+            int streak = DailyDropManager.GetStreak();
+            string shareText = DailyDropManager.GenerateShareText(playerScore, streak);
+
+            GUIUtility.systemCopyBuffer = shareText;
+            Debug.Log($"[GameOverUI] Share text copied to clipboard:\n{shareText}");
+
+            // Brief visual feedback on share button
+            if (_shareButton != null)
+            {
+                var label = _shareButton.GetComponentInChildren<TextMeshProUGUI>();
+                if (label != null) label.text = "COPIED!";
+                // Reset after a delay
+                StartCoroutine(ResetShareButtonLabel(1.5f));
+            }
+
+            AnalyticsManager.ButtonTap("share_daily");
+        }
+
+        private IEnumerator ResetShareButtonLabel(float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            if (_shareButton != null)
+            {
+                var label = _shareButton.GetComponentInChildren<TextMeshProUGUI>();
+                if (label != null) label.text = "SHARE";
+            }
         }
 
         private IEnumerator HideAnimation()
@@ -280,6 +522,23 @@ namespace WordDrop
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
 
+        private IEnumerator HideAnimationToMenu()
+        {
+            _panelRT.DOAnchorPos(_panelHomePos + new Vector2(0, -SLIDE_OFFSET_Y), HIDE_DURATION)
+                .SetEase(Ease.InBack, 1.5f);
+
+            Image overlayImg = _overlay.GetComponent<Image>();
+            if (overlayImg != null)
+                overlayImg.DOFade(0f, HIDE_DURATION);
+
+            yield return new WaitForSeconds(HIDE_DURATION + 0.05f);
+
+            SetVisible(false);
+
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.Menu);
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // VISIBILITY
         // ═══════════════════════════════════════════════════════════════════════════
@@ -294,6 +553,7 @@ namespace WordDrop
                 // Reset overlay alpha for next show
                 Image overlayImg = _overlay != null ? _overlay.GetComponent<Image>() : null;
                 if (overlayImg != null) overlayImg.color = new Color(0f, 0f, 0f, 0f);
+                _showInProgress = false;
             }
         }
 
@@ -356,6 +616,7 @@ namespace WordDrop
             cb.pressedColor     = Color.Lerp(bgColor, Color.black, 0.2f);
             cb.fadeDuration     = 0.08f;
             btn.colors = cb;
+            btn.onClick.AddListener(() => GameAudio.Instance?.PlayUIClick());
             btn.onClick.AddListener(onClick);
 
             // Label
@@ -375,7 +636,9 @@ namespace WordDrop
             t.fontStyle = FontStyles.Normal;
             t.color     = new Color(0.12f, 0.12f, 0.18f, 1f);
             t.alignment = TextAlignmentOptions.Center;
-            TMPHelper.ApplyEffects(t, t.color);
+            t.overflowMode = TextOverflowModes.Overflow;
+            t.enableWordWrapping = false;
+            t.margin = new Vector4(0f, 8f, 0f, 8f);
 
             return btnGO;
         }

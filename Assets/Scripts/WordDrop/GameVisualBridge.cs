@@ -140,9 +140,11 @@ namespace WordDrop
                 HUDManager.Instance.SetTurnsRemaining(
                     totalRemaining, MatchController.Instance.TotalMaxTurns);
 
-                // Always show human player's swap count (AI swaps aren't player-visible)
+                // Always show human player's swap and rewrite counts (AI charges aren't player-visible)
                 int swaps = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
                 HUDManager.Instance.ShowSwapCount(swaps);
+                int rewrites = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
+                HUDManager.Instance.ShowRewriteCount(rewrites);
             }
         }
 
@@ -164,6 +166,7 @@ namespace WordDrop
                       $"slot={evt.HandSlot} '{evt.OldLetter}'->'{evt.NewLetter}' " +
                       $"swapsRemaining={evt.SwapsRemaining}");
 
+            GameAudio.Instance?.PlaySwap();
             if (HUDManager.Instance != null)
                 HUDManager.Instance.ShowSwapCount(evt.SwapsRemaining);
         }
@@ -236,6 +239,10 @@ namespace WordDrop
                     }
                 }
 
+                // Detonation Replay: finalize chain recording
+                if (DetonationRecorder.Instance != null)
+                    DetonationRecorder.Instance.FinalizeChain();
+
                 Debug.Log($"[GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score={totalScore})");
                 onComplete?.Invoke(totalScore);
                 onFinished?.Invoke();
@@ -273,6 +280,10 @@ namespace WordDrop
             if (ScoringDisplay.Instance != null)
                 ScoringDisplay.Instance.ResetChain();
 
+            // ── Detonation Replay: snapshot board before resolution ──
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.SnapshotBoard();
+
             // ── Step 1: BeginDrop ────────────────────────────────────────────────────
 
             Debug.Log($"[GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col={col}, letter='{letter}', player={playerIndex})");
@@ -299,6 +310,22 @@ namespace WordDrop
 
             int targetRow = beginResult.Row;
             Debug.Log($"[GameVisualBridge] <<< BeginDrop returned: Phase={beginResult.Phase} Row={targetRow}");
+
+            // If AI replaced the top tile in a full column, remove old tile visually
+            if (beginResult.ReplacedTopTile)
+            {
+                Tile oldTile = grid.GetTile(col, targetRow);
+                if (oldTile != null)
+                {
+                    oldTile.Dissolve(0.15f);
+                    yield return new WaitForSeconds(0.12f);
+                    grid.RemoveTiles(new List<Vector2Int> { new Vector2Int(col, targetRow) });
+                }
+            }
+
+            // Detonation Replay: record the dropped tile
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.RecordDrop(letter, col, targetRow);
 
             // Animate tile falling
             Tile droppedTile = null;
@@ -371,6 +398,10 @@ namespace WordDrop
             bool loopExitedCleanly = false;
             const int MAX_STEPS = 200;
 
+            // Deferred scoring state — when detonation is coming, skip the full
+            // ScoringDisplay and show word+score during Exploding phase instead.
+            List<WordScoredEvent> _deferredScoredWords = null;
+
             while (resolving && safetyStepCount < MAX_STEPS)
             {
                 safetyStepCount++;
@@ -401,6 +432,10 @@ namespace WordDrop
                 }
 
                 Debug.Log($"[GameVisualBridge] NextStep iteration={safetyStepCount} Phase={step.Phase}");
+
+                // Detonation Replay: record every step
+                if (DetonationRecorder.Instance != null)
+                    DetonationRecorder.Instance.RecordStep(step);
 
                 switch (step.Phase)
                 {
@@ -433,11 +468,22 @@ namespace WordDrop
                         int scoredCount = (step.ScoredWords != null) ? step.ScoredWords.Count : 0;
                         Debug.Log($"[GameVisualBridge] Phase=WordsScored: {scoredCount} word(s) to animate.");
 
+                        // Check if a detonation is coming — if so, skip the slow
+                        // Balatro-style scoring and show a quick flash instead.
+                        bool detonationComing = (scoredCount > 0) && rules.PeekHasTriggers();
+
+                        if (detonationComing)
+                            _deferredScoredWords = new List<WordScoredEvent>(step.ScoredWords);
+
                         if (step.ScoredWords != null && step.ScoredWords.Count > 0)
                         {
                             for (int w = 0; w < step.ScoredWords.Count; w++)
                             {
                                 var sw = step.ScoredWords[w];
+
+                                // Track first word this turn for LastWordDisplay
+                                if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
+                                    MatchController.Instance.LastTurnWord = sw.Word;
 
                                 Debug.Log($"[GameVisualBridge]   Scored word [{w}]: '{sw.Word}' " +
                                           $"baseScore={sw.BaseScore} finalScore={sw.FinalScore} " +
@@ -460,32 +506,33 @@ namespace WordDrop
                                     }
                                 }
 
-                                // Procedural staggered highlight + scale pop
+                                // Procedural staggered highlight + scale pop (always plays)
                                 Color hlColor = isPlayer ? PLAYER_COLOR : AI_COLOR;
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(scoredTilesForFX, hlColor, wordIndex);
 
-                                // Show popup via HUD
-                                // Balatro-style scoring display
-                                try
-                                {
-                                    if (ScoringDisplay.Instance != null)
-                                        ScoringDisplay.Instance.ShowWordScore(sw.Word, sw.FinalScore, isPlayer);
-                                }
-                                catch (System.Exception ex)
-                                {
-                                    Debug.LogWarning($"[GameVisualBridge] ScoringDisplay error: {ex.Message}");
-                                }
+                                // Haptic feedback — light tap on word scored
+                                HapticsManager.Light();
 
-                                // Beat timing — full countdown for first word, quick for chains
-                                float scoringDur = (wordIndex == 0)
-                                    ? ScoringDisplay.GetDuration(sw.Word.Length)
-                                    : ScoringDisplay.GetQuickDuration();
-                                float beat = Mathf.Max(
-                                    WordDropFX.GetBeatDuration(WORD_LOCKIN_BEAT, wordIndex),
-                                    scoringDur);
-                                Debug.Log($"[GameVisualBridge]   Waiting {beat:F2}s beat for word '{sw.Word}'");
-                                yield return new WaitForSeconds(beat);
+                                if (detonationComing)
+                                {
+                                    // Detonation coming — no delay, explosion fires on impact
+                                    yield return null;
+                                }
+                                else
+                                {
+                                    // Normal path — show word+score popup from the tiles on the board
+                                    if (BonusPopup.Instance != null && scoredTilesForFX.Count > 0)
+                                    {
+                                        Vector3 wc = Vector3.zero;
+                                        for (int st = 0; st < scoredTilesForFX.Count; st++)
+                                            if (scoredTilesForFX[st] != null) wc += scoredTilesForFX[st].transform.position;
+                                        wc /= Mathf.Max(1, scoredTilesForFX.Count);
+                                        BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, wc, isPlayer);
+                                    }
+
+                                    yield return new WaitForSeconds(0.35f);
+                                }
                                 wordIndex++;
                             }
                         }
@@ -535,6 +582,9 @@ namespace WordDrop
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayDetonation(trigTiles, wordIndex);
                             }
+
+                            // Haptic feedback — medium pulse on primed tile trigger
+                            HapticsManager.Medium();
 
                             // If there are chain triggers, brief pause then ignite them
                             if (hasChainTriggers)
@@ -606,6 +656,42 @@ namespace WordDrop
                                 catch { /* ignore */ }
                             }
 
+                            // Chain counter — persistent on-screen combo display
+                            if (ChainCounter.Instance != null)
+                                ChainCounter.Instance.OnDetonation(step.ChainDepth);
+
+                            // Compute explosion center for popups
+                            Vector3 center = Vector3.zero;
+                            for (int d = 0; d < dyingTiles.Count; d++)
+                                if (dyingTiles[d] != null) center += dyingTiles[d].transform.position;
+                            center /= Mathf.Max(1, dyingTiles.Count);
+
+                            // Haptic feedback — strong impact on detonation explosion
+                            HapticsManager.Strong();
+
+                            // Named Meltdown — build-up + stamp BEFORE explosion (AI path)
+                            bool aiMeltdownActive = false;
+                            if (MeltdownManager.Instance != null)
+                            {
+                                int aiPlayer = MatchController.Instance != null ? MatchController.Instance.CurrentPlayer : 0;
+                                bool aiLastTurn = MatchController.Instance != null
+                                    && MatchController.Instance.GetPlayerTurns(aiPlayer) >= MatchController.Instance.EffectiveMaxTurns - 1;
+                                Coroutine aiMeltdownIntro = MeltdownManager.Instance.TryMeltdownIntro(
+                                    step.ChainDepth, step.ChainTriggeredCount, step.DetonationBonus, aiLastTurn);
+                                if (aiMeltdownIntro != null)
+                                {
+                                    yield return aiMeltdownIntro;
+                                    aiMeltdownActive = true;
+                                }
+                            }
+
+                            // Hitstop — only if meltdown didn't already freeze
+                            if (!aiMeltdownActive && dyingTiles.Count > 0)
+                            {
+                                float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
+                                yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                            }
+
                             // Procedural staggered explosion with escalating shake
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                                 yield return WordDropFX.Instance.PlayExplosion(dyingTiles, wordIndex);
@@ -613,15 +699,23 @@ namespace WordDrop
                             // Show detonation bonus popup
                             if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dyingTiles.Count > 0)
                             {
-                                Vector3 center = Vector3.zero;
-                                for (int d = 0; d < dyingTiles.Count; d++)
-                                    if (dyingTiles[d] != null) center += dyingTiles[d].transform.position;
-                                center /= Mathf.Max(1, dyingTiles.Count);
-
                                 int baseBonus = step.DetonationBonus - step.DetonationHeat;
-                                BonusPopup.Instance.ShowDetonation("", baseBonus, center);
+                                BonusPopup.Instance.ShowDetonation("", baseBonus, center, step.ChainDepth, isPlayer);
                                 if (step.DetonationHeat > 0)
-                                    BonusPopup.Instance.ShowHeatBonus(step.DetonationHeat, center);
+                                    BonusPopup.Instance.ShowHeatBonus(step.DetonationHeat, center, isPlayer);
+                            }
+
+                            // Show deferred word+score from the skipped ScoringDisplay
+                            if (_deferredScoredWords != null && BonusPopup.Instance != null)
+                            {
+                                float yOffset = 0.5f;
+                                foreach (var sw in _deferredScoredWords)
+                                {
+                                    BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, center + Vector3.up * yOffset, isPlayer);
+                                    yOffset += 0.35f;
+
+                                }
+                                _deferredScoredWords = null;
                             }
 
                             try
@@ -634,6 +728,14 @@ namespace WordDrop
                             }
 
                             yield return new WaitForSeconds(POST_EXPLOSION_PAUSE);
+
+                            // Meltdown outro — fade stamp after chain played out (AI path)
+                            if (aiMeltdownActive && MeltdownManager.Instance != null)
+                            {
+                                Coroutine aiOutro = MeltdownManager.Instance.TryMeltdownOutro();
+                                if (aiOutro != null)
+                                    yield return aiOutro;
+                            }
                         }
                         else
                         {
@@ -676,11 +778,18 @@ namespace WordDrop
                     // Job 5: FinalizeDrop() is ALWAYS called, even if TotalScore == 0.
                     case RulesEngine.ResolutionPhase.Complete:
                     {
+                        if (ChainCounter.Instance != null)
+                            ChainCounter.Instance.OnChainComplete();
+
                         int completedScore = step.TotalScore; // May be 0 — that's fine
                         Debug.Log($"[GameVisualBridge] Phase=Complete: TotalScore={completedScore}. Resolution finished cleanly.");
 
                         // Job 5 guarantee: FinalizeDrop is ALWAYS called in Complete phase,
                         // regardless of TotalScore value (including 0)
+                        // Refresh bonus cell overlays (consumed bonus cells disappear)
+                        if (GridManager.Instance != null)
+                            GridManager.Instance.RefreshBonusCellOverlays();
+
                         try
                         {
                             rules.FinalizeDrop();
@@ -812,7 +921,8 @@ namespace WordDrop
                     if (tile != null)
                     {
                         int fuse = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
-                        try { tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse); }
+                        Color glowColor = pw.IsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+                        try { tile.SetPrimedGlow(glowColor, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse, isGold: pw.IsGold); }
                         catch { /* ignore */ }
                     }
                 }

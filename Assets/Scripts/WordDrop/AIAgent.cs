@@ -129,6 +129,10 @@ namespace WordDrop
         // PUBLIC API
         // ═══════════════════════════════════════════════════════════════════════════
 
+        // Rubber-banding: when AI leads by this many points, it plays suboptimally
+        private const int   RUBBERBAND_LEAD_THRESHOLD = 40;  // with triangular scoring, 20 is a single chain
+        private const float RUBBERBAND_DOWNGRADE_CHANCE = 0.25f; // 25% chance — subtle, not crippling
+
         public bool EvaluateBestMove(out int bestCol, out int bestSlot, out char bestLetter)
         {
             bestCol    = -1;
@@ -145,11 +149,9 @@ namespace WordDrop
             PrimedWordRegistry registry = rules.PrimedRegistry;
             float boardOccupancy = rules.GetBoardOccupancy();
 
-            MoveEval best = default;
-            best.ImmediateScore = -999f;
-            bool foundAny = false;
+            // Collect ALL valid moves, sorted by score
+            var allMoves = new System.Collections.Generic.List<MoveEval>();
 
-            // Evaluate every (slot, column) combination
             for (int slot = 0; slot < PlayerHand.HAND_SIZE; slot++)
             {
                 char letter = aiHand.GetSlot(slot);
@@ -160,20 +162,37 @@ namespace WordDrop
                     if (!rules.IsColumnAvailable(col)) continue;
 
                     MoveEval eval = EvaluateMove(rules, registry, col, letter, slot, boardOccupancy);
+                    allMoves.Add(eval);
+                }
+            }
 
-                    if (!foundAny || eval.Total > best.Total)
+            // If no open columns, allow replacing top tiles (last resort)
+            if (allMoves.Count == 0)
+            {
+                for (int slot = 0; slot < PlayerHand.HAND_SIZE; slot++)
+                {
+                    char letter = aiHand.GetSlot(slot);
+                    if (letter == '\0') continue;
+
+                    for (int col = 0; col < RulesEngine.COLS; col++)
                     {
-                        best = eval;
-                        foundAny = true;
+                        if (rules.IsColumnAvailable(col)) continue; // already tried
+                        MoveEval eval = EvaluateMove(rules, registry, col, letter, slot, boardOccupancy);
+                        eval.ImmediateScore -= 10f; // heavy penalty — sacrifice move
+                        allMoves.Add(eval);
                     }
                 }
             }
 
-            if (!foundAny)
+            if (allMoves.Count == 0)
             {
                 Debug.Log("[AIAgent] No valid move found.");
                 return false;
             }
+
+            // Sort descending by total score
+            allMoves.Sort((a, b) => b.Total.CompareTo(a.Total));
+            MoveEval best = allMoves[0];
 
             // Difficulty gate: chance to play random instead
             if (best.ImmediateScore > 0 && Random.value < RandomChance)
@@ -181,6 +200,23 @@ namespace WordDrop
                 Debug.Log($"[AIAgent] Difficulty ({DifficultyName}): ignoring best, playing random.");
                 if (PickRandomMove(aiHand, out bestCol, out bestSlot, out bestLetter))
                     return true;
+            }
+
+            // Rubber-banding: when AI has a big lead, occasionally pick a weaker move
+            // This keeps games competitive without the player knowing
+            if (ScoreManager.Instance != null && allMoves.Count >= 3)
+            {
+                int aiScore = ScoreManager.Instance.AIScore;
+                int playerScore = ScoreManager.Instance.PlayerScore;
+                int lead = aiScore - playerScore;
+
+                if (lead >= RUBBERBAND_LEAD_THRESHOLD && Random.value < RUBBERBAND_DOWNGRADE_CHANCE)
+                {
+                    // Pick 2nd or 3rd best move instead
+                    int pick = Random.Range(1, Mathf.Min(3, allMoves.Count));
+                    best = allMoves[pick];
+                    Debug.Log($"[AIAgent] Rubber-band: AI leads by {lead}, downgraded to move #{pick + 1}");
+                }
             }
 
             bestCol    = best.Col;
@@ -226,11 +262,10 @@ namespace WordDrop
                 simScore += matches[m].Score;
             eval.ImmediateScore = simScore;
 
-            // 2. Trigger bonus
+            // 2. Trigger bonus — estimate actual detonation value, not just count
             if (registry != null && registry.Count > 0 && matches.Count > 0)
             {
-                int triggerCount = CountPrimedTriggers(matches, registry);
-                eval.TriggerBonus = triggerCount * RulesEngine.BREAKER_BONUS;
+                eval.TriggerBonus = EstimateDetonationValue(matches, registry);
             }
 
             // 3. Block value — does this move occupy a cell the human could use?
@@ -349,13 +384,20 @@ namespace WordDrop
             return conn;
         }
 
-        // ── Trigger counting ────────────────────────────────────────────────────
+        // ── Trigger scoring ──────────────────────────────────────────────────────
 
-        private int CountPrimedTriggers(List<RulesWordMatch> newWords, PrimedWordRegistry registry)
+        /// <summary>
+        /// Estimates the actual detonation value of triggered primed words,
+        /// using the live scoring formula: (pw.Score × 1.5 + 5) × triangular chain multiplier.
+        /// This keeps AI valuation aligned with the real scoring system.
+        /// </summary>
+        private float EstimateDetonationValue(List<RulesWordMatch> newWords, PrimedWordRegistry registry)
         {
             if (registry == null || newWords == null) return 0;
 
-            HashSet<int> triggered = new HashSet<int>();
+            // Collect unique triggered primed words
+            HashSet<int> triggeredIds = new HashSet<int>();
+            List<PrimedWordRegistry.PrimedWord> triggeredWords = new List<PrimedWordRegistry.PrimedWord>();
 
             for (int w = 0; w < newWords.Count; w++)
             {
@@ -364,11 +406,28 @@ namespace WordDrop
                 {
                     var overlapping = registry.GetPrimedWordsContaining(newWords[w].Cells[c]);
                     for (int p = 0; p < overlapping.Count; p++)
-                        triggered.Add(overlapping[p].Id);
+                    {
+                        if (triggeredIds.Add(overlapping[p].Id))
+                            triggeredWords.Add(overlapping[p]);
+                    }
                 }
             }
 
-            return triggered.Count;
+            if (triggeredWords.Count == 0) return 0;
+
+            // Estimate value using the live formula
+            float totalValue = 0;
+            for (int i = 0; i < triggeredWords.Count; i++)
+            {
+                // Base detonation value: pw.Score × multiplier + flat bonus
+                float rawBonus = triggeredWords[i].Score * RulesEngine.DETONATION_SCORE_MULTIPLIER
+                               + RulesEngine.BREAKER_BONUS;
+                // Chain depth = i (each subsequent trigger is deeper in the chain)
+                float chainMult = RulesEngine.TriangularChainMultiplier(i);
+                totalValue += rawBonus * chainMult;
+            }
+
+            return totalValue;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════

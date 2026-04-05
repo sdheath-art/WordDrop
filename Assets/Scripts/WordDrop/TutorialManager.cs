@@ -6,28 +6,24 @@ using DG.Tweening;
 namespace WordDrop
 {
     /// <summary>
-    /// First-time tutorial that teaches the two core mechanics:
-    ///   1. Form a word (CAT) by dropping a letter
-    ///   2. Detonate a primed word (POT overlaps primed CAT)
+    /// First-time tutorial that teaches the game one concept at a time:
     ///
-    /// Flow:
-    ///   - Intercepts at match start when PlayerPrefs "tutorial_complete" == 0
-    ///   - Sets up a deterministic board + hand for each step
-    ///   - Shows instruction text + pulsing arrow on the target column
-    ///   - Restricts input to only the target column via AllowedColumn
-    ///   - After detonation, ends tutorial, sets PlayerPrefs, starts normal game
+    ///   STEP 1 — "DRAG UP TO DROP"
+    ///     Board: empty. Hand: O, X, R, E, L
+    ///     Player drags O up to column 3 (center). Letter falls. No word formed.
+    ///     Teaches the core input: drag card up → letter falls into column.
     ///
-    /// STEP 1 — "MAKE A WORD"
-    ///   Board: A at (1,0), T at (2,0)
-    ///   Hand:  C, X, R, E, L  (C at slot 0 is the target)
-    ///   Arrow: column 0
-    ///   Result: C drops to (0,0) → CAT at (0,0)(1,0)(2,0) → primes
+    ///   STEP 2 — "NOW MAKE A WORD"
+    ///     Board: O at (3,0), G at (4,0) placed by setup. Hand: D, X, R, E, L
+    ///     Player drags D to column 2. D(2,0) O(3,0) G(4,0) = DOG. Tiles prime (glow).
     ///
-    /// STEP 2 — "BLOW IT UP"
-    ///   Board: CAT primed + O placed at (2,1) above T
-    ///   Hand:  P, X, R, E, L  (P at slot 0 is the target)
-    ///   Arrow: column 2
-    ///   Result: P drops to (2,2) → POT vertically (2,2)(2,1)(2,0) → overlaps T(2,0) → DETONATION
+    ///   STEP 3 — "THOSE TILES ARE LIVE" (no action — just a beat)
+    ///     Pause to let the player see the glowing primed tiles. Name the state.
+    ///
+    ///   STEP 4 — "ONE MORE"
+    ///     Board: DOG primed + I placed at (4,1) above G. Hand: P, X, R, E, L
+    ///     Player drags P to column 4. P(4,2) I(4,1) G(4,0) = PIG vertically.
+    ///     Overlaps G at (4,0) → DETONATION. Tutorial complete.
     /// </summary>
     public class TutorialManager : MonoBehaviour
     {
@@ -35,19 +31,33 @@ namespace WordDrop
 
         public static TutorialManager Instance { get; private set; }
 
-        // ── Tutorial column restriction ───────────────────────────────────────────
-        // When >= 0, HandManager should only allow drops into this column.
-        // Set to -1 to allow all columns (normal play).
+        // ── Tutorial restrictions ──────────────────────────────────────────────────
         public static int AllowedColumn { get; private set; } = -1;
-
-        // When true, HandManager should block shuffle and swap interactions.
+        public static int AllowedCardIndex { get; private set; } = -1;
         public static bool BlockShuffleAndSwap { get; private set; } = false;
+
+        /// <summary>
+        /// The letter that should appear in the NEXT tile preview during tutorial.
+        /// Set before each step so the preview stays consistent after DrawSlot's PreCacheNext.
+        /// '\0' means no override.
+        /// </summary>
+        public static char NextPreviewLetter { get; private set; } = '\0';
 
         // ── State ─────────────────────────────────────────────────────────────────
 
-        private enum TutorialStep { Inactive, WaitForWord, WaitForDetonation, ShowBoom, Done }
+        private enum TutorialStep
+        {
+            Inactive,
+            WaitForDrop,        // Step 1: learn the input
+            WaitForWord,        // Step 2: form a word
+            ShowPrimed,         // Step 3: name the glow (no action)
+            WaitForDetonation,  // Step 4: blow it up
+            ShowBoom,           // Celebration
+            Done
+        }
         private TutorialStep _step = TutorialStep.Inactive;
-        private static bool _skipForSession = false; // set when player skips or completes tutorial
+        private static bool _skipForSession = false;
+        private bool _transitioning = false;
 
         public bool IsActive => _step != TutorialStep.Inactive && _step != TutorialStep.Done;
 
@@ -56,8 +66,6 @@ namespace WordDrop
         private GameObject _instructionGO;
         private TMPro.TextMeshPro _instructionText;
         private GameObject _arrowGO;
-        private TextMesh   _arrowText;
-        private Tweener    _arrowBobTween;
         private Tweener    _arrowPulseTween;
         private GameObject _skipButtonCanvas;
         private GameObject _cardHighlightGO;
@@ -65,10 +73,9 @@ namespace WordDrop
 
         // ── Colors ────────────────────────────────────────────────────────────────
 
-        private static readonly Color TEXT_COLOR       = new Color(1f, 1f, 1f, 1f);
-        private static readonly Color TEXT_SHADOW      = new Color(0f, 0f, 0f, 0.3f);
-        private static readonly Color ARROW_COLOR      = new Color(0.2f, 0.85f, 0.4f, 1f);  // green
-        private static readonly Color BOOM_COLOR       = new Color(1f, 0.6f, 0.1f, 1f);     // orange
+        private static readonly Color TEXT_COLOR  = new Color(1f, 1f, 1f, 1f);
+        private static readonly Color ARROW_COLOR = new Color(0.2f, 0.85f, 0.4f, 0.8f);
+        private static readonly Color BOOM_COLOR  = new Color(1f, 0.6f, 0.1f, 1f);
 
         // ── Auto-create ───────────────────────────────────────────────────────────
 
@@ -96,26 +103,16 @@ namespace WordDrop
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // PUBLIC API — called by MatchController/GameManager at match start
+        // PUBLIC API
         // ══════════════════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Returns true if the tutorial should run (first game ever).
-        /// Call this before normal match setup to decide whether to intercept.
-        /// </summary>
         public static bool ShouldRunTutorial()
         {
             if (_skipForSession) return false;
-            // Only run tutorial on first ever launch
             if (PlayerPrefs.GetInt("tutorial_complete", 0) == 1) return false;
             return true;
         }
 
-        /// <summary>
-        /// Begins the tutorial sequence. Call AFTER MatchController.StartMatch()
-        /// has been called (so the board, hands, and managers are initialized).
-        /// The tutorial will override the board and hand state.
-        /// </summary>
         public void BeginTutorial()
         {
             if (_step != TutorialStep.Inactive && _step != TutorialStep.Done)
@@ -126,87 +123,69 @@ namespace WordDrop
 
             Debug.Log("[TutorialManager] === TUTORIAL BEGIN ===");
 
-            _step = TutorialStep.WaitForWord;
+            _step = TutorialStep.WaitForDrop;
             AllowedColumn = -1;
+            AllowedCardIndex = -1;
             BlockShuffleAndSwap = true;
 
-            // Subscribe to RulesEngine events to detect scoring / detonation
             SubscribeEvents();
-
-            // Show skip button
             ShowSkipButton();
-
-            // Set up the board for step 1
             StartCoroutine(SetupStep1());
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 1 — "MAKE A WORD"
+        // STEP 1 — "DRAG UP TO DROP"
+        // Learn the core input: drag a card up, letter falls into a column.
         // ══════════════════════════════════════════════════════════════════════════
 
         private IEnumerator SetupStep1()
         {
-            // Wait a frame for everything to settle after StartMatch
-            yield return null;
+            yield return null; // wait a frame for everything to settle
 
             var rules = RulesEngine.Instance;
             var grid  = GridManager.Instance;
-            if (rules == null || grid == null)
-            {
-                Debug.LogError("[TutorialManager] RulesEngine or GridManager missing — aborting tutorial.");
-                EndTutorial();
-                yield break;
-            }
+            if (rules == null || grid == null) { EndTutorial(); yield break; }
 
-            // Clear the board (StartMatch may have placed opening seed letters)
+            // Clear the board completely
             rules.ClearBoard();
             grid.ClearAllCells();
 
-            // Place A at (1,0) and T at (2,0)
-            rules.SetCell(1, 0, new RulesCellData { Letter = 'A', Col = 1, Row = 0, PlayerIndex = -1 });
-            rules.SetCell(2, 0, new RulesCellData { Letter = 'T', Col = 2, Row = 0, PlayerIndex = -1 });
-
-            // Sync visuals
+            // Empty board — just learning to drop
             grid.RebuildFromRulesEngine(rules);
 
-            // Override the player hand to: C, X, R, E, L
-            SetPlayerHand(new char[] { 'C', 'X', 'R', 'E', 'L' });
+            // Hand: O, X, R, E, L
+            SetPlayerHand(new char[] { 'O', 'X', 'R', 'E', 'L' });
 
-            // Restrict drops to column 0 only
-            AllowedColumn = 0;
+            // Restrict to column 3 (center), card 0 only
+            AllowedColumn = 3;
+            AllowedCardIndex = 0;
 
-            // Show instruction text
-            ShowInstruction("MAKE A WORD", TEXT_COLOR);
+            // Rig the next card deal so slot 0 refills with D after the O drop
+            RigNextDraw('D');
+            NextPreviewLetter = 'D';
 
-            // Show pulsing arrow above column 0 + above the C card
-            ShowArrow(0);
+            ShowInstruction("DRAG UP TO DROP");
+            ShowArrow(3);
             ShowCardHighlight(0);
-
-            // Dim shuffle so it doesn't compete with the guided action
             DimShuffle(true);
 
-            // Enable input
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(true);
 
-            Debug.Log("[TutorialManager] Step 1 ready — waiting for CAT at column 0.");
+            Debug.Log("[TutorialManager] Step 1 ready — waiting for O drop at column 3.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 2 — "BLOW IT UP"
+        // STEP 2 — "NOW MAKE A WORD"
+        // Board has O at (3,0). Place G at (4,0). Player drops D at (2,0) → DOG.
         // ══════════════════════════════════════════════════════════════════════════
 
         private IEnumerator SetupStep2()
         {
             var rules = RulesEngine.Instance;
             var grid  = GridManager.Instance;
-            if (rules == null || grid == null)
-            {
-                EndTutorial();
-                yield break;
-            }
+            if (rules == null || grid == null) { EndTutorial(); yield break; }
 
-            // Disable input briefly while we reconfigure
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(false);
 
@@ -214,71 +193,135 @@ namespace WordDrop
             HideCardHighlight();
             HideInstruction();
 
-            // Wait for the word scoring animation to play out
-            yield return new WaitForSeconds(1.5f);
+            // Brief pause to let the drop settle
+            yield return new WaitForSeconds(1.0f);
 
-            // Apply primed glow to CAT tiles before the O drops
-            grid.SyncToRulesState(rules);
-            PrimedWordRegistry registry = rules.PrimedRegistry;
-            if (registry != null)
-            {
-                for (int p = 0; p < registry.Count; p++)
-                {
-                    var pw = registry.GetByIndex(p);
-                    if (pw == null) continue;
-                    for (int c = 0; c < pw.Cells.Count; c++)
-                    {
-                        Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
-                        if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW);
-                    }
-                }
-            }
+            // Drop G at (4,0) — animate it falling in like an AI move
+            rules.SetCell(4, 0, new RulesCellData { Letter = 'G', Col = 4, Row = 0, PlayerIndex = -1 });
+            grid.DropTile(4, 'G', TileOwner.AI);
 
             yield return new WaitForSeconds(0.5f);
 
-            // Place O in rules data at (2,1)
-            rules.SetCell(2, 1, new RulesCellData { Letter = 'O', Col = 2, Row = 1, PlayerIndex = 1 });
-
-            // Animate the O dropping in like an AI move
-            grid.DropTile(2, 'O', TileOwner.AI);
-
-            // Wait for drop animation to finish
-            yield return new WaitForSeconds(0.4f);
-
-            // Override hand to: P, X, R, E, L
-            SetPlayerHand(new char[] { 'P', 'X', 'R', 'E', 'L' });
-
-            // Restrict to column 2
+            // Restrict to column 2, card 0 only
             AllowedColumn = 2;
+            AllowedCardIndex = 0;
 
-            // Show instruction
-            ShowInstruction("NICE. BLOW IT UP.", TEXT_COLOR);
-
-            // Show pulsing arrow above column 2 + above the P card
-            ShowArrow(2);
-            ShowCardHighlight(0);
-
-            // Force current player back to human (bookkeeping may have switched to AI)
+            // Force current player back to human (FullTurnSequence may have switched it)
             if (MatchController.Instance != null)
                 MatchController.Instance.CurrentPlayer = MatchController.PLAYER_HUMAN;
 
-            // Re-enable input
+            // Rig the next card deal so slot 0 refills with P after the D drop (for PIG in step 4)
+            RigNextDraw('P');
+            NextPreviewLetter = 'P';
+
+            ShowInstruction("NOW MAKE A WORD");
+            ShowArrow(2);
+            ShowCardHighlight(0);
+
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(true);
 
-            Debug.Log("[TutorialManager] Step 2 ready — waiting for POT detonation at column 2.");
+            _transitioning = false;
+            Debug.Log("[TutorialManager] Step 2 ready — waiting for D drop at column 2 to form DOG.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // EVENT HANDLERS — detect word scoring and detonation
+        // STEP 3 — "THOSE TILES ARE LIVE" (no action — naming the glow)
+        // ══════════════════════════════════════════════════════════════════════════
+
+        private IEnumerator SetupStep3()
+        {
+            var rules = RulesEngine.Instance;
+            var grid  = GridManager.Instance;
+            if (rules == null || grid == null) { EndTutorial(); yield break; }
+
+            if (HandManager.Instance != null)
+                HandManager.Instance.SetInteractable(false);
+
+            HideArrow();
+            HideCardHighlight();
+            HideInstruction();
+
+            // Wait for word scoring animation
+            yield return new WaitForSeconds(1.2f);
+
+            // Sync primed glow visuals
+            grid.SyncToRulesState(rules);
+            ApplyPrimedGlow(rules, grid);
+
+            // BUG-07: Verify DOG is actually primed before proceeding
+            if (rules.PrimedRegistry == null || rules.PrimedRegistry.Count == 0)
+            {
+                Debug.LogError("[TutorialManager] Step 3: DOG not primed — aborting tutorial.");
+                _transitioning = false;
+                EndTutorial();
+                StartNormalGame();
+                yield break;
+            }
+
+            yield return new WaitForSeconds(0.3f);
+
+            // Name the state — no action required
+            ShowInstruction("THE FUSE IS LIT");
+
+            // Hold for a beat so the player sees the glow + reads the text
+            yield return new WaitForSeconds(2.0f);
+
+            HideInstruction();
+            yield return new WaitForSeconds(0.3f);
+
+            // Move to step 4
+            _step = TutorialStep.WaitForDetonation;
+            StartCoroutine(SetupStep4());
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // STEP 4 — "ONE MORE"
+        // Board: DOG primed + I at (4,1). Player drops P at column 4 → PIG → BOOM.
+        // ══════════════════════════════════════════════════════════════════════════
+
+        private IEnumerator SetupStep4()
+        {
+            var rules = RulesEngine.Instance;
+            var grid  = GridManager.Instance;
+            if (rules == null || grid == null) { EndTutorial(); yield break; }
+
+            // Place I at (4,1) above G — animate it dropping in like an AI move
+            rules.SetCell(4, 1, new RulesCellData { Letter = 'I', Col = 4, Row = 1, PlayerIndex = -1 });
+            grid.DropTile(4, 'I', TileOwner.AI);
+
+            yield return new WaitForSeconds(0.5f);
+
+            // Restrict to column 4, card 0 only
+            AllowedColumn = 4;
+            AllowedCardIndex = 0;
+
+            ShowInstruction("YOUR MOVE");
+            ShowArrow(4);
+            ShowCardHighlight(0);
+
+            // Force current player back to human
+            if (MatchController.Instance != null)
+                MatchController.Instance.CurrentPlayer = MatchController.PLAYER_HUMAN;
+
+            if (HandManager.Instance != null)
+                HandManager.Instance.SetInteractable(true);
+
+            _transitioning = false;
+            Debug.Log("[TutorialManager] Step 4 ready — waiting for P drop at column 4 to form PIG → detonation.");
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // EVENT HANDLERS
         // ══════════════════════════════════════════════════════════════════════════
 
         private void SubscribeEvents()
         {
             if (RulesEngine.Instance != null)
             {
-                RulesEngine.Instance.OnWordScored     += OnWordScored;
-                RulesEngine.Instance.OnPrimedTriggered += OnPrimedTriggered;
+                RulesEngine.Instance.OnWordScored      += OnWordScored;
+                RulesEngine.Instance.OnPrimedTriggered  += OnPrimedTriggered;
+                RulesEngine.Instance.OnTileDropped      += OnTileDropped;
             }
         }
 
@@ -286,30 +329,48 @@ namespace WordDrop
         {
             if (RulesEngine.Instance != null)
             {
-                RulesEngine.Instance.OnWordScored     -= OnWordScored;
-                RulesEngine.Instance.OnPrimedTriggered -= OnPrimedTriggered;
+                RulesEngine.Instance.OnWordScored      -= OnWordScored;
+                RulesEngine.Instance.OnPrimedTriggered  -= OnPrimedTriggered;
+                RulesEngine.Instance.OnTileDropped      -= OnTileDropped;
             }
+        }
+
+        private void OnTileDropped(TileDroppedEvent evt)
+        {
+            if (_step != TutorialStep.WaitForDrop) return;
+            if (_transitioning) return;
+
+            Debug.Log($"[TutorialManager] Tile dropped during step 1: '{evt.Letter}' at col {evt.Col}");
+
+            // Step 1 complete — they learned to drop
+            _step = TutorialStep.WaitForWord;
+            _transitioning = true;
+            StartCoroutine(SetupStep2());
         }
 
         private void OnWordScored(WordScoredEvent evt)
         {
             if (_step != TutorialStep.WaitForWord) return;
+            if (_transitioning) return;
 
-            Debug.Log($"[TutorialManager] Word scored during tutorial: '{evt.Word}'");
+            Debug.Log($"[TutorialManager] Word scored during step 2: '{evt.Word}'");
 
-            // Move to step 2 — wait for detonation
-            _step = TutorialStep.WaitForDetonation;
-            StartCoroutine(SetupStep2());
+            // Step 2 complete — word formed, now show primed state
+            _step = TutorialStep.ShowPrimed;
+            _transitioning = true;
+            StartCoroutine(SetupStep3());
         }
 
         private void OnPrimedTriggered(PrimedTriggeredEvent evt)
         {
             if (_step != TutorialStep.WaitForDetonation) return;
+            if (_transitioning) return;
 
-            Debug.Log($"[TutorialManager] DETONATION during tutorial! " +
+            Debug.Log($"[TutorialManager] DETONATION during step 4! " +
                       $"Triggered='{evt.TriggeredWord}' by '{evt.TriggerWord}'");
 
             _step = TutorialStep.ShowBoom;
+            _transitioning = true;
             StartCoroutine(ShowBoomAndEnd());
         }
 
@@ -323,14 +384,18 @@ namespace WordDrop
             HideCardHighlight();
             HideInstruction();
 
-            // Disable input while explosion plays out
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(false);
 
-            // Let the explosion animation speak for itself
-            yield return new WaitForSeconds(2.0f);
+            // Let the explosion speak for itself
+            yield return new WaitForSeconds(1.5f);
 
-            // Mark tutorial complete for this session and persistently
+            // Brief celebration text
+            ShowInstruction("NICE.");
+            yield return new WaitForSeconds(1.2f);
+
+            HideInstruction();
+
             _skipForSession = true;
             PlayerPrefs.SetInt("tutorial_complete", 1);
             PlayerPrefs.Save();
@@ -338,7 +403,6 @@ namespace WordDrop
 
             EndTutorial();
 
-            // Start a fresh normal game
             yield return new WaitForSeconds(0.3f);
             StartNormalGame();
         }
@@ -346,8 +410,11 @@ namespace WordDrop
         private void EndTutorial()
         {
             _step = TutorialStep.Done;
+            _transitioning = false;
             AllowedColumn = -1;
+            AllowedCardIndex = -1;
             BlockShuffleAndSwap = false;
+            NextPreviewLetter = '\0';
 
             UnsubscribeEvents();
             HideArrow();
@@ -362,8 +429,6 @@ namespace WordDrop
         private void StartNormalGame()
         {
             Debug.Log("[TutorialManager] Starting normal game after tutorial.");
-
-            // Re-enter Playing state which will call StartMatch fresh
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
@@ -372,12 +437,8 @@ namespace WordDrop
         // HAND MANIPULATION
         // ══════════════════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Overwrites the player's hand data and visual display.
-        /// </summary>
         private void SetPlayerHand(char[] letters)
         {
-            // Set data in MatchController's PlayerHand
             if (MatchController.Instance != null)
             {
                 PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
@@ -388,19 +449,73 @@ namespace WordDrop
                 }
             }
 
-            // Update visual display
             if (HandManager.Instance != null)
                 HandManager.Instance.SetHand(letters);
         }
 
+        /// <summary>
+        /// Replace a single card slot without rebuilding the entire hand.
+        /// This avoids the visual "whole hand changed" confusion.
+        /// </summary>
+        private void ReplaceSingleCard(int slotIndex, char newLetter)
+        {
+            // Update data
+            if (MatchController.Instance != null)
+            {
+                PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+                if (hand != null)
+                    hand.SetSlot(slotIndex, newLetter);
+            }
+
+            // Update just this one card's visual
+            if (HandManager.Instance != null)
+            {
+                // Update the internal hand array and refresh only this card
+                HandManager.Instance.UpdateSingleCard(slotIndex, newLetter);
+            }
+        }
+
+        /// <summary>
+        /// Rigs the next card dealt into slot 0 to be a specific letter.
+        /// Works by setting the PlayerHand's CachedNextLetter, which is what
+        /// DrawSlot actually uses (not the tile bag directly).
+        /// </summary>
+        private void RigNextDraw(char letter)
+        {
+            if (MatchController.Instance == null) return;
+            PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+            if (hand != null)
+                hand.SetCachedNextLetter(char.ToUpper(letter));
+        }
+
         // ══════════════════════════════════════════════════════════════════════════
-        // DIM SHUFFLE — de-emphasize during tutorial
+        // PRIMED GLOW HELPER
+        // ══════════════════════════════════════════════════════════════════════════
+
+        private void ApplyPrimedGlow(RulesEngine rules, GridManager grid)
+        {
+            PrimedWordRegistry registry = rules.PrimedRegistry;
+            if (registry == null) return;
+
+            for (int p = 0; p < registry.Count; p++)
+            {
+                var pw = registry.GetByIndex(p);
+                if (pw == null) continue;
+                for (int c = 0; c < pw.Cells.Count; c++)
+                {
+                    Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
+                    if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW);
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // DIM SHUFFLE
         // ══════════════════════════════════════════════════════════════════════════
 
         private void DimShuffle(bool dim)
         {
             if (HandManager.Instance == null) return;
-            // Access the shuffle button's SpriteRenderer through the HandManager
             Transform shuffleT = HandManager.Instance.transform.Find("ShuffleButton");
             if (shuffleT == null) return;
             SpriteRenderer sr = shuffleT.GetComponent<SpriteRenderer>();
@@ -412,7 +527,7 @@ namespace WordDrop
         // INSTRUCTION TEXT
         // ══════════════════════════════════════════════════════════════════════════
 
-        private void ShowInstruction(string text, Color color, bool largeScale = false)
+        private void ShowInstruction(string text)
         {
             HideInstruction();
 
@@ -421,33 +536,31 @@ namespace WordDrop
 
             _instructionGO = new GameObject("TutorialInstruction");
 
-            // Position between HUD and grid top
             float y = grid.GridTop + grid.CellSize * 1.8f;
             _instructionGO.transform.position = new Vector3(0f, y, -5f);
 
             _instructionText = _instructionGO.AddComponent<TMPro.TextMeshPro>();
-            TMPro.TMP_FontAsset heavyFont = Resources.Load<TMPro.TMP_FontAsset>("NunitoExtraBold SDF");
+            TMPro.TMP_FontAsset heavyFont = Resources.Load<TMPro.TMP_FontAsset>("Cartoon SDF");
             if (heavyFont != null) _instructionText.font = heavyFont;
             _instructionText.text           = text;
-            _instructionText.fontSize       = largeScale ? 12f : 8f;
-            _instructionText.color          = color;
+            _instructionText.fontSize       = 7f;
+            _instructionText.color          = TEXT_COLOR;
             _instructionText.alignment      = TMPro.TextAlignmentOptions.Center;
             _instructionText.sortingOrder   = 50;
             _instructionText.rectTransform.sizeDelta = new Vector2(10f, 3f);
             _instructionText.enableWordWrapping = false;
             _instructionText.overflowMode   = TMPro.TextOverflowModes.Overflow;
-            TMPHelper.ApplyEffects(_instructionText, color);
+            TMPHelper.ApplyEffects(_instructionText, TEXT_COLOR);
 
-            // Scale-in with OutBack ease
+            // Scale-in
             _instructionGO.transform.localScale = Vector3.zero;
-            _instructionGO.transform.DOScale(Vector3.one, 0.4f).SetEase(Ease.OutBack);
+            _instructionGO.transform.DOScale(Vector3.one, 0.35f).SetEase(Ease.OutBack);
         }
 
         private void HideInstruction()
         {
             if (_instructionGO != null)
             {
-                // Kill any active tweens on this object before destroying
                 _instructionGO.transform.DOKill();
                 Object.Destroy(_instructionGO);
                 _instructionGO = null;
@@ -475,7 +588,6 @@ namespace WordDrop
 
             canvasGO.AddComponent<GraphicRaycaster>();
 
-            // Skip button — bottom center, subtle rounded pill
             GameObject btnGO = new GameObject("SkipButton");
             btnGO.transform.SetParent(canvasGO.transform, false);
 
@@ -484,23 +596,22 @@ namespace WordDrop
             rt.anchorMax = new Vector2(0.5f, 0f);
             rt.pivot = new Vector2(0.5f, 0f);
             rt.anchoredPosition = new Vector2(0f, 25f);
-            rt.sizeDelta = new Vector2(120f, 38f);  // slightly smaller, balanced
+            rt.sizeDelta = new Vector2(100f, 34f);
 
             Image img = btnGO.AddComponent<Image>();
             img.sprite = TileRenderer.CreateSolidRoundedRect(512, 160, 60, Color.white);
             img.type = Image.Type.Simple;
-            img.color = new Color(0.15f, 0.15f, 0.25f, 0.50f);
+            img.color = new Color(0.15f, 0.15f, 0.25f, 0.45f);
 
             Button btn = btnGO.AddComponent<Button>();
             ColorBlock cb = btn.colors;
-            cb.normalColor = new Color(0.15f, 0.15f, 0.25f, 0.50f);
-            cb.highlightedColor = new Color(0.20f, 0.20f, 0.30f, 0.65f);
-            cb.pressedColor = new Color(0.10f, 0.10f, 0.20f, 0.70f);
+            cb.normalColor      = new Color(0.15f, 0.15f, 0.25f, 0.45f);
+            cb.highlightedColor = new Color(0.20f, 0.20f, 0.30f, 0.60f);
+            cb.pressedColor     = new Color(0.10f, 0.10f, 0.20f, 0.65f);
             cb.fadeDuration = 0.08f;
             btn.colors = cb;
             btn.onClick.AddListener(OnSkipClicked);
 
-            // Label
             GameObject lblGO = new GameObject("Label");
             lblGO.transform.SetParent(btnGO.transform, false);
             RectTransform lblRT = lblGO.AddComponent<RectTransform>();
@@ -511,10 +622,10 @@ namespace WordDrop
 
             Text t = lblGO.AddComponent<Text>();
             t.font = GameFont.GetUI();
-            t.text = "SKIP ▸";
-            t.fontSize = 18;
+            t.text = "SKIP";
+            t.fontSize = 16;
             t.fontStyle = FontStyle.Normal;
-            t.color = new Color(0.75f, 0.75f, 0.85f, 0.9f);
+            t.color = new Color(0.7f, 0.7f, 0.8f, 0.85f);
             t.alignment = TextAnchor.MiddleCenter;
 
             _skipButtonCanvas = canvasGO;
@@ -533,13 +644,26 @@ namespace WordDrop
         {
             Debug.Log("[TutorialManager] Tutorial skipped by player.");
             _skipForSession = true;
+            PlayerPrefs.SetInt("tutorial_complete", 1);
+            PlayerPrefs.Save();
             StopAllCoroutines();
+
+            // BUG-11: Stop any in-flight HandManager coroutines (e.g. FullTurnSequence)
+            if (HandManager.Instance != null)
+            {
+                HandManager.Instance.StopAllCoroutines();
+                HandManager.Instance.SetInteractable(true);
+            }
+
+            // Safety: restore timeScale in case hitstop was mid-freeze
+            WordDropFX.EnsureTimeScaleRestored();
+
             EndTutorial();
             StartNormalGame();
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // CARD HIGHLIGHT — pulsing arrow above the target hand card
+        // CARD HIGHLIGHT — soft chevron above the target card
         // ══════════════════════════════════════════════════════════════════════════
 
         private void ShowCardHighlight(int cardIndex)
@@ -548,7 +672,6 @@ namespace WordDrop
 
             if (HandManager.Instance == null || GridManager.Instance == null) return;
 
-            // Get the card's world position
             float cardX = HandManager.Instance.GetCardWorldX(cardIndex);
             float cardY = HandManager.Instance.GetCardWorldY();
             float cellSize = GridManager.Instance.CellSize;
@@ -556,9 +679,9 @@ namespace WordDrop
             _cardHighlightGO = new GameObject("TutorialCardHighlight");
             _cardHighlightGO.transform.position = new Vector3(cardX, cardY + cellSize * 0.65f, -5f);
 
-            float arrowSize = cellSize * 0.20f;  // smaller, supportive
+            float arrowSize = cellSize * 0.15f;
             SpriteRenderer sr = _cardHighlightGO.AddComponent<SpriteRenderer>();
-            sr.sprite = GetArrowSprite();
+            sr.sprite = GetChevronSprite();
             sr.color = ARROW_COLOR;
             sr.sortingOrder = 50;
 
@@ -566,16 +689,10 @@ namespace WordDrop
             float arrowScale = arrowSize / nativeSize;
             _cardHighlightGO.transform.localScale = new Vector3(arrowScale, arrowScale, 1f);
 
-            // Pulse
-            float pulseScale = arrowScale * 1.08f;
+            // Gentle pulse only — no bobbing
+            float pulseScale = arrowScale * 1.1f;
             _cardHighlightPulse = _cardHighlightGO.transform
-                .DOScale(new Vector3(pulseScale, pulseScale, 1f), 0.7f)
-                .SetEase(Ease.InOutSine)
-                .SetLoops(-1, LoopType.Yoyo);
-
-            // Bob
-            _cardHighlightGO.transform
-                .DOMoveY(cardY + cellSize * 0.75f, 0.35f)
+                .DOScale(new Vector3(pulseScale, pulseScale, 1f), 0.8f)
                 .SetEase(Ease.InOutSine)
                 .SetLoops(-1, LoopType.Yoyo);
         }
@@ -601,44 +718,64 @@ namespace WordDrop
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // PULSING ARROW
+        // COLUMN ARROW — soft rounded chevron above target column
         // ══════════════════════════════════════════════════════════════════════════
 
-        private static Sprite _arrowSprite;
+        private static Sprite _chevronSprite;
 
-        private static Sprite GetArrowSprite()
+        private static Sprite GetChevronSprite()
         {
-            if (_arrowSprite != null) return _arrowSprite;
+            if (_chevronSprite != null) return _chevronSprite;
 
-            // Create a high-res chunky downward triangle with soft edges
-            int size = 256;
+            // Rounded chevron (˅) — softer than a sharp triangle
+            int size = 128;
             Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
             tex.filterMode = FilterMode.Bilinear;
             Color[] pixels = new Color[size * size];
+
+            float thickness = 0.12f; // arm thickness
+            float halfAngle = 0.42f; // spread angle
 
             for (int y = 0; y < size; y++)
             {
                 for (int x = 0; x < size; x++)
                 {
-                    // Chunky triangle: wider base, blunted point
-                    float ny = (float)y / (size - 1); // 0 at bottom (point), 1 at top (wide)
-                    float halfWidth = Mathf.Lerp(0.04f, 0.48f, ny); // blunted point (not razor sharp)
-                    float cx = (float)x / (size - 1) - 0.5f;
+                    float nx = (float)x / (size - 1) - 0.5f; // -0.5 to 0.5
+                    float ny = (float)y / (size - 1);         // 0 at bottom (point), 1 at top
 
-                    float dist = Mathf.Abs(cx) - halfWidth;
-                    if (dist < 0f)
-                        pixels[y * size + x] = Color.white;
-                    else if (dist < 0.015f) // soft AA edge
-                        pixels[y * size + x] = new Color(1f, 1f, 1f, 1f - dist / 0.015f);
-                    else
+                    // Two diagonal arms meeting at bottom center
+                    // Left arm: from (0.5, 0) to (-halfAngle, 1)
+                    // Right arm: from (0.5, 0) to (halfAngle, 1)
+                    float leftDist = Mathf.Abs(nx + halfAngle * ny);
+                    float rightDist = Mathf.Abs(nx - halfAngle * ny);
+                    float armDist = Mathf.Min(leftDist, rightDist);
+
+                    // Only draw upper portion (the V shape, not below the point)
+                    if (ny < 0.15f)
+                    {
                         pixels[y * size + x] = Color.clear;
+                    }
+                    else if (armDist < thickness)
+                    {
+                        pixels[y * size + x] = Color.white;
+                    }
+                    else if (armDist < thickness + 0.025f)
+                    {
+                        // Soft AA edge
+                        float aa = 1f - (armDist - thickness) / 0.025f;
+                        pixels[y * size + x] = new Color(1f, 1f, 1f, aa);
+                    }
+                    else
+                    {
+                        pixels[y * size + x] = Color.clear;
+                    }
                 }
             }
 
             tex.SetPixels(pixels);
             tex.Apply();
-            _arrowSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
-            return _arrowSprite;
+            _chevronSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
+            return _chevronSprite;
         }
 
         private void ShowArrow(int col)
@@ -649,38 +786,30 @@ namespace WordDrop
             if (grid == null) return;
 
             float x = grid.GetColumnCenterX(col);
-            float y = grid.GridTop + grid.CellSize * 0.5f;
-            float arrowSize = grid.CellSize * 0.28f;
+            float y = grid.GridTop + grid.CellSize * 0.8f;
+            float arrowSize = grid.CellSize * 0.22f;
 
             _arrowGO = new GameObject("TutorialArrow");
-            _arrowGO.transform.position = new Vector3(x, y, -5f);
+            _arrowGO.transform.position = new Vector3(x, y, -10f);
 
             SpriteRenderer sr = _arrowGO.AddComponent<SpriteRenderer>();
-            sr.sprite = GetArrowSprite();
+            sr.sprite = GetChevronSprite();
             sr.color = ARROW_COLOR;
-            sr.sortingOrder = 50;
+            sr.sortingOrder = 100;
 
             float nativeSize = 128f / 100f;
             float scale = arrowSize / nativeSize;
             _arrowGO.transform.localScale = new Vector3(scale, scale, 1f);
 
-            // Pulsing scale
+            // Gentle pulse only — no bobbing
             _arrowPulseTween = _arrowGO.transform
-                .DOScale(new Vector3(scale * 1.15f, scale * 1.15f, 1f), 0.6f)
-                .SetEase(Ease.InOutSine)
-                .SetLoops(-1, LoopType.Yoyo);
-
-            // Bob up and down
-            float bobY = y + grid.CellSize * 0.15f;
-            _arrowBobTween = _arrowGO.transform
-                .DOMoveY(bobY, 0.4f)
+                .DOScale(new Vector3(scale * 1.1f, scale * 1.1f, 1f), 0.8f)
                 .SetEase(Ease.InOutSine)
                 .SetLoops(-1, LoopType.Yoyo);
         }
 
         private void HideArrow()
         {
-            if (_arrowBobTween != null)  { _arrowBobTween.Kill();   _arrowBobTween = null; }
             if (_arrowPulseTween != null) { _arrowPulseTween.Kill(); _arrowPulseTween = null; }
 
             if (_arrowGO != null)
@@ -688,95 +817,22 @@ namespace WordDrop
                 _arrowGO.transform.DOKill();
                 Object.Destroy(_arrowGO);
                 _arrowGO = null;
-                _arrowText = null;
             }
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // DEBUG — skip tutorial via PlayerPrefs
+        // DEBUG
         // ══════════════════════════════════════════════════════════════════════════
 
-        /// <summary>Resets the tutorial flag so it will run again on next game.</summary>
         public static void ResetTutorial()
         {
             PlayerPrefs.SetInt("tutorial_complete", 0);
+            PlayerPrefs.SetInt("hint_rewrite", 0);
+            PlayerPrefs.SetInt("hint_swap", 0);
+            HighScoreManager.ResetAll();
             PlayerPrefs.Save();
-            Debug.Log("[TutorialManager] Tutorial reset — will run on next game.");
+            _skipForSession = false;
+            Debug.Log("[TutorialManager] Tutorial reset (+ high scores cleared) — will run on next game.");
         }
     }
 }
-
-// ══════════════════════════════════════════════════════════════════════════════════
-// REQUIRED CHANGES TO OTHER FILES (DO NOT EDIT — notes for manual integration)
-// ══════════════════════════════════════════════════════════════════════════════════
-//
-// ── 1. HandManager.cs ─────────────────────────────────────────────────────────
-//
-// A) In TryDropInColumn(), after the column is determined from worldPos,
-//    add a check for the tutorial column restriction:
-//
-//      int col = _grid.WorldXToColumn(worldPos.x);
-//      if (col < 0) return;
-//
-//      // Tutorial column restriction
-//      if (TutorialManager.AllowedColumn >= 0 && col != TutorialManager.AllowedColumn)
-//          return;
-//
-//      DropSelectedLetterInColumn(col);
-//
-// B) In the shuffle button handler (TryHandleShuffleButton or similar),
-//    add a guard at the top:
-//
-//      if (TutorialManager.BlockShuffleAndSwap) return false;
-//
-// C) In TriggerSwapConfirmation(), add a guard at the top:
-//
-//      if (TutorialManager.BlockShuffleAndSwap) return;
-//
-// D) Add a public method for the tutorial to force-select a card:
-//
-//      public void ForceSelectCard(int index)
-//      {
-//          if (index < 0 || index >= HAND_SIZE) return;
-//          _selectedIndex = index;
-//          RefreshAllCardVisuals();
-//          if (ColumnArrowManager.Instance != null)
-//              ColumnArrowManager.Instance.ShowArrows(true);
-//      }
-//
-// ── 2. GameManager.cs ─────────────────────────────────────────────────────────
-//
-// In OnStateEntered(GameState.Playing), after MatchController.StartMatch() is
-// called but BEFORE HandManager.InitialiseHand(), add the tutorial check:
-//
-//      MatchController.Instance.StartMatch();
-//
-//      // Check for first-time tutorial
-//      if (TutorialManager.ShouldRunTutorial() && TutorialManager.Instance != null)
-//      {
-//          // Tutorial will override board/hand and manage input itself
-//          TutorialManager.Instance.BeginTutorial();
-//          return; // Skip normal hand init and input enable
-//      }
-//
-//      // ... normal flow continues: InitialiseHand, SetInteractable, ShowArrows ...
-//
-// ── 3. MatchController.cs (optional) ──────────────────────────────────────────
-//
-// No changes strictly required. The tutorial manipulates RulesEngine and
-// PlayerHand directly. However, during the tutorial the FullTurnSequence
-// in HandManager will still run normally — it will call ProcessDrop,
-// CompleteDropBookkeeping, etc. The tutorial hooks into RulesEngine events
-// (OnWordScored, OnPrimedTriggered) to detect when each step completes.
-//
-// The AI turn in FullTurnSequence will fire after the tutorial drop.
-// This is fine — the tutorial overrides the board before the AI can act,
-// and ends the tutorial + starts a fresh game after detonation.
-// If you want to suppress the AI turn during tutorial, add:
-//
-//      // In FullTurnSequence, before the AI turn section:
-//      if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
-//      {
-//          IsInteractable = true;
-//          yield break;  // Skip AI turn during tutorial
-//      }

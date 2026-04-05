@@ -30,6 +30,16 @@ namespace WordDrop
         {
             Debug.Log("[SceneBootstrap] Awake begin");
 
+            // ── Mobile optimizations ──
+            // Disable physics — no colliders, no rigidbodies
+            Physics2D.simulationMode = SimulationMode2D.Script;
+            Physics2D.autoSyncTransforms = false;
+            Physics.autoSyncTransforms = false;
+#if UNITY_IOS || UNITY_ANDROID
+            // Disable accelerometer polling — not used in a puzzle game
+            Input.accelerometerFrequency = 0;
+#endif
+
             SetupCamera();
             SetupEventSystem();
             SetupManagers();
@@ -78,6 +88,11 @@ namespace WordDrop
             // AudioListener required for any audio playback
             camGO.AddComponent<AudioListener>();
 
+            // Enable post-processing on URP camera (bloom, vignette)
+            var camData = camGO.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+            if (camData == null) camData = camGO.AddComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+            camData.renderPostProcessing = true;
+
             float halfH = _mainCamera.orthographicSize;
             float halfW = halfH * ((float)Screen.width / Screen.height);
 
@@ -96,33 +111,7 @@ namespace WordDrop
             bgGO.transform.localScale = new Vector3(halfW * 4f / bgNativeW, halfH * 4f / bgNativeH, 1f);
             bgGO.transform.position = new Vector3(0f, 0f, 4f); // in front of far clip, behind everything
 
-            // Subtle vignette overlay — darkens edges for depth
-            int vigW = 64, vigH = 64;
-            Texture2D vigTex = new Texture2D(vigW, vigH, TextureFormat.RGBA32, false);
-            vigTex.filterMode = FilterMode.Bilinear;
-            Color[] vigPx = new Color[vigW * vigH];
-            for (int vy = 0; vy < vigH; vy++)
-            {
-                for (int vx = 0; vx < vigW; vx++)
-                {
-                    float nx = (vx / (float)(vigW - 1)) * 2f - 1f;
-                    float ny = (vy / (float)(vigH - 1)) * 2f - 1f;
-                    float dist = Mathf.Sqrt(nx * nx + ny * ny);
-                    float vig = Mathf.Clamp01((dist - 0.6f) / 1.0f) * 0.20f; // was 0.5/0.8/0.35 — softer
-                    vigPx[vy * vigW + vx] = new Color(0f, 0f, 0f, vig);
-                }
-            }
-            vigTex.SetPixels(vigPx);
-            vigTex.Apply();
-            Sprite vigSprite = Sprite.Create(vigTex, new Rect(0, 0, vigW, vigH), new Vector2(0.5f, 0.5f), 100f);
-            GameObject vigGO = new GameObject("Vignette");
-            SpriteRenderer vigSR = vigGO.AddComponent<SpriteRenderer>();
-            vigSR.sprite = vigSprite;
-            vigSR.sortingOrder = -9;
-            float vigNW = vigW / 100f;
-            float vigNH = vigH / 100f;
-            vigGO.transform.localScale = new Vector3(halfW * 2.2f / vigNW, halfH * 2.2f / vigNH, 1f);
-            vigGO.transform.position = new Vector3(0f, 0f, 4.5f);
+            // Old sprite vignette removed — URP post-processing handles vignette now
 
             Debug.Log($"[SceneBootstrap] Camera — halfH={halfH:F2}, halfW={halfW:F2}  " +
                       $"({Screen.width}x{Screen.height})");
@@ -220,6 +209,14 @@ namespace WordDrop
             new GameObject("GameOverUI").AddComponent<GameOverUI>();
             new GameObject("DropPreview").AddComponent<DropPreview>();
             new GameObject("BonusPopup").AddComponent<BonusPopup>();
+            new GameObject("ChainCounter").AddComponent<ChainCounter>();
+            new GameObject("MeltdownManager").AddComponent<MeltdownManager>();
+            new GameObject("DetonationRecorder").AddComponent<DetonationRecorder>();
+            new GameObject("DetonationReplay").AddComponent<DetonationReplay>();
+            new GameObject("BlitzManager").AddComponent<BlitzManager>();
+            new GameObject("RisingRowManager").AddComponent<RisingRowManager>();
+            new GameObject("ScreenTransition").AddComponent<ScreenTransition>();
+            new GameObject("LastWordDisplay").AddComponent<LastWordDisplay>();
 
             // NOTE: RoundOverUI, RoundManager, WordleEvaluator are NOT created.
             // The Scrabble-drop game does not use round-based flow.

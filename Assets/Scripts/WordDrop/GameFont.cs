@@ -36,7 +36,8 @@ namespace WordDrop
         {
             if (!_loadedUITMP)
             {
-                _uiTMP = Resources.Load<TMP_FontAsset>("NunitoExtraBold SDF");
+                _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
+                if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("NunitoExtraBold SDF");
                 if (_uiTMP == null) _uiTMP = GetTMP();
                 _loadedUITMP = true;
             }
@@ -77,14 +78,14 @@ namespace WordDrop
         {
             if (tm == null) return;
             Font f = Get();
-            if (f != null) { tm.font = f; var mr = tm.GetComponent<MeshRenderer>(); if (mr != null && f.material != null) mr.material = f.material; }
+            if (f != null) { tm.font = f; var mr = tm.GetComponent<MeshRenderer>(); if (mr != null && f.material != null) mr.sharedMaterial = f.material; }
         }
 
         public static void ApplyUI(TextMesh tm)
         {
             if (tm == null) return;
             Font f = GetUI();
-            if (f != null) { tm.font = f; var mr = tm.GetComponent<MeshRenderer>(); if (mr != null && f.material != null) mr.material = f.material; }
+            if (f != null) { tm.font = f; var mr = tm.GetComponent<MeshRenderer>(); if (mr != null && f.material != null) mr.sharedMaterial = f.material; }
         }
 
         public static void ApplyDisplay(TextMesh tm) => ApplyUI(tm);

@@ -35,10 +35,11 @@ namespace WordDrop
         private TextMeshProUGUI _aiScoreText;       // "AI:" label (static)
         private TextMeshProUGUI _aiScoreNum;        // number only (animated)
 
-        // ── Turn / Swap counters ──────────────────────────────────────────────────
+        // ── Turn / Swap / Rewrite counters ───────────────────────────────────────
 
         private TextMeshProUGUI _turnCounterText;
         private TextMeshProUGUI _swapCounterText;
+        private TextMeshProUGUI _rewriteCounterText;
 
         // ── Word-found overlay ────────────────────────────────────────────────────
 
@@ -48,18 +49,37 @@ namespace WordDrop
 
         // ── Colors ────────────────────────────────────────────────────────────────
 
-        private static readonly Color PLAYER_COLOR    = new Color(0.200f, 0.851f, 0.424f, 1f);  // player green #33D96C
-        private static readonly Color AI_COLOR        = new Color(1.000f, 0.604f, 0.239f, 1f); // AI orange #FF9A3D
-        private static readonly Color TURN_COLOR      = new Color(0.80f, 0.80f, 0.86f, 1f);
-        private static readonly Color TURN_WARN       = new Color(1.00f, 0.75f, 0.20f, 1f);
-        private static readonly Color TURN_DANGER     = new Color(1.00f, 0.32f, 0.28f, 1f);
-        private static readonly Color SWAP_COLOR      = new Color(0.60f, 0.60f, 0.66f, 1f);
-        private static readonly Color WORD_POPUP_P1   = new Color(0.200f, 0.851f, 0.424f, 1f);  // player green #33D96C
-        private static readonly Color WORD_POPUP_AI   = new Color(1.000f, 0.604f, 0.239f, 1f); // AI orange
-        private static readonly Color BAR_BG          = new Color(0.070f, 0.090f, 0.220f, 0.94f);  // deep indigo — matches board family
+        // Colors — cohesive purple/gold/pink palette matching the game's visual identity
+        private static Color PLAYER_COLOR
+        {
+            get { return new Color(1.00f, 0.84f, 0.42f, 1f); } // bright gold #FFD66B
+        }
+        private static Color AI_COLOR
+        {
+            get { return new Color(1.00f, 0.56f, 0.67f, 1f); } // soft pink #FF8FAA
+        }
+        private static Color TURN_COLOR
+        {
+            get { return new Color(0.94f, 0.90f, 0.84f, 1f); } // warm white #F0E6D6
+        }
+        private static Color TURN_WARN
+        {
+            get { return new Color(1.00f, 0.80f, 0.35f, 1f); } // warm amber
+        }
+        private static Color TURN_DANGER
+        {
+            get { return new Color(1.00f, 0.40f, 0.40f, 1f); } // soft red
+        }
+        private static readonly Color SWAP_COLOR      = new Color(0.63f, 0.53f, 0.75f, 0.8f); // light purple #A088C0
+        private static readonly Color WORD_POPUP_P1   = new Color(1.00f, 0.84f, 0.42f, 1f);   // gold (match player)
+        private static readonly Color WORD_POPUP_AI   = new Color(1.00f, 0.56f, 0.67f, 1f);   // pink (match AI)
+        private static readonly Color BAR_BG          = new Color(0.118f, 0.055f, 0.243f, 0.95f); // deep purple #1E0E3E
         private static readonly Color RESET_NORMAL    = new Color(0.18f, 0.18f, 0.23f, 1f);
         private static readonly Color RESET_HIGHLIGHT = new Color(0.32f, 0.32f, 0.40f, 1f);
         private static readonly Color RESET_PRESSED   = new Color(0.10f, 0.10f, 0.14f, 1f);
+
+        // ── Blitz mode state ──────────────────────────────────────────────────────
+        private bool _isBlitzMode = false;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
 
@@ -77,6 +97,8 @@ namespace WordDrop
 
         private void BuildHUD()
         {
+            var cfg = UIConfig.Instance; // null-safe: checked per-field
+
             // ── Canvas ────────────────────────────────────────────────────────────
             GameObject canvasGO = new GameObject("HUDCanvas");
             canvasGO.transform.SetParent(transform, false);
@@ -87,8 +109,8 @@ namespace WordDrop
 
             CanvasScaler scaler = canvasGO.AddComponent<CanvasScaler>();
             scaler.uiScaleMode         = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(540f, 960f);
-            scaler.matchWidthOrHeight  = 0.5f;
+            scaler.referenceResolution = cfg != null ? cfg.referenceResolution : new Vector2(540f, 960f);
+            scaler.matchWidthOrHeight  = cfg != null ? cfg.canvasMatchWidthOrHeight : 0.5f;
 
             canvasGO.AddComponent<GraphicRaycaster>();
 
@@ -100,96 +122,103 @@ namespace WordDrop
             barRT.anchorMin = new Vector2(0f, 1f);
             barRT.anchorMax = new Vector2(1f, 1f);
             barRT.pivot     = new Vector2(0.5f, 1f);
-            barRT.offsetMin = new Vector2(0f, -78f);  // edge to edge
-            barRT.offsetMax = new Vector2(0f,   0f);   // flush with top
+            float barH = cfg != null ? cfg.hudBarHeight : 78f;
+            barRT.offsetMin = new Vector2(0f, -barH);
+            barRT.offsetMax = new Vector2(0f,   0f);
 
             Image barImg = barGO.AddComponent<Image>();
-            barImg.color = BAR_BG;
+            barImg.color = cfg != null ? cfg.hudBarBgColor : BAR_BG;
 
-            // ── Reset button — integrated into plate, far left ───────────────────
-            BuildResetButton(barGO.transform);
+            TMP_FontAsset heavyFont = Resources.Load<TMP_FontAsset>("Cartoon SDF");
 
-            // ── P1 Score — left, larger ──────────────────────────────────────────
-            // P1 label (static)
+            // ── Left: YOU score ──────────────────────────────────────────────────
             _playerScoreText = MakeLabel(barGO.transform, "PlayerLabel",
-                anchorMin: new Vector2(0.10f, 0.35f),
-                anchorMax: new Vector2(0.20f, 0.98f),
+                anchorMin: new Vector2(0.08f, 0.60f),
+                anchorMax: new Vector2(0.25f, 0.95f),
                 pivot:     new Vector2(0f, 0.5f),
-                offMin:    new Vector2(0f, 0f),
-                offMax:    new Vector2(0f, 0f),
-                text:      "P1:",
-                size:      22,
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "YOU",
+                size:      14,
                 style:     FontStyle.Bold,
-                color:     PLAYER_COLOR,
+                color:     new Color(PLAYER_COLOR.r, PLAYER_COLOR.g, PLAYER_COLOR.b, 0.7f),
                 align:     TextAnchor.MiddleLeft);
 
-            // P1 number (animated) — Nunito ExtraBold
             _playerScoreNum = MakeLabel(barGO.transform, "PlayerScoreNum",
-                anchorMin: new Vector2(0.20f, 0.35f),
-                anchorMax: new Vector2(0.35f, 0.98f),
+                anchorMin: new Vector2(0.08f, 0.05f),
+                anchorMax: new Vector2(0.28f, 0.65f),
                 pivot:     new Vector2(0f, 0.5f),
-                offMin:    new Vector2(0f, 0f),
-                offMax:    new Vector2(0f, 0f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "0",
-                size:      34,
+                size:      38,
                 style:     FontStyle.Bold,
                 color:     PLAYER_COLOR,
                 align:     TextAnchor.MiddleLeft);
-            TMP_FontAsset heavyFont = Resources.Load<TMP_FontAsset>("NunitoExtraBold SDF");
             if (heavyFont != null) _playerScoreNum.font = heavyFont;
 
-            // ── Swaps — small, tucked under P1 ─────────────────────────────────
-            _swapCounterText = MakeLabel(barGO.transform, "SwapCounter",
-                anchorMin: new Vector2(0.10f, 0.02f),
-                anchorMax: new Vector2(0.35f, 0.35f),
-                pivot:     new Vector2(0f, 0.5f),
-                offMin:    new Vector2(0f, 0f),
-                offMax:    new Vector2(0f, 0f),
-                text:      "Swaps: 3",
-                size:      12,
-                style:     FontStyle.Normal,
-                color:     new Color(0.68f, 0.68f, 0.75f, 1f),  // slightly brighter
-                align:     TextAnchor.MiddleLeft);
-
-            // ── Turns remaining — center headline ────────────────────────────────
+            // ── Center: Turn counter ─────────────────────────────────────────────
             _turnCounterText = MakeLabel(barGO.transform, "TurnCounter",
-                anchorMin: new Vector2(0.35f, 0.08f),
-                anchorMax: new Vector2(0.65f, 0.92f),
+                anchorMin: new Vector2(0.28f, 0.10f),
+                anchorMax: new Vector2(0.72f, 0.90f),
                 pivot:     new Vector2(0.5f, 0.5f),
-                offMin:    new Vector2(0f, 0f),
-                offMax:    new Vector2(0f, 0f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "",
-                size:      28,
+                size:      24,
                 style:     FontStyle.Bold,
-                color:     new Color(1f, 1f, 1f, 1f),
+                color:     new Color(1f, 1f, 1f, 0.9f),
                 align:     TextAnchor.MiddleCenter);
+            if (heavyFont != null) _turnCounterText.font = heavyFont;
 
-            // AI number (animated) — Nunito ExtraBold
-            _aiScoreNum = MakeLabel(barGO.transform, "AIScoreNum",
-                anchorMin: new Vector2(0.80f, 0.08f),
-                anchorMax: new Vector2(0.95f, 0.92f),
+            // ── Right: AI score ──────────────────────────────────────────────────
+            _aiScoreText = MakeLabel(barGO.transform, "AILabel",
+                anchorMin: new Vector2(0.75f, 0.60f),
+                anchorMax: new Vector2(0.92f, 0.95f),
                 pivot:     new Vector2(1f, 0.5f),
-                offMin:    new Vector2(0f, 0f),
-                offMax:    new Vector2(0f, 0f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "AI",
+                size:      14,
+                style:     FontStyle.Bold,
+                color:     new Color(AI_COLOR.r, AI_COLOR.g, AI_COLOR.b, 0.7f),
+                align:     TextAnchor.MiddleRight);
+
+            _aiScoreNum = MakeLabel(barGO.transform, "AIScoreNum",
+                anchorMin: new Vector2(0.72f, 0.05f),
+                anchorMax: new Vector2(0.92f, 0.65f),
+                pivot:     new Vector2(1f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "0",
-                size:      34,
+                size:      38,
                 style:     FontStyle.Bold,
                 color:     AI_COLOR,
                 align:     TextAnchor.MiddleRight);
             if (heavyFont != null) _aiScoreNum.font = heavyFont;
 
-            // AI label (static)
-            _aiScoreText = MakeLabel(barGO.transform, "AILabel",
-                anchorMin: new Vector2(0.68f, 0.08f),
-                anchorMax: new Vector2(0.80f, 0.92f),
-                pivot:     new Vector2(1f, 0.5f),
-                offMin:    new Vector2(0f, 0f),
-                offMax:    new Vector2(0f, 0f),
-                text:      "AI:",
-                size:      22,
+            // ── Swaps + Rewrites — compact, under center ─────────────────────────
+            Color swapCol = new Color(0.78f, 0.78f, 0.85f, 0.8f);
+
+            _swapCounterText = MakeLabel(barGO.transform, "SwapCounter",
+                anchorMin: new Vector2(0.30f, 0.02f),
+                anchorMax: new Vector2(0.50f, 0.28f),
+                pivot:     new Vector2(0.5f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "SWAP x2",
+                size:      11,
                 style:     FontStyle.Bold,
-                color:     AI_COLOR,
-                align:     TextAnchor.MiddleRight);
+                color:     swapCol,
+                align:     TextAnchor.MiddleCenter);
+
+            _rewriteCounterText = MakeLabel(barGO.transform, "RewriteCounter",
+                anchorMin: new Vector2(0.50f, 0.02f),
+                anchorMax: new Vector2(0.70f, 0.28f),
+                pivot:     new Vector2(0.5f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "EDIT x1",
+                size:      11,
+                style:     FontStyle.Bold,
+                color:     swapCol,
+                align:     TextAnchor.MiddleCenter);
+
+            // ── Menu button — small, far right edge ──────────────────────────────
+            BuildMenuButton(barGO.transform);
 
             // ── Word-found overlay ────────────────────────────────────────────────
             BuildWordFoundOverlay(canvasGO.transform);
@@ -197,18 +226,24 @@ namespace WordDrop
 
         private void BuildResetButton(Transform plateTransform)
         {
-            GameObject btnGO = new GameObject("ResetButton");
+            // Reset button removed — menu button handles returning to menu
+        }
+
+        private void BuildMenuButton(Transform plateTransform)
+        {
+            // Small pause/menu icon tucked into top-left corner (not overlapping scores)
+            GameObject btnGO = new GameObject("MenuButton");
             btnGO.transform.SetParent(plateTransform, false);
 
             RectTransform rt = btnGO.AddComponent<RectTransform>();
-            rt.anchorMin = new Vector2(0f, 0f);
-            rt.anchorMax = new Vector2(0.10f, 1f);
+            rt.anchorMin = new Vector2(0.01f, 0.30f);
+            rt.anchorMax = new Vector2(0.07f, 0.70f);
             rt.pivot     = new Vector2(0.5f, 0.5f);
-            rt.offsetMin = new Vector2(4f, 4f);
-            rt.offsetMax = new Vector2(-2f, -4f);
+            rt.offsetMin = new Vector2(2f, 0f);
+            rt.offsetMax = new Vector2(0f, 0f);
 
             Image img = btnGO.AddComponent<Image>();
-            img.color = new Color(1f, 1f, 1f, 0.08f); // subtle, integrated
+            img.color = new Color(1f, 1f, 1f, 0.08f);
 
             Button btn    = btnGO.AddComponent<Button>();
             ColorBlock cb = btn.colors;
@@ -217,22 +252,25 @@ namespace WordDrop
             cb.pressedColor     = new Color(1f, 1f, 1f, 0.04f);
             cb.fadeDuration     = 0.08f;
             btn.colors          = cb;
-            btn.onClick.AddListener(OnResetClicked);
+            btn.onClick.AddListener(OnMenuClicked);
 
+            // Simple "X" label
             GameObject labelGO = new GameObject("Label");
             labelGO.transform.SetParent(btnGO.transform, false);
 
             RectTransform lrt = labelGO.AddComponent<RectTransform>();
-            lrt.anchorMin = new Vector2(0.15f, 0.15f);
-            lrt.anchorMax = new Vector2(0.85f, 0.85f);
+            lrt.anchorMin = Vector2.zero;
+            lrt.anchorMax = Vector2.one;
             lrt.offsetMin = Vector2.zero;
             lrt.offsetMax = Vector2.zero;
 
-            // Procedural reset icon — circular arrow
-            Image iconImg = labelGO.AddComponent<Image>();
-            iconImg.sprite = CreateResetIconSprite();
-            iconImg.color = new Color(0.85f, 0.85f, 0.92f, 0.8f);
-            iconImg.preserveAspect = true;
+            Text t = labelGO.AddComponent<Text>();
+            t.font = GameFont.GetUI();
+            t.text = "≡";
+            t.fontSize = 20;
+            t.fontStyle = FontStyle.Bold;
+            t.color = new Color(0.85f, 0.85f, 0.92f, 0.6f);
+            t.alignment = TextAnchor.MiddleCenter;
         }
 
         private void BuildWordFoundOverlay(Transform canvasTransform)
@@ -248,7 +286,8 @@ namespace WordDrop
             rt.offsetMax = Vector2.zero;
 
             Image bg = _wordFoundOverlay.AddComponent<Image>();
-            bg.color = new Color(0.04f, 0.04f, 0.06f, 0.75f);
+            var cfgBg = UIConfig.Instance;
+            bg.color = cfgBg != null ? cfgBg.hudWordFoundBgColor : new Color(0.04f, 0.04f, 0.06f, 0.75f);
 
             GameObject textGO = new GameObject("WordFoundText");
             textGO.transform.SetParent(_wordFoundOverlay.transform, false);
@@ -263,7 +302,8 @@ namespace WordDrop
             TMP_FontAsset uiFont = GameFont.GetUITMP();
             if (uiFont != null) _wordFoundText.font = uiFont;
             _wordFoundText.text      = "";
-            _wordFoundText.fontSize  = 30;
+            var cfgWf = UIConfig.Instance;
+            _wordFoundText.fontSize  = cfgWf != null ? cfgWf.hudWordFoundFontSize : 30;
             _wordFoundText.fontStyle = FontStyles.Normal;
             _wordFoundText.color     = WORD_POPUP_P1;
             _wordFoundText.alignment = TextAlignmentOptions.Center;
@@ -278,18 +318,48 @@ namespace WordDrop
         // PUBLIC API — Score
         // ═══════════════════════════════════════════════════════════════════════════
 
-        /// <summary>Updates the P1 (human player) score label.</summary>
+        /// <summary>Updates the P1 score with animated count-up.</summary>
         public void SetPlayerScore(int pts)
         {
-            if (_playerScoreNum != null)
+            if (_playerScoreNum == null) return;
+            int current = 0;
+            int.TryParse(_playerScoreNum.text, out current);
+            if (pts != current && pts > current)
+            {
+                if (_playerCountUp != null) StopCoroutine(_playerCountUp);
+                _playerCountUp = StartCoroutine(CountUpScore(_playerScoreNum, current, pts, true));
+                AnimateScorePop(_playerScoreNum.rectTransform);
+            }
+            else
+            {
                 _playerScoreNum.text = pts.ToString();
+            }
         }
 
-        /// <summary>Updates the AI score number.</summary>
+        /// <summary>Updates the AI score with animated count-up.</summary>
+        /// <summary>Update the AI label to show rival name + record.</summary>
+        public void SetRivalName(string name, Color accentColor)
+        {
+            if (_aiScoreText == null) return;
+            _aiScoreText.text = name.ToUpper();
+            _aiScoreText.color = accentColor;
+        }
+
         public void SetAIScore(int pts)
         {
-            if (_aiScoreNum != null)
+            if (_aiScoreNum == null) return;
+            int current = 0;
+            int.TryParse(_aiScoreNum.text, out current);
+            if (pts != current && pts > current)
+            {
+                if (_aiCountUp != null) StopCoroutine(_aiCountUp);
+                _aiCountUp = StartCoroutine(CountUpScore(_aiScoreNum, current, pts, false));
+                AnimateScorePop(_aiScoreNum.rectTransform);
+            }
+            else
+            {
                 _aiScoreNum.text = pts.ToString();
+            }
         }
 
         // ── Visual score tick (used by ScoringDisplay to count up per-tile) ─────
@@ -327,18 +397,17 @@ namespace WordDrop
 
             // Flash text color to bright white
             TextMeshProUGUI tmp = t.GetComponent<TextMeshProUGUI>();
-            // Use the known original color — don't read from current state (may be mid-flash)
             Color origColor = (tmp == _playerScoreNum) ? PLAYER_COLOR : AI_COLOR;
             if (tmp != null) tmp.color = Color.white;
 
-            // Scale pop up to 1.65x (0.21s, OutBack 2f)
-            t.DOScale(1.65f, 0.21f).SetEase(Ease.OutBack, 2f);
+            // Scale PUNCH — big overshoot then elastic settle
+            t.DOScale(2.2f, 0.12f).SetEase(Ease.OutBack, 3f);
 
-            // Jitter rotation per-frame during the pop (0.55s total)
+            // Jitter rotation per-frame during the pop (0.6s total)
             float jitterElapsed = 0f;
-            float jitterDur = 0.55f;
-            float scaleUpDur = 0.21f;
-            float settleDur = 0.275f;
+            float jitterDur = 0.6f;
+            float scaleUpDur = 0.12f;
+            float settleDur = 0.35f;
             bool settleStarted = false;
 
             while (jitterElapsed < jitterDur && t != null)
@@ -346,15 +415,15 @@ namespace WordDrop
                 jitterElapsed += Time.deltaTime;
                 float decay = 1f - (jitterElapsed / jitterDur);
 
-                // Random rotation each frame (±10° decaying)
-                float rot = Random.Range(-10f, 10f) * decay;
+                // Random rotation each frame (±15° decaying)
+                float rot = Random.Range(-15f, 15f) * decay;
                 t.localRotation = Quaternion.Euler(0f, 0f, rot);
 
                 // Trigger settle scale after scale-up completes
                 if (!settleStarted && jitterElapsed >= scaleUpDur)
                 {
                     settleStarted = true;
-                    t.DOScale(1f, settleDur).SetEase(Ease.OutQuad);
+                    t.DOScale(1f, settleDur).SetEase(Ease.OutElastic, 0.5f, 0.3f);
                 }
 
                 yield return null;
@@ -365,11 +434,11 @@ namespace WordDrop
             // Clean rotation
             t.localRotation = Quaternion.identity;
 
-            // Settle beat: 1.0 → 1.2 → 1.0
-            t.DOScale(1.2f, 0.165f * 0.4f).SetEase(Ease.OutQuad);
-            yield return new WaitForSeconds(0.165f * 0.4f);
-            if (t != null) t.DOScale(1f, 0.165f * 0.6f).SetEase(Ease.OutBack);
-            yield return new WaitForSeconds(0.165f * 0.6f);
+            // Final settle beat: 1.0 → 1.3 → 1.0
+            t.DOScale(1.3f, 0.08f).SetEase(Ease.OutQuad);
+            yield return new WaitForSeconds(0.08f);
+            if (t != null) t.DOScale(1f, 0.15f).SetEase(Ease.OutBack, 2f);
+            yield return new WaitForSeconds(0.15f);
 
             // Ensure clean state
             if (t != null)
@@ -395,35 +464,21 @@ namespace WordDrop
             _scorePopCoroutine = null;
         }
 
-        /// <summary>Sync display scores to actual ScoreManager values (call after bookkeeping).</summary>
+        /// <summary>Sync display scores to actual ScoreManager values.</summary>
         public void SyncDisplayScores()
         {
             _tickAccumPlayer = 0;
             _tickAccumAI = 0;
             if (ScoreManager.Instance != null)
             {
-                if (_playerScoreNum != null)
-                    _playerScoreNum.text = ScoreManager.Instance.PlayerScore.ToString();
-                if (_aiScoreNum != null)
-                    _aiScoreNum.text = ScoreManager.Instance.AIScore.ToString();
+                SetPlayerScore(ScoreManager.Instance.PlayerScore);
+                SetAIScore(ScoreManager.Instance.AIScore);
             }
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
         // PUBLIC API — Turn Countdown (used by TurnCountdown.cs)
         // ═══════════════════════════════════════════════════════════════════════════
-
-        /// <summary>Set the countdown text and color directly from TurnCountdown.</summary>
-        public void SetTurnCountdownText(string text, Color color)
-        {
-            if (_turnCounterText == null) return;
-            _turnCounterText.text = text;
-            _turnCounterText.color = color;
-            _turnCounterText.fontSize = 28;
-            // Use Nunito ExtraBold for heavy weight on turns
-            TMP_FontAsset heavyFont = Resources.Load<TMP_FontAsset>("NunitoExtraBold SDF");
-            if (heavyFont != null) _turnCounterText.font = heavyFont;
-        }
 
         // ═══════════════════════════════════════════════════════════════════════════
         // PUBLIC API — Turn Counter
@@ -461,6 +516,126 @@ namespace WordDrop
                 TurnCountdown.Instance.UpdateTurnsLeft(remaining, max);
         }
 
+        /// <summary>
+        /// Direct text/color setter for turn countdown label. Used by TurnCountdown.
+        /// Punches scale on critical announcements (LAST TURN, SUDDEN DEATH).
+        /// </summary>
+        public void SetTurnCountdownText(string text, Color color)
+        {
+            if (_turnCounterText == null) return;
+            _turnCounterText.text = text;
+            _turnCounterText.color = color;
+
+            // Punch on dramatic announcements
+            if (text.Contains("LAST") || text.Contains("SUDDEN"))
+            {
+                var rt = _turnCounterText.rectTransform;
+                rt.DOKill();
+                rt.localScale = Vector3.one * 1.5f;
+                rt.DOScale(1f, 0.35f).SetEase(Ease.OutBack, 2f);
+            }
+        }
+
+        /// <summary>
+        /// Returns the world-space position of the player score counter.
+        /// Used by flying score text to know where to fly to.
+        /// </summary>
+        public Vector3 GetPlayerScoreWorldPos()
+        {
+            if (_playerScoreNum == null || _canvas == null) return Vector3.up * 4f;
+            return _playerScoreNum.rectTransform.position;
+        }
+
+        public Vector3 GetAIScoreWorldPos()
+        {
+            if (_aiScoreNum == null || _canvas == null) return Vector3.up * 4f;
+            return _aiScoreNum.rectTransform.position;
+        }
+
+        private Coroutine _playerCountUp;
+        private Coroutine _aiCountUp;
+
+        /// <summary>Punch the score counter (visual only — score update handled by SetPlayerScore).</summary>
+        public void PunchPlayerScore(int addPoints = 0)
+        {
+            if (_playerScoreNum == null) return;
+            _playerScoreNum.rectTransform.DOKill();
+            _playerScoreNum.rectTransform.localScale = Vector3.one;
+            _playerScoreNum.rectTransform.localRotation = Quaternion.identity;
+            AnimateScorePop(_playerScoreNum.rectTransform);
+        }
+
+        public void PunchAIScore(int addPoints = 0)
+        {
+            if (_aiScoreNum == null) return;
+            _aiScoreNum.rectTransform.DOKill();
+            _aiScoreNum.rectTransform.localScale = Vector3.one;
+            _aiScoreNum.rectTransform.localRotation = Quaternion.identity;
+            AnimateScorePop(_aiScoreNum.rectTransform);
+        }
+
+        private IEnumerator CountUpScore(TextMeshProUGUI label, int from, int to, bool isPlayer)
+        {
+            int delta = to - from;
+            float duration = Mathf.Clamp(delta * 0.03f, 0.15f, 0.5f);
+            float elapsed = 0f;
+            int lastDisplay = from;
+            float tickInterval = 0.04f;
+            float lastTickTime = 0f;
+
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+                // OutExpo easing: fast start, slow end — feels like Balatro chip counting
+                float eased = 1f - Mathf.Pow(2f, -10f * t);
+                int display = Mathf.RoundToInt(Mathf.Lerp(from, to, eased));
+
+                if (display != lastDisplay)
+                {
+                    label.text = display.ToString();
+                    if (elapsed - lastTickTime >= tickInterval)
+                    {
+                        float pitch = Mathf.Lerp(0.9f, 1.4f, t);
+                        GameAudio.Instance?.PlayScoreTick(pitch);
+                        lastTickTime = elapsed;
+                    }
+                    lastDisplay = display;
+                }
+                yield return null;
+            }
+            label.text = to.ToString();
+
+            if (isPlayer) _playerCountUp = null;
+            else _aiCountUp = null;
+        }
+
+        /// <summary>
+        /// Forces any running count-up animations to finish immediately.
+        /// Call before showing game-over screen to prevent stale HUD values.
+        /// </summary>
+        public void ForceFinishCountUp()
+        {
+            if (_playerCountUp != null)
+            {
+                StopCoroutine(_playerCountUp);
+                _playerCountUp = null;
+            }
+            if (_aiCountUp != null)
+            {
+                StopCoroutine(_aiCountUp);
+                _aiCountUp = null;
+            }
+            // Snap both labels to authoritative ScoreManager values
+            if (ScoreManager.Instance != null)
+            {
+                if (_playerScoreNum != null)
+                    _playerScoreNum.text = ScoreManager.Instance.PlayerScore.ToString();
+                if (_aiScoreNum != null)
+                    _aiScoreNum.text = ScoreManager.Instance.AIScore.ToString();
+            }
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // PUBLIC API — Swap Counter
         // ═══════════════════════════════════════════════════════════════════════════
@@ -473,12 +648,13 @@ namespace WordDrop
         {
             if (_swapCounterText == null) return;
 
-            _swapCounterText.text = $"Swaps: {remaining}";
+            _swapCounterText.text = $"SWAP x{remaining}";
 
             // Dim the text when no swaps remain
+            var cfgSw = UIConfig.Instance;
             _swapCounterText.color = remaining > 0
-                ? SWAP_COLOR
-                : new Color(0.38f, 0.38f, 0.42f, 0.60f);
+                ? (cfgSw != null ? cfgSw.hudSwapColor : SWAP_COLOR)
+                : (cfgSw != null ? cfgSw.hudSwapDimColor : new Color(0.38f, 0.38f, 0.42f, 0.60f));
         }
 
         /// <summary>
@@ -489,6 +665,34 @@ namespace WordDrop
         public void SetSwapsRemaining(int player, int count)
         {
             ShowSwapCount(count);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PUBLIC API — Rewrite Counter
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Shows remaining rewrites for the current active player.
+        /// </summary>
+        public void ShowRewriteCount(int remaining)
+        {
+            if (_rewriteCounterText == null) return;
+
+            _rewriteCounterText.text = $"EDIT x{remaining}";
+
+            // Dim the text when no rewrites remain
+            var cfgRw = UIConfig.Instance;
+            _rewriteCounterText.color = remaining > 0
+                ? (cfgRw != null ? cfgRw.hudSwapColor : SWAP_COLOR)
+                : (cfgRw != null ? cfgRw.hudSwapDimColor : new Color(0.38f, 0.38f, 0.42f, 0.60f));
+        }
+
+        /// <summary>
+        /// Sets rewrite count for a specific player index.
+        /// </summary>
+        public void SetRewritesRemaining(int player, int count)
+        {
+            ShowRewriteCount(count);
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -513,8 +717,9 @@ namespace WordDrop
             Image bg = _wordFoundOverlay.GetComponent<Image>();
             if (bg != null) bg.color = new Color(0.04f, 0.04f, 0.06f, 0.84f);
 
+            var cfgDur = UIConfig.Instance;
             _wordFoundOverlay.SetActive(true);
-            _wordFoundCoroutine = StartCoroutine(FadeOutWordFound(1.4f));
+            _wordFoundCoroutine = StartCoroutine(FadeOutWordFound(cfgDur != null ? cfgDur.hudWordFoundDuration : 1.4f));
         }
 
         private IEnumerator FadeOutWordFound(float totalDuration)
@@ -571,6 +776,25 @@ namespace WordDrop
             GameManager.Instance.RequestReset();
         }
 
+        private void OnMenuClicked()
+        {
+            if (GameManager.Instance == null) return;
+            if (GameManager.Instance.CurrentState != GameState.Playing) return;
+
+            // Safety: restore timeScale in case hitstop was active
+            WordDropFX.EnsureTimeScaleRestored();
+
+            // Stop any in-flight coroutines
+            if (HandManager.Instance != null)
+            {
+                HandManager.Instance.StopAllCoroutines();
+                HandManager.Instance.SetInteractable(false);
+            }
+
+            AnalyticsManager.ButtonTap("menu");
+            GameManager.Instance.TransitionTo(GameState.Menu);
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // LEGACY STUBS — kept so old callers compile without changes
         // ═══════════════════════════════════════════════════════════════════════════
@@ -595,6 +819,115 @@ namespace WordDrop
 
         /// <summary>Legacy stub — combo pill removed.</summary>
         public void SetCombo(int combo, float multiplier) { }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PUBLIC API — Blitz Mode
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Toggle blitz mode display: hides AI score/label, uses timer instead of turn counter.
+        /// </summary>
+        public void SetBlitzMode(bool blitz)
+        {
+            _isBlitzMode = blitz;
+
+            if (_aiScoreText != null)
+                _aiScoreText.gameObject.SetActive(!blitz);
+            if (_aiScoreNum != null)
+                _aiScoreNum.gameObject.SetActive(!blitz);
+        }
+
+        /// <summary>
+        /// Configures HUD for Daily Drop mode: hides AI score, shows "DAILY DROP" label.
+        /// </summary>
+        public void SetDailyMode(bool daily)
+        {
+            if (daily)
+            {
+                // Hide AI score number, repurpose AI label for "DAILY"
+                if (_aiScoreNum != null)  _aiScoreNum.gameObject.SetActive(false);
+                if (_aiScoreText != null)
+                {
+                    _aiScoreText.gameObject.SetActive(true);
+                    _aiScoreText.text = "DAILY";
+                }
+
+                // Keep P1 label as-is so score displays correctly
+                if (_playerScoreText != null) _playerScoreText.text = "P1:";
+            }
+            else if (!_isBlitzMode)
+            {
+                // Restore AI elements (unless blitz mode is active)
+                if (_aiScoreText != null)
+                {
+                    _aiScoreText.gameObject.SetActive(true);
+                    _aiScoreText.text = "AI";
+                }
+                if (_aiScoreNum != null) _aiScoreNum.gameObject.SetActive(true);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // LIVE CONFIG — update existing elements without rebuilding
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Called by UIConfigEditor when values change during Play mode.
+        /// Updates colors, font sizes, and text on existing UI elements.
+        /// </summary>
+        public void ApplyLiveConfig()
+        {
+            var cfg = UIConfig.Instance;
+            if (cfg == null) return;
+
+            // Bar background
+            Transform barT = transform.GetComponentInChildren<Canvas>()?.transform.Find("HUDBar");
+            if (barT != null)
+            {
+                Image barImg = barT.GetComponent<Image>();
+                if (barImg != null) barImg.color = cfg.hudBarBgColor;
+            }
+
+            // Player score colors
+            if (_playerScoreText != null)
+            {
+                _playerScoreText.color = PLAYER_COLOR;
+                _playerScoreText.fontSize = cfg.hudPlayerLabelFontSize;
+            }
+            if (_playerScoreNum != null)
+            {
+                _playerScoreNum.color = PLAYER_COLOR;
+                _playerScoreNum.fontSize = cfg.hudPlayerNumFontSize;
+            }
+
+            // AI score colors
+            if (_aiScoreText != null)
+            {
+                _aiScoreText.color = AI_COLOR;
+                _aiScoreText.fontSize = cfg.hudAILabelFontSize;
+            }
+            if (_aiScoreNum != null)
+            {
+                _aiScoreNum.color = AI_COLOR;
+                _aiScoreNum.fontSize = cfg.hudAINumFontSize;
+            }
+
+            // Swap/rewrite counters
+            if (_swapCounterText != null)
+            {
+                _swapCounterText.color = cfg.hudSwapColor;
+                _swapCounterText.fontSize = cfg.hudSwapFontSize;
+            }
+            if (_rewriteCounterText != null)
+            {
+                _rewriteCounterText.color = cfg.hudSwapColor;
+                _rewriteCounterText.fontSize = cfg.hudSwapFontSize;
+            }
+
+            // Turn counter
+            if (_turnCounterText != null)
+                _turnCounterText.fontSize = cfg.hudTurnFontSize;
+        }
 
         // ═══════════════════════════════════════════════════════════════════════════
         // HELPERS

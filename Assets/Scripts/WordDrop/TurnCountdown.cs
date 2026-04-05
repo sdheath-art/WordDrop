@@ -13,10 +13,10 @@ namespace WordDrop
 
         private const int SHOW_AT_TURNS_LEFT = 10;
 
-        private static readonly Color COLOR_CALM     = new Color(0.85f, 0.85f, 0.90f, 1f);
-        private static readonly Color COLOR_WARM     = new Color(1.00f, 0.80f, 0.25f, 1f);
-        private static readonly Color COLOR_HOT      = new Color(1.00f, 0.50f, 0.15f, 1f);
-        private static readonly Color COLOR_CRITICAL  = new Color(1.00f, 0.25f, 0.20f, 1f);
+        private static readonly Color COLOR_CALM     = new Color(0.94f, 0.90f, 0.84f, 1f); // warm white
+        private static readonly Color COLOR_WARM     = new Color(1.00f, 0.84f, 0.42f, 1f); // gold
+        private static readonly Color COLOR_HOT      = new Color(1.00f, 0.56f, 0.67f, 1f); // pink
+        private static readonly Color COLOR_CRITICAL  = new Color(1.00f, 0.40f, 0.40f, 1f); // soft red
 
         private int _lastShownTurns = -1;
 
@@ -40,11 +40,18 @@ namespace WordDrop
         {
             if (HUDManager.Instance == null) return;
 
-            int playerTurnsLeft = turnsRemaining / 2;
+            // In blitz mode, BlitzManager manages the timer display
+            if (BlitzManager.IsBlitzMode) return;
+
+            int playerTurnsLeft;
             if (MatchController.Instance != null)
             {
                 int humanUsed = MatchController.Instance.GetPlayerTurns(MatchController.PLAYER_HUMAN);
-                playerTurnsLeft = MatchController.MAX_TURNS - humanUsed;
+                playerTurnsLeft = MatchController.Instance.EffectiveMaxTurns - humanUsed;
+            }
+            else
+            {
+                playerTurnsLeft = turnsRemaining / 2;
             }
 
             // Sudden death override

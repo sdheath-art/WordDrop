@@ -90,12 +90,30 @@ namespace WordDrop
         private int        _totalDrawn = 0;
         private int        _refillCount = 0;
 
+        /// <summary>
+        /// When non-null, this seeded System.Random is used instead of UnityEngine.Random
+        /// to ensure deterministic, cross-device reproducible letter sequences.
+        /// </summary>
+        private System.Random _seededRng = null;
+
         // ---------------------------------------------------------------------------
-        // Constructor
+        // Constructors
         // ---------------------------------------------------------------------------
 
+        /// <summary>Default constructor — uses UnityEngine.Random (non-deterministic).</summary>
         public TileBag()
         {
+            Refill();
+        }
+
+        /// <summary>
+        /// Seeded constructor — uses System.Random with the given seed.
+        /// Produces identical letter sequences for the same seed on every device.
+        /// Used by Daily Drop mode for fair, reproducible puzzles.
+        /// </summary>
+        public TileBag(int seed)
+        {
+            _seededRng = new System.Random(seed);
             Refill();
         }
 
@@ -113,12 +131,36 @@ namespace WordDrop
         public int RefillCount => _refillCount - 1; // first fill doesn't count as a refill
 
         /// <summary>
+        /// If set, the next DrawLetter() call returns this letter instead of drawing from the bag.
+        /// Automatically clears after one use. Used by the tutorial to rig draws.
+        /// </summary>
+        private char _forcedNextDraw = '\0';
+
+        /// <summary>
+        /// Forces the next DrawLetter() call to return the given letter.
+        /// One-shot: automatically clears after the draw.
+        /// </summary>
+        public void ForceNextDraw(char letter)
+        {
+            _forcedNextDraw = char.ToUpper(letter);
+            Debug.Log($"[TileBag] Next draw forced to '{_forcedNextDraw}'");
+        }
+
+        /// <summary>
         /// Draws a single letter from the bag.
         /// ALWAYS returns a valid A-Z character — never returns WILD_CHAR ('*').
         /// If the bag is empty, it automatically refills first.
         /// </summary>
         public char DrawLetter()
         {
+            if (_forcedNextDraw != '\0')
+            {
+                char forced = _forcedNextDraw;
+                _forcedNextDraw = '\0';
+                _totalDrawn++;
+                return forced;
+            }
+
             if (_bag.Count == 0)
             {
                 Debug.Log("[TileBag] Bag empty — refilling.");
@@ -158,7 +200,10 @@ namespace WordDrop
                 totalTiles += entry.count;
             }
 
-            Shuffle(_bag);
+            if (_seededRng != null)
+                ShuffleSeeded(_bag, _seededRng);
+            else
+                Shuffle(_bag);
 
             if (_refillCount == 0)
                 Debug.Log($"[TileBag] Initial fill — {_bag.Count} tiles " +
@@ -250,6 +295,10 @@ namespace WordDrop
         // Fisher-Yates shuffle
         // ---------------------------------------------------------------------------
 
+        /// <summary>
+        /// Shuffles using UnityEngine.Random (non-deterministic).
+        /// Used when no seeded RNG is set.
+        /// </summary>
         private static void Shuffle(List<char> list)
         {
             int n          = list.Count;
@@ -259,6 +308,21 @@ namespace WordDrop
             for (int i = n - 1; i > 0 && iterations < safetyMax; i--, iterations++)
             {
                 int  j    = Random.Range(0, i + 1);
+                char temp = list[i];
+                list[i]   = list[j];
+                list[j]   = temp;
+            }
+        }
+
+        /// <summary>
+        /// Shuffles using a seeded System.Random for deterministic, cross-device results.
+        /// </summary>
+        private static void ShuffleSeeded(List<char> list, System.Random rng)
+        {
+            int n = list.Count;
+            for (int i = n - 1; i > 0; i--)
+            {
+                int  j    = rng.Next(0, i + 1);
                 char temp = list[i];
                 list[i]   = list[j];
                 list[j]   = temp;

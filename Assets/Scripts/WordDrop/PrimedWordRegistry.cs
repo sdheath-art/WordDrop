@@ -31,6 +31,7 @@ namespace WordDrop
             public int PrimedOnTurn { get; set; }
             public int ExpiresOnTurn { get; set; }
             public int OverlapFuseBonusGranted { get; set; } = 0; // total +turns from overlap extensions
+            public bool IsGold { get; set; } = false; // gold primed word — worth 3x on detonation
 
             public override string ToString()
                 => $"PrimedWord[id={Id} word={Word} owner={OwnerPlayer} " +
@@ -67,7 +68,8 @@ namespace WordDrop
             int ownerPlayer,
             int primedOnTurn,
             int expiresOnTurn,
-            int score = 0)
+            int score = 0,
+            bool isGold = false)
         {
             if (string.IsNullOrEmpty(word))
             {
@@ -92,6 +94,7 @@ namespace WordDrop
                 OwnerPlayer   = ownerPlayer,
                 PrimedOnTurn  = primedOnTurn,
                 ExpiresOnTurn = expiresOnTurn,
+                IsGold        = isGold,
             };
 
             _primedWords.Add(record);

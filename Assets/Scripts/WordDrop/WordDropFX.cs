@@ -21,7 +21,7 @@ namespace WordDrop
 
         // ── Tuning: Word scored ─────────────────────────────────────────────────
         public const float SCORE_POP_STRENGTH   = 0.12f;  // subtler pop
-        public const float SCORE_POP_DURATION   = 0.20f;
+        public const float SCORE_POP_DURATION   = 0.14f;
         public const float TILE_STAGGER_DELAY   = 0.03f;
 
         // ── Tuning: Detonation ──────────────────────────────────────────────────
@@ -57,15 +57,16 @@ namespace WordDrop
         public const float CARD_SHUFFLE_DUR     = 0.15f;
 
         // ── Tuning: Detonation particles ──────────────────────────────────────
-        public const int   PARTICLE_BURST_COUNT  = 6;
+        public const int   PARTICLE_BURST_COUNT  = 12;
         public const float PARTICLE_LIFETIME_MIN = 0.15f;
         public const float PARTICLE_LIFETIME_MAX = 0.30f;
         public const float PARTICLE_SPEED        = 3.5f;
-        public const float PARTICLE_SIZE          = 0.08f;
+        public const float PARTICLE_SIZE          = 0.12f;
 
         // ── State ───────────────────────────────────────────────────────────────
         private Transform _gridRoot;
         private ParticleSystem _detonationParticles;
+        private Material _cachedSpriteMat;
 
         // ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -148,7 +149,8 @@ namespace WordDrop
             // Use default sprite renderer (white particle)
             var renderer = go.GetComponent<ParticleSystemRenderer>();
             renderer.sortingOrder = 20; // above tiles
-            renderer.material = new Material(Shader.Find("Sprites/Default"));
+            if (_cachedSpriteMat == null) _cachedSpriteMat = new Material(Shader.Find("Sprites/Default"));
+            renderer.sharedMaterial = _cachedSpriteMat;
         }
 
         /// <summary>
@@ -177,7 +179,7 @@ namespace WordDrop
 
             float punch = SCORE_POP_STRENGTH + chainStep * 0.05f;
 
-            // All tiles flash simultaneously
+            // All tiles flash simultaneously — boost sorting so they render above neighbors
             for (int i = 0; i < tiles.Count; i++)
             {
                 Tile tile = tiles[i];
@@ -185,16 +187,28 @@ namespace WordDrop
 
                 tile.transform.DOComplete();
                 tile.FlashHighlight(color);
+                tile.SetSortingOrder(15); // temporarily above all other tiles (normal = 5)
                 tile.transform
                     .DOPunchScale(Vector3.one * punch, SCORE_POP_DURATION, 1, 0.5f)
-                    .SetEase(DG.Tweening.Ease.OutBack);
+                    .SetEase(DG.Tweening.Ease.OutBack)
+                    .OnComplete(() => { if (tile != null) tile.SetSortingOrder(5); });
 
                 // Temporary shadow under the tile during the pop
-                StartCoroutine(TileScoredShadow(tile));
+                // Shadow disabled — cleaner without floating shadows during animations
+                // StartCoroutine(TileScoredShadow(tile));
             }
 
-            // Light screen shake on word scored — subtle bump
-            PlayBoardShake(-1); // -1 = lighter than base detonation shake
+            // Sound + particles + screen shake + neighbor ripple on word scored
+            GameAudio.Instance?.PlayWordScored();
+            if (tiles.Count > 0 && tiles[0] != null)
+            {
+                Vector3 center = Vector3.zero;
+                foreach (var tile in tiles) if (tile != null) center += tile.transform.position;
+                center /= Mathf.Max(1, tiles.Count);
+                GameParticles.Instance?.PlayWordScored(center, tiles.Count * 3);
+            }
+            PlayBoardShake(-1);
+            PlayNeighborRipple(tiles, chainStep);
         }
 
         private IEnumerator TileScoredShadow(Tile tile)
@@ -296,9 +310,10 @@ namespace WordDrop
             lr.positionCount = 2;
             lr.SetPosition(0, from);
             lr.SetPosition(1, to);
-            lr.startWidth = 0.06f;
-            lr.endWidth = 0.06f;
-            lr.material = new Material(Shader.Find("Sprites/Default"));
+            lr.startWidth = 0.04f;
+            lr.endWidth = 0.04f;
+            if (_cachedSpriteMat == null) _cachedSpriteMat = new Material(Shader.Find("Sprites/Default"));
+            lr.sharedMaterial = _cachedSpriteMat;
             lr.startColor = color;
             lr.endColor = color;
             lr.sortingOrder = 20;
@@ -325,6 +340,13 @@ namespace WordDrop
         public void PlayDetonation(List<Tile> tiles, int chainStep)
         {
             if (tiles == null || tiles.Count == 0) return;
+            GameAudio.Instance?.PlayDetonation(chainStep);
+            // Particles on detonation
+            Vector3 center = Vector3.zero;
+            foreach (var tile in tiles)
+                if (tile != null) center += tile.transform.position;
+            center /= Mathf.Max(1, tiles.Count);
+            GameParticles.Instance?.PlayDetonation(center, chainStep);
 
             foreach (var tile in tiles)
             {
@@ -368,6 +390,15 @@ namespace WordDrop
         {
             float dissolveDur = 0.28f + chainStep * 0.02f; // was 0.35 — snappier
 
+            // Phase 0: Anticipation pre-flash — tiles glow bright before exploding (staging)
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                Tile tile = tiles[i];
+                if (tile == null) continue;
+                tile.FlashHighlight(new Color(1f, 0.9f, 0.5f, 1f)); // warm white flash
+            }
+            yield return new WaitForSeconds(0.08f);
+
             // Phase 1: Quick scale pop on all tiles (anticipation before dissolve)
             for (int i = 0; i < tiles.Count; i++)
             {
@@ -380,7 +411,10 @@ namespace WordDrop
             }
             yield return new WaitForSeconds(0.06f);
 
-            // Phase 2: Dissolve + particles + rotation
+            // Phase 2: Screen flash — white overlay, instant on, quick fade
+            PlayScreenFlash(chainStep);
+
+            // Phase 3: Dissolve + particles + rotation
             for (int i = 0; i < tiles.Count; i++)
             {
                 Tile tile = tiles[i];
@@ -391,7 +425,7 @@ namespace WordDrop
                     .SetEase(DG.Tweening.Ease.InQuad);
 
                 // Particles — capped to avoid frame drops on mobile
-                int burstCount = Mathf.Min(PARTICLE_BURST_COUNT + chainStep * 2, 14);
+                int burstCount = Mathf.Min(PARTICLE_BURST_COUNT + chainStep * 2, 24);
                 EmitDetonationBurst(tile.transform.position, burstCount);
 
                 tile.Dissolve(dissolveDur);
@@ -399,11 +433,63 @@ namespace WordDrop
 
             PlayBoardShake(chainStep, tiles.Count);
             ShakeHandCards(chainStep, tiles.Count);
+            PlayNeighborRipple(tiles, chainStep);
+            PlayHitStop(chainStep);
 
             yield return new WaitForSeconds(dissolveDur + 0.03f);
 
             foreach (var tile in tiles)
                 if (tile != null) tile.transform.rotation = Quaternion.identity;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SCREEN FLASH — white overlay on detonation impact
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        private const float FLASH_BASE_ALPHA = 0.35f;
+        private const float FLASH_PER_CHAIN  = 0.10f;
+        private const float FLASH_MAX_ALPHA  = 0.65f;
+        private const float FLASH_FADE_DUR   = 0.15f;
+
+        /// <summary>Quick white screen flash scaled by chain depth.</summary>
+        public void PlayScreenFlash(int chainStep)
+        {
+            float alpha = Mathf.Min(FLASH_BASE_ALPHA + chainStep * FLASH_PER_CHAIN, FLASH_MAX_ALPHA);
+            StartCoroutine(ScreenFlashCoroutine(alpha));
+        }
+
+        private IEnumerator ScreenFlashCoroutine(float peakAlpha)
+        {
+            // Create a temporary full-screen white overlay via UI canvas
+            GameObject canvasGO = new GameObject("FlashCanvas");
+            Canvas canvas = canvasGO.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 55; // above game, below meltdown
+
+            GameObject imgGO = new GameObject("FlashImage");
+            imgGO.transform.SetParent(canvasGO.transform, false);
+
+            RectTransform rt = imgGO.AddComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+
+            UnityEngine.UI.Image img = imgGO.AddComponent<UnityEngine.UI.Image>();
+            img.color = new Color(1f, 1f, 1f, peakAlpha);
+            img.raycastTarget = false;
+
+            // Fade out
+            float elapsed = 0f;
+            while (elapsed < FLASH_FADE_DUR)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / FLASH_FADE_DUR);
+                img.color = new Color(1f, 1f, 1f, peakAlpha * (1f - t * t)); // quadratic fade
+                yield return null;
+            }
+
+            Destroy(canvasGO);
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -430,17 +516,17 @@ namespace WordDrop
             int vibrato;
             if (chainStep < 0)
             {
-                mag = 0.18f;
-                dur = 0.18f;
-                vibrato = 12;
+                mag = 0.06f;
+                dur = 0.10f;
+                vibrato = 8;
             }
             else
             {
                 // Scale with both chain depth and tile count
                 float tileMult = 1f + (tileCount - 1) * 0.15f; // each extra tile adds 15%
-                mag = Mathf.Min((0.30f + chainStep * 0.18f) * tileMult, 1.3f);
-                dur = Mathf.Min(0.28f + chainStep * 0.06f + tileCount * 0.02f, 0.6f);
-                vibrato = Mathf.Min(18 + chainStep * 4 + tileCount * 2, 50);
+                mag = Mathf.Min((0.22f + chainStep * 0.12f) * tileMult, 0.70f);
+                dur = Mathf.Min(0.18f + chainStep * 0.04f + tileCount * 0.015f, 0.35f);
+                vibrato = Mathf.Min(14 + chainStep * 4 + tileCount * 2, 32);
             }
 
             t.DOShakePosition(dur, mag, vibrato, 90f, false, true)
@@ -461,8 +547,8 @@ namespace WordDrop
             if (HandManager.Instance == null) return;
 
             float tileMult = 1f + (tileCount - 1) * 0.12f;
-            float intensity = Mathf.Min((0.12f + chainStep * 0.04f) * tileMult, 0.35f);
-            float dur = Mathf.Min(0.25f + chainStep * 0.04f + tileCount * 0.02f, 0.5f);
+            float intensity = Mathf.Min((0.08f + chainStep * 0.03f) * tileMult, 0.20f);
+            float dur = Mathf.Min(0.25f + chainStep * 0.04f + tileCount * 0.02f, 0.25f);
 
             StartCoroutine(HandCardShakeCoroutine(intensity, dur));
         }
@@ -509,6 +595,141 @@ namespace WordDrop
                 cards[i].transform.position = restPos[i];
                 cards[i].transform.localRotation = Quaternion.identity;
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // NEIGHBOR RIPPLE BOUNCE — adjacent tiles react to scored/detonated words
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Makes tiles adjacent to a scored/detonated word bounce slightly.
+        /// Creates a ripple effect radiating outward from the impact center.
+        /// Intensity is ~30-50% of the primary animation (Disney secondary motion).
+        /// </summary>
+        public void PlayNeighborRipple(List<Tile> scoredTiles, int chainStep = 0)
+        {
+            if (scoredTiles == null || scoredTiles.Count == 0) return;
+            if (GridManager.Instance == null) return;
+
+            var grid = GridManager.Instance;
+
+            // Collect scored tile positions for distance calculation
+            HashSet<Vector2Int> scoredPositions = new HashSet<Vector2Int>();
+            Vector3 center = Vector3.zero;
+            int centerCount = 0;
+            foreach (var tile in scoredTiles)
+            {
+                if (tile == null) continue;
+                scoredPositions.Add(new Vector2Int(tile.Col, tile.Row));
+                center += tile.transform.position;
+                centerCount++;
+            }
+            if (centerCount == 0) return;
+            center /= centerCount;
+
+            // Intensity scales with chain depth — bigger chains, bigger ripple
+            float baseIntensity = 3f + chainStep * 1.5f;
+            float maxIntensity = 8f;
+
+            // Find and bounce all adjacent tiles not in the scored set
+            for (int col = 0; col < GridManager.COLS; col++)
+            {
+                for (int row = 0; row < GridManager.ROWS; row++)
+                {
+                    if (scoredPositions.Contains(new Vector2Int(col, row))) continue;
+
+                    Tile neighbor = grid.GetTile(col, row);
+                    if (neighbor == null) continue;
+
+                    // Check if adjacent to any scored tile (8-directional)
+                    bool isAdjacent = false;
+                    foreach (var sp in scoredPositions)
+                    {
+                        if (Mathf.Abs(col - sp.x) <= 1 && Mathf.Abs(row - sp.y) <= 1)
+                        {
+                            isAdjacent = true;
+                            break;
+                        }
+                    }
+                    if (!isAdjacent) continue;
+
+                    // Distance-based delay — closer tiles react first
+                    float dist = Vector3.Distance(neighbor.transform.position, center);
+                    float delay = dist * 0.03f; // 30ms per unit of distance
+
+                    // Bounce direction: away from center
+                    Vector3 dir = (neighbor.transform.position - center).normalized;
+                    float intensity = Mathf.Min(baseIntensity, maxIntensity);
+                    Vector3 punch = dir * intensity * 0.01f; // small positional punch
+
+                    neighbor.transform.DOComplete();
+                    neighbor.transform
+                        .DOPunchPosition(punch, 0.15f, 4, 0.5f)
+                        .SetDelay(delay)
+                        .SetEase(DG.Tweening.Ease.OutQuad);
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // HITSTOP — freeze frame on big moments
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        // Tuning constants — expose as SerializeField when moving to UIConfig
+        private const float HITSTOP_LIGHT_DUR    = 0.04f;  // word scored
+        private const float HITSTOP_MEDIUM_DUR   = 0.07f;  // chain depth 1
+        private const float HITSTOP_HEAVY_DUR    = 0.12f;  // chain depth 2+
+        private const float HITSTOP_ULTRA_DUR    = 0.18f;  // meltdown
+        private const float HITSTOP_SAFETY_MAX   = 0.5f;   // max freeze ever
+
+        private Coroutine _activeHitStop;
+        private float _hitStopSafetyTimer;
+
+        private void Update()
+        {
+            // Safety net: if timeScale is stuck at 0, force restore
+            if (Time.timeScale < 0.01f)
+            {
+                _hitStopSafetyTimer += Time.unscaledDeltaTime;
+                if (_hitStopSafetyTimer > HITSTOP_SAFETY_MAX)
+                {
+                    Time.timeScale = 1f;
+                    _hitStopSafetyTimer = 0f;
+                    Debug.LogWarning("[WordDropFX] HitStop safety net — forced timeScale restore.");
+                }
+            }
+            else
+            {
+                _hitStopSafetyTimer = 0f;
+            }
+        }
+
+        /// <summary>
+        /// Freezes time briefly for dramatic impact.
+        /// chainStep: -1=none, 0=light, 1=medium, 2+=heavy, 3+=ultra (meltdown).
+        /// Safe: runs on this MonoBehaviour (DontDestroyOnLoad not needed — WordDropFX persists),
+        /// has safety net timer in Update().
+        /// </summary>
+        public void PlayHitStop(int chainStep)
+        {
+            if (chainStep < 0) return; // no hitstop for regular word scores
+
+            float duration;
+            if (chainStep >= 3) duration = HITSTOP_ULTRA_DUR;
+            else if (chainStep >= 2) duration = HITSTOP_HEAVY_DUR;
+            else if (chainStep >= 1) duration = HITSTOP_MEDIUM_DUR;
+            else duration = HITSTOP_LIGHT_DUR;
+
+            if (_activeHitStop != null) StopCoroutine(_activeHitStop);
+            _activeHitStop = StartCoroutine(HitStopCoroutine(duration));
+        }
+
+        private IEnumerator HitStopCoroutine(float duration)
+        {
+            Time.timeScale = 0f;
+            yield return new WaitForSecondsRealtime(duration);
+            Time.timeScale = 1f;
+            _activeHitStop = null;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -591,6 +812,34 @@ namespace WordDrop
         {
             float beat = baseBeat * Mathf.Pow(CHAIN_SPEED_MULT, chainStep);
             return Mathf.Max(beat, CHAIN_MIN_BEAT);
+        }
+
+        /// <summary>
+        /// Brief time-freeze on detonation impact (hitstop).
+        /// Runs on WordDropFX's own MonoBehaviour so it can't be killed by
+        /// StopAllCoroutines on HandManager. Always restores timeScale.
+        /// </summary>
+        public static IEnumerator HitStop(float duration = 0.05f)
+        {
+            // Run on WordDropFX instance so it survives HandManager coroutine stops
+            if (Instance != null)
+            {
+                Instance.StartCoroutine(HitStopInternal(duration));
+                yield return new WaitForSecondsRealtime(duration);
+            }
+        }
+
+        private static IEnumerator HitStopInternal(float duration)
+        {
+            Time.timeScale = 0f;
+            yield return new WaitForSecondsRealtime(duration);
+            Time.timeScale = 1f;
+        }
+
+        /// <summary>Safety: ensure timeScale is restored. Call on game state transitions.</summary>
+        public static void EnsureTimeScaleRestored()
+        {
+            Time.timeScale = 1f;
         }
 
         /// <summary>Kill all tweens on a transform.</summary>

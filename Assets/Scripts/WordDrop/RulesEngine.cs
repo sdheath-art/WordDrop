@@ -52,8 +52,15 @@ namespace WordDrop
         //   Scaled:       MULTIPLIER=0.5, BONUS=1  (rewards big-word primes)
         //   Full double:  MULTIPLIER=1.0, BONUS=0  (maximum detonation reward)
         //   Hybrid:       MULTIPLIER=0.5, BONUS=2  (scaled + flat floor)
-        public const float DETONATION_SCORE_MULTIPLIER = 1f;  // re-score original word value on detonation
-        public const int   BREAKER_BONUS               = 2;  // flat bonus on top
+        public const float DETONATION_SCORE_MULTIPLIER = 1.5f; // 1.5x primed word's score on detonation
+        public const int   BREAKER_BONUS               = 5;   // flat bonus — detonations should feel explosive
+
+        // Chain-Depth Scaling: TRIANGULAR curve — each depth feels dramatically bigger.
+        // Uses triangular formula: multiplier = 1 + (depth² + depth) / 2
+        // depth 0: 1.0x, depth 1: 2.0x, depth 2: 4.0x, depth 3: 7.0x, depth 4+: capped at 7.0x
+        // Old linear was: 1.0x / 1.5x / 2.0x / 2.5x — too flat, chains didn't feel special.
+        public const float CHAIN_DEPTH_SCALE_PER_DEPTH = 0.5f; // unused — kept for compat, see TriangularChainMultiplier
+        public const int   CHAIN_DEPTH_SCALE_CAP       = 4;   // max chain depth for triangular scaling
 
         // Heat Fuse: primed words gain +1 detonation bonus per survived turn, capped
         public const int   HEAT_FUSE_PER_TURN          = 1;
@@ -62,6 +69,18 @@ namespace WordDrop
         // Overlap Fuse Extension: existing primed words get +1 fuse when a new prime overlaps them
         public const int   OVERLAP_FUSE_EXTENSION      = 1;
         public const int   MAX_OVERLAP_FUSE_BONUS      = 2;
+
+        /// <summary>
+        /// Triangular chain multiplier: each depth level adds MORE than the last.
+        /// Formula: 1 + (d² + d) / 2 where d = min(chainDepth, cap)
+        /// d=0: 1.0x, d=1: 2.0x, d=2: 4.0x, d=3: 7.0x, d=4: 11.0x
+        /// Much punchier than the old linear 1.0/1.5/2.0/2.5 — chains should feel explosive.
+        /// </summary>
+        public static float TriangularChainMultiplier(int chainDepth)
+        {
+            int d = Mathf.Min(Mathf.Max(chainDepth, 0), CHAIN_DEPTH_SCALE_CAP);
+            return 1f + (d * d + d) / 2f;
+        }
 
         // TWO directions only — matches how humans read:
         // Horizontal: left to right
@@ -81,6 +100,192 @@ namespace WordDrop
         // ── Board state ───────────────────────────────────────────────────────────
 
         private RulesCellData[,] _board = new RulesCellData[COLS, ROWS];
+
+        // ── Board Blessing: bonus cells that double word scores ──────────────────
+
+        private bool[,] _bonusCells = new bool[COLS, ROWS];
+
+        /// <summary>Check if a cell is a bonus cell.</summary>
+        public bool IsBonusCell(int col, int row)
+        {
+            if (!InBounds(col, row)) return false;
+            return _bonusCells[col, row];
+        }
+
+        /// <summary>Set a cell as a bonus cell.</summary>
+        public void SetBonusCell(int col, int row, bool isBonus)
+        {
+            if (!InBounds(col, row)) return;
+            _bonusCells[col, row] = isBonus;
+        }
+
+        /// <summary>Clear all bonus cells (called on match start).</summary>
+        public void ClearAllBonusCells()
+        {
+            System.Array.Clear(_bonusCells, 0, _bonusCells.Length);
+        }
+
+        /// <summary>Shift bonus cells up by one row (called during rising rows).</summary>
+        public void ShiftBonusCellsUp()
+        {
+            for (int col = 0; col < COLS; col++)
+            {
+                for (int row = ROWS - 1; row > 0; row--)
+                    _bonusCells[col, row] = _bonusCells[col, row - 1];
+                _bonusCells[col, 0] = false; // bottom row cleared for new bonus placement
+            }
+        }
+
+        /// <summary>
+        /// Place 1-2 random bonus cells scattered across the board at game start.
+        /// Enforces minimum 2-cell spacing to prevent clumping.
+        /// Returns the positions for visual overlay.
+        /// </summary>
+        public List<Vector2Int> PlaceInitialBonusCells()
+        {
+            var positions = new List<Vector2Int>();
+            int count = Random.Range(1, 3); // 1 or 2 starting bonus cells (rarer = more exciting)
+            var available = new List<Vector2Int>();
+
+            // Scatter across the whole board — any cell can be gold
+            // Tiles landing on these positions later will become gold via CreateSingleTile
+            for (int col = 0; col < COLS; col++)
+                for (int row = 0; row < ROWS; row++)
+                    available.Add(new Vector2Int(col, row));
+
+            for (int i = 0; i < count && available.Count > 0; i++)
+            {
+                int idx = Random.Range(0, available.Count);
+                var pos = available[idx];
+                available.RemoveAt(idx);
+                _bonusCells[pos.x, pos.y] = true;
+                positions.Add(pos);
+
+                // Remove nearby cells to prevent clumping (min 2 cells apart)
+                available.RemoveAll(p =>
+                    Mathf.Abs(p.x - pos.x) <= 2 && Mathf.Abs(p.y - pos.y) <= 2);
+            }
+
+            Debug.Log($"[RulesEngine] Initial Board Blessing: placed {positions.Count} bonus cell(s)");
+            return positions;
+        }
+
+        /// <summary>
+        /// Place 0-1 random bonus cells in the bottom row after a rising row.
+        /// 40% chance per rising row — gold should feel like a surprise, not routine.
+        /// Returns the columns that got bonus cells for visual overlay.
+        /// </summary>
+        public List<int> PlaceBonusCellsOnBottomRow()
+        {
+            var bonusCols = new List<int>();
+
+            // 40% chance to place a gold tile on a rising row (was 100% with 1-2 tiles)
+            if (Random.value > 0.40f)
+            {
+                Debug.Log("[RulesEngine] Board Blessing: no bonus cell this rising row (60% skip chance).");
+                return bonusCols;
+            }
+
+            int count = 1; // at most 1 per rising row
+            var available = new List<int>();
+            for (int col = 0; col < COLS; col++)
+            {
+                // Don't place gold adjacent to existing gold in row 1 (the row that just shifted up)
+                bool adjacentGold = false;
+                if (col > 0 && _bonusCells[col - 1, 1]) adjacentGold = true;
+                if (col < COLS - 1 && _bonusCells[col + 1, 1]) adjacentGold = true;
+                if (_bonusCells[col, 1]) adjacentGold = true; // directly above
+                if (!adjacentGold) available.Add(col);
+            }
+
+            for (int i = 0; i < count && available.Count > 0; i++)
+            {
+                int idx = Random.Range(0, available.Count);
+                int col = available[idx];
+                available.RemoveAt(idx);
+                _bonusCells[col, 0] = true;
+                bonusCols.Add(col);
+            }
+
+            Debug.Log($"[RulesEngine] Board Blessing: placed {bonusCols.Count} bonus cell(s) on bottom row at col(s): {string.Join(",", bonusCols)}");
+            return bonusCols;
+        }
+
+        /// <summary>
+        /// Check if any tile in a word match is a gold bonus tile.
+        /// Returns the bonus multiplier (1 = no bonus, 2 = has gold tile).
+        /// Consumes the gold status on used tiles (one-time use).
+        /// </summary>
+        /// <summary>Check if any tile in the word is gold. Does NOT consume.</summary>
+        public bool HasGoldTile(RulesWordMatch match)
+        {
+            if (match.Cells == null || GridManager.Instance == null) return false;
+            for (int i = 0; i < match.Cells.Count; i++)
+            {
+                Tile tile = GridManager.Instance.GetTile(match.Cells[i].x, match.Cells[i].y);
+                if (tile != null && tile.IsGoldBonus) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Consume gold tiles in a word and return the bonus multiplier.
+        /// Call AFTER checking HasGoldTile for priming decisions.
+        /// </summary>
+        public int ConsumeGoldAndGetMultiplier(RulesWordMatch match)
+        {
+            if (match.Cells == null || GridManager.Instance == null) return 1;
+            bool hitGold = false;
+            for (int i = 0; i < match.Cells.Count; i++)
+            {
+                Tile tile = GridManager.Instance.GetTile(match.Cells[i].x, match.Cells[i].y);
+                if (tile != null && tile.IsGoldBonus)
+                {
+                    hitGold = true;
+                    tile.SetGoldBonus(false); // consumed!
+                    _bonusCells[match.Cells[i].x, match.Cells[i].y] = false; // clear position too
+                    Debug.Log($"[RulesEngine] Gold tile consumed at ({match.Cells[i].x},{match.Cells[i].y})!");
+                }
+            }
+            return hitGold ? 2 : 1;
+        }
+
+        // ── Word Echo: letter streak bonus ───────────────────────────────────────
+
+        // Tracks how many words each player has scored starting with each letter.
+        // Each subsequent word starting with the same letter gets +echoCount bonus.
+        private Dictionary<char, int>[] _echoCounters = new Dictionary<char, int>[]
+        {
+            new Dictionary<char, int>(), // player 0 (human)
+            new Dictionary<char, int>(), // player 1 (AI)
+        };
+
+        /// <summary>Get the echo bonus for a word scored by a player. Increments the counter.</summary>
+        public int ConsumeEchoBonus(string word, int playerIndex)
+        {
+            if (string.IsNullOrEmpty(word) || playerIndex < 0 || playerIndex >= _echoCounters.Length)
+                return 0;
+
+            char startLetter = char.ToUpper(word[0]);
+            var counters = _echoCounters[playerIndex];
+
+            int echoCount = 0;
+            if (counters.TryGetValue(startLetter, out echoCount) && echoCount > 0)
+            {
+                Debug.Log($"[RulesEngine] Word Echo: '{word}' starts with '{startLetter}' — echo #{echoCount} → +{echoCount} bonus");
+            }
+
+            // Increment for next time
+            counters[startLetter] = echoCount + 1;
+            return echoCount; // 0 on first use (no bonus), 1 on second, etc.
+        }
+
+        /// <summary>Clear echo counters (called on match start via ClearBoard).</summary>
+        private void ClearEchoCounters()
+        {
+            for (int i = 0; i < _echoCounters.Length; i++)
+                _echoCounters[i].Clear();
+        }
 
         // ── Primed word registry ──────────────────────────────────────────────────
 
@@ -148,6 +353,7 @@ namespace WordDrop
         {
             if (!InBounds(col, row)) return;
             _board[col, row] = null;
+            _bonusCells[col, row] = false; // gold consumed with the cell
         }
 
         public void ClearBoard()
@@ -159,6 +365,8 @@ namespace WordDrop
             _scoredWordKeys.Clear();
             _primedRegistry.Clear();
             _globalTurn = 0;
+            ClearAllBonusCells();
+            ClearEchoCounters();
 
             Debug.Log("[RulesEngine] Board cleared.");
         }
@@ -187,6 +395,136 @@ namespace WordDrop
         public float GetBoardOccupancy()
         {
             return (float)CountOccupied() / (COLS * ROWS);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // RISING ROW SUPPORT
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Returns true if any cell in the top row (row ROWS-1) is occupied.
+        /// Used by RisingRowManager to check for overflow before shifting.
+        /// </summary>
+        public bool HasTilesInTopRow()
+        {
+            int topRow = ROWS - 1;
+            for (int col = 0; col < COLS; col++)
+                if (_board[col, topRow] != null) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Shifts all board data up one row. Row 0 becomes empty.
+        /// Returns a move dictionary mapping old positions to new positions.
+        /// IMPORTANT: Does NOT check for overflow — caller must check HasTilesInTopRow() first.
+        /// </summary>
+        public Dictionary<Vector2Int, Vector2Int> ShiftBoardUp()
+        {
+            var moves = new Dictionary<Vector2Int, Vector2Int>();
+
+            // Shift from top to bottom to avoid overwriting
+            for (int col = 0; col < COLS; col++)
+            {
+                for (int row = ROWS - 1; row >= 1; row--)
+                {
+                    _board[col, row] = _board[col, row - 1];
+                    if (_board[col, row] != null)
+                    {
+                        var oldPos = new Vector2Int(col, row - 1);
+                        var newPos = new Vector2Int(col, row);
+                        moves[oldPos] = newPos;
+                        _board[col, row].Row = row;
+                    }
+                }
+                // Clear bottom row
+                _board[col, 0] = null;
+            }
+
+            Debug.Log($"[RulesEngine] ShiftBoardUp — moved {moves.Count} tiles up by 1 row.");
+            return moves;
+        }
+
+        /// <summary>
+        /// Fills the bottom row (row 0) with random neutral letters from the bag.
+        /// Returns the array of letters placed (length = COLS).
+        /// Neutral tiles have PlayerIndex = -1.
+        /// </summary>
+        public char[] FillBottomRow(TileBag bag)
+        {
+            char[] letters = new char[COLS];
+            for (int col = 0; col < COLS; col++)
+            {
+                char letter = bag.DrawLetter();
+                letters[col] = letter;
+                _board[col, 0] = new RulesCellData
+                {
+                    Letter = letter,
+                    Col = col,
+                    Row = 0,
+                    PlayerIndex = -1  // neutral
+                };
+            }
+            Debug.Log($"[RulesEngine] FillBottomRow — placed {COLS} neutral tiles: {new string(letters)}");
+            return letters;
+        }
+
+        /// <summary>
+        /// <summary>
+        /// After a rising row, detect any NEW words that weren't on the board before.
+        /// These words are primed as neutral (playerIndex = -1) — free bonus for both players!
+        /// Returns the list of newly primed words.
+        /// </summary>
+        public List<RulesWordMatch> DetectAndPrimeRiseWords()
+        {
+            var newWords = new List<RulesWordMatch>();
+            var allWords = ScanEntireBoard();
+
+            for (int i = 0; i < allWords.Count; i++)
+            {
+                string key = allWords[i].Word + "|" + allWords[i].CellKey;
+                if (_scoredWordKeys.Contains(key)) continue; // already existed before the rise
+
+                // This is a NEW word created by the rising row!
+                var match = allWords[i];
+                int score = CalculateWordScore(match.Word);
+                match.Score = score;
+
+                // Prime it — neutral player (-1), anyone can detonate
+                int expiresOn = _globalTurn + PRIMED_EXPIRY_TURNS;
+                _primedRegistry.AddPrimedWord(
+                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score);
+
+                newWords.Add(match);
+                Debug.Log($"[RulesEngine] Rising row created word '{match.Word}' ({score} pts) — PRIMED!");
+            }
+
+            if (newWords.Count > 0)
+                Debug.Log($"[RulesEngine] Rising row primed {newWords.Count} new word(s)!");
+
+            return newWords;
+        }
+
+        /// <summary>
+        /// After a rising row shift, rebuild _scoredWordKeys so that all
+        /// currently existing words on the board are marked as already scored.
+        /// This prevents shifted pre-existing words from being re-detected
+        /// as "new" on the next drop.
+        /// </summary>
+        public void RebuildScoredKeysAfterRise()
+        {
+            _scoredWordKeys.Clear();
+
+            // Scan the board for all valid words and register them as scored
+            List<RulesWordMatch> allWords = ScanEntireBoard();
+            allWords = FilterSubstringWords(allWords);
+
+            for (int i = 0; i < allWords.Count; i++)
+            {
+                string key = allWords[i].Word + "|" + allWords[i].CellKey;
+                _scoredWordKeys.Add(key);
+            }
+
+            Debug.Log($"[RulesEngine] RebuildScoredKeysAfterRise — registered {_scoredWordKeys.Count} existing words.");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -342,10 +680,13 @@ namespace WordDrop
                     string key = match.Word + "|" + match.CellKey;
                     _scoredWordKeys.Add(key);
 
-                    // Calculate score with chain bonus
+                    // Calculate score with chain bonus + gold bonus + echo
                     int baseScore  = CalculateWordScore(match.Word);
-                    int chainBonus = (chainStep > 0) ? CHAIN_BONUS * chainStep : 0;
-                    int finalScore = baseScore + chainBonus;
+                    int chainBonus = (chainStep > 0) ? Mathf.RoundToInt(CHAIN_BONUS * TriangularChainMultiplier(chainStep)) : 0;
+                    int echoBonus  = ConsumeEchoBonus(match.Word, playerIndex);
+                    bool isGoldWord = HasGoldTile(match); // check BEFORE consuming
+                    int bonusMult  = ConsumeGoldAndGetMultiplier(match);
+                    int finalScore = (baseScore + chainBonus + echoBonus) * bonusMult;
                     match.Score    = finalScore;
                     totalScore    += finalScore;
                     baseScoreAccum += baseScore;
@@ -353,6 +694,7 @@ namespace WordDrop
 
                     Debug.Log($"[RulesEngine] Scored '{match.Word}': base={baseScore}" +
                               (chainBonus > 0 ? $" +chain({chainBonus})" : "") +
+                              (echoBonus > 0 ? $" +echo({echoBonus})" : "") +
                               $" = {finalScore} pts  [step={chainStep}]");
 
                     // Emit WordScored
@@ -368,7 +710,7 @@ namespace WordDrop
                     result.ScoredWords.Add(scoredEvt);
                     OnWordScored?.Invoke(scoredEvt);
 
-                    // Prime the word — store score for double word bonus on detonation
+                    // Prime the word — gold words get gold primed status
                     int expiresOn = _globalTurn + PRIMED_EXPIRY_TURNS;
                     int primedId  = _primedRegistry.AddPrimedWord(
                         match.Word,
@@ -376,7 +718,8 @@ namespace WordDrop
                         playerIndex,
                         _globalTurn,
                         expiresOn,
-                        finalScore);
+                        finalScore,
+                        isGoldWord);
 
                     justPrimedThisResolution.Add(primedId);
 
@@ -391,6 +734,7 @@ namespace WordDrop
                     };
                     result.PrimedWords.Add(primedEvt);
                     OnWordPrimed?.Invoke(primedEvt);
+                    GameAudio.Instance?.PlayTilePrimed();
 
                     // Check if any cell in this new word overlaps an EXISTING primed word
                     // (not one primed in THIS resolution)
@@ -501,13 +845,18 @@ namespace WordDrop
                         for (int c = 0; c < pw.Cells.Count; c++)
                             allCellsToRemove.Add(pw.Cells[c]);
 
-                        // Detonation bonus: base + heat fuse
+                        // Detonation bonus: base + heat fuse + chain-depth scaling
                         int survivedTurns = Mathf.Max(0, _globalTurn - pw.PrimedOnTurn);
                         int heatBonus = Mathf.Min(survivedTurns * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
-                        int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
+                        int rawBonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
+
+                        float chainMultiplier = TriangularChainMultiplier(chainStep);
+                        float goldMultiplier = pw.IsGold ? 3f : 1f; // gold primed words detonate for 3x
+                        int bonus = Mathf.RoundToInt(rawBonus * chainMultiplier * goldMultiplier);
+
                         detonationBonus += bonus;
                         Debug.Log($"[RulesEngine] DETONATION BONUS: '{pw.Word}' explodes for +{bonus} pts " +
-                                  $"(base={BREAKER_BONUS} heat={heatBonus} survived={survivedTurns})");
+                                  $"(base={BREAKER_BONUS} heat={heatBonus} survived={survivedTurns} chain={chainStep} x{chainMultiplier:F1})");
 
                         // Remove from registry
                         _primedRegistry.RemovePrimedWord(pid);
@@ -650,6 +999,17 @@ namespace WordDrop
                         mismatchDetail += $" [{cc},{rr}]:{exp}{(ok ? "=" : "≠")}{act}";
                     }
                     Debug.Log($"[RulesEngine] Removing invalid primed word '{pw.Word}' (id={pw.Id}) —{mismatchDetail}");
+
+                    // Clear primed glow on surviving tiles so they don't keep glowing
+                    if (GridManager.Instance != null)
+                    {
+                        for (int c3 = 0; c3 < pw.Cells.Count; c3++)
+                        {
+                            Tile t = GridManager.Instance.GetTile(pw.Cells[c3].x, pw.Cells[c3].y);
+                            if (t != null) t.ClearPrimedGlow();
+                        }
+                    }
+
                     _primedRegistry.RemovePrimedWord(pw.Id);
                 }
             }
@@ -673,6 +1033,7 @@ namespace WordDrop
                 if (InBounds(c, r) && _board[c, r] != null)
                 {
                     _board[c, r] = null;
+                    _bonusCells[c, r] = false; // gold consumed with tile
                     removed++;
                 }
             }
@@ -1283,6 +1644,8 @@ namespace WordDrop
             public int ChainTriggeredCount;
             public int DetonationBonus;  // total detonation bonus this step
             public int DetonationHeat;   // heat portion of detonation bonus
+            public int ChainDepth;       // chain depth when this detonation fired
+            public bool ReplacedTopTile; // true if this drop replaced the top tile in a full column
         }
 
         // ── Step-by-step state ───────────────────────────────────────────────────────
@@ -1295,11 +1658,37 @@ namespace WordDrop
         private HashSet<string> _stepScoredKeys;
         private List<RulesWordMatch> _stepPendingWords;
         private List<int> _stepPendingTriggers;
+        private int _stepChainTriggeredCount;
 
         // ── Public accessors ─────────────────────────────────────────────────────────
 
         public ResolutionPhase CurrentPhase => _currentPhase;
         public bool IsResolving => _currentPhase != ResolutionPhase.Idle && _currentPhase != ResolutionPhase.Complete;
+
+        /// <summary>
+        /// Lightweight read-only check: will DoCheckTriggers find any triggers?
+        /// Call during WordsScored phase to decide whether to play full scoring
+        /// animation or skip it in favour of the detonation presentation.
+        /// </summary>
+        public bool PeekHasTriggers()
+        {
+            if (_stepPendingWords == null || _stepPendingWords.Count == 0) return false;
+
+            for (int w = 0; w < _stepPendingWords.Count; w++)
+            {
+                var match = _stepPendingWords[w];
+                for (int c = 0; c < match.Cells.Count; c++)
+                {
+                    var overlapping = _primedRegistry.GetPrimedWordsContaining(match.Cells[c]);
+                    for (int p = 0; p < overlapping.Count; p++)
+                    {
+                        if (!_stepJustPrimed.Contains(overlapping[p].Id))
+                            return true;
+                    }
+                }
+            }
+            return false;
+        }
 
         // ── BeginDrop ────────────────────────────────────────────────────────────────
 
@@ -1310,7 +1699,26 @@ namespace WordDrop
         public StepResult BeginDrop(int col, char letter, int playerIndex)
         {
             int targetRow = GetLowestEmptyRow(col);
-            if (targetRow < 0) return null;
+            bool replaced = false;
+
+            if (targetRow < 0)
+            {
+                // Column full — replace top tile (sacrifice)
+                targetRow = ROWS - 1;
+                var oldCell = _board[col, targetRow];
+                char oldLetter = oldCell != null ? oldCell.Letter : '?';
+
+                // Clear any primed words involving the replaced tile
+                if (GridManager.Instance != null)
+                {
+                    Tile oldTile = GridManager.Instance.GetTile(col, targetRow);
+                    if (oldTile != null) oldTile.ClearPrimedGlow();
+                }
+                _bonusCells[col, targetRow] = false;
+
+                replaced = true;
+                Debug.Log($"[RulesEngine] BeginDrop: column {col} full — replacing top tile '{oldLetter}' with '{letter}'");
+            }
 
             var cellData = new RulesCellData
             {
@@ -1324,6 +1732,7 @@ namespace WordDrop
             _stepPlayerIndex   = playerIndex;
             _stepChainDepth    = 0;
             _stepTotalScore    = 0;
+            _stepChainTriggeredCount = 0;
             _stepJustPrimed    = new HashSet<int>();
             _stepScoredKeys    = new HashSet<string>();
             _stepPendingWords  = null;
@@ -1334,7 +1743,15 @@ namespace WordDrop
 
             Debug.Log($"[RulesEngine] BeginDrop: placed '{letter}' at ({col},{targetRow}) player={playerIndex}");
 
-            return new StepResult { Phase = ResolutionPhase.TileDropped, Row = targetRow };
+            OnTileDropped?.Invoke(new TileDroppedEvent
+            {
+                Col         = col,
+                Row         = targetRow,
+                Letter      = char.ToUpper(letter),
+                PlayerIndex = playerIndex,
+            });
+
+            return new StepResult { Phase = ResolutionPhase.TileDropped, Row = targetRow, ReplacedTopTile = replaced };
         }
 
         // ── BeginRewrite ─────────────────────────────────────────────────────────────
@@ -1518,15 +1935,18 @@ namespace WordDrop
                 string key = match.Word + "|" + match.CellKey;
 
                 int baseScore  = CalculateWordScore(match.Word);
-                int chainBonus = (_stepChainDepth > 0) ? CHAIN_BONUS * _stepChainDepth : 0;
-                int finalScore = baseScore + chainBonus;
+                int chainBonus = (_stepChainDepth > 0) ? Mathf.RoundToInt(CHAIN_BONUS * TriangularChainMultiplier(_stepChainDepth)) : 0;
+                int echoBonus  = ConsumeEchoBonus(match.Word, _stepPlayerIndex);
+                bool isGoldWord = HasGoldTile(match);
+                int bonusMult  = ConsumeGoldAndGetMultiplier(match);
+                int finalScore = (baseScore + chainBonus + echoBonus) * bonusMult;
                 match.Score    = finalScore;
                 _stepTotalScore += finalScore;
 
                 _scoredWordKeys.Add(key);
                 _stepScoredKeys.Add(key);
 
-                // Prime in registry
+                // Prime in registry — gold words get gold primed status
                 int expiresOn = _globalTurn + PRIMED_EXPIRY_TURNS;
                 int primedId  = _primedRegistry.AddPrimedWord(
                     match.Word,
@@ -1534,7 +1954,8 @@ namespace WordDrop
                     _stepPlayerIndex,
                     _globalTurn,
                     expiresOn,
-                    finalScore);
+                    finalScore,
+                    isGoldWord);
 
                 _stepJustPrimed.Add(primedId);
 
@@ -1715,6 +2136,7 @@ namespace WordDrop
             }
 
             _stepPendingTriggers = new List<int>(triggeredIds);
+            _stepChainTriggeredCount = chainTriggeredCount;
             _currentPhase = ResolutionPhase.TriggersFound;
 
             return new StepResult
@@ -1744,18 +2166,25 @@ namespace WordDrop
                     if (InBounds(cell.x, cell.y) && _board[cell.x, cell.y] != null)
                     {
                         _board[cell.x, cell.y] = null;
+                        _bonusCells[cell.x, cell.y] = false; // gold consumed with tile
                         allExplodedCells.Add(cell);
                     }
                 }
 
                 int survivedTurns = Mathf.Max(0, _globalTurn - pw.PrimedOnTurn);
                 int heatBonus = Mathf.Min(survivedTurns * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
-                int bonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
+                int rawBonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
+
+                // Chain-depth scaling: triangular curve — each depth dramatically bigger
+                float chainMultiplier = TriangularChainMultiplier(_stepChainDepth);
+                float goldMultiplier = pw.IsGold ? 3f : 1f;
+                int bonus = Mathf.RoundToInt(rawBonus * chainMultiplier * goldMultiplier);
+
                 detonationBonus += bonus;
                 totalHeat += heatBonus;
 
                 Debug.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
-                          $"(rescore={Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER)} base={BREAKER_BONUS} heat={heatBonus})");
+                          $"(rescore={Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER)} base={BREAKER_BONUS} heat={heatBonus} chain={_stepChainDepth} x{chainMultiplier:F1})");
 
                 _primedRegistry.RemovePrimedWord(pid);
                 _stepJustPrimed.Remove(pid);
@@ -1776,6 +2205,8 @@ namespace WordDrop
                 TotalScore = _stepTotalScore,
                 DetonationBonus = detonationBonus,
                 DetonationHeat = totalHeat,
+                ChainDepth = _stepChainDepth,
+                ChainTriggeredCount = _stepChainTriggeredCount,
             };
         }
 

@@ -185,21 +185,32 @@ namespace WordDrop
             _ghostTile.transform.position = pos;
             _ghostTile.SetActive(true);
 
-            // Use a simple rounded rect sprite
-            int texSize = Mathf.Clamp(Mathf.RoundToInt(cellSize * 200f), 64, 512);
-            int radius = texSize / 6;
-            int border = Mathf.Max(3, texSize / 12);
-            Texture2D tex = CreateGhostTexture(texSize, radius, border);
-            _ghostSR.sprite = Sprite.Create(tex,
-                new Rect(0, 0, texSize, texSize),
-                new Vector2(0.5f, 0.5f), 100f);
-            _ghostSR.color = Color.white;
+            // Use the selected (green) tile sprite if available, fallback to procedural
+            Sprite selectedSprite = Resources.Load<Sprite>("Tiles/selected_tile");
+            if (selectedSprite != null)
+            {
+                _ghostSR.sprite = selectedSprite;
+                _ghostSR.color = new Color(1f, 1f, 1f, 0.5f); // semi-transparent
+                float nativeSize = selectedSprite.bounds.size.x;
+                float scale = displaySize / nativeSize;
+                _ghostTile.transform.localScale = new Vector3(scale, scale, 1f);
+            }
+            else
+            {
+                int texSize = Mathf.Clamp(Mathf.RoundToInt(cellSize * 200f), 64, 512);
+                int radius = texSize / 6;
+                int border = Mathf.Max(3, texSize / 12);
+                Texture2D tex = CreateGhostTexture(texSize, radius, border);
+                _ghostSR.sprite = Sprite.Create(tex,
+                    new Rect(0, 0, texSize, texSize),
+                    new Vector2(0.5f, 0.5f), 100f);
+                _ghostSR.color = Color.white;
+                float nativeSize = texSize / 100f;
+                float scale = displaySize / nativeSize;
+                _ghostTile.transform.localScale = new Vector3(scale, scale, 1f);
+            }
 
-            float nativeSize = texSize / 100f;
-            float scale = displaySize / nativeSize;
-            _ghostTile.transform.localScale = new Vector3(scale, scale, 1f);
-
-            // Letter
+            // Letter — not bold, semi-transparent
             if (_ghostLetterTMP == null)
             {
                 GameObject letterGO = new GameObject("GhostLetter");
@@ -209,17 +220,18 @@ namespace WordDrop
                 _ghostLetterTMP.sortingOrder = 6;
                 _ghostLetterTMP.enableAutoSizing = false;
 
-                var font = Resources.Load<TMPro.TMP_FontAsset>("Fredoka-Bold SDF");
+                var font = GameFont.GetTMP();
                 if (font != null) _ghostLetterTMP.font = font;
             }
             _ghostLetterTMP.text = letter.ToString();
-            _ghostLetterTMP.fontSize = cellSize * 5.5f;
-            _ghostLetterTMP.color = new Color(0.15f, 0.15f, 0.18f, 0.45f);
-            _ghostLetterTMP.rectTransform.sizeDelta = new Vector2(cellSize, cellSize);
-            _ghostLetterTMP.rectTransform.localPosition = new Vector3(0f, cellSize * 0.03f, 0f);
-            _ghostLetterTMP.rectTransform.localScale = new Vector3(
-                1f / _ghostTile.transform.localScale.x,
-                1f / _ghostTile.transform.localScale.y, 1f);
+            _ghostLetterTMP.fontSize = 5.5f; // matches board tile font size
+            _ghostLetterTMP.fontStyle = TMPro.FontStyles.Normal;
+            _ghostLetterTMP.color = new Color(0.15f, 0.15f, 0.18f, 0.35f);
+            _ghostLetterTMP.rectTransform.sizeDelta = new Vector2(2f, 2f);
+            float sprNative = (_ghostSR.sprite != null) ? _ghostSR.sprite.bounds.size.x : cellSize;
+            float invScale = 1f / Mathf.Max(_ghostTile.transform.localScale.x, 0.01f);
+            _ghostLetterTMP.rectTransform.localPosition = new Vector3(0f, sprNative * 0.04f, -0.1f);
+            _ghostLetterTMP.rectTransform.localScale = new Vector3(invScale, invScale, 1f);
         }
 
         private void RenderWordHighlights(GridManager grid)

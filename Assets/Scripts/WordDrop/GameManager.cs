@@ -1,4 +1,5 @@
 using UnityEngine;
+using DG.Tweening;
 
 namespace WordDrop
 {
@@ -48,8 +49,10 @@ namespace WordDrop
             {
                 bool matchOver = MatchController.Instance.IsGameOver;
                 bool isSuddenDeath = MatchController.Instance.IsSuddenDeath;
-                bool allTurnsUsed = !isSuddenDeath &&
-                    MatchController.Instance.TotalTurnsUsed >= MatchController.MAX_TURNS * 2;
+                // Skip turn-count safety check in blitz — timer handles it
+                // Use TotalMaxTurns for correct daily/classic calculation
+                bool allTurnsUsed = !BlitzManager.IsBlitzMode && !isSuddenDeath &&
+                    MatchController.Instance.TotalTurnsUsed >= MatchController.Instance.TotalMaxTurns;
 
                 if (matchOver || allTurnsUsed)
                 {
@@ -57,7 +60,7 @@ namespace WordDrop
                     if (_gameOverCheckTimer > 0.5f)
                     {
                         Debug.LogWarning($"[GameManager] Safety: forcing GameOver. " +
-                            $"IsGameOver={matchOver} TotalTurns={MatchController.Instance.TotalTurnsUsed}/{MatchController.MAX_TURNS * 2}");
+                            $"IsGameOver={matchOver} TotalTurns={MatchController.Instance.TotalTurnsUsed}/{MatchController.Instance.TotalMaxTurns}");
                         if (!matchOver)
                             MatchController.Instance.ForceGameOver();
                         TransitionTo(GameState.GameOver);
@@ -113,12 +116,46 @@ namespace WordDrop
                 return;
             }
 
+            // Block transitions during screen transition
+            if (ScreenTransition.Instance != null && ScreenTransition.Instance.IsTransitioning)
+                return;
+
             Debug.Log($"[GameManager] {CurrentState} → {newState}");
 
-            HideAllScreens();
+            // Use slide transition for Menu↔Playing
+            bool useSlide = ScreenTransition.Instance != null
+                && ((CurrentState == GameState.Menu && newState == GameState.Playing)
+                 || (CurrentState == GameState.Playing && newState == GameState.Menu));
 
-            CurrentState = newState;
-            OnStateEntered(newState);
+            if (useSlide)
+            {
+                bool slideFromRight = (newState == GameState.Playing);
+                ScreenTransition.Instance.Play(slideFromRight, () =>
+                {
+                    // Don't hide menu here — ScreenTransition controls its visibility
+                    if (GameOverUI.Instance != null) GameOverUI.Instance.SetVisible(false);
+                    CurrentState = newState;
+                    OnStateEntered(newState, deferHand: true);
+                }, () =>
+                {
+                    // Transition done — deal the hand
+                    if (newState == GameState.Playing)
+                    {
+                        if (HandManager.Instance != null)
+                            HandManager.Instance.InitialiseHand();
+                        if (HandManager.Instance != null)
+                            HandManager.Instance.SetInteractable(true);
+                        if (ColumnArrowManager.Instance != null)
+                            ColumnArrowManager.Instance.ShowArrows(true);
+                    }
+                });
+            }
+            else
+            {
+                HideAllScreens();
+                CurrentState = newState;
+                OnStateEntered(newState, deferHand: false);
+            }
         }
 
         private void HideAllScreens()
@@ -127,7 +164,7 @@ namespace WordDrop
             if (GameOverUI.Instance != null) GameOverUI.Instance.SetVisible(false);
         }
 
-        private void OnStateEntered(GameState state)
+        private void OnStateEntered(GameState state, bool deferHand = false)
         {
             switch (state)
             {
@@ -135,6 +172,11 @@ namespace WordDrop
                 case GameState.Menu:
                     Debug.Log("[GameManager] Entered Menu");
                     AnalyticsManager.ScreenView("main_menu");
+                    GameAudio.Instance?.PlayMenuAppear();
+
+                    // Reset all mode flags when returning to menu
+                    BlitzManager.Reset();
+                    DailyDropManager.IsDailyMode = false;
 
                     if (MenuUI.Instance != null)
                         MenuUI.Instance.SetVisible(true);
@@ -144,6 +186,12 @@ namespace WordDrop
                 case GameState.Playing:
                     Debug.Log("[GameManager] Entered Playing");
                     AnalyticsManager.ScreenView("playing");
+
+                    // Reset detonation recorder and last word display for new match
+                    if (DetonationRecorder.Instance != null)
+                        DetonationRecorder.Instance.Reset();
+                    if (LastWordDisplay.Instance != null)
+                        LastWordDisplay.Instance.Clear();
 
                     // Start or restart the match via MatchController
                     if (MatchController.Instance != null)
@@ -170,16 +218,18 @@ namespace WordDrop
                         break; // Tutorial manages hand/input itself
                     }
 
-                    // Normal flow: init hand + enable input
-                    if (HandManager.Instance != null)
-                        HandManager.Instance.InitialiseHand();
+                    // Normal flow: init hand + enable input (unless deferred for transition)
+                    if (!deferHand)
+                    {
+                        if (HandManager.Instance != null)
+                            HandManager.Instance.InitialiseHand();
 
-                    if (HandManager.Instance != null)
-                        HandManager.Instance.SetInteractable(true);
+                        if (HandManager.Instance != null)
+                            HandManager.Instance.SetInteractable(true);
 
-                    // Show column drop arrows
-                    if (ColumnArrowManager.Instance != null)
-                        ColumnArrowManager.Instance.ShowArrows(true);
+                        if (ColumnArrowManager.Instance != null)
+                            ColumnArrowManager.Instance.ShowArrows(true);
+                    }
 
                     break;
 
@@ -194,6 +244,10 @@ namespace WordDrop
                 // ── Game Over ─────────────────────────────────────────────────────
                 case GameState.GameOver:
                     Debug.Log("[GameManager] Entered GameOver");
+
+                    // Stop blitz timer
+                    if (BlitzManager.Instance != null)
+                        BlitzManager.Instance.StopTimer();
 
                     int playerScore = ScoreManager.Instance != null
                         ? ScoreManager.Instance.PlayerScore : 0;

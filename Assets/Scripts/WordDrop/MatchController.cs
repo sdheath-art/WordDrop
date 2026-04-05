@@ -11,7 +11,8 @@ namespace WordDrop
     ///   - currentTurn (0-based global turn index)
     ///   - currentPlayer (0=human, 1=AI)
     ///   - playerTurns[2] — how many drops each player has made
-    ///   - swapsRemaining[2] — 3 each at start
+    ///   - swapsRemaining[2] — 2 each at start (hand card trades)
+    ///   - rewritesRemaining[2] — 1 each at start (board tile replacements)
     ///   - PlayerHand[2] — letter hands for both players
     ///   - shared TileBag
     ///
@@ -29,10 +30,18 @@ namespace WordDrop
 
         // Per-player turn count. Tuning: 12=fast, 15=default, 20=long
         public const int MAX_TURNS       = 12;
-        public const int INITIAL_SWAPS   = 3;  // per player
+        public const int INITIAL_SWAPS    = 2;  // per player (hand card trades)
+        public const int INITIAL_REWRITES = 1;  // per player (board tile replacements)
         public const int PLAYER_HUMAN    = 0;
         public const int PLAYER_AI       = 1;
         public const int NUM_PLAYERS     = 2;
+
+        /// <summary>Effective max turns per player for the current match (6 for daily, MAX_TURNS for classic).</summary>
+        public int EffectiveMaxTurns => DailyDropManager.IsDailyMode
+            ? DailyDropManager.DAILY_TURNS : MAX_TURNS;
+
+        /// <summary>Effective player count (1 for daily solo, NUM_PLAYERS for classic).</summary>
+        public int EffectivePlayerCount => DailyDropManager.IsDailyMode ? 1 : NUM_PLAYERS;
 
         // ── Singleton ─────────────────────────────────────────────────────────────
 
@@ -44,7 +53,8 @@ namespace WordDrop
         private int   _currentPlayer = 0;  // 0=human, 1=AI
 
         private int[] _playerTurns      = new int[NUM_PLAYERS];   // drops per player
-        private int[] _swapsRemaining   = new int[NUM_PLAYERS];
+        private int[] _swapsRemaining    = new int[NUM_PLAYERS];
+        private int[] _rewritesRemaining = new int[NUM_PLAYERS];
 
         private PlayerHand[] _hands = new PlayerHand[NUM_PLAYERS];
         private TileBag      _bag;
@@ -53,8 +63,17 @@ namespace WordDrop
         private bool _isGameOver    = false;
         private bool _isProcessing  = false; // prevents re-entrant drops
         private bool _isSuddenDeath = false; // tie at end of turns → next score wins
+        private bool _isLastWord   = false; // overflow imminent → one final turn each at 3x
+        private int  _lastWordTurnsRemaining = 0; // how many players still get their last word
+
+        /// <summary>Set by resolution paths before CompleteDropBookkeeping. The first word formed this turn.</summary>
+        public string LastTurnWord { get; set; }
 
         public bool IsSuddenDeath => _isSuddenDeath;
+        public bool IsLastWord    => _isLastWord;
+
+        /// <summary>Score multiplier for Last Word phase (3x).</summary>
+        public const int LAST_WORD_MULTIPLIER = 3;
 
         // ── Events ────────────────────────────────────────────────────────────────
 
@@ -71,6 +90,8 @@ namespace WordDrop
         public bool IsMatchActive     => _isMatchActive;
         public bool IsGameOver        => _isGameOver;
         public bool IsProcessing      => _isProcessing;
+        public void BeginProcessing() { _isProcessing = true; }
+        public void EndProcessing()   { _isProcessing = false; }
 
         public int  GetPlayerTurns(int playerIndex)
         {
@@ -84,6 +105,12 @@ namespace WordDrop
             return _swapsRemaining[playerIndex];
         }
 
+        public int  GetRewritesRemaining(int playerIndex)
+        {
+            if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return 0;
+            return _rewritesRemaining[playerIndex];
+        }
+
         public PlayerHand GetHand(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return null;
@@ -93,10 +120,12 @@ namespace WordDrop
         public TileBag Bag => _bag;
 
         /// <summary>Total turns across both players combined (for display as "Turn N/40").</summary>
-        public int TotalTurnsUsed => _playerTurns[0] + _playerTurns[1];
+        public int TotalTurnsUsed => DailyDropManager.IsDailyMode
+            ? _playerTurns[0]
+            : _playerTurns[0] + _playerTurns[1];
 
-        /// <summary>Maximum total turns = MAX_TURNS × 2.</summary>
-        public int TotalMaxTurns => MAX_TURNS * NUM_PLAYERS;
+        /// <summary>Maximum total turns = EffectiveMaxTurns × EffectivePlayerCount.</summary>
+        public int TotalMaxTurns => EffectiveMaxTurns * EffectivePlayerCount;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
 
@@ -121,6 +150,14 @@ namespace WordDrop
         /// </summary>
         public void StartMatch()
         {
+            // Enforce mutual exclusion — only one mode can be active
+            if (DailyDropManager.IsDailyMode && BlitzManager.IsBlitzMode)
+            {
+                Debug.LogWarning("[MatchController] Both daily and blitz active — forcing classic.");
+                DailyDropManager.IsDailyMode = false;
+                BlitzManager.IsBlitzMode = false;
+            }
+
             Debug.Log("[MatchController] StartMatch()");
 
             // Reset state
@@ -130,23 +167,44 @@ namespace WordDrop
             _isGameOver    = false;
             _isProcessing  = false;
             _isSuddenDeath = false;
+            _isLastWord    = false;
+            _lastWordTurnsRemaining = 0;
 
             for (int p = 0; p < NUM_PLAYERS; p++)
             {
-                _playerTurns[p]    = 0;
-                _swapsRemaining[p] = INITIAL_SWAPS;
+                _playerTurns[p]      = 0;
+                _swapsRemaining[p]   = INITIAL_SWAPS;
+                _rewritesRemaining[p] = INITIAL_REWRITES;
             }
 
-            // Create shared bag
-            _bag = new TileBag();
+            // Create shared bag (seeded for daily mode, random otherwise)
+            bool isDaily = DailyDropManager.IsDailyMode;
+            if (isDaily)
+            {
+                _bag = new TileBag(DailyDropManager.GetDailySeed());
+                Debug.Log($"[MatchController] Daily Drop mode — seeded bag (seed={DailyDropManager.GetDailySeed()})");
+            }
+            else
+            {
+                _bag = new TileBag();
+            }
 
-            // Create hands
+            // Create hands (no AI hand in solo modes: daily or blitz)
+            bool soloMode = isDaily || BlitzManager.IsBlitzMode;
             _hands[PLAYER_HUMAN] = new PlayerHand(PLAYER_HUMAN);
-            _hands[PLAYER_AI]    = new PlayerHand(PLAYER_AI);
+            if (!soloMode)
+            {
+                _hands[PLAYER_AI] = new PlayerHand(PLAYER_AI);
+            }
+            else
+            {
+                _hands[PLAYER_AI] = null; // no AI in solo modes
+            }
 
-            // Fill both hands
+            // Fill hands
             _hands[PLAYER_HUMAN].FillAll(_bag);
-            _hands[PLAYER_AI].FillAll(_bag);
+            if (_hands[PLAYER_AI] != null)
+                _hands[PLAYER_AI].FillAll(_bag);
 
             // Clear RulesEngine board
             if (RulesEngine.Instance != null)
@@ -165,28 +223,74 @@ namespace WordDrop
                 GridManager.Instance.RebuildFromRulesEngine(RulesEngine.Instance);
             }
 
+            // Place initial bonus cells on the board
+            if (RulesEngine.Instance != null && !BlitzManager.IsBlitzMode)
+            {
+                RulesEngine.Instance.PlaceInitialBonusCells();
+                if (GridManager.Instance != null)
+                    GridManager.Instance.RefreshBonusCellOverlays();
+            }
+
+            // Clear chain counter from previous match
+            if (ChainCounter.Instance != null)
+                ChainCounter.Instance.ResetForNewMatch();
+
             // Reset scores
             if (ScoreManager.Instance != null)
                 ScoreManager.Instance.ResetScore();
 
             // Update HUD
+            int totalMaxTurns = EffectiveMaxTurns * EffectivePlayerCount;
             if (HUDManager.Instance != null)
             {
                 HUDManager.Instance.SetPlayerScore(0);
                 HUDManager.Instance.SetAIScore(0);
-                HUDManager.Instance.SetTurnsRemaining(MAX_TURNS * NUM_PLAYERS, MAX_TURNS * NUM_PLAYERS);
+                if (BlitzManager.IsBlitzMode)
+                    HUDManager.Instance.SetBlitzMode(true);
+                else
+                    HUDManager.Instance.SetBlitzMode(false);
+                HUDManager.Instance.SetDailyMode(isDaily);
+                HUDManager.Instance.SetTurnsRemaining(totalMaxTurns, totalMaxTurns);
+            }
+
+            // Start blitz timer if in blitz mode
+            if (BlitzManager.IsBlitzMode && BlitzManager.Instance != null)
+                BlitzManager.Instance.StartTimer();
+
+            // Pick a rival for Classic mode
+            if (!BlitzManager.IsBlitzMode && !isDaily && RivalSystem.Instance != null)
+            {
+                var rival = RivalSystem.Instance.PickRandomRival();
+                if (HUDManager.Instance != null)
+                    HUDManager.Instance.SetRivalName(rival.Name, rival.AccentColor);
+            }
+
+            // Rising rows: ON by default in Classic, OFF in Blitz (too short)
+            // Interval 4 in Classic (gentler pressure), 2 in Blitz if ever enabled
+            if (!BlitzManager.IsBlitzMode && !isDaily)
+            {
+                RisingRowManager.Enabled = true;
+                RisingRowManager.TurnInterval = 4;
+            }
+            else
+            {
+                RisingRowManager.Enabled = false;
             }
 
             // Emit hand refilled events
             EmitHandRefilled(PLAYER_HUMAN);
-            EmitHandRefilled(PLAYER_AI);
+            if (_hands[PLAYER_AI] != null)
+                EmitHandRefilled(PLAYER_AI);
 
             AnalyticsManager.GameStart();
 
-            Debug.Log($"[MatchController] Match started. " +
+            string aiHandStr = _hands[PLAYER_AI] != null ? _hands[PLAYER_AI].HandString() : "(none)";
+            string modeStr = isDaily ? "DAILY DROP" : BlitzManager.IsBlitzMode ? "BLITZ" : "CLASSIC";
+            Debug.Log($"[MatchController] Match started [{modeStr}]. " +
                       $"Human hand: {_hands[PLAYER_HUMAN].HandString()} " +
-                      $"AI hand: {_hands[PLAYER_AI].HandString()} " +
-                      $"Bag: {_bag.Count} tiles  Swaps: {INITIAL_SWAPS} each");
+                      $"AI hand: {aiHandStr} " +
+                      $"Bag: {_bag.Count} tiles  Swaps: {INITIAL_SWAPS} each  Rewrites: {INITIAL_REWRITES} each " +
+                      $"Turns: {EffectiveMaxTurns}x{EffectivePlayerCount}");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -292,9 +396,10 @@ namespace WordDrop
             AnalyticsManager.Milestone("drop", _currentTurn);
 
             // 6. Update HUD turn counter
-            int totalRemaining = (MAX_TURNS * NUM_PLAYERS) - TotalTurnsUsed;
+            int legacyTotalMax = TotalMaxTurns;
+            int totalRemaining = legacyTotalMax - TotalTurnsUsed;
             if (HUDManager.Instance != null)
-                HUDManager.Instance.SetTurnsRemaining(totalRemaining, MAX_TURNS * NUM_PLAYERS);
+                HUDManager.Instance.SetTurnsRemaining(totalRemaining, legacyTotalMax);
 
             // 7. Emit TurnEnd
             var turnEndEvt = new TurnEndEvent
@@ -337,6 +442,24 @@ namespace WordDrop
         public void CompleteDropBookkeeping(int playerIndex, int totalScore, int handSlotIndex,
             int baseScore = -1, int chainBonus = -1, int detonationBonus = -1)
         {
+            // ── Tutorial guard: skip turn counting, player switching, match-end checks.
+            // Only refill the hand slot so the card deal animation works naturally.
+            if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
+            {
+                if (handSlotIndex >= 0 && handSlotIndex < PlayerHand.HAND_SIZE)
+                {
+                    _hands[playerIndex].DrawSlot(handSlotIndex, _bag);
+
+                    // Re-rig the NEXT preview after DrawSlot's PreCacheNext overwrote it
+                    char nextPreview = TutorialManager.NextPreviewLetter;
+                    if (nextPreview != '\0')
+                        _hands[playerIndex].SetCachedNextLetter(nextPreview);
+
+                    EmitHandRefilled(playerIndex);
+                }
+                return;
+            }
+
             // Compact score log
             if (totalScore > 0)
             {
@@ -346,23 +469,33 @@ namespace WordDrop
                 Debug.Log($"[Score] P{playerIndex} +{totalScore} {breakdown}");
             }
 
+            // Last Word multiplier: 3x scoring during final desperation turns
+            if (_isLastWord && totalScore > 0)
+            {
+                totalScore *= LAST_WORD_MULTIPLIER;
+                Debug.Log($"[MatchController] LAST WORD 3x applied! Score: {totalScore / LAST_WORD_MULTIPLIER} → {totalScore}");
+            }
+
             // 1. Apply score — MatchController is the SOLE ScoreManager writer
             if (totalScore > 0 && ScoreManager.Instance != null)
             {
-                // Match arc bonuses
-                int turnsLeft = (MAX_TURNS * NUM_PLAYERS) - TotalTurnsUsed;
+                // Match arc bonuses (skip in solo modes — no opponent)
+                bool isSoloMode = BlitzManager.IsBlitzMode || DailyDropManager.IsDailyMode;
+                int turnsLeft = isSoloMode ? 999 : TotalMaxTurns - TotalTurnsUsed;
                 int arcBonus = 0;
                 int finalPush = MatchArcRules.GetFinalPushBonus(turnsLeft);
                 if (finalPush > 0)
                 {
                     arcBonus += finalPush;
                     Debug.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
+                    bool isHuman = (playerIndex == PLAYER_HUMAN);
                     if (BonusPopup.Instance != null)
-                        BonusPopup.Instance.ShowFinalPush(finalPush, Vector3.up * 2f);
+                        BonusPopup.Instance.ShowFinalPush(finalPush, Vector3.up * 2f, isHuman);
                 }
-                int opponentScore = (playerIndex == PLAYER_HUMAN)
+                bool isHumanPlayer = (playerIndex == PLAYER_HUMAN);
+                int opponentScore = isHumanPlayer
                     ? (ScoreManager.Instance.AIScore) : (ScoreManager.Instance.PlayerScore);
-                int myScore = (playerIndex == PLAYER_HUMAN)
+                int myScore = isHumanPlayer
                     ? (ScoreManager.Instance.PlayerScore) : (ScoreManager.Instance.AIScore);
                 int comeback = MatchArcRules.GetComebackBonus(myScore, opponentScore, turnsLeft);
                 if (comeback > 0)
@@ -370,7 +503,7 @@ namespace WordDrop
                     arcBonus += comeback;
                     Debug.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
                     if (BonusPopup.Instance != null)
-                        BonusPopup.Instance.ShowComeback(comeback, Vector3.up * 2.5f);
+                        BonusPopup.Instance.ShowComeback(comeback, Vector3.up * 2.5f, isHumanPlayer);
                 }
                 totalScore += arcBonus;
 
@@ -387,13 +520,20 @@ namespace WordDrop
                     HUDManager.Instance.SyncDisplayScores();
                 }
 
-                // Sudden death: any score ends the match immediately
-                if (_isSuddenDeath)
+                // Sudden death: any score ends the match immediately (but not during Last Word)
+                if (_isSuddenDeath && !_isLastWord)
                 {
                     Debug.Log($"[MatchController] SUDDEN DEATH — P{playerIndex} scored {totalScore}! Match over.");
                     EndMatch("sudden_death");
                     return;
                 }
+            }
+
+            // Last Word: consume turn and end match when both players have gone
+            if (_isLastWord)
+            {
+                ConsumeLastWordTurn();
+                if (_isGameOver) return;
             }
 
             // 2. Update drought tracker (before refill so draw benefits from it)
@@ -419,9 +559,10 @@ namespace WordDrop
             AnalyticsManager.Milestone("drop", _currentTurn);
 
             // 5. Update HUD turn counter
-            int totalRemaining = (MAX_TURNS * NUM_PLAYERS) - TotalTurnsUsed;
+            int effTotalMax = TotalMaxTurns;
+            int totalRemaining = effTotalMax - TotalTurnsUsed;
             if (HUDManager.Instance != null)
-                HUDManager.Instance.SetTurnsRemaining(totalRemaining, MAX_TURNS * NUM_PLAYERS);
+                HUDManager.Instance.SetTurnsRemaining(totalRemaining, effTotalMax);
 
             // 6. Emit TurnEnd
             var turnEndEvt = new TurnEndEvent
@@ -432,6 +573,21 @@ namespace WordDrop
             };
             OnTurnEnd?.Invoke(turnEndEvt);
 
+            // Track best combo (highest single-turn score)
+            if (totalScore > 0 && playerIndex == PLAYER_HUMAN)
+            {
+                string comboMode = DailyDropManager.IsDailyMode ? "daily"
+                    : BlitzManager.IsBlitzMode ? "blitz" : "classic";
+                HighScoreManager.SubmitCombo(totalScore, comboMode);
+            }
+
+            // Update last word display with full turn total
+            if (totalScore > 0 && LastWordDisplay.Instance != null && !string.IsNullOrEmpty(LastTurnWord))
+            {
+                LastWordDisplay.Instance.ShowWord(LastTurnWord, totalScore, playerIndex == PLAYER_HUMAN);
+                LastTurnWord = null;
+            }
+
             Debug.Log($"[MatchController] CompleteDropBookkeeping: player={playerIndex} " +
                       $"score={totalScore} playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
                       $"globalTurn={_currentTurn}");
@@ -440,8 +596,9 @@ namespace WordDrop
             if (CheckMatchEnd())
                 return;
 
-            // 8. Switch player
-            SwitchPlayer();
+            // 8. Switch player (skip in blitz — always human)
+            if (!BlitzManager.IsBlitzMode)
+                SwitchPlayer();
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -516,15 +673,19 @@ namespace WordDrop
             return true;
         }
 
-        /// <summary>Refund 1 swap/rewrite charge for a player (capped at MAX_SWAPS).</summary>
+        /// <summary>Refund 1 rewrite charge for a player (capped at INITIAL_REWRITES).</summary>
         public void RefundSwapCharge(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return;
-            if (_swapsRemaining[playerIndex] < INITIAL_SWAPS)
+            if (_rewritesRemaining[playerIndex] < INITIAL_REWRITES)
             {
-                _swapsRemaining[playerIndex]++;
-                Debug.Log($"[MatchController] Refunded swap charge for P{playerIndex}. " +
-                          $"Remaining: {_swapsRemaining[playerIndex]}");
+                _rewritesRemaining[playerIndex]++;
+                Debug.Log($"[MatchController] Refunded rewrite charge for P{playerIndex}. " +
+                          $"Remaining: {_rewritesRemaining[playerIndex]}");
+
+                // Update HUD rewrite display
+                if (playerIndex == _currentPlayer && HUDManager.Instance != null)
+                    HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[playerIndex]);
             }
         }
 
@@ -533,8 +694,8 @@ namespace WordDrop
         // ═══════════════════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Uses the Rewrite Tile action: replaces a player-owned board tile with
-        /// a hand tile. Costs 1 swap charge, consumes the hand tile, and the turn
+        /// Uses the Rewrite Tile action: replaces any non-primed board tile with
+        /// a hand tile. Costs 1 rewrite charge, consumes the hand tile, and the turn
         /// is consumed after resolution (via CompleteDropBookkeeping).
         ///
         /// Returns true if the rewrite was accepted. The caller (HandManager) is
@@ -551,9 +712,9 @@ namespace WordDrop
 
             int player = _currentPlayer;
 
-            if (_swapsRemaining[player] <= 0)
+            if (_rewritesRemaining[player] <= 0)
             {
-                Debug.Log("[MatchController] UseRewrite: no swaps remaining.");
+                Debug.Log("[MatchController] UseRewrite: no rewrites remaining.");
                 return false;
             }
 
@@ -590,15 +751,15 @@ namespace WordDrop
                 return false;
             }
 
-            // Consume swap charge
-            _swapsRemaining[player]--;
+            // Consume rewrite charge
+            _rewritesRemaining[player]--;
 
             // Clear the hand slot (will be refilled in CompleteDropBookkeeping)
             _hands[player].SetSlot(handSlot, '\0');
 
             Debug.Log($"[MatchController] UseRewrite: player={player} slot={handSlot} " +
                       $"'{handLetter}' replaces '{oldBoardLetter}' at ({targetCol},{targetRow}) " +
-                      $"swapsRemaining={_swapsRemaining[player]}");
+                      $"rewritesRemaining={_rewritesRemaining[player]}");
 
             // Emit event
             var evt = new RewriteUsedEvent
@@ -609,12 +770,13 @@ namespace WordDrop
                 OldBoardLetter = oldBoardLetter,
                 TargetCol      = targetCol,
                 TargetRow      = targetRow,
-                SwapsRemaining = _swapsRemaining[player],
+                SwapsRemaining = _rewritesRemaining[player],
             };
             OnRewriteUsed?.Invoke(evt);
+            GameAudio.Instance?.PlayRewrite();
 
             if (HUDManager.Instance != null)
-                HUDManager.Instance.ShowSwapCount(_swapsRemaining[player]);
+                HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[player]);
 
             AnalyticsManager.ButtonTap("rewrite");
 
@@ -635,18 +797,117 @@ namespace WordDrop
             EndMatch("board_full");
         }
 
+        /// <summary>
+        /// Trigger Last Word phase: both players get one final turn with 3x scoring.
+        /// Called when rising rows would overflow instead of immediately ending.
+        /// </summary>
+        public void TriggerLastWord()
+        {
+            if (_isLastWord || _isGameOver) return;
+            _isLastWord = true;
+            _lastWordTurnsRemaining = 2; // both players get one turn
+            Debug.Log("[MatchController] LAST WORD! Both players get one final turn at 3x scoring.");
+
+            // Disable rising rows so the board doesn't overflow during last word
+            RisingRowManager.Enabled = false;
+
+            // Show HUD indicator via turn counter
+            if (HUDManager.Instance != null)
+                HUDManager.Instance.SetTurnsRemaining(1, 1); // triggers "LAST TURN" display
+        }
+
+        /// <summary>
+        /// Called after each last-word turn completes. Ends game when both players have gone.
+        /// </summary>
+        public void ConsumeLastWordTurn()
+        {
+            if (!_isLastWord) return;
+            _lastWordTurnsRemaining--;
+            Debug.Log($"[MatchController] Last Word turn consumed. Remaining: {_lastWordTurnsRemaining}");
+            if (_lastWordTurnsRemaining <= 0)
+            {
+                Debug.Log("[MatchController] Last Word complete — ending match.");
+                EndMatch("last_word");
+            }
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // INTERNAL HELPERS
         // ═══════════════════════════════════════════════════════════════════════════
 
         private void SwitchPlayer()
         {
+            // In solo modes (daily/blitz), always stay on human player
+            if (DailyDropManager.IsDailyMode || BlitzManager.IsBlitzMode)
+            {
+                _currentPlayer = PLAYER_HUMAN;
+                return;
+            }
             _currentPlayer = (_currentPlayer + 1) % NUM_PLAYERS;
             Debug.Log($"[MatchController] Switched to player {_currentPlayer}");
         }
 
         private bool CheckMatchEnd()
         {
+            // Blitz mode: timer controls match end, not turn count
+            if (BlitzManager.IsBlitzMode)
+            {
+                if (BlitzManager.Instance != null && BlitzManager.Instance.IsTimeUp)
+                {
+                    Debug.Log("[MatchController] Blitz time expired — ending match.");
+                    EndMatch("blitz_time_up");
+                    return true;
+                }
+                // Still check board full
+                if (RulesEngine.Instance != null)
+                {
+                    bool anyOpen = false;
+                    for (int c = 0; c < GridManager.COLS; c++)
+                    {
+                        if (RulesEngine.Instance.IsColumnAvailable(c))
+                        {
+                            anyOpen = true;
+                            break;
+                        }
+                    }
+                    if (!anyOpen)
+                    {
+                        Debug.Log("[MatchController] Blitz board full — ending match.");
+                        EndMatch("board_full");
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // Daily mode: solo, check only human turns
+            if (DailyDropManager.IsDailyMode)
+            {
+                if (_playerTurns[PLAYER_HUMAN] >= EffectiveMaxTurns)
+                {
+                    Debug.Log($"[MatchController] Daily Drop — all {EffectiveMaxTurns} turns used. Match ending.");
+                    EndMatch("turn_limit");
+                    return true;
+                }
+
+                // Board full check
+                if (RulesEngine.Instance != null)
+                {
+                    bool anyOpen = false;
+                    for (int c = 0; c < GridManager.COLS; c++)
+                    {
+                        if (RulesEngine.Instance.IsColumnAvailable(c)) { anyOpen = true; break; }
+                    }
+                    if (!anyOpen)
+                    {
+                        Debug.Log("[MatchController] Daily Drop board full — ending match.");
+                        EndMatch("board_full");
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             int totalTurns = _playerTurns[PLAYER_HUMAN] + _playerTurns[PLAYER_AI];
             int maxTotal = MAX_TURNS * NUM_PLAYERS;
 
@@ -668,42 +929,8 @@ namespace WordDrop
                 return true;
             }
 
-            // Board full — no columns available
-            if (RulesEngine.Instance != null)
-            {
-                bool anyOpen = false;
-                for (int c = 0; c < GridManager.COLS; c++)
-                {
-                    if (RulesEngine.Instance.IsColumnAvailable(c))
-                    {
-                        anyOpen = true;
-                        break;
-                    }
-                }
-                if (!anyOpen)
-                {
-                    int pScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
-                    int aScore = ScoreManager.Instance != null ? ScoreManager.Instance.AIScore : 0;
-
-                    if (pScore == aScore)
-                    {
-                        // Tie + board full → clear the board for sudden death
-                        _isSuddenDeath = true;
-                        Debug.Log($"[MatchController] Board full + tied {pScore}-{aScore} — clearing board for SUDDEN DEATH!");
-                        RulesEngine.Instance.ClearBoard();
-                        if (GridManager.Instance != null)
-                        {
-                            GridManager.Instance.ClearAllCells();
-                            GridManager.Instance.RebuildFromRulesEngine(RulesEngine.Instance);
-                        }
-                        return false; // keep playing
-                    }
-
-                    Debug.Log("[MatchController] Board full — match ending.");
-                    EndMatch("board_full");
-                    return true;
-                }
-            }
+            // Board full — players can now replace top tiles, so no game-over here.
+            // Match ends only when turns run out (above).
 
             // During sudden death, both players alternate freely
             if (_isSuddenDeath) return false;
@@ -733,11 +960,17 @@ namespace WordDrop
             _isGameOver    = true;
             _isMatchActive = false;
 
+            // Force-finish any running score count-up animations so HUD shows final values
+            if (HUDManager.Instance != null)
+                HUDManager.Instance.ForceFinishCountUp();
+
             int playerScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
             int aiScore     = ScoreManager.Instance != null ? ScoreManager.Instance.AIScore     : 0;
 
             int winner;
-            if (playerScore > aiScore)      winner = PLAYER_HUMAN;
+            if (BlitzManager.IsBlitzMode || DailyDropManager.IsDailyMode)
+                winner = PLAYER_HUMAN; // solo mode — player always "wins"
+            else if (playerScore > aiScore)      winner = PLAYER_HUMAN;
             else if (aiScore > playerScore) winner = PLAYER_AI;
             else                            winner = -1; // tie
 
@@ -747,6 +980,15 @@ namespace WordDrop
             Debug.Log($"[MatchController] Match ended! Cause={cause} " +
                       $"Player={playerScore} AI={aiScore} Winner={winnerStr} " +
                       $"Turns=[{_playerTurns[0]},{_playerTurns[1]}]");
+
+            // Record rival win/loss (Classic mode only)
+            if (!BlitzManager.IsBlitzMode && !DailyDropManager.IsDailyMode && RivalSystem.Instance != null)
+            {
+                if (winner == PLAYER_HUMAN)
+                    RivalSystem.Instance.RecordPlayerWin();
+                else if (winner == PLAYER_AI)
+                    RivalSystem.Instance.RecordPlayerLoss();
+            }
 
             AnalyticsManager.GameOver(playerScore, cause: cause,
                 wave: _playerTurns[PLAYER_HUMAN],
@@ -758,7 +1000,7 @@ namespace WordDrop
                 WinnerPlayerIndex = winner,
                 PlayerScore       = playerScore,
                 AIScore           = aiScore,
-                TotalTurnsEach    = MAX_TURNS,
+                TotalTurnsEach    = EffectiveMaxTurns,
             };
             OnMatchEnd?.Invoke(matchEndEvt);
 
@@ -802,12 +1044,29 @@ namespace WordDrop
         public bool IsPlayerDone(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return true;
-            return _playerTurns[playerIndex] >= MAX_TURNS;
+            // Blitz mode: human is never "done" by turn count — timer controls it.
+            // AI doesn't exist in blitz.
+            if (BlitzManager.IsBlitzMode)
+            {
+                if (playerIndex == PLAYER_AI) return true;
+                return false; // human plays until timer runs out
+            }
+            // In daily mode, AI is always "done" (doesn't exist)
+            if (DailyDropManager.IsDailyMode && playerIndex == PLAYER_AI) return true;
+            return _playerTurns[playerIndex] >= EffectiveMaxTurns;
         }
 
-        /// <summary>True if both players have exhausted all turns.</summary>
+        /// <summary>True if all active players have exhausted all turns.</summary>
         public bool IsTurnLimitReached
-            => _playerTurns[PLAYER_HUMAN] >= MAX_TURNS &&
-               _playerTurns[PLAYER_AI] >= MAX_TURNS;
+        {
+            get
+            {
+                if (BlitzManager.IsBlitzMode) return false; // timer controls end
+                if (DailyDropManager.IsDailyMode)
+                    return _playerTurns[PLAYER_HUMAN] >= EffectiveMaxTurns;
+                return _playerTurns[PLAYER_HUMAN] >= EffectiveMaxTurns &&
+                       _playerTurns[PLAYER_AI] >= EffectiveMaxTurns;
+            }
+        }
     }
 }

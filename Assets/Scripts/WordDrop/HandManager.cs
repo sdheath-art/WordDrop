@@ -65,6 +65,7 @@ namespace WordDrop
         private float            _cardSize;
 
         // ── Next tile preview ────────────────────────────────────────────────────
+        private int              _lastCarryCol = -1; // track column for tick sound during carry
         private GameObject       _nextTilePreview;
         private SpriteRenderer   _nextTileSR;
         private TMPro.TextMeshPro _nextTileLetter;
@@ -212,6 +213,17 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Update a single card slot without rebuilding the entire hand.
+        /// Used by the tutorial to avoid the "whole hand changed" visual glitch.
+        /// </summary>
+        public void UpdateSingleCard(int index, char letter)
+        {
+            if (index < 0 || index >= HAND_SIZE) return;
+            _hand[index] = letter;
+            RefreshCardVisual(index);
+        }
+
+        /// <summary>
         /// Returns the letter on the currently selected card.
         /// Returns '\0' if no valid selection.
         /// </summary>
@@ -297,7 +309,7 @@ namespace WordDrop
         private int  _rewriteTargetCol = -1;
         private int  _rewriteTargetRow = -1;
         private int  _rewriteMatchRewriteCount = 0; // debug: total rewrites this match
-        private static readonly Color REWRITE_HIGHLIGHT_COLOR = new Color(0.3f, 0.95f, 0.9f, 1f); // teal/cyan
+        private static readonly Color REWRITE_HIGHLIGHT_COLOR = new Color(0.6f, 1.9f, 1.8f, 1f); // HDR teal — blooms on pulse
 
         // ── Board long-press tracking for rewrite ──
         private Vector2Int _boardHoldCell = new Vector2Int(-1, -1);
@@ -434,10 +446,14 @@ namespace WordDrop
                     // Board area tapped — either drop (if card selected) or start rewrite hold
                     if (_selectedIndex >= 0 && worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f)
                     {
-                        // Tap-to-drop fallback: card already selected, tap board column to drop
                         int tapCol = _grid.WorldXToColumn(worldPos.x);
-                        if (tapCol >= 0 && _grid.IsColumnAvailable(tapCol))
+                        bool tutColOk  = TutorialManager.AllowedColumn < 0    || tapCol == TutorialManager.AllowedColumn;
+                        bool tutCardOk = TutorialManager.AllowedCardIndex < 0 || _selectedIndex == TutorialManager.AllowedCardIndex;
+
+                        if (tapCol >= 0 && _grid.IsColumnAvailable(tapCol) && tutColOk && tutCardOk)
                         {
+                            if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
+                                TutorialManager.Instance.HideArrowsOnDrop();
                             DropSelectedLetterInColumn(tapCol);
                             break;
                         }
@@ -480,22 +496,49 @@ namespace WordDrop
                                 // Lock into CARRY TO BOARD
                                 _inputMode = InputMode.CarryToBoard;
                                 _selectedIndex = _touchCardIndex;
+                                _lastCarryCol = -1; // reset so first column gets a tick
+                                RestoreAllCardSortOrder();
+                                BoostCardSortOrder(_touchCardIndex);
+                                GameAudio.Instance?.PlayTileSelect();
+
+                                // Hide ALL shadows first, then show only the dragged card's
+                                for (int s = 0; s < HAND_SIZE; s++)
+                                    if (_cardShadows[s] != null)
+                                        _cardShadows[s].color = Color.clear;
 
                                 if (_cardObjects[_touchCardIndex] != null)
                                 {
                                     _cardObjects[_touchCardIndex].transform.position = new Vector3(
                                         worldPos.x, worldPos.y, -3f);
                                     _cardObjects[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.1f;
+
+                                    // Move shadow to finger immediately
+                                    if (_touchCardIndex < HAND_SIZE && _cardShadows[_touchCardIndex] != null)
+                                    {
+                                        _cardShadows[_touchCardIndex].transform.position = new Vector3(
+                                            worldPos.x, worldPos.y - _cardSize * 0.06f, 0f);
+                                        _cardShadows[_touchCardIndex].color = new Color(0f, 0f, 0f, 0.3f);
+                                        _cardShadows[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.06f;
+                                    }
+
+                                    // Swap to selected sprite while dragging
+                                    SpriteRenderer dragSR = _cardObjects[_touchCardIndex].GetComponent<SpriteRenderer>();
+                                    if (dragSR != null && _spriteSelected != null)
+                                        dragSR.sprite = _spriteSelected;
                                 }
 
                                 Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
                             }
-                            else if (dx > dy * REORDER_LOCK_RATIO)
+                            else if (dx > dy * REORDER_LOCK_RATIO
+                                     && !TutorialManager.BlockShuffleAndSwap)
                             {
-                                // Lock into REORDERING
+                                // Lock into REORDERING (blocked during tutorial)
                                 _inputMode = InputMode.Reordering;
                                 _dragIndex = _touchCardIndex;
                                 _isDragging = true;
+                                RestoreAllCardSortOrder();
+                                BoostCardSortOrder(_touchCardIndex);
+                                GameAudio.Instance?.PlayTileSelect();
                                 _dragStartX = worldPos.x;
 
                                 Debug.Log($"[Input] Reordering: card={_touchCardIndex}");
@@ -525,11 +568,40 @@ namespace WordDrop
                                 float hOffset = -Mathf.Sign(worldPos.x - centerX)
                                     * Mathf.Clamp01(Mathf.Abs(worldPos.x - centerX) / 3f) * maxHOffset;
 
-                                float shadowDrop = _cardSize * 0.12f; // how far below the card
+                                // Y offset grows as card lifts higher from rest — simulates lifting off surface
+                                float restY = GetCardRowY();
+                                float liftDist = Mathf.Max(0f, worldPos.y - restY);
+                                float baseShadowDrop = _cardSize * 0.06f;
+                                float maxExtraDrop = _cardSize * 0.15f;
+                                float shadowDrop = baseShadowDrop + Mathf.Clamp01(liftDist / (_cardSize * 3f)) * maxExtraDrop;
+
                                 _cardShadows[_touchCardIndex].transform.position = new Vector3(
                                     worldPos.x + hOffset, worldPos.y - shadowDrop, 0f);
-                                _cardShadows[_touchCardIndex].color = new Color(0f, 0f, 0f, 0.5f);
-                                _cardShadows[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.12f;
+                                _cardShadows[_touchCardIndex].color = new Color(0f, 0f, 0f, 0.3f); // see-through
+                                _cardShadows[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.06f; // tighter spread
+                            }
+                        }
+
+                        // Reorder hand while carrying — if near the hand row, swap with neighbors
+                        float cardRowY = GetCardRowY();
+                        float reorderZone = _cardSize * 2.0f; // within 2 card-heights of hand
+                        if (worldPos.y < cardRowY + reorderZone && _touchCardIndex >= 0
+                            && !TutorialManager.BlockShuffleAndSwap)
+                        {
+                            float cardSpacing = (HAND_SIZE > 1) ? GetCardX(1) - GetCardX(0) : _cardSize * 1.2f;
+                            for (int i = 0; i < HAND_SIZE; i++)
+                            {
+                                if (i == _touchCardIndex) continue;
+                                float targetX = GetCardX(i);
+                                if (Mathf.Abs(worldPos.x - targetX) < cardSpacing * 0.4f)
+                                {
+                                    GameAudio.Instance?.PlayReorderTick();
+                                    SwapCardPositions(_touchCardIndex, i);
+                                    _touchCardIndex = i;
+                                    _selectedIndex = i;
+                                    UpdateCardPositionsExcept(_touchCardIndex);
+                                    break;
+                                }
                             }
                         }
 
@@ -540,6 +612,11 @@ namespace WordDrop
 
                         if (letter != '\0' && col >= 0 && worldPos.y >= _grid.GridBottom - _grid.CellSize)
                         {
+                            if (col != _lastCarryCol)
+                            {
+                                _lastCarryCol = col;
+                                GameAudio.Instance?.PlayLightTick();
+                            }
                             if (DropPreview.Instance != null)
                                 DropPreview.Instance.UpdatePreview(letter, col);
 
@@ -548,6 +625,7 @@ namespace WordDrop
                         }
                         else
                         {
+                            _lastCarryCol = -1;
                             if (DropPreview.Instance != null)
                                 DropPreview.Instance.ClearPreview();
                         }
@@ -564,14 +642,32 @@ namespace WordDrop
                         int dropCol = _grid.WorldXToColumn(worldPos.x);
                         bool overBoard = worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f;
 
+                        // Tutorial restrictions on drag-to-drop
+                        bool tutColOk  = TutorialManager.AllowedColumn < 0    || dropCol == TutorialManager.AllowedColumn;
+                        bool tutCardOk = TutorialManager.AllowedCardIndex < 0 || _touchCardIndex == TutorialManager.AllowedCardIndex;
+
                         if (dropCol >= 0 && overBoard && _touchCardIndex >= 0
                             && _grid.IsColumnAvailable(dropCol)
+                            && tutColOk && tutCardOk
                             && MatchController.Instance != null
                             && MatchController.Instance.IsMatchActive
                             && MatchController.Instance.CurrentPlayer == MatchController.PLAYER_HUMAN
                             && !MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))
                         {
                             _selectedIndex = _touchCardIndex;
+
+                            // Reset card scale and sprite before drop
+                            if (_cardObjects[_touchCardIndex] != null)
+                            {
+                                _cardObjects[_touchCardIndex].transform.localScale = GetCardBaseScale();
+                                SpriteRenderer csr = _cardObjects[_touchCardIndex].GetComponent<SpriteRenderer>();
+                                if (csr != null) csr.sprite = _spriteNormal;
+                            }
+
+                            // Hide tutorial arrows on successful drop
+                            if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
+                                TutorialManager.Instance.HideArrowsOnDrop();
+
                             DropSelectedLetterInColumn(dropCol);
                         }
                         else
@@ -590,6 +686,37 @@ namespace WordDrop
                 {
                     if (mouseHeld)
                     {
+                        // If player pulls card upward past threshold, switch to CarryToBoard
+                        float cardRowY = GetCardRowY();
+                        float liftThreshold = _cardSize * 1.2f;
+                        if (worldPos.y > cardRowY + liftThreshold)
+                        {
+                            // Transition: end reorder, start carry
+                            int cardIdx = _dragIndex;
+                            HandleDragEnd();
+                            _isDragging = false;
+                            _dragIndex = -1;
+
+                            _inputMode = InputMode.CarryToBoard;
+                            _touchCardIndex = cardIdx;
+                            _selectedIndex = cardIdx;
+                            _lastCarryCol = -1;
+
+                            if (_cardObjects[cardIdx] != null)
+                            {
+                                _cardObjects[cardIdx].transform.position = new Vector3(
+                                    worldPos.x, worldPos.y, -3f);
+                                _cardObjects[cardIdx].transform.localScale = GetCardBaseScale() * 1.1f;
+
+                                SpriteRenderer dragSR = _cardObjects[cardIdx].GetComponent<SpriteRenderer>();
+                                if (dragSR != null && _spriteSelected != null)
+                                    dragSR.sprite = _spriteSelected;
+                            }
+
+                            Debug.Log($"[Input] Reordering → CarryToBoard: card={cardIdx}");
+                            break;
+                        }
+
                         HandleDragMove(worldPos);
                     }
 
@@ -632,12 +759,20 @@ namespace WordDrop
         private void SnapCardBack(int index)
         {
             if (index < 0 || index >= HAND_SIZE || _cardObjects[index] == null) return;
+            RestoreAllCardSortOrder();
             float baseY = GetCardRowY();
             _cardObjects[index].transform.position = new Vector3(GetCardX(index), baseY, -1f);
             _cardObjects[index].transform.localScale = GetCardBaseScale();
-            // Clear the carry shadow
+            // Reset sprite back to normal
+            SpriteRenderer csr = _cardObjects[index].GetComponent<SpriteRenderer>();
+            if (csr != null) csr.sprite = _spriteNormal;
+            // Reset shadow to rest state
             if (index < HAND_SIZE && _cardShadows[index] != null)
-                _cardShadows[index].color = Color.clear;
+            {
+                _cardShadows[index].color = new Color(0f, 0f, 0f, 0.15f);
+                _cardShadows[index].transform.position = new Vector3(
+                    GetCardX(index), baseY - _cardSize * 0.03f, 0f);
+            }
         }
 
         private int GetCardIndexAtPosition(Vector3 worldPos)
@@ -686,9 +821,17 @@ namespace WordDrop
                 float centerX = 0f;
                 float maxHOffset = _cardSize * 0.1f;
                 float hOffset = -Mathf.Sign(worldPos.x - centerX) * Mathf.Clamp01(Mathf.Abs(worldPos.x - centerX) / 3f) * maxHOffset;
-                _cardShadows[_dragIndex].transform.position = new Vector3(worldPos.x + hOffset, baseY - _cardSize * 0.05f, 0f);
-                _cardShadows[_dragIndex].color = new Color(0f, 0f, 0f, 0.7f);
-                _cardShadows[_dragIndex].transform.localScale = GetCardBaseScale() * 1.15f;
+
+                // Y offset grows as card lifts higher — shadow separates from card
+                float cardY = baseY + CARD_SELECT_RAISE * 0.5f;
+                float liftDist = Mathf.Max(0f, cardY - baseY);
+                float baseShadowDrop = _cardSize * 0.03f;
+                float maxExtraDrop = _cardSize * 0.15f;
+                float shadowDrop = baseShadowDrop + Mathf.Clamp01(liftDist / (_cardSize * 3f)) * maxExtraDrop;
+
+                _cardShadows[_dragIndex].transform.position = new Vector3(worldPos.x + hOffset, cardY - shadowDrop, 0f);
+                _cardShadows[_dragIndex].color = new Color(0f, 0f, 0f, 0.3f);
+                _cardShadows[_dragIndex].transform.localScale = GetCardBaseScale() * 1.06f;
             }
 
             // Check if we should swap with a neighbor
@@ -702,6 +845,7 @@ namespace WordDrop
                 if (Mathf.Abs(worldPos.x - targetX) < cardSpacing * 0.4f)
                 {
                     // Swap dragged card with this position
+                    GameAudio.Instance?.PlayReorderTick();
                     SwapCardPositions(_dragIndex, i);
                     _dragIndex = i; // Now tracking the new index
                     _dragStartX = worldPos.x;
@@ -718,6 +862,7 @@ namespace WordDrop
             bool wasDragging = _isDragging; // did user actually move past drag threshold?
             _isDragging = false;
             _dragIndex = -1;
+            RestoreAllCardSortOrder();
 
             if (wasDragging)
             {
@@ -810,6 +955,21 @@ namespace WordDrop
         private void ExecuteSwap(int cardIndex)
         {
             if (TutorialManager.BlockShuffleAndSwap) return;
+
+            // One-time contextual hint for first swap
+            if (PlayerPrefs.GetInt("hint_swap", 0) == 0)
+            {
+                PlayerPrefs.SetInt("hint_swap", 1);
+                PlayerPrefs.Save();
+                if (BonusPopup.Instance != null)
+                {
+                    float cardX = GetCardWorldX(cardIndex);
+                    float cardY = GetCardWorldY();
+                    BonusPopup.Instance.Show("TRADE A CARD", new Color(0.3f, 0.85f, 0.9f, 1f),
+                        new Vector3(cardX, cardY + 0.5f, -5f), 1.1f);
+                }
+            }
+
             if (MatchController.Instance == null) return;
             bool success = MatchController.Instance.UseSwap(cardIndex);
             if (success)
@@ -828,17 +988,26 @@ namespace WordDrop
         /// </summary>
         private void TryEnterRewriteMode(int col, int row)
         {
+            if (TutorialManager.BlockShuffleAndSwap) return;
             if (MatchController.Instance == null || RulesEngine.Instance == null) return;
 
-            int swapsLeft = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
-            if (swapsLeft <= 0)
+            int rewritesLeft = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
+            if (rewritesLeft <= 0)
             {
-                Debug.Log("[HandManager] Rewrite: no swaps remaining.");
+                Debug.Log("[HandManager] Rewrite: no rewrites remaining.");
                 return;
             }
 
             var cell = RulesEngine.Instance.GetCell(col, row);
             if (cell == null) return;
+
+            // Gold tiles cannot be rewritten — they're too valuable to discard
+            Tile existingTile = _grid.GetTile(col, row);
+            if (existingTile != null && existingTile.IsGoldBonus)
+            {
+                Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is gold — cannot rewrite.");
+                return;
+            }
 
             var primed = RulesEngine.Instance.PrimedRegistry
                 .GetPrimedWordsContaining(new Vector2Int(col, row));
@@ -848,9 +1017,22 @@ namespace WordDrop
                 return;
             }
 
+            // One-time contextual hint for first rewrite (only after validation passes)
+            if (PlayerPrefs.GetInt("hint_rewrite", 0) == 0)
+            {
+                PlayerPrefs.SetInt("hint_rewrite", 1);
+                PlayerPrefs.Save();
+                if (BonusPopup.Instance != null && GridManager.Instance != null)
+                {
+                    Vector3 worldPos = GridManager.Instance.CellToWorld(col, row);
+                    BonusPopup.Instance.Show("REPLACE A TILE", new Color(0.3f, 0.85f, 0.9f, 1f), worldPos, 1.1f);
+                }
+            }
+
             _rewriteModeActive = true;
             _rewriteTargetCol = col;
             _rewriteTargetRow = row;
+            GameAudio.Instance?.PlayTileSelect();
 
             // Pulse the target tile
             Tile targetTile = _grid.GetTile(col, row);
@@ -890,13 +1072,25 @@ namespace WordDrop
             Debug.Log("[HandManager] Rewrite mode cancelled.");
         }
 
+        private static readonly Color REWRITE_LOW  = new Color(0.85f, 0.95f, 0.95f, 1f); // subtle teal tint
+        private static readonly Color REWRITE_HIGH = new Color(0.6f, 1.9f, 1.8f, 1f);   // HDR teal — bloom peak
+
         private IEnumerator RewritePulseCoroutine(Tile tile)
         {
-            while (_rewriteModeActive && tile != null)
+            if (tile == null) { _rewritePulseCoroutine = null; yield break; }
+
+            SpriteRenderer sr = tile.GetComponent<SpriteRenderer>();
+            float speed = 2.2f;
+
+            while (_rewriteModeActive && tile != null && sr != null)
             {
-                tile.FlashHighlight(REWRITE_HIGHLIGHT_COLOR);
-                yield return new WaitForSeconds(0.6f);
+                float t = (Mathf.Sin(Time.time * speed) + 1f) * 0.5f;
+                sr.color = Color.Lerp(REWRITE_LOW, REWRITE_HIGH, t);
+                yield return null;
             }
+
+            // Restore normal color when done
+            if (sr != null) sr.color = Color.white;
             _rewritePulseCoroutine = null;
         }
 
@@ -950,6 +1144,8 @@ namespace WordDrop
 
         private IEnumerator RewriteTurnSequence(int col, int row, char letter, int handSlot)
         {
+            if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
             var rules = RulesEngine.Instance;
             var grid  = GridManager.Instance;
             var mc    = MatchController.Instance;
@@ -957,6 +1153,7 @@ namespace WordDrop
             if (rules == null || grid == null || mc == null)
             {
                 IsInteractable = true;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
 
@@ -1007,6 +1204,10 @@ namespace WordDrop
                 grid.CreateSingleTile(col, row, letter);
             }
 
+            // Detonation Replay: snapshot board before rewrite resolution
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.SnapshotBoard();
+
             // Run RulesEngine resolution
             var beginResult = rules.BeginRewrite(col, row, letter, playerIdx);
             if (beginResult == null)
@@ -1015,6 +1216,10 @@ namespace WordDrop
                 yield break;
             }
 
+            // Detonation Replay: record the rewritten tile
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.RecordDrop(letter, col, row);
+
             yield return new WaitForSeconds(0.15f);
 
             // Step-by-step resolution loop (mirrors GameVisualBridge phases)
@@ -1022,10 +1227,17 @@ namespace WordDrop
             int totalScore = 0;
             int wordIndex = 0;
 
+            // Deferred scoring state for rewrite path (same pattern as FullTurnSequence)
+            List<WordScoredEvent> _rwDeferredScoredWords = null;
+
             while (resolving)
             {
                 RulesEngine.StepResult step = rules.NextStep();
                 if (step == null) { resolving = false; break; }
+
+                // Detonation Replay: record every step
+                if (DetonationRecorder.Instance != null)
+                    DetonationRecorder.Instance.RecordStep(step);
 
                 switch (step.Phase)
                 {
@@ -1037,14 +1249,25 @@ namespace WordDrop
                     }
                     case RulesEngine.ResolutionPhase.WordsScored:
                     {
+                        bool rwDetonationComing = (step.ScoredWords != null && step.ScoredWords.Count > 0)
+                            && rules.PeekHasTriggers();
+
                         if (step.ScoredWords != null && step.ScoredWords.Count > 0)
                         {
                             rewriteScoredWord = true;
+
+                            if (rwDetonationComing)
+                                _rwDeferredScoredWords = new List<WordScoredEvent>(step.ScoredWords);
+
                             for (int w = 0; w < step.ScoredWords.Count; w++)
                             {
                                 var sw = step.ScoredWords[w];
                                 Debug.Log($"[Rewrite] Word scored: '{sw.Word}' +{sw.FinalScore}");
                                 totalScore += sw.FinalScore;
+
+                                // Track first word this turn for LastWordDisplay
+                                if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
+                                    MatchController.Instance.LastTurnWord = sw.Word;
 
                                 // Flash tiles
                                 var tiles = new System.Collections.Generic.List<Tile>();
@@ -1060,24 +1283,36 @@ namespace WordDrop
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(tiles, hlColor, wordIndex);
 
-                                if (ScoringDisplay.Instance != null)
-                                    ScoringDisplay.Instance.ShowWordScore(sw.Word, sw.FinalScore, true);
+                                // Haptic feedback — light tap on word scored (rewrite path)
+                                HapticsManager.Light();
+
+                                if (!rwDetonationComing && BonusPopup.Instance != null && tiles.Count > 0)
+                                {
+                                    Vector3 wc = Vector3.zero;
+                                    for (int st = 0; st < tiles.Count; st++)
+                                        if (tiles[st] != null) wc += tiles[st].transform.position;
+                                    wc /= Mathf.Max(1, tiles.Count);
+                                    BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, wc);
+                                }
 
                                 wordIndex++;
                             }
                         }
-                        yield return new WaitForSeconds(0.25f);
+                        yield return new WaitForSeconds(rwDetonationComing ? 0f : 0.25f);
                         break;
                     }
                     case RulesEngine.ResolutionPhase.TriggersFound:
                     {
                         rewriteTriggeredPrimed = true;
                         Debug.Log("[Rewrite] Primed word triggered!");
-                        yield return new WaitForSeconds(0.15f);
+                        yield return new WaitForSeconds(0.05f); // Micro-anticipation
                         break;
                     }
                     case RulesEngine.ResolutionPhase.Exploding:
                     {
+                        if (ChainCounter.Instance != null)
+                            ChainCounter.Instance.OnDetonation(step.ChainDepth);
+
                         if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                         {
                             var dyingTiles = new System.Collections.Generic.List<Tile>();
@@ -1086,10 +1321,64 @@ namespace WordDrop
                                 Tile t = grid.GetTile(c.x, c.y);
                                 if (t != null) dyingTiles.Add(t);
                             }
+
+                            // Compute explosion center for popups
+                            Vector3 rwCenter = Vector3.zero;
+                            for (int d = 0; d < dyingTiles.Count; d++)
+                                if (dyingTiles[d] != null) rwCenter += dyingTiles[d].transform.position;
+                            rwCenter /= Mathf.Max(1, dyingTiles.Count);
+
+                            // Show deferred word+score from the skipped ScoringDisplay
+                            if (_rwDeferredScoredWords != null && BonusPopup.Instance != null)
+                            {
+                                float yOff = 0.5f;
+                                foreach (var sw in _rwDeferredScoredWords)
+                                {
+                                    BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, rwCenter + Vector3.up * yOff);
+                                    yOff += 0.35f;
+
+                                }
+                                _rwDeferredScoredWords = null;
+                            }
+
+                            // Haptic feedback — strong impact on detonation explosion (rewrite path)
+                            HapticsManager.Strong();
+
+                            // Named Meltdown — build-up + stamp BEFORE explosion (rewrite path)
+                            bool rwMeltdownActive = false;
+                            if (MeltdownManager.Instance != null)
+                            {
+                                int rwPlayer = MatchController.Instance != null ? MatchController.Instance.CurrentPlayer : 0;
+                                bool rwLastTurn = MatchController.Instance != null
+                                    && MatchController.Instance.GetPlayerTurns(rwPlayer) >= MatchController.Instance.EffectiveMaxTurns - 1;
+                                Coroutine rwMeltdownIntro = MeltdownManager.Instance.TryMeltdownIntro(
+                                    step.ChainDepth, step.ChainTriggeredCount, step.DetonationBonus, rwLastTurn);
+                                if (rwMeltdownIntro != null)
+                                {
+                                    yield return rwMeltdownIntro;
+                                    rwMeltdownActive = true;
+                                }
+                            }
+
+                            // Hitstop — only if meltdown didn't already freeze
+                            if (!rwMeltdownActive && dyingTiles.Count > 0)
+                            {
+                                float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
+                                yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                            }
+
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                                 yield return WordDropFX.Instance.PlayExplosion(dyingTiles, wordIndex);
                             grid.RemoveTiles(step.ExplodedCells);
                             Debug.Log($"[Rewrite] Exploded {step.ExplodedCells.Count} tiles");
+
+                            // Meltdown outro — fade stamp after chain played out (rewrite path)
+                            if (rwMeltdownActive && MeltdownManager.Instance != null)
+                            {
+                                Coroutine rwOutro = MeltdownManager.Instance.TryMeltdownOutro();
+                                if (rwOutro != null)
+                                    yield return rwOutro;
+                            }
                         }
                         break;
                     }
@@ -1101,6 +1390,8 @@ namespace WordDrop
                     }
                     case RulesEngine.ResolutionPhase.Complete:
                     {
+                        if (ChainCounter.Instance != null)
+                            ChainCounter.Instance.OnChainComplete();
                         resolving = false;
 
                         int finalScore = step.TotalScore;
@@ -1109,6 +1400,10 @@ namespace WordDrop
                                   $"chainContinues={step.ChainContinues}");
 
                         rules.FinalizeDrop();
+
+                        // Detonation Replay: finalize chain recording
+                        if (DetonationRecorder.Instance != null)
+                            DetonationRecorder.Instance.FinalizeChain();
 
                         try { grid.SyncToRulesState(rules); }
                         catch (System.Exception ex) { Debug.LogError($"[Rewrite] SyncToRulesState: {ex}"); }
@@ -1135,6 +1430,28 @@ namespace WordDrop
                 }
             }
 
+            // Apply primed glow to all primed tiles (rewrite path was missing this)
+            PrimedWordRegistry rwRegistry = rules.PrimedRegistry;
+            int rwCurrentTurn = rules.GlobalTurn;
+            if (rwRegistry != null)
+            {
+                for (int p = 0; p < rwRegistry.Count; p++)
+                {
+                    var pw = rwRegistry.GetByIndex(p);
+                    if (pw == null) continue;
+                    int survived = Mathf.Max(0, rwCurrentTurn - pw.PrimedOnTurn);
+                    int heatLevel = Mathf.Min(survived, RulesEngine.HEAT_FUSE_MAX_BONUS);
+                    bool justPrimed = (pw.PrimedOnTurn == rwCurrentTurn - 1 || pw.PrimedOnTurn == rwCurrentTurn);
+                    for (int c = 0; c < pw.Cells.Count; c++)
+                    {
+                        Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
+                        int fuse = Mathf.Max(0, pw.ExpiresOnTurn - rwCurrentTurn);
+                        Color glowColor = pw.IsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+                        if (t != null) t.SetPrimedGlow(glowColor, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse, isGold: pw.IsGold);
+                    }
+                }
+            }
+
             // Refresh hand and visuals — reactivate all cards (rewrite hides the used card)
             for (int i = 0; i < HAND_SIZE; i++)
                 if (_cardObjects[i] != null) _cardObjects[i].SetActive(true);
@@ -1145,6 +1462,21 @@ namespace WordDrop
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
                 Debug.Log("[HandManager] RewriteTurnSequence: match ended during rewrite.");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                yield break;
+            }
+
+            // Blitz mode: skip AI, check timer, re-enable immediately
+            if (BlitzManager.IsBlitzMode)
+            {
+                if (BlitzManager.Instance != null && BlitzManager.Instance.CheckBlitzTimeUp())
+                {
+                    Debug.Log("[HandManager] RewriteTurnSequence: Blitz time expired.");
+                    if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                    yield break;
+                }
+                IsInteractable = true;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
 
@@ -1160,6 +1492,7 @@ namespace WordDrop
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
                 Debug.Log("[HandManager] RewriteTurnSequence: match ended after AI turn.");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
 
@@ -1168,11 +1501,13 @@ namespace WordDrop
             {
                 Debug.Log("[HandManager] RewriteTurnSequence: human has no turns — forcing game over.");
                 IsInteractable = false;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 mc.ForceGameOver();
                 yield break;
             }
 
             IsInteractable = true;
+            if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
         }
 
         /// <summary>Animate all cards except the one being dragged to their correct positions.</summary>
@@ -1219,11 +1554,16 @@ namespace WordDrop
             float baseY = GetCardRowY();
             float offScreenX = _grid != null ? _grid.GridRight + _grid.CellSize * 3f : 8f;
 
-            // Hide all cards off-screen to the right
+            // Hide all cards and shadows off-screen
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
                 _cardObjects[i].transform.position = new Vector3(offScreenX, baseY, -1f);
+                if (i < HAND_SIZE && _cardShadows[i] != null)
+                {
+                    _cardShadows[i].color = Color.clear;
+                    _cardShadows[i].transform.position = new Vector3(offScreenX, baseY, 0f);
+                }
             }
 
             // Deal all cards with DOTween — staggered slide-in with overshoot
@@ -1235,15 +1575,25 @@ namespace WordDrop
                 _cardObjects[i].transform.position = startPos;
                 _cardObjects[i].transform.localScale = GetCardBaseScale() * 0.6f; // start small
 
-                float delay = i * 0.05f; // slightly more stagger for readability
-                // Position overshoots past target then settles back
+                float delay = i * 0.05f;
+                int cardIdx = i;
                 _cardObjects[i].transform.DOMove(endPos, 0.25f)
                     .SetDelay(delay)
-                    .SetEase(DG.Tweening.Ease.OutBack, 2.5f);
-                // Scale pops up with elastic bounce
+                    .SetEase(DG.Tweening.Ease.OutBack, 2.5f)
+                    .OnStart(() => GameAudio.Instance?.PlayLightTick())
+                    .OnComplete(() =>
+                    {
+                        // Show shadow when card lands
+                        if (cardIdx < HAND_SIZE && _cardShadows[cardIdx] != null)
+                        {
+                            _cardShadows[cardIdx].color = new Color(0f, 0f, 0f, 0.15f);
+                            _cardShadows[cardIdx].transform.position = new Vector3(
+                                GetCardX(cardIdx), GetCardRowY() - _cardSize * 0.03f, 0f);
+                        }
+                    });
                 _cardObjects[i].transform.DOScale(GetCardBaseScale(), 0.3f)
                     .SetDelay(delay)
-                    .SetEase(DG.Tweening.Ease.OutElastic, 0.6f, 0.3f);
+                    .SetEase(DG.Tweening.Ease.OutBack);
             }
 
             // Wait for all cards to land
@@ -1262,7 +1612,9 @@ namespace WordDrop
             // Tap same card → deselect
             if (_selectedIndex == index)
             {
-                // Reset scale on deselect
+                GameAudio.Instance?.PlayLightTick();
+                // Reset scale and sort order on deselect
+                RestoreAllCardSortOrder();
                 if (_cardObjects[index] != null)
                     _cardObjects[index].transform.localScale = GetCardBaseScale();
                 HideAllCardShadows();
@@ -1281,6 +1633,7 @@ namespace WordDrop
 
             // Tap different card → deselect old, select new
             _selectedIndex = index;
+            GameAudio.Instance?.PlayTileSelect();
             RefreshAllCardVisuals();
             UpdateCardPositions();
 
@@ -1288,9 +1641,11 @@ namespace WordDrop
             if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
                 TutorialManager.Instance.HideCardHighlightPublic();
 
-            // Scale up the newly selected card + show shadow
+            // Scale up the newly selected card + show shadow + boost sort order
+            RestoreAllCardSortOrder();
             if (_cardObjects[index] != null)
-                _cardObjects[index].transform.localScale = GetCardBaseScale() * 1.08f;
+                _cardObjects[index].transform.localScale = GetCardBaseScale() * 1.12f;
+            BoostCardSortOrder(index);
             HideAllCardShadows(true); // animate old shadow dropping
             ShowCardShadow(index);
 
@@ -1336,6 +1691,11 @@ namespace WordDrop
             _cardTexts[a] = _cardTexts[b];
             _cardTexts[b] = tempTM;
 
+            // Swap shadows too
+            SpriteRenderer tempShadow = _cardShadows[a];
+            _cardShadows[a] = _cardShadows[b];
+            _cardShadows[b] = tempShadow;
+
             Debug.Log($"[HandManager] Swapped slots {a}↔{b}: '{_hand[a]}' '{_hand[b]}'");
         }
 
@@ -1378,12 +1738,15 @@ namespace WordDrop
                 yield return null;
             }
 
-            // Snap to final
+            // Snap to final position and reset scale
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
                 float targetY = (i == _selectedIndex) ? baseY + CARD_SELECT_RAISE : baseY;
                 _cardObjects[i].transform.position = new Vector3(GetCardX(i), targetY, -1f);
+                // Reset scale for non-selected cards
+                if (i != _selectedIndex)
+                    _cardObjects[i].transform.localScale = GetCardBaseScale();
             }
         }
 
@@ -1405,6 +1768,10 @@ namespace WordDrop
 
             // Tutorial column restriction
             if (TutorialManager.AllowedColumn >= 0 && col != TutorialManager.AllowedColumn)
+                return;
+
+            // Tutorial card restriction (defense in depth — also checked in DropSelectedLetterInColumn)
+            if (TutorialManager.AllowedCardIndex >= 0 && _selectedIndex != TutorialManager.AllowedCardIndex)
                 return;
 
             // Hide tutorial arrows when player drops
@@ -1435,11 +1802,7 @@ namespace WordDrop
                 return;
             }
 
-            if (!_grid.IsColumnAvailable(col))
-            {
-                Debug.Log($"[HandManager] Column {col} is full — ignoring.");
-                return;
-            }
+            // Full columns are allowed — dropping replaces the top tile
 
             // Check if human player still has turns
             if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))
@@ -1448,7 +1811,7 @@ namespace WordDrop
                 IsInteractable = false;
                 // Force game over if match should be done
                 if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI) ||
-                    MatchController.Instance.TotalTurnsUsed >= MatchController.MAX_TURNS * 2)
+                    MatchController.Instance.TotalTurnsUsed >= MatchController.Instance.TotalMaxTurns)
                 {
                     MatchController.Instance.ForceGameOver();
                 }
@@ -1462,6 +1825,10 @@ namespace WordDrop
                 return;
             }
 
+            // Tutorial card restriction — only the highlighted card can be played
+            if (TutorialManager.AllowedCardIndex >= 0 && _selectedIndex != TutorialManager.AllowedCardIndex)
+                return;
+
             // Clear preview before committing the drop
             if (DropPreview.Instance != null)
                 DropPreview.Instance.ClearPreview();
@@ -1471,7 +1838,11 @@ namespace WordDrop
 
             // Disable input during animation
             IsInteractable = false;
+            RestoreAllCardSortOrder();
+            // Clear ALL shadows, then fully hide the dropped card's
             HideAllCardShadows();
+            if (_selectedIndex >= 0 && _selectedIndex < HAND_SIZE && _cardShadows[_selectedIndex] != null)
+                _cardShadows[_selectedIndex].color = Color.clear;
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(false);
 
@@ -1488,6 +1859,9 @@ namespace WordDrop
 
         private IEnumerator FullTurnSequence(int col, char letter, int handSlot)
         {
+            // Mark processing so BlitzManager defers game-over until resolution completes
+            if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
             // --- Job 4: Log state BEFORE the drop ---
             int playerIndexBeforeDrop = MatchController.Instance != null
                 ? MatchController.Instance.CurrentPlayer : -1;
@@ -1512,6 +1886,10 @@ namespace WordDrop
                 yield break;
             }
 
+            // ── Detonation Replay: snapshot board before resolution ──
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.SnapshotBoard();
+
             // ── STEP 1: Animate hand tile flying to column, then drop into grid ──
             RulesEngine.StepResult beginResult = rules.BeginDrop(col, letter, playerIdx);
             if (beginResult == null || beginResult.Row < 0)
@@ -1523,10 +1901,46 @@ namespace WordDrop
 
             int targetRow = beginResult.Row;
 
-            // Hide the hand card immediately — it's been placed
+            // If we replaced the top tile in a full column, destroy the old tile visually
+            if (beginResult.ReplacedTopTile)
+            {
+                Tile oldTile = grid.GetTile(col, targetRow);
+                if (oldTile != null)
+                {
+                    // Quick dissolve animation on the replaced tile
+                    oldTile.Dissolve(0.15f);
+                    yield return new WaitForSeconds(0.12f);
+                    grid.RemoveTiles(new System.Collections.Generic.List<Vector2Int> { new Vector2Int(col, targetRow) });
+                }
+            }
+
+            // Detonation Replay: record the dropped tile
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.RecordDrop(letter, col, targetRow);
+
+            // ── Card launch animation: anticipation squash → stretch upward → hide ──
             GameObject handCard = (handSlot >= 0 && handSlot < HAND_SIZE) ? _cardObjects[handSlot] : null;
             if (handCard != null)
+            {
+                Transform ct = handCard.transform;
+                Vector3 cardScale = ct.localScale;
+
+                // Anticipation: squash down (wind-up)
+                ct.DOComplete();
+                ct.DOScale(new Vector3(cardScale.x * 1.15f, cardScale.y * 0.85f, 1f), 0.06f)
+                    .SetEase(DG.Tweening.Ease.InQuad);
+                yield return new WaitForSeconds(0.06f);
+
+                // Launch: stretch upward + fly toward grid
+                ct.DOScale(new Vector3(cardScale.x * 0.8f, cardScale.y * 1.25f, 1f), 0.08f)
+                    .SetEase(DG.Tweening.Ease.OutQuad);
+                ct.DOMove(ct.position + Vector3.up * _grid.CellSize * 0.5f, 0.08f)
+                    .SetEase(DG.Tweening.Ease.OutQuad);
+                yield return new WaitForSeconds(0.06f);
+
                 handCard.SetActive(false);
+                ct.localScale = cardScale; // reset for next use
+            }
 
             // Create grid tile at the top of the column and drop it straight down
             Tile droppedTile = grid.CreateSingleTile(col, targetRow, letter);
@@ -1542,7 +1956,7 @@ namespace WordDrop
                 droppedTile.SetFake3D(tiltX, tiltY);
 
                 float elapsed = 0f;
-                float duration = (spawnY - targetPos.y) / 38f; // was 45
+                float duration = (spawnY - targetPos.y) / 38f;
                 while (elapsed < duration && droppedTile != null)
                 {
                     elapsed += Time.deltaTime;
@@ -1560,6 +1974,7 @@ namespace WordDrop
                     droppedTile.ClearFake3D();
                     droppedTile.transform.position = targetPos;
                     droppedTile.PlayLandingSquish();
+                    GameAudio.Instance?.PlayTileDrop();
                 }
             }
 
@@ -1577,10 +1992,19 @@ namespace WordDrop
             Color playerColor = new Color(0.29f, 0.87f, 0.31f);  // bright lime green #4ADE50
             Color aiColor = new Color(0.96f, 0.57f, 0.18f);  // warm orange #F5922E
 
+            // Deferred scoring state — when detonation is coming, we skip the
+            // full ScoringDisplay and instead show the word+score during the
+            // Exploding phase as a BonusPopup rising from the blast zone.
+            List<WordScoredEvent> _deferredScoredWords = null;
+
             while (resolving)
             {
                 RulesEngine.StepResult step = rules.NextStep();
                 if (step == null) { Debug.LogError("[HandManager] NextStep null"); break; }
+
+                // Detonation Replay: record every step
+                if (DetonationRecorder.Instance != null)
+                    DetonationRecorder.Instance.RecordStep(step);
 
                 switch (step.Phase)
                 {
@@ -1591,8 +2015,22 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.WordsScored:
                         if (step.ScoredWords != null)
                         {
+                            // Check if a detonation is coming — if so, skip the slow
+                            // Balatro-style scoring and show a quick flash instead.
+                            bool detonationComing = rules.PeekHasTriggers();
+
+                            if (detonationComing)
+                            {
+                                // Defer the word+score info for display during Exploding phase
+                                _deferredScoredWords = new List<WordScoredEvent>(step.ScoredWords);
+                            }
+
                             foreach (var sw in step.ScoredWords)
                             {
+                                // Track first word this turn for LastWordDisplay
+                                if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
+                                    MatchController.Instance.LastTurnWord = sw.Word;
+
                                 // Collect tiles for FX
                                 List<Tile> scoredTiles = new List<Tile>();
                                 if (sw.Cells != null)
@@ -1602,22 +2040,32 @@ namespace WordDrop
                                         if (t != null) scoredTiles.Add(t);
                                     }
 
-                                // Procedural staggered highlight + scale pop
+                                // Procedural staggered highlight + scale pop (always plays)
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(scoredTiles, playerColor, wordIdx);
 
-                                // Balatro-style scoring display
-                                if (ScoringDisplay.Instance != null)
-                                    ScoringDisplay.Instance.ShowWordScore(sw.Word, sw.FinalScore, true);
+                                // Haptic feedback — light tap on word scored
+                                HapticsManager.Light();
 
-                                // Beat timing — full countdown for first word, quick for chains
-                                float scoringDur = (wordIdx == 0)
-                                    ? ScoringDisplay.GetDuration(sw.Word.Length)
-                                    : ScoringDisplay.GetQuickDuration();
-                                float beat = Mathf.Max(
-                                    WordDropFX.GetBeatDuration(0.40f, wordIdx),
-                                    scoringDur);
-                                yield return new WaitForSeconds(beat);
+                                if (detonationComing)
+                                {
+                                    // Detonation coming — no delay, explosion fires on impact
+                                    yield return null; // single frame for visual sync
+                                }
+                                else
+                                {
+                                    // Normal path — show word+score popup from the tiles on the board
+                                    if (BonusPopup.Instance != null && scoredTiles.Count > 0)
+                                    {
+                                        Vector3 wordCenter = Vector3.zero;
+                                        for (int st = 0; st < scoredTiles.Count; st++)
+                                            if (scoredTiles[st] != null) wordCenter += scoredTiles[st].transform.position;
+                                        wordCenter /= Mathf.Max(1, scoredTiles.Count);
+                                        BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, wordCenter);
+                                    }
+
+                                    yield return new WaitForSeconds(0.35f);
+                                }
                                 wordIdx++;
                                 totalScore += sw.FinalScore;
                                 baseScoreAccum += sw.BaseScore;
@@ -1630,7 +2078,8 @@ namespace WordDrop
                         // Fuse Trace for player path
                         if (step.Triggers != null && WordDropFX.Instance != null)
                             WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
-                        yield return new WaitForSeconds(0.15f);
+                        // Micro-anticipation — just enough for the squeeze to register
+                        yield return new WaitForSeconds(0.05f);
                         if (step.Triggers != null)
                         {
                             foreach (var trig in step.Triggers)
@@ -1648,9 +2097,8 @@ namespace WordDrop
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayDetonation(trigTiles, wordIdx);
 
-                                if (ScoringDisplay.Instance != null)
-                                    ScoringDisplay.Instance.ShowWordScore(
-                                        trig.TriggeredWord, RulesEngine.BREAKER_BONUS, true);
+                                // Haptic feedback — medium pulse on primed tile trigger
+                                HapticsManager.Medium();
 
                                 yield return new WaitForSeconds(WordDropFX.DETONATE_TOTAL_DUR);
                             }
@@ -1669,12 +2117,77 @@ namespace WordDrop
                                 if (t != null) dying.Add(t);
                             }
 
+                            // Chain counter — persistent on-screen combo display
+                            if (ChainCounter.Instance != null)
+                                ChainCounter.Instance.OnDetonation(step.ChainDepth);
+
+                            // Compute explosion center for popups
+                            Vector3 center = Vector3.zero;
+                            for (int d = 0; d < dying.Count; d++)
+                                if (dying[d] != null) center += dying[d].transform.position;
+                            center /= Mathf.Max(1, dying.Count);
+
+                            // Haptic feedback — strong impact on detonation explosion
+                            HapticsManager.Strong();
+
+                            // Named Meltdown — build-up + stamp BEFORE explosion
+                            bool meltdownActive = false;
+                            if (MeltdownManager.Instance != null)
+                            {
+                                int mPlayer = MatchController.Instance != null ? MatchController.Instance.CurrentPlayer : 0;
+                                bool mLastTurn = MatchController.Instance != null
+                                    && MatchController.Instance.GetPlayerTurns(mPlayer) >= MatchController.Instance.EffectiveMaxTurns - 1;
+                                Coroutine meltdownIntro = MeltdownManager.Instance.TryMeltdownIntro(
+                                    step.ChainDepth, step.ChainTriggeredCount, step.DetonationBonus, mLastTurn);
+                                if (meltdownIntro != null)
+                                {
+                                    yield return meltdownIntro;
+                                    meltdownActive = true;
+                                }
+                            }
+
+                            // Hitstop — only if meltdown didn't already freeze
+                            if (!meltdownActive && dying.Count > 0)
+                            {
+                                float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
+                                yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                            }
+
                             // Procedural staggered explosion with escalating shake
                             if (WordDropFX.Instance != null)
                                 yield return WordDropFX.Instance.PlayExplosion(dying, wordIdx);
 
                             grid.RemoveTiles(step.ExplodedCells);
+
+                            // Score popups AFTER the explosion — rising from the blast zone
+                            if (BonusPopup.Instance != null && step.DetonationBonus > 0)
+                            {
+                                int baseBonus = step.DetonationBonus - step.DetonationHeat;
+                                BonusPopup.Instance.ShowDetonation("", baseBonus, center, step.ChainDepth);
+                                if (step.DetonationHeat > 0)
+                                    BonusPopup.Instance.ShowHeatBonus(step.DetonationHeat, center);
+                            }
+
+                            if (_deferredScoredWords != null && BonusPopup.Instance != null)
+                            {
+                                float yOffset = 0.5f;
+                                foreach (var sw in _deferredScoredWords)
+                                {
+                                    BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, center + Vector3.up * yOffset);
+                                    yOffset += 0.4f;
+                                }
+                                _deferredScoredWords = null;
+                            }
+
                             yield return new WaitForSeconds(0.08f);
+
+                            // Meltdown outro — fade stamp after chain played out
+                            if (meltdownActive && MeltdownManager.Instance != null)
+                            {
+                                Coroutine meltdownOutro = MeltdownManager.Instance.TryMeltdownOutro();
+                                if (meltdownOutro != null)
+                                    yield return meltdownOutro;
+                            }
                         }
                         break;
 
@@ -1688,6 +2201,8 @@ namespace WordDrop
 
                     case RulesEngine.ResolutionPhase.Complete:
                         totalScore = step.TotalScore;
+                        if (ChainCounter.Instance != null)
+                            ChainCounter.Instance.OnChainComplete();
                         resolving = false;
                         break;
 
@@ -1699,6 +2214,11 @@ namespace WordDrop
 
             // ── STEP 3: Finalize ──
             rules.FinalizeDrop();
+
+            // Detonation Replay: finalize chain recording
+            if (DetonationRecorder.Instance != null)
+                DetonationRecorder.Instance.FinalizeChain();
+
             // Sync without destroying existing tiles — avoids visual pop
             grid.SyncToRulesState(rules);
 
@@ -1710,8 +2230,9 @@ namespace WordDrop
                     if (t == null) continue;
                     // Complete any running tweens then force correct scale
                     t.transform.DOComplete();
-                    int ts = Mathf.Clamp(Mathf.RoundToInt(grid.CellSize * 200f), 64, 512);
-                    float ns = ts / 100f;
+                    SpriteRenderer tSR = t.GetComponent<SpriteRenderer>();
+                    float ns = (tSR != null && tSR.sprite != null) ? tSR.sprite.bounds.size.x
+                        : Mathf.Clamp(Mathf.RoundToInt(grid.CellSize * 200f), 64, 512) / 100f;
                     float correctScale = (grid.CellSize * 0.88f) / ns;
                     t.transform.localScale = new Vector3(correctScale, correctScale, 1f);
                     t.ResetVisuals();
@@ -1733,7 +2254,8 @@ namespace WordDrop
                     {
                         Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
                         int fuse = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
-                        if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse);
+                        Color glowColor = pw.IsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+                        if (t != null) t.SetPrimedGlow(glowColor, playFlash: justPrimed, heatLevel: heatLevel, fuseRemaining: fuse, isGold: pw.IsGold);
                     }
                 }
             }
@@ -1764,10 +2286,20 @@ namespace WordDrop
                 float baseY = GetCardRowY();
                 float offScreenX = grid.GridRight + grid.CellSize * 3f;
 
+                _cardObjects[handSlot].transform.DOKill();
+                _cardObjects[handSlot].transform.localScale = GetCardBaseScale();
                 _cardObjects[handSlot].SetActive(true);
                 _cardObjects[handSlot].transform.position = new Vector3(offScreenX, baseY - 0.2f, -1f);
 
+                // Hide shadow until card is visible
+                if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
+                {
+                    _cardShadows[handSlot].color = Color.clear;
+                    _cardShadows[handSlot].transform.position = new Vector3(offScreenX, baseY - 0.2f, 0f);
+                }
+
                 // Slide in from right with bounce
+                GameAudio.Instance?.PlayTileSelect();
                 Vector3 from = _cardObjects[handSlot].transform.position;
                 Vector3 to = new Vector3(GetCardX(handSlot), baseY, -1f);
                 float dealElapsed = 0f;
@@ -1785,6 +2317,13 @@ namespace WordDrop
                 }
                 if (_cardObjects[handSlot] != null)
                     _cardObjects[handSlot].transform.position = to;
+
+                // Show shadow now that card has landed
+                if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
+                {
+                    _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.15f);
+                    _cardShadows[handSlot].transform.position = new Vector3(to.x, to.y - _cardSize * 0.03f, 0f);
+                }
             }
 
             _selectedIndex = -1; // Deselect after placing
@@ -1821,6 +2360,28 @@ namespace WordDrop
 
             // 2. Update hand display after player's turn
             RefreshHandFromMatchController();
+
+            // Blitz mode: check if time expired during resolution, skip AI entirely
+            if (BlitzManager.IsBlitzMode)
+            {
+                if (BlitzManager.Instance != null && BlitzManager.Instance.CheckBlitzTimeUp())
+                {
+                    Debug.Log("[HandManager] FullTurnSequence: Blitz time expired after resolution.");
+                    yield break;
+                }
+
+                // In blitz, re-enable input immediately — no AI turn
+                if (MatchController.Instance != null && MatchController.Instance.IsMatchActive
+                    && !MatchController.Instance.IsGameOver)
+                {
+                    IsInteractable = true;
+                    if (ColumnArrowManager.Instance != null)
+                        ColumnArrowManager.Instance.ShowArrows(true);
+                    Debug.Log("[HandManager] FullTurnSequence END (blitz): Player input re-enabled.");
+                }
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                yield break;
+            }
 
             // 3. Determine if AI should take a turn
             bool currentPlayerIsAI   = (playerIndexAfterDrop == MatchController.PLAYER_AI);
@@ -1904,6 +2465,42 @@ namespace WordDrop
                 yield break;
             }
 
+            // 4b. Rising Row mechanic — after both players have gone
+            if (RisingRowManager.Instance != null && RisingRowManager.Enabled
+                && !BlitzManager.IsBlitzMode
+                && MatchController.Instance != null && MatchController.Instance.IsMatchActive)
+            {
+                int globalTurn = RulesEngine.Instance != null ? RulesEngine.Instance.GlobalTurn : 0;
+                if (RisingRowManager.Instance.ShouldRiseThisTurn(globalTurn))
+                {
+                    Debug.Log($"[HandManager] Rising row triggered at globalTurn={globalTurn}");
+                    bool overflowed = false;
+                    yield return StartCoroutine(RisingRowManager.Instance.RiseRow((overflow) =>
+                    {
+                        overflowed = overflow;
+                    }));
+
+                    if (overflowed)
+                    {
+                        if (MatchController.Instance != null && !MatchController.Instance.IsLastWord)
+                        {
+                            Debug.Log("[HandManager] Rising row overflow → triggering LAST WORD phase!");
+                            MatchController.Instance.TriggerLastWord();
+                            // Continue — let players have their final turns
+                        }
+                        else
+                        {
+                            Debug.Log("[HandManager] Rising row overflow during Last Word — game over.");
+                            if (MatchController.Instance != null)
+                                MatchController.Instance.ForceGameOver();
+                            if (GameManager.Instance != null)
+                                GameManager.Instance.TransitionTo(GameState.GameOver);
+                            yield break;
+                        }
+                    }
+                }
+            }
+
             // 5. Update hand display again (in case hand changed)
             RefreshHandFromMatchController();
 
@@ -1936,6 +2533,8 @@ namespace WordDrop
                 if (GameManager.Instance != null)
                     GameManager.Instance.TransitionTo(GameState.GameOver);
             }
+
+            if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
         }
 
         // ── Hand display refresh ──────────────────────────────────────────────────
@@ -2006,14 +2605,32 @@ namespace WordDrop
             int radius  = texSize / 7;
             int border  = Mathf.Max(3, texSize / 16);
 
-            _spriteNormal      = TileRenderer.CreateRoundedRect(texSize, texSize, radius,
-                                    CARD_FILL_NORMAL, CARD_BORDER_NORMAL, border);
-            _spriteSelected    = TileRenderer.CreateRoundedRect(texSize, texSize, radius,
-                                    CARD_FILL_NORMAL, CARD_BORDER_SELECT, border + 2);
-            _spriteSwap        = TileRenderer.CreateRoundedRect(texSize, texSize, radius,
-                                    CARD_FILL_NORMAL, CARD_BORDER_SWAP, border + 1);
-            _spriteSwapSelected= TileRenderer.CreateRoundedRect(texSize, texSize, radius,
-                                    CARD_FILL_NORMAL, CARD_BORDER_SWAP_SEL, border + 2);
+            // Try loading hand-drawn sprites
+            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/master_tile");
+            Sprite loadedSelected = Resources.Load<Sprite>("Tiles/selected_tile");
+            Sprite loadedSwap     = Resources.Load<Sprite>("Tiles/swap_tile");
+
+            if (loadedNormal != null)
+            {
+                _spriteNormal       = loadedNormal;
+                _spriteSelected     = loadedSelected ?? loadedNormal;
+                _spriteSwap         = loadedSwap ?? loadedNormal;
+                _spriteSwapSelected = loadedSwap ?? loadedNormal; // swap+selected uses swap sprite
+                Debug.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
+            }
+            else
+            {
+                // Fallback to procedural
+                _spriteNormal      = TileRenderer.CreateRoundedRect(texSize, texSize, radius,
+                                        CARD_FILL_NORMAL, CARD_BORDER_NORMAL, border);
+                _spriteSelected    = TileRenderer.CreateRoundedRect(texSize, texSize, radius,
+                                        CARD_FILL_NORMAL, CARD_BORDER_SELECT, border + 2);
+                _spriteSwap        = TileRenderer.CreateRoundedRect(texSize, texSize, radius,
+                                        CARD_FILL_NORMAL, CARD_BORDER_SWAP, border + 1);
+                _spriteSwapSelected= TileRenderer.CreateRoundedRect(texSize, texSize, radius,
+                                        CARD_FILL_NORMAL, CARD_BORDER_SWAP_SEL, border + 2);
+                Debug.Log("[HandManager] Fallback: procedural card sprites.");
+            }
         }
 
         private void BuildCardObjects()
@@ -2036,9 +2653,14 @@ namespace WordDrop
                 SpriteRenderer sr = cardGO.AddComponent<SpriteRenderer>();
                 sr.sprite       = _spriteNormal;
                 sr.sortingOrder = 10;
+                // Apply lit material for URP 2D lighting
+                Material litMat = Resources.Load<Material>("SpriteLit2D");
+                if (litMat != null) sr.sharedMaterial = litMat;
 
-                int   texSize    = Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512);
-                float nativeSize = texSize / 100f;
+                // Use actual sprite bounds for sizing
+                float nativeSize = (sr.sprite != null && sr.sprite.bounds.size.x > 0)
+                    ? sr.sprite.bounds.size.x
+                    : Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512) / 100f;
                 float scale      = _cardSize / nativeSize;
                 cardGO.transform.localScale = new Vector3(scale, scale, 1f);
 
@@ -2047,7 +2669,7 @@ namespace WordDrop
                 // Letter text — TMP, matches board tiles exactly
                 GameObject textGO = new GameObject("CardLetter");
                 textGO.transform.SetParent(cardGO.transform, false);
-                textGO.transform.localPosition = new Vector3(0f, nativeSize * 0.02f, -0.1f);
+                textGO.transform.localPosition = new Vector3(0f, nativeSize * 0.04f, -0.1f);
 
                 var tm = textGO.AddComponent<TMPro.TextMeshPro>();
                 TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
@@ -2066,7 +2688,7 @@ namespace WordDrop
                 // Point value — TMP, matches board tiles exactly
                 GameObject ptsGO = new GameObject("CardPoints");
                 ptsGO.transform.SetParent(cardGO.transform, false);
-                ptsGO.transform.localPosition = new Vector3(nativeSize * 0.28f, -nativeSize * 0.32f, -0.1f);
+                ptsGO.transform.localPosition = new Vector3(nativeSize * 0.28f, -nativeSize * 0.20f, -0.1f);
 
                 var ptsTm = ptsGO.AddComponent<TMPro.TextMeshPro>();
                 if (tileFont != null) ptsTm.font = tileFont;
@@ -2084,19 +2706,8 @@ namespace WordDrop
                 MeshRenderer ptsMr = ptsGO.GetComponent<MeshRenderer>();
                 if (ptsMr != null) ptsMr.sortingOrder = 11;
 
-                // Shadow sprite — independent object (NOT a child of card)
-                // Stays at rest position while card lifts above it
-                GameObject shadowGO = new GameObject($"CardShadow_{i}");
-                shadowGO.transform.SetParent(transform, false); // parent to HandManager, not the card
-                shadowGO.transform.position = new Vector3(cardX, cardY, 0f);
-                shadowGO.transform.localScale = new Vector3(scale, scale, 1f); // same scale as card
-
-                SpriteRenderer shadowSR = shadowGO.AddComponent<SpriteRenderer>();
-                shadowSR.sprite = GetSoftShadowSprite();
-                shadowSR.color = new Color(0f, 0f, 0f, 0f); // invisible by default
-                shadowSR.sortingOrder = 9;
-
-                _cardShadows[i] = shadowSR;
+                // Hand card shadows disabled — caused too many z-order/timing issues
+                _cardShadows[i] = null;
 
                 _cardObjects[i]  = cardGO;
                 _cardSRs[i]      = sr;
@@ -2111,6 +2722,34 @@ namespace WordDrop
 
         private Coroutine _shadowAnimCoroutine;
 
+        /// <summary>Boost sorting order on a card so it renders above all others.</summary>
+        private void BoostCardSortOrder(int index)
+        {
+            if (index < 0 || index >= HAND_SIZE || _cardObjects[index] == null) return;
+            var sr = _cardObjects[index].GetComponent<SpriteRenderer>();
+            if (sr != null) sr.sortingOrder = 20;
+            // Boost all child renderers (text, points)
+            foreach (var child in _cardObjects[index].GetComponentsInChildren<MeshRenderer>())
+                child.sortingOrder = 21;
+            foreach (var child in _cardObjects[index].GetComponentsInChildren<TMPro.TextMeshPro>())
+                child.sortingOrder = 21;
+        }
+
+        /// <summary>Restore sorting order on all cards to default.</summary>
+        private void RestoreAllCardSortOrder()
+        {
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] == null) continue;
+                var sr = _cardObjects[i].GetComponent<SpriteRenderer>();
+                if (sr != null) sr.sortingOrder = 10;
+                foreach (var child in _cardObjects[i].GetComponentsInChildren<MeshRenderer>())
+                    child.sortingOrder = 11;
+                foreach (var child in _cardObjects[i].GetComponentsInChildren<TMPro.TextMeshPro>())
+                    child.sortingOrder = 11;
+            }
+        }
+
         private void ShowCardShadow(int index)
         {
             if (index < 0 || index >= HAND_SIZE) return;
@@ -2123,13 +2762,13 @@ namespace WordDrop
             float maxHOffset = _cardSize * 0.1f;
             float hOffset = -Mathf.Sign(cardX - centerX) * Mathf.Clamp01(Mathf.Abs(cardX - centerX) / 3f) * maxHOffset;
 
-            _cardShadows[index].transform.position = new Vector3(cardX + hOffset, restY - _cardSize * 0.05f, 0f);
+            _cardShadows[index].transform.position = new Vector3(cardX + hOffset, restY - _cardSize * 0.03f, 0f);
 
-            // Shadow starts invisible, fades in + grows slightly as card lifts
+            // Shadow starts subtle, gets slightly bigger and darker as card lifts
             Vector3 cardScale = GetCardBaseScale();
-            float shadowScaleMult = 1.15f; // 15% larger than card — soft edge covers extra
-            _cardShadows[index].transform.localScale = cardScale * shadowScaleMult * 0.9f;
-            _cardShadows[index].color = Color.clear;
+            float shadowScaleMult = 1.08f; // smaller spread than before
+            _cardShadows[index].transform.localScale = cardScale * shadowScaleMult * 0.95f;
+            _cardShadows[index].color = new Color(0f, 0f, 0f, 0.15f); // start from rest opacity
 
             if (_shadowAnimCoroutine != null) StopCoroutine(_shadowAnimCoroutine);
             _shadowAnimCoroutine = StartCoroutine(AnimateShadowLift(
@@ -2143,7 +2782,7 @@ namespace WordDrop
             float duration = 0.12f;
             float elapsed = 0f;
             Vector3 startScale = targetScale * 0.92f;
-            float targetAlpha = 0.7f; // strong shadow
+            float targetAlpha = 0.35f; // semi-transparent shadow
 
             while (elapsed < duration && shadow != null)
             {
@@ -2177,8 +2816,19 @@ namespace WordDrop
                 }
                 else
                 {
-                    _cardShadows[i].color = new Color(0f, 0f, 0f, 0f);
-                    _cardShadows[i].transform.localScale = GetCardBaseScale();
+                    // Only show rest shadow if card is active and visible
+                    bool cardActive = _cardObjects[i] != null && _cardObjects[i].activeSelf;
+                    if (cardActive)
+                    {
+                        _cardShadows[i].color = new Color(0f, 0f, 0f, 0.15f);
+                        _cardShadows[i].transform.localScale = GetCardBaseScale();
+                        _cardShadows[i].transform.position = new Vector3(
+                            GetCardX(i), GetCardRowY() - _cardSize * 0.03f, 0f);
+                    }
+                    else
+                    {
+                        _cardShadows[i].color = Color.clear;
+                    }
                 }
             }
         }
@@ -2349,7 +2999,7 @@ namespace WordDrop
             textGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
             var tm = textGO.AddComponent<TMPro.TextMeshPro>();
-            TMPro.TMP_FontAsset heavyFont = Resources.Load<TMPro.TMP_FontAsset>("NunitoExtraBold SDF");
+            TMPro.TMP_FontAsset heavyFont = Resources.Load<TMPro.TMP_FontAsset>("Cartoon SDF");
             if (heavyFont != null) tm.font = heavyFont;
             tm.text = "SHUFFLE";
             tm.fontSize = 2.8f;
@@ -2417,6 +3067,7 @@ namespace WordDrop
 
         private void ShuffleHand()
         {
+            GameAudio.Instance?.PlayShuffle();
             StartCoroutine(ShuffleHandAnimated());
         }
 
@@ -2441,7 +3092,7 @@ namespace WordDrop
             float shakeDur = 0.25f;
             float shakeElapsed = 0f;
             float posJitter = _cardSize * 0.10f;
-            float rotJitter = 12f;
+            float rotJitter = 8f;
 
             while (shakeElapsed < shakeDur)
             {
@@ -2555,8 +3206,15 @@ namespace WordDrop
 
         private Vector3 GetCardBaseScale()
         {
-            int texSize = Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512);
-            float nativeSize = texSize / 100f;
+            // Use actual sprite bounds if hand-drawn sprites are loaded
+            float nativeSize;
+            if (_spriteNormal != null && _spriteNormal.bounds.size.x > 0)
+                nativeSize = _spriteNormal.bounds.size.x;
+            else
+            {
+                int texSize = Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512);
+                nativeSize = texSize / 100f;
+            }
             float scale = _cardSize / nativeSize;
             return new Vector3(scale, scale, 1f);
         }
@@ -2601,7 +3259,10 @@ namespace WordDrop
             socketSR.sprite = _spriteNormal;
             socketSR.color = new Color(0.06f, 0.08f, 0.20f, 0.50f); // deep inset — matches board family
             socketSR.sortingOrder = 9;
-            float socketScale = (previewSize * 1.15f) / (Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512) / 100f);
+            float socketNative = (_spriteNormal != null && _spriteNormal.bounds.size.x > 0)
+                ? _spriteNormal.bounds.size.x
+                : Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512) / 100f;
+            float socketScale = (previewSize * 1.15f) / socketNative;
             socketGO.transform.localScale = new Vector3(socketScale, socketScale, 1f);
 
             // -- Preview tile --
@@ -2615,9 +3276,10 @@ namespace WordDrop
             sr.sortingOrder = 10;
             _nextTileSR = sr;
 
-            // Scale relative to the card sprite (same texture), just smaller
-            int texSize = Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512);
-            float nativeSize = texSize / 100f;
+            // Scale using actual sprite bounds
+            float nativeSize = (sr.sprite != null && sr.sprite.bounds.size.x > 0)
+                ? sr.sprite.bounds.size.x
+                : Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512) / 100f;
             float scale = previewSize / nativeSize;
             _nextTilePreview.transform.localScale = new Vector3(scale, scale, 1f);
 
@@ -2626,14 +3288,14 @@ namespace WordDrop
             // Letter text (child of tile)
             GameObject textGO = new GameObject("NextLetter");
             textGO.transform.SetParent(_nextTilePreview.transform, false);
-            textGO.transform.localPosition = new Vector3(0f, nativeSize * 0.02f, -0.2f);
+            textGO.transform.localPosition = new Vector3(0f, nativeSize * 0.04f, -0.2f);
 
             var tm = textGO.AddComponent<TMPro.TextMeshPro>();
             TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
             if (tileFont != null) tm.font = tileFont;
             tm.text          = "";
             tm.fontSize      = 5.5f;
-            tm.fontStyle     = TMPro.FontStyles.Bold;
+            tm.fontStyle     = TMPro.FontStyles.Normal;
             tm.color         = new Color(0.25f, 0.25f, 0.30f, 1f);
             tm.alignment     = TMPro.TextAlignmentOptions.Center;
             tm.sortingOrder  = 15;

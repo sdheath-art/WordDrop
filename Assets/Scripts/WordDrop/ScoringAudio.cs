@@ -73,18 +73,23 @@ namespace WordDrop
         {
             AudioClip clip = _pointsClips[_sequenceClipIndex];
             if (clip == null || _source == null) return;
+            if (GameAudio.Instance != null && GameAudio.Instance.Muted) return;
 
+            float vol = GameAudio.Instance != null ? GameAudio.Instance.Volume : 1f;
             float pitch = Mathf.Min(BASE_PITCH + tileIndex * PITCH_INCREMENT, MAX_PITCH);
             _source.pitch = pitch;
-            _source.PlayOneShot(clip, COUNT_VOLUME);
+            _source.PlayOneShot(clip, COUNT_VOLUME * vol);
         }
 
         /// <summary>Play the total score reveal sound.</summary>
         public void PlayTotalReveal()
         {
             if (_totalClip == null || _source == null) return;
+            if (GameAudio.Instance != null && GameAudio.Instance.Muted) return;
+
+            float vol = GameAudio.Instance != null ? GameAudio.Instance.Volume : 1f;
             _source.pitch = 1f;
-            _source.PlayOneShot(_totalClip, TOTAL_VOLUME);
+            _source.PlayOneShot(_totalClip, TOTAL_VOLUME * vol);
         }
     }
 }
