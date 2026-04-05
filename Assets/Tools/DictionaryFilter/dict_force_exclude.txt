@@ -1,2 +1,41 @@
 # Add one word per line (UPPERCASE)
 # Lines starting with # are comments
+# Family-friendly filter — April 5, 2026
+
+# Profanity
+BITCH
+CUNT
+DAMN
+FUCK
+SHIT
+
+# Sexual/explicit
+BOOB
+BOOBS
+DILDO
+EROTIC
+HOOKER
+NUDES
+NUDE
+ORGASM
+PENIS
+PORN
+SCROTUM
+SEX
+SEXY
+SLUT
+SPUNK
+TESTICLE
+TOPLESS
+VAGINA
+WHORE
+
+# Drugs (beyond common usage)
+COCAINE
+ECSTASY
+HEROIN
+METH
+
+# Slurs and offensive
+PIMP
+RAPE
