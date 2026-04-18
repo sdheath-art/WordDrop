@@ -41,7 +41,7 @@ namespace WordDrop
                 return;
             }
             Instance = this;
-            Debug.Log("[BlitzManager] Awake");
+//             Debug.Log("[BlitzManager] Awake");
         }
 
         private void Update()
@@ -59,7 +59,7 @@ namespace WordDrop
                 _isTimerRunning = false;
                 _pendingGameOver = true;
                 UpdateHUDTimer(); // show 0:00
-                Debug.Log("[BlitzManager] Time's up!");
+//                 Debug.Log("[BlitzManager] Time's up!");
                 OnTimerExpired();
             }
         }
@@ -71,14 +71,14 @@ namespace WordDrop
             _timeRemaining = BLITZ_DURATION;
             _isTimerRunning = true;
             _pendingGameOver = false;
-            Debug.Log($"[BlitzManager] Timer started: {BLITZ_DURATION}s");
+//             Debug.Log($"[BlitzManager] Timer started: {BLITZ_DURATION}s");
             UpdateHUDTimer();
         }
 
         public void StopTimer()
         {
             _isTimerRunning = false;
-            Debug.Log($"[BlitzManager] Timer stopped at {_timeRemaining:F1}s remaining");
+//             Debug.Log($"[BlitzManager] Timer stopped at {_timeRemaining:F1}s remaining");
         }
 
         public static void Reset()
@@ -137,7 +137,7 @@ namespace WordDrop
             {
                 // Resolution in progress — _pendingGameOver flag is set.
                 // HandManager's FullTurnSequence will call CheckBlitzTimeUp() after resolution.
-                Debug.Log("[BlitzManager] Mid-resolution — will end after current resolution completes.");
+//                 Debug.Log("[BlitzManager] Mid-resolution — will end after current resolution completes.");
             }
         }
 
@@ -157,7 +157,7 @@ namespace WordDrop
             _pendingGameOver = false;
             _isTimerRunning = false;
 
-            Debug.Log("[BlitzManager] Ending blitz match.");
+//             Debug.Log("[BlitzManager] Ending blitz match.");
 
             if (MatchController.Instance != null)
                 MatchController.Instance.ForceGameOver();

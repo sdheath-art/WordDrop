@@ -88,7 +88,7 @@ namespace WordDrop
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             BuildHUD();
-            Debug.Log("[HUDManager] Awake — HUD built");
+//             Debug.Log("[HUDManager] Awake — HUD built");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -114,57 +114,88 @@ namespace WordDrop
 
             canvasGO.AddComponent<GraphicRaycaster>();
 
+            // ── Safe Area container — respects iPhone notch/dynamic island ────────
+            GameObject safeAreaGO = new GameObject("SafeArea");
+            safeAreaGO.transform.SetParent(canvasGO.transform, false);
+            RectTransform safeRT = safeAreaGO.AddComponent<RectTransform>();
+            safeRT.anchorMin = Vector2.zero;
+            safeRT.anchorMax = Vector2.one;
+            safeRT.offsetMin = Vector2.zero;
+            safeRT.offsetMax = Vector2.zero;
+
+            // Apply safe area insets
+            Rect safeArea = Screen.safeArea;
+            Vector2 anchorMin = safeArea.position;
+            Vector2 anchorMax = safeArea.position + safeArea.size;
+            anchorMin.x /= Screen.width;
+            anchorMin.y /= Screen.height;
+            anchorMax.x /= Screen.width;
+            anchorMax.y /= Screen.height;
+            safeRT.anchorMin = anchorMin;
+            safeRT.anchorMax = anchorMax;
+
             // ── HUD Bar — solid flat strip across the top ─────────────────────────
             GameObject barGO = new GameObject("HUDBar");
-            barGO.transform.SetParent(canvasGO.transform, false);
+            barGO.transform.SetParent(safeAreaGO.transform, false);
 
             RectTransform barRT = barGO.AddComponent<RectTransform>();
             barRT.anchorMin = new Vector2(0f, 1f);
             barRT.anchorMax = new Vector2(1f, 1f);
             barRT.pivot     = new Vector2(0.5f, 1f);
             float barH = cfg != null ? cfg.hudBarHeight : 78f;
+            if (Application.isMobilePlatform) barH = Mathf.Min(barH, 60f);
             barRT.offsetMin = new Vector2(0f, -barH);
             barRT.offsetMax = new Vector2(0f,   0f);
 
             Image barImg = barGO.AddComponent<Image>();
             barImg.color = cfg != null ? cfg.hudBarBgColor : BAR_BG;
 
-            TMP_FontAsset heavyFont = Resources.Load<TMP_FontAsset>("Cartoon SDF");
+            TMP_FontAsset heavyFont = GameFont.GetUITMP();
 
             // ── Left: YOU score ──────────────────────────────────────────────────
             _playerScoreText = MakeLabel(barGO.transform, "PlayerLabel",
                 anchorMin: new Vector2(0.08f, 0.60f),
-                anchorMax: new Vector2(0.25f, 0.95f),
+                anchorMax: new Vector2(0.28f, 0.95f),
                 pivot:     new Vector2(0f, 0.5f),
                 offMin:    Vector2.zero, offMax: Vector2.zero,
-                text:      "YOU",
-                size:      14,
+                text:      "",
+                size:      12,
                 style:     FontStyle.Bold,
                 color:     new Color(PLAYER_COLOR.r, PLAYER_COLOR.g, PLAYER_COLOR.b, 0.7f),
                 align:     TextAnchor.MiddleLeft);
 
             _playerScoreNum = MakeLabel(barGO.transform, "PlayerScoreNum",
                 anchorMin: new Vector2(0.08f, 0.05f),
-                anchorMax: new Vector2(0.28f, 0.65f),
+                anchorMax: new Vector2(0.22f, 0.65f),   // was 0.28 — tighter right edge
                 pivot:     new Vector2(0f, 0.5f),
                 offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "0",
-                size:      38,
+                size:      30,
                 style:     FontStyle.Bold,
                 color:     PLAYER_COLOR,
                 align:     TextAnchor.MiddleLeft);
             if (heavyFont != null) _playerScoreNum.font = heavyFont;
+            // Auto-shrink large scores so 4-5 digit values don't overflow into the
+            // swap/edit counters. Min 16 stays readable; max 30 preserves the punch
+            // for typical 2-3 digit scores.
+            if (_playerScoreNum != null)
+            {
+                _playerScoreNum.enableAutoSizing = true;
+                _playerScoreNum.fontSizeMin = 16;
+                _playerScoreNum.fontSizeMax = 30;
+                _playerScoreNum.overflowMode = TMPro.TextOverflowModes.Overflow;
+            }
 
             // ── Center: Turn counter ─────────────────────────────────────────────
             _turnCounterText = MakeLabel(barGO.transform, "TurnCounter",
-                anchorMin: new Vector2(0.28f, 0.10f),
-                anchorMax: new Vector2(0.72f, 0.90f),
+                anchorMin: new Vector2(0.24f, 0.10f),
+                anchorMax: new Vector2(0.98f, 0.90f),
                 pivot:     new Vector2(0.5f, 0.5f),
                 offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "",
-                size:      24,
+                size:      18,
                 style:     FontStyle.Bold,
-                color:     new Color(1f, 1f, 1f, 0.9f),
+                color:     new Color(0.97f, 0.95f, 0.92f, 0.9f),
                 align:     TextAnchor.MiddleCenter);
             if (heavyFont != null) _turnCounterText.font = heavyFont;
 
@@ -195,24 +226,28 @@ namespace WordDrop
             // ── Swaps + Rewrites — compact, under center ─────────────────────────
             Color swapCol = new Color(0.78f, 0.78f, 0.85f, 0.8f);
 
+            // Swap/edit counters moved RIGHT so they don't sit under the growing
+            // score label on the left. Was 0.24-0.44 / 0.44-0.64; now 0.30-0.48 /
+            // 0.48-0.66 — the score's expanded anchor (up to 0.22) now clears
+            // these by ~8% screen width buffer.
             _swapCounterText = MakeLabel(barGO.transform, "SwapCounter",
                 anchorMin: new Vector2(0.30f, 0.02f),
-                anchorMax: new Vector2(0.50f, 0.28f),
+                anchorMax: new Vector2(0.48f, 0.28f),
                 pivot:     new Vector2(0.5f, 0.5f),
                 offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "SWAP x2",
-                size:      11,
+                size:      10,
                 style:     FontStyle.Bold,
                 color:     swapCol,
                 align:     TextAnchor.MiddleCenter);
 
             _rewriteCounterText = MakeLabel(barGO.transform, "RewriteCounter",
-                anchorMin: new Vector2(0.50f, 0.02f),
-                anchorMax: new Vector2(0.70f, 0.28f),
+                anchorMin: new Vector2(0.48f, 0.02f),
+                anchorMax: new Vector2(0.66f, 0.28f),
                 pivot:     new Vector2(0.5f, 0.5f),
                 offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "EDIT x1",
-                size:      11,
+                size:      10,
                 style:     FontStyle.Bold,
                 color:     swapCol,
                 align:     TextAnchor.MiddleCenter);
@@ -309,7 +344,7 @@ namespace WordDrop
             _wordFoundText.alignment = TextAlignmentOptions.Center;
             _wordFoundText.enableWordWrapping = false;
             _wordFoundText.overflowMode = TextOverflowModes.Overflow;
-            TMPHelper.ApplyEffects(_wordFoundText, WORD_POPUP_P1);
+            TMPHelper.ApplyEffects(_wordFoundText, WORD_POPUP_P1, TMPHelper.TextTier.HUD);
 
             _wordFoundOverlay.SetActive(false);
         }
@@ -360,6 +395,32 @@ namespace WordDrop
             {
                 _aiScoreNum.text = pts.ToString();
             }
+        }
+
+        /// <summary>Hide AI score display (Survival mode — no opponent).</summary>
+        public void HideAIScore()
+        {
+            if (_aiScoreText != null) _aiScoreText.gameObject.SetActive(false);
+            if (_aiScoreNum  != null) _aiScoreNum.gameObject.SetActive(false);
+        }
+
+        /// <summary>Show AI score display (returning from Survival to Classic).</summary>
+        public void ShowAIScore()
+        {
+            if (_aiScoreText != null) _aiScoreText.gameObject.SetActive(true);
+            if (_aiScoreNum  != null) _aiScoreNum.gameObject.SetActive(true);
+        }
+
+        /// <summary>Hide "YOU" label (Survival — solo, no need for player label).</summary>
+        public void HidePlayerLabel()
+        {
+            if (_playerScoreText != null) _playerScoreText.gameObject.SetActive(false);
+        }
+
+        /// <summary>Show "YOU" label (returning from Survival to Classic).</summary>
+        public void ShowPlayerLabel()
+        {
+            if (_playerScoreText != null) _playerScoreText.gameObject.SetActive(true);
         }
 
         // ── Visual score tick (used by ScoringDisplay to count up per-tile) ─────
@@ -594,6 +655,10 @@ namespace WordDrop
                 if (display != lastDisplay)
                 {
                     label.text = display.ToString();
+
+                    // Scale punch on each tick
+                    label.transform.localScale = Vector3.one * 1.15f;
+
                     if (elapsed - lastTickTime >= tickInterval)
                     {
                         float pitch = Mathf.Lerp(0.9f, 1.4f, t);
@@ -602,9 +667,15 @@ namespace WordDrop
                     }
                     lastDisplay = display;
                 }
+                else
+                {
+                    // Settle scale back toward 1
+                    label.transform.localScale = Vector3.Lerp(label.transform.localScale, Vector3.one, Time.deltaTime * 12f);
+                }
                 yield return null;
             }
             label.text = to.ToString();
+            label.transform.localScale = Vector3.one;
 
             if (isPlayer) _playerCountUp = null;
             else _aiCountUp = null;
@@ -968,7 +1039,7 @@ namespace WordDrop
                 default:                      t.alignment = TextAlignmentOptions.Center; break;
             }
 
-            TMPHelper.ApplyEffects(t, color);
+            TMPHelper.ApplyEffects(t, color, TMPHelper.TextTier.HUD);
             return t;
         }
 
@@ -1033,6 +1104,63 @@ namespace WordDrop
             tex.Apply();
             _resetIconSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
             return _resetIconSprite;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PUBLIC API — Survival Mode HUD
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Called every frame by SurvivalManager.Update() to refresh the HUD.
+        /// Shows elapsed time and next auto-drop countdown in the turn counter area.
+        /// </summary>
+        public void UpdateSurvivalHUD(SurvivalManager sm)
+        {
+            if (sm == null || _turnCounterText == null) return;
+
+            int stage          = sm.GetCurrentStage();
+            int stageScore     = sm.CurrentStageScore;
+            int stageTarget    = sm.CurrentStageTarget;
+            int stageMovesLeft = sm.CurrentStageMovesRemaining;
+            int riseMovesLeft  = sm.RisingRowMovesRemaining;
+
+            // Primary HUD: stage progress + moves left in stage + rise countdown
+            _turnCounterText.text = $"S{stage} {stageScore}/{stageTarget}  |  {stageMovesLeft} moves  |  RISE in {riseMovesLeft}";
+
+            // Color logic:
+            // - If stage already cleared this round → green (safe, bonus moves)
+            // - If behind pace + running out of moves → red
+            // - If behind pace but moves OK → amber
+            // - Otherwise survival cyan
+            bool cleared = sm.IsCurrentStageCleared;
+            float requiredPerMove = stageMovesLeft > 0
+                ? (float)(stageTarget - stageScore) / stageMovesLeft
+                : 0f;
+
+            if (cleared)
+            {
+                _turnCounterText.color = new Color(0.4f, 1f, 0.5f, 1f); // green — already cleared
+            }
+            else if (stageMovesLeft <= 3 && stageScore < stageTarget)
+            {
+                _turnCounterText.color = TURN_DANGER; // red — about to fail
+            }
+            else if (requiredPerMove > 100f)
+            {
+                _turnCounterText.color = TURN_WARN; // amber — behind pace
+            }
+            else if (riseMovesLeft <= 1)
+            {
+                _turnCounterText.color = TURN_DANGER; // red — rise imminent
+            }
+            else if (riseMovesLeft <= 2)
+            {
+                _turnCounterText.color = TURN_WARN; // amber — rise soon
+            }
+            else
+            {
+                _turnCounterText.color = new Color(0.1f, 0.85f, 0.9f, 1f); // survival cyan
+            }
         }
 
         internal static Font GetFont()

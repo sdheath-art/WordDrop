@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 namespace WordDrop
 {
@@ -24,7 +25,7 @@ namespace WordDrop
             // SceneBootstrap.Start() transitions to Playing without showing the menu.
             BuildUI();
             SetVisible(false);
-            Debug.Log("[MenuUI] Awake — panel built and hidden");
+//             Debug.Log("[MenuUI] Awake — panel built and hidden");
         }
 
         private void BuildUI()
@@ -186,6 +187,16 @@ namespace WordDrop
                 color: cfg != null ? cfg.menuBlitzBestScoreColor : new Color(0.85f, 0.50f, 0.25f, 1f));
             RefreshBlitzBestScore();
 
+            // SURVIVAL button
+            CreateButton(_panel.transform, "SurvivalButton",
+                anchorMin: new Vector2(0.05f, 0.16f),
+                anchorMax: new Vector2(0.95f, 0.24f),
+                label:     "SURVIVAL",
+                bgColor:   new Color(0.10f, 0.70f, 0.75f, 1f),  // cyan
+                textColor: Color.white,
+                fontSize:  24,
+                onClick:   OnSurvivalClicked);
+
             // ── Debug buttons ────────────────────────────────────────────────
 
             Color dbgBg  = cfg != null ? cfg.menuDebugBgColor : new Color(0.3f, 0.3f, 0.4f, 0.5f);
@@ -257,7 +268,7 @@ namespace WordDrop
             AIAgent.CurrentProfile = profile;
             if (_profileText != null)
                 _profileText.text = $"AI Style: {profile}";
-            Debug.Log($"[MenuUI] AI profile set to {profile}");
+//             Debug.Log($"[MenuUI] AI profile set to {profile}");
         }
 
         private void SetDifficulty(int level, string name)
@@ -265,13 +276,14 @@ namespace WordDrop
             AIAgent.Difficulty = level;
             if (_difficultyText != null)
                 _difficultyText.text = $"Difficulty: {name}";
-            Debug.Log($"[MenuUI] Difficulty set to {name} ({level})");
+//             Debug.Log($"[MenuUI] Difficulty set to {name} ({level})");
         }
 
         private void OnPlayClicked()
         {
             BlitzManager.IsBlitzMode = false;
             DailyDropManager.IsDailyMode = false;
+            SurvivalManager.IsSurvivalMode = false;
             AnalyticsManager.ButtonTap("play");
             AnalyticsManager.ScreenView("playing");
             if (GameManager.Instance != null)
@@ -282,8 +294,20 @@ namespace WordDrop
         {
             DailyDropManager.IsDailyMode = false;
             BlitzManager.IsBlitzMode = true;
+            SurvivalManager.IsSurvivalMode = false;
             AnalyticsManager.ButtonTap("blitz");
             AnalyticsManager.ScreenView("playing_blitz");
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.Playing);
+        }
+
+        private void OnSurvivalClicked()
+        {
+            DailyDropManager.IsDailyMode = false;
+            BlitzManager.IsBlitzMode = false;
+            SurvivalManager.IsSurvivalMode = true;
+            AnalyticsManager.ButtonTap("survival");
+            AnalyticsManager.ScreenView("playing_survival");
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
@@ -292,7 +316,7 @@ namespace WordDrop
         {
             if (DailyDropManager.HasPlayedToday())
             {
-                Debug.Log("[MenuUI] Daily already completed today.");
+//                 Debug.Log("[MenuUI] Daily already completed today.");
                 return;
             }
             BlitzManager.IsBlitzMode = false;
@@ -401,7 +425,7 @@ namespace WordDrop
             RisingRowManager.Enabled = !RisingRowManager.Enabled;
             if (_risingRowsText != null)
                 _risingRowsText.text = GetRisingRowsLabel();
-            Debug.Log($"[MenuUI] Rising Rows toggled: {(RisingRowManager.Enabled ? "ON" : "OFF")}");
+//             Debug.Log($"[MenuUI] Rising Rows toggled: {(RisingRowManager.Enabled ? "ON" : "OFF")}");
         }
 
         private string GetRisingRowsLabel()
@@ -415,7 +439,7 @@ namespace WordDrop
             GameAudio.Instance.Muted = !GameAudio.Instance.Muted;
             if (_sfxText != null)
                 _sfxText.text = GetSFXLabel();
-            Debug.Log($"[MenuUI] SFX toggled: {(GameAudio.Instance.Muted ? "OFF" : "ON")}");
+//             Debug.Log($"[MenuUI] SFX toggled: {(GameAudio.Instance.Muted ? "OFF" : "ON")}");
         }
 
         private string GetSFXLabel()
@@ -431,14 +455,14 @@ namespace WordDrop
             RefreshBestScore();
             RefreshBlitzBestScore();
             RefreshDailyInfo();
-            Debug.Log("[MenuUI] Full reset — tutorial, daily, scores all cleared.");
+//             Debug.Log("[MenuUI] Full reset — tutorial, daily, scores all cleared.");
         }
 
         private void OnResetDailyClicked()
         {
             DailyDropManager.ResetDaily();
             RefreshDailyInfo();
-            Debug.Log("[MenuUI] Daily reset — can replay today.");
+//             Debug.Log("[MenuUI] Daily reset — can replay today.");
         }
 
         public void SetVisible(bool visible)
@@ -527,7 +551,7 @@ namespace WordDrop
             cb.pressedColor     = Color.Lerp(bgColor, Color.black, 0.25f);
             cb.normalColor      = bgColor;
             btn.colors          = cb;
-            btn.onClick.AddListener(() => GameAudio.Instance?.PlayUIClick());
+            btn.onClick.AddListener(() => GameAudio.Instance?.PlayButtonClick());
             btn.onClick.AddListener(onClick);
 
             GameObject labelGO = new GameObject("Label");
@@ -539,13 +563,20 @@ namespace WordDrop
             labelRT.offsetMin = Vector2.zero;
             labelRT.offsetMax = Vector2.zero;
 
-            Text t      = labelGO.AddComponent<Text>();
-            t.font      = GetFont();
+            TextMeshProUGUI t = labelGO.AddComponent<TextMeshProUGUI>();
+            TMP_FontAsset btnFont = GameFont.GetUITMP();
+            if (btnFont != null) t.font = btnFont;
             t.text      = label;
             t.fontSize  = fontSize;
-            t.fontStyle = FontStyle.Bold;
+            t.fontStyle = FontStyles.Bold;
             t.color     = textColor;
-            t.alignment = TextAnchor.MiddleCenter;
+            t.alignment = TextAlignmentOptions.Center;
+            t.enableWordWrapping = false;
+            t.overflowMode = TextOverflowModes.Overflow;
+
+            // Button-tier outline
+            t.outlineWidth = 0.1f;
+            t.outlineColor = (Color32)Color.Lerp(textColor, Color.black, 0.5f);
         }
 
         internal static Font GetFont()

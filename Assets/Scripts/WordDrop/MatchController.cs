@@ -36,12 +36,14 @@ namespace WordDrop
         public const int PLAYER_AI       = 1;
         public const int NUM_PLAYERS     = 2;
 
-        /// <summary>Effective max turns per player for the current match (6 for daily, MAX_TURNS for classic).</summary>
-        public int EffectiveMaxTurns => DailyDropManager.IsDailyMode
-            ? DailyDropManager.DAILY_TURNS : MAX_TURNS;
+        /// <summary>Effective max turns per player for the current match.</summary>
+        public int EffectiveMaxTurns =>
+            SurvivalManager.IsSurvivalMode ? int.MaxValue :
+            DailyDropManager.IsDailyMode   ? DailyDropManager.DAILY_TURNS : MAX_TURNS;
 
-        /// <summary>Effective player count (1 for daily solo, NUM_PLAYERS for classic).</summary>
-        public int EffectivePlayerCount => DailyDropManager.IsDailyMode ? 1 : NUM_PLAYERS;
+        /// <summary>Effective player count (1 for daily/blitz/survival solo, 2 for classic).</summary>
+        public int EffectivePlayerCount =>
+            SurvivalManager.IsSurvivalMode || DailyDropManager.IsDailyMode ? 1 : NUM_PLAYERS;
 
         // ── Singleton ─────────────────────────────────────────────────────────────
 
@@ -55,6 +57,8 @@ namespace WordDrop
         private int[] _playerTurns      = new int[NUM_PLAYERS];   // drops per player
         private int[] _swapsRemaining    = new int[NUM_PLAYERS];
         private int[] _rewritesRemaining = new int[NUM_PLAYERS];
+        private int   _survivalWordsMeter = 0; // counts scored words toward rewrite refund
+        private const int SURVIVAL_WORDS_PER_REFUND = 2; // every 2 words scored → +1 rewrite
 
         private PlayerHand[] _hands = new PlayerHand[NUM_PLAYERS];
         private TileBag      _bag;
@@ -137,7 +141,7 @@ namespace WordDrop
                 return;
             }
             Instance = this;
-            Debug.Log("[MatchController] Awake");
+//             Debug.Log("[MatchController] Awake");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -151,14 +155,18 @@ namespace WordDrop
         public void StartMatch()
         {
             // Enforce mutual exclusion — only one mode can be active
-            if (DailyDropManager.IsDailyMode && BlitzManager.IsBlitzMode)
+            int modeCount = (DailyDropManager.IsDailyMode ? 1 : 0)
+                          + (BlitzManager.IsBlitzMode ? 1 : 0)
+                          + (SurvivalManager.IsSurvivalMode ? 1 : 0);
+            if (modeCount > 1)
             {
-                Debug.LogWarning("[MatchController] Both daily and blitz active — forcing classic.");
+                Debug.LogWarning("[MatchController] Multiple modes active — forcing classic.");
                 DailyDropManager.IsDailyMode = false;
                 BlitzManager.IsBlitzMode = false;
+                SurvivalManager.IsSurvivalMode = false;
             }
 
-            Debug.Log("[MatchController] StartMatch()");
+//             Debug.Log("[MatchController] StartMatch()");
 
             // Reset state
             _currentTurn   = 0;
@@ -182,15 +190,33 @@ namespace WordDrop
             if (isDaily)
             {
                 _bag = new TileBag(DailyDropManager.GetDailySeed());
-                Debug.Log($"[MatchController] Daily Drop mode — seeded bag (seed={DailyDropManager.GetDailySeed()})");
+//                 Debug.Log($"[MatchController] Daily Drop mode — seeded bag (seed={DailyDropManager.GetDailySeed()})");
             }
             else
             {
                 _bag = new TileBag();
             }
 
-            // Create hands (no AI hand in solo modes: daily or blitz)
-            bool soloMode = isDaily || BlitzManager.IsBlitzMode;
+            // Survival mode: Rewrite is a core verb — 3 charges, max 3
+            _survivalWordsMeter = 0;
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                _rewritesRemaining[PLAYER_HUMAN] = 3;
+                // swaps already 2 (INITIAL_SWAPS)
+
+                // Subscribe to stage-clear and stage-fail events
+                if (SurvivalManager.Instance != null)
+                {
+                    // Clean prior subscriptions in case of match restart
+                    SurvivalManager.Instance.OnStageCleared -= OnSurvivalStageCleared;
+                    SurvivalManager.Instance.OnStageFailed  -= OnSurvivalStageFailed;
+                    SurvivalManager.Instance.OnStageCleared += OnSurvivalStageCleared;
+                    SurvivalManager.Instance.OnStageFailed  += OnSurvivalStageFailed;
+                }
+            }
+
+            // Create hands (no AI hand in solo modes: daily, blitz, or survival)
+            bool soloMode = isDaily || BlitzManager.IsBlitzMode || SurvivalManager.IsSurvivalMode;
             _hands[PLAYER_HUMAN] = new PlayerHand(PLAYER_HUMAN);
             if (!soloMode)
             {
@@ -213,8 +239,45 @@ namespace WordDrop
                 RulesEngine.Instance.GlobalTurn = 0;
             }
 
-            // Apply opening seed (places neutral letters on the board)
+            // Rebuild grid visuals for current mode (5 vs 9 rows)
+            if (GridManager.Instance != null)
+                GridManager.Instance.RebuildGrid();
+
+            // Reposition hand UI to match new grid layout
+            if (HandManager.Instance != null)
+                HandManager.Instance.RebuildHandLayout();
+
+            // Start Survival timers
+            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                SurvivalManager.Instance.StartSurvival();
+
+            // Apply opening seed (places neutral letters on the board).
+            // Runs even under NoAssistMode — it's a starting position, not dynamic
+            // assistance. Analogous to Balatro's initial deck: fixed setup, not help.
             OpeningSeed.ApplyRandomSeed(RulesEngine.Instance);
+
+            // First-word guarantee: ensure the player can make a word on their first drop.
+            // If no valid play exists with current hand + board, re-roll hand up to 5 times.
+            // Skipped under NoAssistMode — raw first hand, no rerolls. THIS is dynamic
+            // assist (re-rolls based on current hand quality).
+            if (!SurvivalManager.NoAssistMode
+                && SurvivalManager.IsSurvivalMode && RulesEngine.Instance != null)
+            {
+                for (int reroll = 0; reroll < 5; reroll++)
+                {
+                    if (HasValidFirstMove(_hands[PLAYER_HUMAN], RulesEngine.Instance))
+                    {
+                        // if (reroll > 0)
+//                             Debug.Log($"[MatchController] First-word guarantee: found valid move after {reroll} reroll(s)");
+                        break;
+                    }
+                    // Re-roll the hand
+                    _hands[PLAYER_HUMAN].FillAll(_bag);
+//                     Debug.Log($"[MatchController] First-word guarantee: rerolled hand → {_hands[PLAYER_HUMAN].HandString()}");
+                }
+                // Emit updated hand
+                EmitHandRefilled(PLAYER_HUMAN);
+            }
 
             // Sync visual board (shows seeded letters)
             if (GridManager.Instance != null)
@@ -222,6 +285,29 @@ namespace WordDrop
                 GridManager.Instance.ClearAllCells();
                 GridManager.Instance.RebuildFromRulesEngine(RulesEngine.Instance);
             }
+
+            // No pre-primed opening words — player creates all primes
+            /* disabled
+            if (RulesEngine.Instance != null && GridManager.Instance != null &&
+                RulesEngine.Instance.PrimedRegistry != null)
+            {
+                var registry = RulesEngine.Instance.PrimedRegistry;
+                for (int p = 0; p < registry.Count; p++)
+                {
+                    var pw = registry.GetByIndex(p);
+                    if (pw == null || pw.Cells == null) continue;
+                    foreach (var cell in pw.Cells)
+                    {
+                        Tile tile = GridManager.Instance.GetTile(cell.x, cell.y);
+                        if (tile != null)
+                        {
+                            tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true);
+                            GameParticles.Instance?.PlayPrimed(tile.transform.position);
+                        }
+                    }
+                }
+            }
+            */
 
             // Place initial bonus cells on the board
             if (RulesEngine.Instance != null && !BlitzManager.IsBlitzMode)
@@ -240,7 +326,6 @@ namespace WordDrop
                 ScoreManager.Instance.ResetScore();
 
             // Update HUD
-            int totalMaxTurns = EffectiveMaxTurns * EffectivePlayerCount;
             if (HUDManager.Instance != null)
             {
                 HUDManager.Instance.SetPlayerScore(0);
@@ -250,7 +335,23 @@ namespace WordDrop
                 else
                     HUDManager.Instance.SetBlitzMode(false);
                 HUDManager.Instance.SetDailyMode(isDaily);
-                HUDManager.Instance.SetTurnsRemaining(totalMaxTurns, totalMaxTurns);
+
+                if (SurvivalManager.IsSurvivalMode)
+                {
+                    // Survival: clean solo HUD — no turns, no AI, no "YOU" label
+                    HUDManager.Instance.SetTurnCountdownText("SURVIVAL", new Color(0.1f, 0.85f, 0.9f, 1f));
+                    HUDManager.Instance.ShowSwapCount(_swapsRemaining[PLAYER_HUMAN]);
+                    HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[PLAYER_HUMAN]);
+                    HUDManager.Instance.HideAIScore();
+                    HUDManager.Instance.HidePlayerLabel();
+                }
+                else
+                {
+                    HUDManager.Instance.ShowAIScore();
+                    HUDManager.Instance.ShowPlayerLabel();
+                    int totalMaxTurns = EffectiveMaxTurns * EffectivePlayerCount;
+                    HUDManager.Instance.SetTurnsRemaining(totalMaxTurns, totalMaxTurns);
+                }
             }
 
             // Start blitz timer if in blitz mode
@@ -265,9 +366,9 @@ namespace WordDrop
                     HUDManager.Instance.SetRivalName(rival.Name, rival.AccentColor);
             }
 
-            // Rising rows: ON by default in Classic, OFF in Blitz (too short)
-            // Interval 4 in Classic (gentler pressure), 2 in Blitz if ever enabled
-            if (!BlitzManager.IsBlitzMode && !isDaily)
+            // Rising rows: ON in Classic (turn-based), OFF in Blitz/Daily/Survival
+            // Survival drives its own move-based rising rows via SurvivalManager
+            if (!BlitzManager.IsBlitzMode && !isDaily && !SurvivalManager.IsSurvivalMode)
             {
                 RisingRowManager.Enabled = true;
                 RisingRowManager.TurnInterval = 4;
@@ -286,11 +387,11 @@ namespace WordDrop
 
             string aiHandStr = _hands[PLAYER_AI] != null ? _hands[PLAYER_AI].HandString() : "(none)";
             string modeStr = isDaily ? "DAILY DROP" : BlitzManager.IsBlitzMode ? "BLITZ" : "CLASSIC";
-            Debug.Log($"[MatchController] Match started [{modeStr}]. " +
-                      $"Human hand: {_hands[PLAYER_HUMAN].HandString()} " +
-                      $"AI hand: {aiHandStr} " +
-                      $"Bag: {_bag.Count} tiles  Swaps: {INITIAL_SWAPS} each  Rewrites: {INITIAL_REWRITES} each " +
-                      $"Turns: {EffectiveMaxTurns}x{EffectivePlayerCount}");
+//             Debug.Log($"[MatchController] Match started [{modeStr}]. " +
+                      // $"Human hand: {_hands[PLAYER_HUMAN].HandString()} " +
+                      // $"AI hand: {aiHandStr} " +
+                      // $"Bag: {_bag.Count} tiles  Swaps: {INITIAL_SWAPS} each  Rewrites: {INITIAL_REWRITES} each " +
+                      // $"Turns: {EffectiveMaxTurns}x{EffectivePlayerCount}");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -333,14 +434,14 @@ namespace WordDrop
 
             if (!RulesEngine.Instance.IsColumnAvailable(col))
             {
-                Debug.Log($"[MatchController] DropLetter: col {col} is full.");
+//                 Debug.Log($"[MatchController] DropLetter: col {col} is full.");
                 return null;
             }
 
             _isProcessing = true;
 
-            Debug.Log($"[MatchController] DropLetter: player={player} col={col} letter='{letter}' " +
-                      $"turn={_currentTurn} playerTurns[{player}]={_playerTurns[player]}");
+//             Debug.Log($"[MatchController] DropLetter: player={player} col={col} letter='{letter}' " +
+                      // $"turn={_currentTurn} playerTurns[{player}]={_playerTurns[player]}");
 
             // 1. Call RulesEngine.ProcessDrop
             ResolutionResult result = RulesEngine.Instance.ProcessDrop(col, letter, player);
@@ -367,8 +468,8 @@ namespace WordDrop
                 // GameVisualBridge.PlayWordScored() is the sole word-presentation path.
                 // Showing them here would cause duplicate popups.
 
-                Debug.Log($"[MatchController] Player {player} scored {result.TotalScore} pts " +
-                          $"({result.ScoredWords.Count} word(s), {result.ChainSteps} chain step(s))");
+//                 Debug.Log($"[MatchController] Player {player} scored {result.TotalScore} pts " +
+                          // $"({result.ScoredWords.Count} word(s), {result.ChainSteps} chain step(s))");
             }
 
             // 3. Update drought tracker
@@ -391,15 +492,21 @@ namespace WordDrop
 
             // Update RulesEngine global turn
             if (RulesEngine.Instance != null)
+            {
                 RulesEngine.Instance.GlobalTurn = _currentTurn;
+                RulesEngine.Instance.RefreshAllPrimedWordTiles(_currentTurn);
+            }
 
             AnalyticsManager.Milestone("drop", _currentTurn);
 
-            // 6. Update HUD turn counter
-            int legacyTotalMax = TotalMaxTurns;
-            int totalRemaining = legacyTotalMax - TotalTurnsUsed;
-            if (HUDManager.Instance != null)
-                HUDManager.Instance.SetTurnsRemaining(totalRemaining, legacyTotalMax);
+            // 6. Update HUD turn counter (skip in Survival — no turn limit)
+            if (!SurvivalManager.IsSurvivalMode)
+            {
+                int legacyTotalMax = TotalMaxTurns;
+                int totalRemaining = legacyTotalMax - TotalTurnsUsed;
+                if (HUDManager.Instance != null)
+                    HUDManager.Instance.SetTurnsRemaining(totalRemaining, legacyTotalMax);
+            }
 
             // 7. Emit TurnEnd
             var turnEndEvt = new TurnEndEvent
@@ -410,9 +517,9 @@ namespace WordDrop
             };
             OnTurnEnd?.Invoke(turnEndEvt);
 
-            Debug.Log($"[MatchController] TurnEnd: player={player} " +
-                      $"playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
-                      $"globalTurn={_currentTurn}");
+//             Debug.Log($"[MatchController] TurnEnd: player={player} " +
+                      // $"playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
+                      // $"globalTurn={_currentTurn}");
 
             // 8. Check match end
             if (CheckMatchEnd())
@@ -439,8 +546,22 @@ namespace WordDrop
         /// This replaces the bookkeeping portion of DropLetter when using the
         /// step-by-step resolution flow.
         /// </summary>
+        /// <summary>
+        /// Draw a new card into a hand slot immediately (before resolution completes).
+        /// Used in Survival to let the player plan the next move during animations.
+        /// CompleteDropBookkeeping will skip the draw if the slot is already filled.
+        /// </summary>
+        public void EarlyDrawSlot(int playerIndex, int handSlotIndex)
+        {
+            if (handSlotIndex < 0 || handSlotIndex >= PlayerHand.HAND_SIZE) return;
+            if (_hands[playerIndex] == null || _bag == null) return;
+            if (_hands[playerIndex].GetSlot(handSlotIndex) != '\0') return; // already filled
+            _hands[playerIndex].DrawSlot(handSlotIndex, _bag);
+        }
+
         public void CompleteDropBookkeeping(int playerIndex, int totalScore, int handSlotIndex,
-            int baseScore = -1, int chainBonus = -1, int detonationBonus = -1)
+            int baseScore = -1, int chainBonus = -1, int detonationBonus = -1,
+            bool isRewrite = false)
         {
             // ── Tutorial guard: skip turn counting, player switching, match-end checks.
             // Only refill the hand slot so the card deal animation works naturally.
@@ -473,21 +594,21 @@ namespace WordDrop
             if (_isLastWord && totalScore > 0)
             {
                 totalScore *= LAST_WORD_MULTIPLIER;
-                Debug.Log($"[MatchController] LAST WORD 3x applied! Score: {totalScore / LAST_WORD_MULTIPLIER} → {totalScore}");
+//                 Debug.Log($"[MatchController] LAST WORD 3x applied! Score: {totalScore / LAST_WORD_MULTIPLIER} → {totalScore}");
             }
 
             // 1. Apply score — MatchController is the SOLE ScoreManager writer
             if (totalScore > 0 && ScoreManager.Instance != null)
             {
                 // Match arc bonuses (skip in solo modes — no opponent)
-                bool isSoloMode = BlitzManager.IsBlitzMode || DailyDropManager.IsDailyMode;
+                bool isSoloMode = BlitzManager.IsBlitzMode || DailyDropManager.IsDailyMode || SurvivalManager.IsSurvivalMode;
                 int turnsLeft = isSoloMode ? 999 : TotalMaxTurns - TotalTurnsUsed;
                 int arcBonus = 0;
                 int finalPush = MatchArcRules.GetFinalPushBonus(turnsLeft);
                 if (finalPush > 0)
                 {
                     arcBonus += finalPush;
-                    Debug.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
+//                     Debug.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
                     bool isHuman = (playerIndex == PLAYER_HUMAN);
                     if (BonusPopup.Instance != null)
                         BonusPopup.Instance.ShowFinalPush(finalPush, Vector3.up * 2f, isHuman);
@@ -501,7 +622,7 @@ namespace WordDrop
                 if (comeback > 0)
                 {
                     arcBonus += comeback;
-                    Debug.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
+//                     Debug.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
                     if (BonusPopup.Instance != null)
                         BonusPopup.Instance.ShowComeback(comeback, Vector3.up * 2.5f, isHumanPlayer);
                 }
@@ -523,7 +644,7 @@ namespace WordDrop
                 // Sudden death: any score ends the match immediately (but not during Last Word)
                 if (_isSuddenDeath && !_isLastWord)
                 {
-                    Debug.Log($"[MatchController] SUDDEN DEATH — P{playerIndex} scored {totalScore}! Match over.");
+//                     Debug.Log($"[MatchController] SUDDEN DEATH — P{playerIndex} scored {totalScore}! Match over.");
                     EndMatch("sudden_death");
                     return;
                 }
@@ -545,7 +666,9 @@ namespace WordDrop
             // 3. Refill hand slot
             if (handSlotIndex >= 0 && handSlotIndex < PlayerHand.HAND_SIZE)
             {
-                _hands[playerIndex].DrawSlot(handSlotIndex, _bag);
+                // Rewrites don't count toward wild expiry — editing a board tile
+                // shouldn't shorten an untouched wild's life in the player's hand.
+                _hands[playerIndex].DrawSlot(handSlotIndex, _bag, countsAsWildDrop: !isRewrite);
                 EmitHandRefilled(playerIndex);
             }
 
@@ -554,15 +677,21 @@ namespace WordDrop
             _currentTurn++;
 
             if (RulesEngine.Instance != null)
+            {
                 RulesEngine.Instance.GlobalTurn = _currentTurn;
+                RulesEngine.Instance.RefreshAllPrimedWordTiles(_currentTurn);
+            }
 
             AnalyticsManager.Milestone("drop", _currentTurn);
 
-            // 5. Update HUD turn counter
-            int effTotalMax = TotalMaxTurns;
-            int totalRemaining = effTotalMax - TotalTurnsUsed;
-            if (HUDManager.Instance != null)
-                HUDManager.Instance.SetTurnsRemaining(totalRemaining, effTotalMax);
+            // 5. Update HUD turn counter (skip in Survival — no turn limit)
+            if (!SurvivalManager.IsSurvivalMode)
+            {
+                int effTotalMax = TotalMaxTurns;
+                int totalRemaining = effTotalMax - TotalTurnsUsed;
+                if (HUDManager.Instance != null)
+                    HUDManager.Instance.SetTurnsRemaining(totalRemaining, effTotalMax);
+            }
 
             // 6. Emit TurnEnd
             var turnEndEvt = new TurnEndEvent
@@ -577,7 +706,8 @@ namespace WordDrop
             if (totalScore > 0 && playerIndex == PLAYER_HUMAN)
             {
                 string comboMode = DailyDropManager.IsDailyMode ? "daily"
-                    : BlitzManager.IsBlitzMode ? "blitz" : "classic";
+                    : BlitzManager.IsBlitzMode ? "blitz"
+                    : SurvivalManager.IsSurvivalMode ? "survival" : "classic";
                 HighScoreManager.SubmitCombo(totalScore, comboMode);
             }
 
@@ -588,16 +718,28 @@ namespace WordDrop
                 LastTurnWord = null;
             }
 
-            Debug.Log($"[MatchController] CompleteDropBookkeeping: player={playerIndex} " +
-                      $"score={totalScore} playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
-                      $"globalTurn={_currentTurn}");
+            // Consume post-clear boost on player drop + advance move counter +
+            // funnel score delta into the stage chip-target system.
+            // ORDER MATTERS: score delta fires BEFORE move committed so a target
+            // cross doesn't count against the current stage's move budget.
+            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                && playerIndex == PLAYER_HUMAN)
+            {
+                SurvivalManager.Instance.ConsumeBoostDrop();
+                SurvivalManager.Instance.NotifyScoreDelta(totalScore);
+                SurvivalManager.Instance.NotifyDropCommitted();
+            }
+
+//             Debug.Log($"[MatchController] CompleteDropBookkeeping: player={playerIndex} " +
+                      // $"score={totalScore} playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
+                      // $"globalTurn={_currentTurn}");
 
             // 7. Check match end
             if (CheckMatchEnd())
                 return;
 
-            // 8. Switch player (skip in blitz — always human)
-            if (!BlitzManager.IsBlitzMode)
+            // 8. Switch player (skip in solo modes — always human)
+            if (!BlitzManager.IsBlitzMode && !SurvivalManager.IsSurvivalMode)
                 SwitchPlayer();
         }
 
@@ -628,7 +770,7 @@ namespace WordDrop
 
             if (_swapsRemaining[player] <= 0)
             {
-                Debug.Log($"[MatchController] UseSwap: player {player} has no swaps remaining.");
+//                 Debug.Log($"[MatchController] UseSwap: player {player} has no swaps remaining.");
                 return false;
             }
 
@@ -646,9 +788,9 @@ namespace WordDrop
 
             _swapsRemaining[player]--;
 
-            Debug.Log($"[MatchController] UseSwap: player={player} slot={handSlot} " +
-                      $"'{oldLetter}' → '{newLetter}' " +
-                      $"swapsRemaining={_swapsRemaining[player]}");
+//             Debug.Log($"[MatchController] UseSwap: player={player} slot={handSlot} " +
+                      // $"'{oldLetter}' → '{newLetter}' " +
+                      // $"swapsRemaining={_swapsRemaining[player]}");
 
             // Emit SwapUsed event
             var swapEvt = new SwapUsedEvent
@@ -673,20 +815,149 @@ namespace WordDrop
             return true;
         }
 
-        /// <summary>Refund 1 rewrite charge for a player (capped at INITIAL_REWRITES).</summary>
-        public void RefundSwapCharge(int playerIndex)
+        /// <summary>Refund 1 swap for the human player (Survival auto-drop bonus).</summary>
+        public void RefundSwapResource()
+        {
+            if (_swapsRemaining[PLAYER_HUMAN] < INITIAL_SWAPS + 2) // cap at initial + 2 bonus
+            {
+                _swapsRemaining[PLAYER_HUMAN]++;
+//                 Debug.Log($"[MatchController] Refunded swap. Remaining: {_swapsRemaining[PLAYER_HUMAN]}");
+                if (HUDManager.Instance != null)
+                    HUDManager.Instance.ShowSwapCount(_swapsRemaining[PLAYER_HUMAN]);
+            }
+        }
+
+        /// <summary>
+        /// Checks if any hand letter dropped in any column would create a valid word.
+        /// Used for first-word guarantee at match start.
+        /// </summary>
+        private bool HasValidFirstMove(PlayerHand hand, RulesEngine rules)
+        {
+            if (hand == null || rules == null) return false;
+            for (int slot = 0; slot < PlayerHand.HAND_SIZE; slot++)
+            {
+                char letter = hand.GetSlot(slot);
+                if (letter == '\0') continue;
+                for (int col = 0; col < RulesEngine.COLS; col++)
+                {
+                    var matches = rules.SimulateDrop(col, letter, PLAYER_HUMAN);
+                    if (matches != null && matches.Count > 0) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Survival rewrite meter: every 2 words scored refunds 1 rewrite.
+        /// Called by HandManager when a word is scored during resolution.
+        /// </summary>
+        public void SurvivalWordScored()
+        {
+            if (!SurvivalManager.IsSurvivalMode) return;
+            _survivalWordsMeter++;
+            if (_survivalWordsMeter >= SURVIVAL_WORDS_PER_REFUND)
+            {
+                _survivalWordsMeter = 0;
+                RefundRewriteCharge(PLAYER_HUMAN);
+//                 Debug.Log("[MatchController] Survival rewrite meter: 2 words → +1 rewrite");
+                if (BonusPopup.Instance != null)
+                    BonusPopup.Instance.Show("EDIT +1", new Color(0.0f, 0.85f, 0.9f, 1f), Vector3.up * 3f, 1.1f);
+            }
+        }
+
+        /// <summary>Consume 1 rewrite charge (for legal swap, which doesn't go through UseRewrite).</summary>
+        public void UseRewriteCharge(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return;
-            if (_rewritesRemaining[playerIndex] < INITIAL_REWRITES)
+            if (_rewritesRemaining[playerIndex] > 0)
+            {
+                _rewritesRemaining[playerIndex]--;
+//                 Debug.Log($"[MatchController] Used rewrite charge for P{playerIndex}. Remaining: {_rewritesRemaining[playerIndex]}");
+                if (HUDManager.Instance != null)
+                    HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[playerIndex]);
+            }
+        }
+
+        /// <summary>Refund 1 rewrite charge for a player.</summary>
+        public void RefundRewriteCharge(int playerIndex)
+        {
+            if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return;
+            int cap = SurvivalManager.IsSurvivalMode ? 3 : INITIAL_REWRITES;
+            if (_rewritesRemaining[playerIndex] < cap)
             {
                 _rewritesRemaining[playerIndex]++;
-                Debug.Log($"[MatchController] Refunded rewrite charge for P{playerIndex}. " +
-                          $"Remaining: {_rewritesRemaining[playerIndex]}");
+//                 Debug.Log($"[MatchController] Refunded rewrite for P{playerIndex}. " +
+                          // $"Remaining: {_rewritesRemaining[playerIndex]}");
 
-                // Update HUD rewrite display
                 if (playerIndex == _currentPlayer && HUDManager.Instance != null)
                     HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[playerIndex]);
             }
+        }
+
+        /// <summary>Legacy name — forwards to RefundRewriteCharge.</summary>
+        public void RefundSwapCharge(int playerIndex) => RefundRewriteCharge(playerIndex);
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SURVIVAL STAGE EVENTS — chip-target system hooks
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Called by SurvivalManager when the player hits a stage's chip target.
+        /// Grants +STAGE_CLEAR_REWRITES rewrite charges (currently +1) + banner.
+        /// </summary>
+        private void OnSurvivalStageCleared(int stage)
+        {
+            for (int i = 0; i < SurvivalManager.STAGE_CLEAR_REWRITES; i++)
+                RefundRewriteCharge(PLAYER_HUMAN);
+
+            if (BonusPopup.Instance != null)
+                BonusPopup.Instance.Show(
+                    $"S{stage} CLEARED! +{SurvivalManager.STAGE_CLEAR_REWRITES} EDIT",
+                    new Color(0.4f, 1f, 0.5f, 1f), Vector3.up * 2.5f, 1.5f);
+
+            GameAudio.Instance?.PlayScorePowerup();
+            HapticsManager.Strong();
+        }
+
+        /// <summary>
+        /// Called by SurvivalManager when the player exhausts a stage's move budget
+        /// without hitting the chip target. Triggers same game-over flow as top-out.
+        /// SurvivalManager exposes LastStageReached / LastStageShortfall / LastStageTarget
+        /// for the game-over screen near-miss copy.
+        /// </summary>
+        private void OnSurvivalStageFailed(int stage)
+        {
+            Debug.Log($"[MatchController] Stage {stage} failed — ending run.");
+
+            // Fire run_end analytics via SurvivalManager (stage_fail event
+            // already fired from inside NotifyDropCommitted). Call StopSurvival
+            // which also cleans event delegates.
+            if (SurvivalManager.Instance != null)
+            {
+                // EmitRunEndAnalytics is private on SurvivalManager — easiest
+                // way to trigger it is via a public method. For this initial
+                // pass, just fire the analytics log inline here so we don't
+                // add more surface area.
+                int finalScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
+                AnalyticsManager.Log("run_end",
+                    "cause", "stage_fail",
+                    "final_score", finalScore,
+                    "final_stage", stage,
+                    "stages_cleared", stage - 1,
+                    "no_assist", SurvivalManager.NoAssistMode);
+                AnalyticsManager.FlushToDisk();
+
+                SurvivalManager.Instance.StopSurvival();
+            }
+
+            // Force game-over via existing flow (mirrors TriggerTopOut behavior)
+            ForceGameOver();
+
+            if (HandManager.Instance != null)
+                HandManager.Instance.IsInteractable = false;
+
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.GameOver);
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -714,7 +985,7 @@ namespace WordDrop
 
             if (_rewritesRemaining[player] <= 0)
             {
-                Debug.Log("[MatchController] UseRewrite: no rewrites remaining.");
+//                 Debug.Log("[MatchController] UseRewrite: no rewrites remaining.");
                 return false;
             }
 
@@ -728,7 +999,7 @@ namespace WordDrop
             var cell = RulesEngine.Instance.GetCell(targetCol, targetRow);
             if (cell == null)
             {
-                Debug.Log($"[MatchController] UseRewrite: no tile at ({targetCol},{targetRow}).");
+//                 Debug.Log($"[MatchController] UseRewrite: no tile at ({targetCol},{targetRow}).");
                 return false;
             }
 
@@ -737,7 +1008,7 @@ namespace WordDrop
                 .GetPrimedWordsContaining(new Vector2Int(targetCol, targetRow));
             if (primedAtCell != null && primedAtCell.Count > 0)
             {
-                Debug.Log($"[MatchController] UseRewrite: tile at ({targetCol},{targetRow}) is primed.");
+//                 Debug.Log($"[MatchController] UseRewrite: tile at ({targetCol},{targetRow}) is primed.");
                 return false;
             }
 
@@ -747,7 +1018,7 @@ namespace WordDrop
             // Block same-letter rewrite — prevents re-scoring expired words for free
             if (handLetter == oldBoardLetter)
             {
-                Debug.Log($"[MatchController] UseRewrite: same letter '{handLetter}' — no-op.");
+//                 Debug.Log($"[MatchController] UseRewrite: same letter '{handLetter}' — no-op.");
                 return false;
             }
 
@@ -757,9 +1028,9 @@ namespace WordDrop
             // Clear the hand slot (will be refilled in CompleteDropBookkeeping)
             _hands[player].SetSlot(handSlot, '\0');
 
-            Debug.Log($"[MatchController] UseRewrite: player={player} slot={handSlot} " +
-                      $"'{handLetter}' replaces '{oldBoardLetter}' at ({targetCol},{targetRow}) " +
-                      $"rewritesRemaining={_rewritesRemaining[player]}");
+//             Debug.Log($"[MatchController] UseRewrite: player={player} slot={handSlot} " +
+                      // $"'{handLetter}' replaces '{oldBoardLetter}' at ({targetCol},{targetRow}) " +
+                      // $"rewritesRemaining={_rewritesRemaining[player]}");
 
             // Emit event
             var evt = new RewriteUsedEvent
@@ -793,7 +1064,7 @@ namespace WordDrop
         public void ForceGameOver()
         {
             if (_isGameOver) return;
-            Debug.Log("[MatchController] ForceGameOver called.");
+//             Debug.Log("[MatchController] ForceGameOver called.");
             EndMatch("board_full");
         }
 
@@ -806,7 +1077,7 @@ namespace WordDrop
             if (_isLastWord || _isGameOver) return;
             _isLastWord = true;
             _lastWordTurnsRemaining = 2; // both players get one turn
-            Debug.Log("[MatchController] LAST WORD! Both players get one final turn at 3x scoring.");
+//             Debug.Log("[MatchController] LAST WORD! Both players get one final turn at 3x scoring.");
 
             // Disable rising rows so the board doesn't overflow during last word
             RisingRowManager.Enabled = false;
@@ -823,10 +1094,10 @@ namespace WordDrop
         {
             if (!_isLastWord) return;
             _lastWordTurnsRemaining--;
-            Debug.Log($"[MatchController] Last Word turn consumed. Remaining: {_lastWordTurnsRemaining}");
+//             Debug.Log($"[MatchController] Last Word turn consumed. Remaining: {_lastWordTurnsRemaining}");
             if (_lastWordTurnsRemaining <= 0)
             {
-                Debug.Log("[MatchController] Last Word complete — ending match.");
+//                 Debug.Log("[MatchController] Last Word complete — ending match.");
                 EndMatch("last_word");
             }
         }
@@ -844,7 +1115,7 @@ namespace WordDrop
                 return;
             }
             _currentPlayer = (_currentPlayer + 1) % NUM_PLAYERS;
-            Debug.Log($"[MatchController] Switched to player {_currentPlayer}");
+//             Debug.Log($"[MatchController] Switched to player {_currentPlayer}");
         }
 
         private bool CheckMatchEnd()
@@ -854,7 +1125,7 @@ namespace WordDrop
             {
                 if (BlitzManager.Instance != null && BlitzManager.Instance.IsTimeUp)
                 {
-                    Debug.Log("[MatchController] Blitz time expired — ending match.");
+//                     Debug.Log("[MatchController] Blitz time expired — ending match.");
                     EndMatch("blitz_time_up");
                     return true;
                 }
@@ -872,7 +1143,28 @@ namespace WordDrop
                     }
                     if (!anyOpen)
                     {
-                        Debug.Log("[MatchController] Blitz board full — ending match.");
+//                         Debug.Log("[MatchController] Blitz board full — ending match.");
+                        EndMatch("board_full");
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // Survival mode: no turn limit, only ends on top-out (handled by SurvivalManager)
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                // Board full check only
+                if (RulesEngine.Instance != null)
+                {
+                    bool anyOpen = false;
+                    for (int c = 0; c < GridManager.COLS; c++)
+                    {
+                        if (RulesEngine.Instance.IsColumnAvailable(c)) { anyOpen = true; break; }
+                    }
+                    if (!anyOpen)
+                    {
+//                         Debug.Log("[MatchController] Survival board full — ending match.");
                         EndMatch("board_full");
                         return true;
                     }
@@ -885,7 +1177,7 @@ namespace WordDrop
             {
                 if (_playerTurns[PLAYER_HUMAN] >= EffectiveMaxTurns)
                 {
-                    Debug.Log($"[MatchController] Daily Drop — all {EffectiveMaxTurns} turns used. Match ending.");
+//                     Debug.Log($"[MatchController] Daily Drop — all {EffectiveMaxTurns} turns used. Match ending.");
                     EndMatch("turn_limit");
                     return true;
                 }
@@ -900,7 +1192,7 @@ namespace WordDrop
                     }
                     if (!anyOpen)
                     {
-                        Debug.Log("[MatchController] Daily Drop board full — ending match.");
+//                         Debug.Log("[MatchController] Daily Drop board full — ending match.");
                         EndMatch("board_full");
                         return true;
                     }
@@ -920,17 +1212,30 @@ namespace WordDrop
                 {
                     // Tie → sudden death: next score wins
                     _isSuddenDeath = true;
-                    Debug.Log($"[MatchController] Tied {playerScore}-{aiScore} — entering SUDDEN DEATH!");
+//                     Debug.Log($"[MatchController] Tied {playerScore}-{aiScore} — entering SUDDEN DEATH!");
                     return false; // don't end, keep playing
                 }
 
-                Debug.Log($"[MatchController] All {maxTotal} turns used — match ending.");
+//                 Debug.Log($"[MatchController] All {maxTotal} turns used — match ending.");
                 EndMatch("turn_limit");
                 return true;
             }
 
-            // Board full — players can now replace top tiles, so no game-over here.
-            // Match ends only when turns run out (above).
+            // Board full — end the match (UI does not support sacrifice drops)
+            if (RulesEngine.Instance != null)
+            {
+                bool anyOpen = false;
+                for (int c = 0; c < GridManager.COLS; c++)
+                {
+                    if (RulesEngine.Instance.IsColumnAvailable(c)) { anyOpen = true; break; }
+                }
+                if (!anyOpen)
+                {
+//                     Debug.Log("[MatchController] Classic board full — ending match.");
+                    EndMatch("board_full");
+                    return true;
+                }
+            }
 
             // During sudden death, both players alternate freely
             if (_isSuddenDeath) return false;
@@ -941,12 +1246,12 @@ namespace WordDrop
 
             if (p0Done && _currentPlayer == PLAYER_HUMAN)
             {
-                Debug.Log("[MatchController] Human done, switching to AI for remaining turns.");
+//                 Debug.Log("[MatchController] Human done, switching to AI for remaining turns.");
                 _currentPlayer = PLAYER_AI;
             }
             else if (p1Done && _currentPlayer == PLAYER_AI)
             {
-                Debug.Log("[MatchController] AI done, switching to Human for remaining turns.");
+//                 Debug.Log("[MatchController] AI done, switching to Human for remaining turns.");
                 _currentPlayer = PLAYER_HUMAN;
             }
 
@@ -977,9 +1282,9 @@ namespace WordDrop
             string winnerStr = winner == PLAYER_HUMAN ? "Player" :
                                winner == PLAYER_AI    ? "AI"     : "Tie";
 
-            Debug.Log($"[MatchController] Match ended! Cause={cause} " +
-                      $"Player={playerScore} AI={aiScore} Winner={winnerStr} " +
-                      $"Turns=[{_playerTurns[0]},{_playerTurns[1]}]");
+//             Debug.Log($"[MatchController] Match ended! Cause={cause} " +
+                      // $"Player={playerScore} AI={aiScore} Winner={winnerStr} " +
+                      // $"Turns=[{_playerTurns[0]},{_playerTurns[1]}]");
 
             // Record rival win/loss (Classic mode only)
             if (!BlitzManager.IsBlitzMode && !DailyDropManager.IsDailyMode && RivalSystem.Instance != null)

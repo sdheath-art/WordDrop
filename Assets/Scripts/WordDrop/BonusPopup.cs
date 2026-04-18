@@ -65,7 +65,7 @@ namespace WordDrop
             float fontSize;
             if (total >= 25)
             {
-                color = new Color(1f, 0.3f, 0.15f, 1f); // hot red — massive
+                color = new Color(1f, 0.3f, 0.65f, 1f); // hot pink/magenta — massive
                 fontSize = 9f;
             }
             else if (total >= 16)
@@ -150,11 +150,11 @@ namespace WordDrop
             go.transform.position = startPos;
 
             TextMeshPro tmp = go.AddComponent<TextMeshPro>();
-            TMPro.TMP_FontAsset font = GameFont.GetTMP();
+            TMPro.TMP_FontAsset font = GameFont.GetDisplayTMP();
             if (font != null) tmp.font = font;
             tmp.text = text;
             tmp.fontSize = fontSize;
-            tmp.fontStyle = FontStyles.Bold;
+            tmp.fontStyle = FontStyles.Normal;
             tmp.color = color;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.sortingOrder = 100;
@@ -245,29 +245,27 @@ namespace WordDrop
         private IEnumerator AnimatePopup(string text, Color color, Vector3 worldPos, float scale)
         {
             GameAudio.Instance?.PlayBonusPopup();
-            // Create text object
+            var cfg = UIConfig.Instance;
+
+            // ── Create main text object ──
             GameObject go = new GameObject("BonusPopup");
             go.transform.position = worldPos;
 
             TextMeshPro tmp = go.AddComponent<TextMeshPro>();
-            var cfg = UIConfig.Instance;
-
-            // Font — use config font if set, otherwise fall back to GameFont
-            TMPro.TMP_FontAsset popupFont = (cfg != null && cfg.popupFont != null) ? cfg.popupFont : GameFont.GetTMP();
+            TMPro.TMP_FontAsset popupFont = (cfg != null && cfg.popupFont != null) ? cfg.popupFont : GameFont.GetDisplayTMP();
             if (popupFont != null) tmp.font = popupFont;
 
             tmp.text = text;
-            float baseFontSize = cfg != null ? cfg.popupBaseFontSize : 5f;
+            float baseFontSize = cfg != null ? cfg.popupBaseFontSize : 7f;
             tmp.fontSize = baseFontSize * scale;
-            tmp.fontStyle = FontStyles.Bold;
-            tmp.color = color;
+            tmp.fontStyle = FontStyles.Normal;
+            tmp.color = Color.white; // Start white — will flash to final color
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.sortingOrder = 30;
-            tmp.rectTransform.sizeDelta = new Vector2(8f, 2f);
+            tmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
             tmp.enableWordWrapping = false;
             tmp.overflowMode = TextOverflowModes.Overflow;
 
-            // Outline + drop shadow — configurable
             tmp.outlineWidth = cfg != null ? cfg.popupOutlineWidth : 0.2f;
             Color32 outlineCol = cfg != null ? (Color32)cfg.popupOutlineColor : new Color32(0, 0, 0, 220);
             tmp.outlineColor = outlineCol;
@@ -275,14 +273,57 @@ namespace WordDrop
 
             Transform t = go.transform;
 
-            // Phase 1: Pop in (scale from 0 → overshoot → settle)
+            // ── Ghost/echo effect — duplicate that scales up and fades out behind main text ──
+            GameObject ghostGO = null;
+            TextMeshPro ghostTmp = null;
+            if (scale >= 1.0f) // only for bigger popups (announcements, not tiny scores)
+            {
+                ghostGO = new GameObject("PopupGhost");
+                ghostGO.transform.position = worldPos;
+                ghostTmp = ghostGO.AddComponent<TextMeshPro>();
+                if (popupFont != null) ghostTmp.font = popupFont;
+                ghostTmp.text = text;
+                ghostTmp.fontSize = baseFontSize * scale;
+                ghostTmp.fontStyle = FontStyles.Normal;
+                ghostTmp.color = new Color(color.r, color.g, color.b, 0.4f);
+                ghostTmp.alignment = TextAlignmentOptions.Center;
+                ghostTmp.sortingOrder = 29; // behind main text
+                ghostTmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
+                ghostTmp.enableWordWrapping = false;
+                ghostTmp.overflowMode = TextOverflowModes.Overflow;
+                ghostTmp.outlineWidth = 0f;
+
+                // Ghost scales up to 180% and fades out over 0.35s
+                ghostGO.transform.localScale = Vector3.one * scale;
+                ghostGO.transform.DOScale(Vector3.one * scale * 1.8f, 0.35f)
+                    .SetEase(Ease.OutQuad);
+                DOTween.To(() => ghostTmp.color, c => ghostTmp.color = c,
+                    new Color(color.r, color.g, color.b, 0f), 0.35f)
+                    .SetEase(Ease.OutQuad);
+            }
+
+            // ── Phase 1: Pop in with white flash ──
             float popInDur = cfg != null ? cfg.popupPopInDuration : 0.12f;
             t.localScale = Vector3.zero;
             t.DOScale(Vector3.one * scale, popInDur).SetEase(Ease.OutBack);
             yield return new WaitForSeconds(popInDur);
 
-            // Phase 2: Hold + gentle float up (research: 800-1000ms total visibility)
-            float holdDur = cfg != null ? cfg.popupHoldDuration : 0.5f;
+            // ── Color flash: white → final color over 0.1s ──
+            float flashDur = 0.1f;
+            float flashElapsed = 0f;
+            while (flashElapsed < flashDur)
+            {
+                flashElapsed += Time.deltaTime;
+                float fp = Mathf.Clamp01(flashElapsed / flashDur);
+                tmp.color = Color.Lerp(Color.white, color, fp);
+                yield return null;
+            }
+            tmp.color = color;
+
+            // ── Phase 2: Hold + gentle float up ──
+            // Bigger popups (stage-up, announcements) hold longer so player can read them
+            float holdDur = cfg != null ? cfg.popupHoldDuration : 0.6f;
+            if (scale >= 1.3f) holdDur = Mathf.Max(holdDur, 1.5f);
             float elapsed = 0f;
             Vector3 startPos = t.position;
             while (elapsed < holdDur)
@@ -294,8 +335,8 @@ namespace WordDrop
                 yield return null;
             }
 
-            // Phase 3: Fade out while continuing to float
-            float fadeDur = cfg != null ? cfg.popupFadeDuration : 0.3f;
+            // ── Phase 3: Fade out while continuing to float ──
+            float fadeDur = cfg != null ? cfg.popupFadeDuration : 0.25f;
             elapsed = 0f;
             Color startColor = tmp.color;
             Color32 startOutline = tmp.outlineColor;
@@ -315,6 +356,7 @@ namespace WordDrop
             }
 
             Destroy(go);
+            if (ghostGO != null) Destroy(ghostGO);
         }
     }
 }

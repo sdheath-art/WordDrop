@@ -4,15 +4,25 @@ using UnityEngine;
 namespace WordDrop
 {
     /// <summary>
-    /// Curated opening board seeds. Places a few neutral letters on the board
-    /// at match start so turn 1 feels engaging — "I already see possibilities."
+    /// Rich procedural opening boards for Survival mode.
     ///
-    /// All seeds are validated at apply-time to ensure they don't form any
-    /// valid words on the board. Seeded letters are neutral (playerIndex = -1),
-    /// not primed, not owned.
+    /// Goal: the first 20-30 seconds should create:
+    ///   - first word quickly
+    ///   - first prime quickly
+    ///   - first "oh I get this" moment
+    ///   - first pressure signal (rising row)
+    ///   - ideally, a believable early mini-payoff
     ///
-    /// Board: 7 columns (0–6), 6 rows (0 = bottom, 5 = top).
-    /// Words scan left-to-right and top-to-bottom.
+    /// Generates 2-row openings (8-10 tiles with gaps) that contain:
+    ///   - At least 1 pre-primed word (glowing, ready to detonate)
+    ///   - At least 2 near-words completable with the player's hand
+    ///   - Strategic gaps for drop targets
+    ///   - Vowel/consonant balance
+    ///
+    /// NOT canned — procedurally varied each run. Same emotional arc,
+    /// different exact letters every time.
+    ///
+    /// Classic/Daily/Blitz modes use the simpler legacy seeds.
     /// </summary>
     public static class OpeningSeed
     {
@@ -40,375 +50,462 @@ namespace WordDrop
             public Placement[] Placements;
         }
 
-        // ── Curated seed library ────────────────────────────────────────────────
-        //
-        // Design constraints:
-        //   - 2–4 letters, mostly in bottom 2 rows
-        //   - No 3+ adjacent letters forming a valid word (H or V)
-        //   - Common letters that create many possible continuations
-        //   - Spread to avoid one-sided advantage
-        //
-        // Validation happens at runtime via ValidateSeed().
+        // ── Helpers ──────────────────────────────────────────────────────────────
 
-        private static readonly Seed[] _seeds = new Seed[]
+        private static char PickOpeningLetter(System.Random rng, HashSet<char> used, ref int vowelCount)
         {
-            // -- Spread pairs: two useful letters, opposite sides --
-            new Seed { Name = "Anchors",     Placements = new[] {
-                new Placement(1, 0, 'R'), new Placement(5, 0, 'E') }},
-            new Seed { Name = "Posts",       Placements = new[] {
-                new Placement(2, 0, 'T'), new Placement(5, 0, 'A') }},
-            new Seed { Name = "Bookends",    Placements = new[] {
-                new Placement(0, 0, 'S'), new Placement(6, 0, 'N') }},
-            new Seed { Name = "Wide",        Placements = new[] {
-                new Placement(1, 0, 'A'), new Placement(6, 0, 'R') }},
+            char letter;
+            if (vowelCount < 4 || rng.Next(0, 100) < 30)
+            {
+                letter = VOWELS[rng.Next(0, VOWELS.Length)];
+                vowelCount++;
+            }
+            else if (rng.Next(0, 100) < 70)
+            {
+                letter = COMMON_CONSONANTS[rng.Next(0, COMMON_CONSONANTS.Length)];
+            }
+            else
+            {
+                letter = LESS_COMMON[rng.Next(0, LESS_COMMON.Length)];
+            }
 
-            // -- Triplets: three letters creating multiple paths --
-            new Seed { Name = "Scatter",     Placements = new[] {
-                new Placement(1, 0, 'E'), new Placement(3, 0, 'T'), new Placement(5, 0, 'A') }},
-            new Seed { Name = "Steps",       Placements = new[] {
-                new Placement(2, 0, 'N'), new Placement(4, 0, 'O'), new Placement(6, 1, 'S') }},
-            new Seed { Name = "Triangle",    Placements = new[] {
-                new Placement(1, 0, 'L'), new Placement(5, 0, 'R'), new Placement(3, 1, 'E') }},
-            new Seed { Name = "Zigzag",      Placements = new[] {
-                new Placement(0, 0, 'T'), new Placement(3, 0, 'I'), new Placement(6, 0, 'S') }},
-            new Seed { Name = "Bases",       Placements = new[] {
-                new Placement(2, 0, 'A'), new Placement(4, 0, 'R'), new Placement(6, 0, 'E') }},
-            new Seed { Name = "Spaced",      Placements = new[] {
-                new Placement(0, 0, 'E'), new Placement(3, 0, 'N'), new Placement(5, 0, 'T') }},
-            new Seed { Name = "Offset",      Placements = new[] {
-                new Placement(1, 0, 'S'), new Placement(4, 0, 'A'), new Placement(2, 1, 'T') }},
-            new Seed { Name = "Lean",        Placements = new[] {
-                new Placement(0, 0, 'R'), new Placement(4, 0, 'E'), new Placement(2, 1, 'A') }},
-            new Seed { Name = "Bridge",      Placements = new[] {
-                new Placement(1, 0, 'O'), new Placement(3, 0, 'S'), new Placement(5, 0, 'T') }},
-            new Seed { Name = "Corners",     Placements = new[] {
-                new Placement(0, 0, 'N'), new Placement(6, 0, 'L'), new Placement(3, 0, 'A') }},
+            // Try to avoid duplicates (soft — allows after 10 retries)
+            int retry = 0;
+            while (used.Contains(letter) && retry < 10)
+            {
+                if (rng.Next(0, 100) < 30)
+                    letter = VOWELS[rng.Next(0, VOWELS.Length)];
+                else
+                    letter = COMMON_CONSONANTS[rng.Next(0, COMMON_CONSONANTS.Length)];
+                retry++;
+            }
+            used.Add(letter);
+            return letter;
+        }
 
-            // -- Quads: four letters, more structure --
-            new Seed { Name = "Diamond",     Placements = new[] {
-                new Placement(1, 0, 'R'), new Placement(5, 0, 'N'),
-                new Placement(2, 1, 'E'), new Placement(4, 1, 'A') }},
-            new Seed { Name = "Frame",       Placements = new[] {
-                new Placement(0, 0, 'T'), new Placement(6, 0, 'S'),
-                new Placement(2, 0, 'I'), new Placement(4, 0, 'E') }},
-            new Seed { Name = "Pillars",     Placements = new[] {
-                new Placement(1, 0, 'E'), new Placement(1, 1, 'R'),
-                new Placement(5, 0, 'A'), new Placement(5, 1, 'N') }},
-            new Seed { Name = "Wings",       Placements = new[] {
-                new Placement(0, 0, 'A'), new Placement(2, 0, 'T'),
-                new Placement(4, 0, 'E'), new Placement(6, 0, 'R') }},
+        private static void ShuffleList(List<int> list, System.Random rng)
+        {
+            for (int i = list.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(0, i + 1);
+                int tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+            }
+        }
+
+        // ── Letter pools ────────────────────────────────────────────────────────
+
+        private static readonly char[] VOWELS = { 'A', 'E', 'I', 'O', 'U' };
+        private static readonly char[] COMMON_CONSONANTS = {
+            'R', 'S', 'T', 'N', 'L', 'D', 'H', 'C', 'M', 'P'
+        };
+        private static readonly char[] LESS_COMMON = {
+            'B', 'F', 'G', 'W', 'K', 'Y'
         };
 
         // ── Public API ──────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Generate a unique procedural opening, or fall back to curated seeds.
-        /// Daily mode uses seeded RNG for deterministic boards.
-        /// Returns the seed name, or null if disabled.
+        /// Generates a rich opening board. Survival gets a 2-row fertile start.
+        /// Other modes get the simpler legacy seeds.
         /// </summary>
         public static string ApplyRandomSeed(RulesEngine rules)
         {
             if (!Enabled || rules == null) return null;
 
-            // Try procedural generation first — unique every match
-            string proceduralResult = TryProceduralSeed(rules);
-            if (proceduralResult != null) return proceduralResult;
+            if (SurvivalManager.IsSurvivalMode)
+                return ApplySurvivalOpening(rules);
 
-            // Fallback: curated seeds
-            return ApplyCuratedSeed(rules);
+            return ApplyLegacySeed(rules);
         }
 
-        // ── Procedural seed generation ──────────────────────────────────────
+        // ═══════════════════════════════════════════════════════════════════════
+        // SURVIVAL OPENING — Rich 2-row board with pre-primed word
+        // ═══════════════════════════════════════════════════════════════════════
 
-        // Letters weighted by usefulness — vowels + common consonants more likely
-        private static readonly char[] SEED_VOWELS     = { 'A', 'E', 'I', 'O', 'U' };
-        private static readonly char[] SEED_CONSONANTS = {
-            'R', 'S', 'T', 'N', 'L', 'D', 'H', 'C', 'M', 'P',  // common
-            'B', 'F', 'G', 'W', 'K', 'Y'                         // less common
-        };
+        private const int NUM_CANDIDATES = 10;
+        private const int OPENING_ROWS = 4;    // how many rows to pre-fill
+        private const int OPENING_TILES = 20;  // target tiles across 4 rows
 
-        private const int PROCEDURAL_MAX_ATTEMPTS = 20;
-
-        private static string TryProceduralSeed(RulesEngine rules)
+        private static string ApplySurvivalOpening(RulesEngine rules)
         {
+            // Read the player's hand so we can ensure hand+board synergy
+            char[] hand = null;
+            if (MatchController.Instance != null)
+            {
+                var playerHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+                if (playerHand != null)
+                    hand = playerHand.GetAllSlots();
+            }
+
             System.Random rng;
             if (DailyDropManager.IsDailyMode)
-                rng = new System.Random(DailyDropManager.GetDailySeed() + 7919);
+                rng = new System.Random(DailyDropManager.GetDailySeed() + 4219);
             else
                 rng = new System.Random(System.Environment.TickCount);
 
-            for (int attempt = 0; attempt < PROCEDURAL_MAX_ATTEMPTS; attempt++)
+            // Generate candidates and pick the best
+            char[,] bestBoard = null;
+            int bestScore = -999;
+            string bestName = "Opening";
+
+            for (int attempt = 0; attempt < NUM_CANDIDATES; attempt++)
             {
-                int letterCount = 2 + rng.Next(0, 3); // 2, 3, or 4 letters
-                var placements = GenerateLayout(letterCount, rng);
-                if (placements == null) continue;
+                char[,] candidate = GenerateOpeningBoard(rng);
+                int score = ScoreOpening(candidate, hand, rules);
 
-                Seed candidate = new Seed
+                if (score > bestScore)
                 {
-                    Name = $"Proc_{attempt}",
-                    Placements = placements
-                };
-
-                if (ValidateSeed(candidate, rules))
-                {
-                    float quality = ScoreSeed(candidate);
-                    if (quality >= 4f) // minimum quality threshold
-                    {
-                        ApplySeed(candidate, rules);
-                        string letters = "";
-                        for (int i = 0; i < placements.Length; i++)
-                            letters += placements[i].Letter;
-                        Debug.Log($"[OpeningSeed] Procedural '{letters}' (quality={quality:F1}, attempt={attempt + 1})");
-                        return candidate.Name;
-                    }
+                    bestScore = score;
+                    bestBoard = candidate;
+                    bestName = $"SurvOpen_{attempt}";
                 }
             }
 
-            return null; // fall through to curated
+            if (bestBoard == null) return null;
+
+            // Place tiles on the rules board
+            int placed = 0;
+            for (int col = 0; col < RulesEngine.COLS; col++)
+            {
+                for (int row = 0; row < OPENING_ROWS; row++)
+                {
+                    char letter = bestBoard[col, row];
+                    if (letter == '\0') continue;
+
+                    rules.SetCell(col, row, new RulesCellData
+                    {
+                        Letter = letter,
+                        Col = col,
+                        Row = row,
+                        PlayerIndex = -1,
+                    });
+                    placed++;
+                }
+            }
+
+            string primedWord = null;
+
+            // Log the opening
+            var rowStrs = new string[OPENING_ROWS];
+            for (int row = 0; row < OPENING_ROWS; row++)
+            {
+                rowStrs[row] = "";
+                for (int c = 0; c < RulesEngine.COLS; c++)
+                    rowStrs[row] += bestBoard[c, row] != '\0' ? bestBoard[c, row].ToString() : "_";
+            }
+            string logRows = "";
+            for (int row = OPENING_ROWS - 1; row >= 0; row--)
+                logRows += $"  Row {row}: {rowStrs[row]}\n";
+//             Debug.Log($"[OpeningSeed] Survival opening (score={bestScore}, placed={placed}):\n{logRows}" +
+                      // $"  Primed: {(primedWord ?? "none")}\n" +
+                      // $"  Hand: {(hand != null ? new string(hand) : "?")}");
+
+            return bestName;
         }
 
-        private static Placement[] GenerateLayout(int count, System.Random rng)
+        /// <summary>
+        /// Generates a 2-row opening board with 8-10 tiles and 3-5 gaps.
+        /// Ensures vowel balance, variety, and structural opportunity.
+        /// </summary>
+        private static char[,] GenerateOpeningBoard(System.Random rng)
         {
-            var placements = new Placement[count];
-            var usedCols = new HashSet<int>();
+            char[,] board = new char[RulesEngine.COLS, OPENING_ROWS];
+            var used = new HashSet<char>();
+            int vowelCount = 0;
 
-            // Guarantee at least 1 vowel
-            int vowelSlot = rng.Next(0, count);
+            // Row 0 (bottom): full or near-full — 5-7 tiles
+            int row0Gaps = 1 + rng.Next(0, 2); // 1 or 2 gaps
+            var gapCols0 = new HashSet<int>();
+            while (gapCols0.Count < row0Gaps)
+                gapCols0.Add(rng.Next(0, RulesEngine.COLS));
 
-            for (int i = 0; i < count; i++)
+            for (int col = 0; col < RulesEngine.COLS; col++)
             {
-                // Pick column — spread across board, no duplicates on row 0
-                int col;
-                int colAttempts = 0;
-                do
-                {
-                    col = rng.Next(0, RulesEngine.COLS);
-                    colAttempts++;
-                    if (colAttempts > 20) return null;
-                }
-                while (usedCols.Contains(col) || !HasMinSpacing(col, usedCols, count <= 2 ? 3 : 2));
-                usedCols.Add(col);
+                if (gapCols0.Contains(col)) continue;
+                board[col, 0] = PickOpeningLetter(rng, used, ref vowelCount);
+            }
 
-                // Pick letter
-                char letter;
-                if (i == vowelSlot)
-                    letter = SEED_VOWELS[rng.Next(0, SEED_VOWELS.Length)];
-                else if (rng.Next(0, 100) < 35) // 35% chance of extra vowel
-                    letter = SEED_VOWELS[rng.Next(0, SEED_VOWELS.Length)];
-                else
-                    letter = SEED_CONSONANTS[rng.Next(0, SEED_CONSONANTS.Length)];
+            // Row 1: 4-6 tiles (stacked on row 0)
+            int row1Gaps = 1 + rng.Next(0, 2);
+            var gapCols1 = new HashSet<int>();
+            while (gapCols1.Count < row1Gaps)
+            {
+                int c = rng.Next(0, RulesEngine.COLS);
+                if (board[c, 0] != '\0') gapCols1.Add(c); // only gap where row 0 has a tile
+            }
 
-                // Most tiles on row 0, occasional row 1 (must be supported)
-                int row = 0;
-                if (i > 0 && rng.Next(0, 100) < 20) // 20% chance of stacking
+            for (int col = 0; col < RulesEngine.COLS; col++)
+            {
+                if (board[col, 0] == '\0') continue; // must stack on row 0
+                if (gapCols1.Contains(col)) continue;
+                board[col, 1] = PickOpeningLetter(rng, used, ref vowelCount);
+            }
+
+            // Row 2: sparser — 3-5 tiles
+            int row2Count = 3 + rng.Next(0, 3);
+            var row2Candidates = new List<int>();
+            for (int col = 0; col < RulesEngine.COLS; col++)
+                if (board[col, 1] != '\0') row2Candidates.Add(col);
+            ShuffleList(row2Candidates, rng);
+
+            for (int i = 0; i < Mathf.Min(row2Count, row2Candidates.Count); i++)
+                board[row2Candidates[i], 2] = PickOpeningLetter(rng, used, ref vowelCount);
+
+            // Row 3: very sparse — 1-3 tiles
+            int row3Count = 1 + rng.Next(0, 3);
+            var row3Candidates = new List<int>();
+            for (int col = 0; col < RulesEngine.COLS; col++)
+                if (board[col, 2] != '\0') row3Candidates.Add(col);
+            ShuffleList(row3Candidates, rng);
+
+            for (int i = 0; i < Mathf.Min(row3Count, row3Candidates.Count); i++)
+                board[row3Candidates[i], 3] = PickOpeningLetter(rng, used, ref vowelCount);
+
+            return board;
+        }
+
+        /// <summary>
+        /// Scores an opening board by how many real opportunities it creates
+        /// in combination with the player's hand.
+        ///
+        /// High scores = immediate words possible, near-words visible, fertile layout.
+        /// </summary>
+        private static int ScoreOpening(char[,] board, char[] hand, RulesEngine rules)
+        {
+            int score = 0;
+
+            // 1. Check horizontal words already on the board (3-letter)
+            //    These will get auto-primed — exciting!
+            int wordsOnBoard = 0;
+            for (int row = 0; row < OPENING_ROWS; row++)
+            {
+                for (int startCol = 0; startCol <= RulesEngine.COLS - 3; startCol++)
                 {
-                    // Check if any existing placement is in same column at row 0
-                    for (int j = 0; j < i; j++)
+                    for (int len = 3; len <= Mathf.Min(5, RulesEngine.COLS - startCol); len++)
                     {
-                        if (placements[j].Col == col && placements[j].Row == 0)
+                        bool valid = true;
+                        var sb = new System.Text.StringBuilder(len);
+                        for (int c = startCol; c < startCol + len; c++)
                         {
-                            row = 1;
-                            break;
+                            if (board[c, row] == '\0') { valid = false; break; }
+                            sb.Append(board[c, row]);
+                        }
+                        if (valid && WordDictionary.IsValidWord(sb.ToString()))
+                        {
+                            wordsOnBoard++;
+                            score += 8; // great — a word to pre-prime
                         }
                     }
-                    // If no support, stay at row 0
-                    if (row == 1)
-                    {
-                        // Already have support — keep row 1
-                    }
-                    else
-                    {
-                        row = 0;
-                    }
-                }
-
-                placements[i] = new Placement(col, row, letter);
-            }
-
-            return placements;
-        }
-
-        private static bool HasMinSpacing(int col, HashSet<int> used, int minDist)
-        {
-            foreach (int c in used)
-                if (Mathf.Abs(col - c) < minDist) return false;
-            return true;
-        }
-
-        // ── Curated seed fallback ───────────────────────────────────────────
-
-        private static string ApplyCuratedSeed(RulesEngine rules)
-        {
-            var candidates = new List<(Seed seed, float score)>();
-
-            for (int i = 0; i < _seeds.Length; i++)
-            {
-                if (ValidateSeed(_seeds[i], rules))
-                {
-                    float quality = ScoreSeed(_seeds[i]);
-                    candidates.Add((_seeds[i], quality));
                 }
             }
 
-            if (candidates.Count == 0)
+            // Cap: 1 pre-primed word is ideal, 2 is fine, more is too easy
+            if (wordsOnBoard > 2) score -= (wordsOnBoard - 2) * 4;
+
+            // 2. Check near-words completable with hand letters
+            //    (one gap in a horizontal run, hand has the letter to fill it)
+            if (hand != null)
             {
-                Debug.LogWarning("[OpeningSeed] No valid seed found — starting with blank board");
-                return null;
-            }
+                var handSet = new HashSet<char>();
+                for (int i = 0; i < hand.Length; i++)
+                    if (hand[i] != '\0') handSet.Add(char.ToUpper(hand[i]));
 
-            candidates.Sort((a, b) => b.score.CompareTo(a.score));
-
-            int topCount = Mathf.Max(3, candidates.Count / 2);
-            topCount = Mathf.Min(topCount, candidates.Count);
-            int pick;
-            if (DailyDropManager.IsDailyMode)
-            {
-                var seededRng = new System.Random(DailyDropManager.GetDailySeed() + 7919);
-                pick = seededRng.Next(0, topCount);
-            }
-            else
-            {
-                pick = Random.Range(0, topCount);
-            }
-
-            Seed chosen = candidates[pick].seed;
-            ApplySeed(chosen, rules);
-
-            Debug.Log($"[OpeningSeed] Curated '{chosen.Name}' (quality={candidates[pick].score:F1}, " +
-                      $"rank {pick + 1}/{candidates.Count})");
-
-            return chosen.Name;
-        }
-
-        private static string FormatTop3(List<(Seed seed, float score)> list)
-        {
-            var sb = new System.Text.StringBuilder();
-            for (int i = 0; i < Mathf.Min(3, list.Count); i++)
-            {
-                if (i > 0) sb.Append(", ");
-                sb.Append($"{list[i].seed.Name}={list[i].score:F1}");
-            }
-            return sb.ToString();
-        }
-
-        // ── Seed quality scoring ────────────────────────────────────────────────
-
-        /// <summary>
-        /// Rates seed quality. Higher = more likely to create engaging first turns.
-        /// </summary>
-        private static float ScoreSeed(Seed seed)
-        {
-            float score = 0f;
-            var placements = seed.Placements;
-
-            // 1. Completion opportunities: how many near-word setups exist?
-            //    Count pairs of letters that are adjacent (could become part of a word)
-            for (int i = 0; i < placements.Length; i++)
-            {
-                for (int j = i + 1; j < placements.Length; j++)
+                int nearWords = 0;
+                for (int row = 0; row < OPENING_ROWS; row++)
                 {
-                    int dx = Mathf.Abs(placements[i].Col - placements[j].Col);
-                    int dy = Mathf.Abs(placements[i].Row - placements[j].Row);
-                    // Adjacent on same row (horizontal potential)
-                    if (dy == 0 && dx == 2) score += 3f; // gap of 1 = fill to make 3-letter word
-                    if (dy == 0 && dx == 1) score += 1f; // adjacent = 2-run, needs one more
-                    // Vertical adjacency
-                    if (dx == 0 && dy == 1) score += 1.5f;
-                }
-            }
-
-            // 2. Centrality: reward letters near center columns (2-4)
-            for (int i = 0; i < placements.Length; i++)
-            {
-                float centerDist = Mathf.Abs(placements[i].Col - 3f);
-                score += Mathf.Max(0f, 2f - centerDist);
-            }
-
-            // 3. Spread / fairness: reward spread across both halves
-            bool hasLeft = false, hasRight = false;
-            for (int i = 0; i < placements.Length; i++)
-            {
-                if (placements[i].Col <= 2) hasLeft = true;
-                if (placements[i].Col >= 4) hasRight = true;
-            }
-            if (hasLeft && hasRight) score += 3f;
-
-            // 4. Multi-path: more letters = more paths (diminishing)
-            score += placements.Length * 1.5f;
-
-            // 5. Penalty: overly isolated letters (no other letter within 3 cols)
-            for (int i = 0; i < placements.Length; i++)
-            {
-                bool hasNeighbor = false;
-                for (int j = 0; j < placements.Length; j++)
-                {
-                    if (i == j) continue;
-                    if (Mathf.Abs(placements[i].Col - placements[j].Col) <= 3)
+                    for (int col = 0; col < RulesEngine.COLS; col++)
                     {
-                        hasNeighbor = true;
-                        break;
-                    }
-                }
-                if (!hasNeighbor) score -= 2f;
-            }
-
-            return score;
-        }
-
-        /// <summary>Debug: print all seeds ranked by quality. Call from console/editor.</summary>
-        public static void DebugPrintSeedRankings()
-        {
-            Debug.Log("[OpeningSeed] ══ SEED QUALITY RANKINGS ══");
-            var ranked = new List<(string name, float score, int letters)>();
-            for (int i = 0; i < _seeds.Length; i++)
-                ranked.Add((_seeds[i].Name, ScoreSeed(_seeds[i]), _seeds[i].Placements.Length));
-            ranked.Sort((a, b) => b.score.CompareTo(a.score));
-            for (int i = 0; i < ranked.Count; i++)
-                Debug.Log($"  {i + 1}. {ranked[i].name} — quality={ranked[i].score:F1} ({ranked[i].letters} letters)");
-        }
-
-        // ── Validation ──────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Validates a seed by temporarily placing its letters and scanning
-        /// for any valid words. Returns true if the seed is safe (no words formed).
-        /// </summary>
-        private static bool ValidateSeed(Seed seed, RulesEngine rules)
-        {
-            // Check all placements are in bounds and on empty cells
-            for (int i = 0; i < seed.Placements.Length; i++)
-            {
-                var p = seed.Placements[i];
-                if (p.Col < 0 || p.Col >= RulesEngine.COLS ||
-                    p.Row < 0 || p.Row >= RulesEngine.ROWS)
-                    return false;
-
-                // Seed letters must stack properly (no floating tiles)
-                if (p.Row > 0)
-                {
-                    // Check there's a tile below (either another seed letter or existing)
-                    bool supported = rules.GetCell(p.Col, p.Row - 1) != null;
-                    if (!supported)
-                    {
-                        // Check if another placement in this seed supports it
-                        for (int j = 0; j < seed.Placements.Length; j++)
+                        if (board[col, row] != '\0') continue; // occupied
+                        // Check if dropping any hand letter here creates a word
+                        foreach (char h in handSet)
                         {
-                            if (j == i) continue;
-                            if (seed.Placements[j].Col == p.Col && seed.Placements[j].Row == p.Row - 1)
+                            if (CheckHorizontalWordAt(board, col, row, h))
                             {
-                                supported = true;
+                                nearWords++;
+                                score += 5; // hand + board synergy
+                                break; // one per gap
+                            }
+                        }
+                    }
+                }
+
+                // Also check: can the hand drop into a gap column on row 0?
+                for (int col = 0; col < RulesEngine.COLS; col++)
+                {
+                    if (board[col, 0] == '\0') // gap column
+                    {
+                        // Check if any hand letter + adjacent board tiles = word
+                        foreach (char h in handSet)
+                        {
+                            if (CheckHorizontalWordAt(board, col, 0, h) ||
+                                CheckVerticalWordAt(board, col, 0, h))
+                            {
+                                score += 6; // gap is a viable drop target — great
                                 break;
                             }
                         }
                     }
-                    if (!supported) return false;
                 }
             }
 
-            // Temporarily place letters
-            for (int i = 0; i < seed.Placements.Length; i++)
+            // 3. Vowel balance
+            int vowels = 0, total = 0;
+            for (int col = 0; col < RulesEngine.COLS; col++)
             {
-                var p = seed.Placements[i];
+                for (int row = 0; row < OPENING_ROWS; row++)
+                {
+                    if (board[col, row] == '\0') continue;
+                    total++;
+                    char c = char.ToUpper(board[col, row]);
+                    if (c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U')
+                        vowels++;
+                }
+            }
+            if (vowels >= 2 && vowels <= 4) score += 3;
+            else score -= 2;
+
+            // 4. Tile count (prefer 8-10)
+            if (total >= 8 && total <= 10) score += 2;
+            else if (total < 7) score -= 3;
+
+            // 5. Gap count (prefer 2-3 gaps in row 0 for drop targets)
+            int gaps = 0;
+            for (int col = 0; col < RulesEngine.COLS; col++)
+                if (board[col, 0] == '\0') gaps++;
+            if (gaps >= 2 && gaps <= 3) score += 2;
+            else if (gaps < 2) score -= 3; // too packed
+
+            // 6. Penalize if NO words on board (nothing to prime)
+            if (wordsOnBoard == 0) score -= 5;
+
+            return score;
+        }
+
+        /// <summary>
+        /// Check if placing 'letter' at (col, row) in the opening board creates
+        /// a valid horizontal word of length 3+.
+        /// </summary>
+        private static bool CheckHorizontalWordAt(char[,] board, int col, int row, char letter)
+        {
+            int left = col, right = col;
+            while (left > 0 && board[left - 1, row] != '\0') left--;
+            while (right < RulesEngine.COLS - 1 && board[right + 1, row] != '\0') right++;
+
+            int runLen = right - left + 1;
+            if (runLen < 3) return false;
+
+            var sb = new System.Text.StringBuilder(runLen);
+            for (int c = left; c <= right; c++)
+                sb.Append(c == col ? letter : board[c, row]);
+
+            string full = sb.ToString();
+            int idx = col - left;
+
+            for (int start = 0; start < full.Length; start++)
+            {
+                for (int len = 3; len <= Mathf.Min(7, full.Length - start); len++)
+                {
+                    if (idx >= start && idx < start + len)
+                    {
+                        if (WordDictionary.IsValidWord(full.Substring(start, len)))
+                            return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Check if placing 'letter' at (col, row) creates a valid vertical word.
+        /// </summary>
+        private static bool CheckVerticalWordAt(char[,] board, int col, int row, char letter)
+        {
+            // Opening is only 2 rows — vertical words need both rows + the new letter
+            if (row == 0 && board[col, 1] != '\0')
+            {
+                // Letter at row 0, tile at row 1: 2-letter vertical, needs 3+
+                // Can't form a 3-letter vertical in a 2-row opening
+                return false;
+            }
+            return false; // Vertical words unlikely in 2-row opener
+        }
+
+        /// <summary>
+        /// After placing the opening board, scan for valid words and pre-prime one.
+        /// This gives the player an immediate glowing target to detonate.
+        /// </summary>
+        private static string TryPrimeOneWord(RulesEngine rules)
+        {
+            if (rules == null || rules.PrimedRegistry == null) return null;
+
+            // Scan the board for valid words
+            var words = rules.ScanEntireBoardPublic();
+            if (words == null || words.Count == 0) return null;
+
+            // Pick the shortest word (easiest to understand as the first prime)
+            RulesWordMatch best = null;
+            for (int i = 0; i < words.Count; i++)
+            {
+                if (best == null || words[i].Word.Length < best.Word.Length)
+                    best = words[i];
+            }
+
+            if (best == null) return null;
+
+            // Prime it with a generous fuse (8 turns — plenty of time)
+            int score = RulesEngine.CalculateWordScore(best.Word);
+            int fuse = 8;
+            rules.PrimedRegistry.AddPrimedWord(
+                best.Word, best.Cells,
+                -1, // neutral owner
+                0,  // primed on turn 0
+                fuse, // expires on turn 8
+                score
+            );
+
+            // Mark as scored so it doesn't get re-detected
+            rules.RegisterScoredKey(best.Word + "|" + best.CellKey);
+
+//             Debug.Log($"[OpeningSeed] Pre-primed '{best.Word}' at {best.CellKey} (score={score}, fuse={fuse})");
+
+            return best.Word;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // LEGACY SEEDS — for Classic, Daily, Blitz
+        // ═══════════════════════════════════════════════════════════════════════
+
+        private static readonly Seed[] _legacySeeds = new Seed[]
+        {
+            new Seed { Name = "Anchors", Placements = new[] {
+                new Placement(1, 0, 'R'), new Placement(5, 0, 'E') }},
+            new Seed { Name = "Posts", Placements = new[] {
+                new Placement(2, 0, 'T'), new Placement(5, 0, 'A') }},
+            new Seed { Name = "Scatter", Placements = new[] {
+                new Placement(1, 0, 'E'), new Placement(3, 0, 'T'), new Placement(5, 0, 'A') }},
+            new Seed { Name = "Triangle", Placements = new[] {
+                new Placement(1, 0, 'L'), new Placement(5, 0, 'R'), new Placement(3, 1, 'E') }},
+            new Seed { Name = "Diamond", Placements = new[] {
+                new Placement(1, 0, 'R'), new Placement(5, 0, 'N'),
+                new Placement(2, 1, 'E'), new Placement(4, 1, 'A') }},
+            new Seed { Name = "Wings", Placements = new[] {
+                new Placement(0, 0, 'A'), new Placement(2, 0, 'T'),
+                new Placement(4, 0, 'E'), new Placement(6, 0, 'R') }},
+        };
+
+        private static string ApplyLegacySeed(RulesEngine rules)
+        {
+            // Pick a random legacy seed
+            var rng = DailyDropManager.IsDailyMode
+                ? new System.Random(DailyDropManager.GetDailySeed() + 7919)
+                : new System.Random(System.Environment.TickCount);
+
+            int pick = rng.Next(0, _legacySeeds.Length);
+            Seed chosen = _legacySeeds[pick];
+
+            for (int i = 0; i < chosen.Placements.Length; i++)
+            {
+                var p = chosen.Placements[i];
                 rules.SetCell(p.Col, p.Row, new RulesCellData
                 {
                     Letter = p.Letter,
@@ -418,95 +515,8 @@ namespace WordDrop
                 });
             }
 
-            // Scan for words by checking all horizontal and vertical runs
-            bool hasWords = ScanForAnyWord(rules);
-
-            // Remove temporary letters
-            for (int i = 0; i < seed.Placements.Length; i++)
-            {
-                var p = seed.Placements[i];
-                rules.ClearCell(p.Col, p.Row);
-            }
-
-            if (hasWords)
-                Debug.Log($"[OpeningSeed] Rejected seed '{seed.Name}' — forms a valid word");
-
-            return !hasWords;
-        }
-
-        /// <summary>
-        /// Scans the board for any valid 3–7 letter words (horizontal or vertical).
-        /// </summary>
-        private static bool ScanForAnyWord(RulesEngine rules)
-        {
-            // Horizontal scan: each row, left to right
-            for (int row = 0; row < RulesEngine.ROWS; row++)
-            {
-                for (int startCol = 0; startCol <= RulesEngine.COLS - 3; startCol++)
-                {
-                    if (rules.GetCell(startCol, row) == null) continue;
-
-                    var sb = new System.Text.StringBuilder();
-                    for (int c = startCol; c < RulesEngine.COLS; c++)
-                    {
-                        var cell = rules.GetCell(c, row);
-                        if (cell == null) break;
-                        sb.Append(cell.Letter);
-
-                        if (sb.Length >= 3 && sb.Length <= 7)
-                        {
-                            if (WordDictionary.IsValidWord(sb.ToString()))
-                                return true;
-                        }
-                    }
-                }
-            }
-
-            // Vertical scan: each column, top to bottom (high row to low)
-            for (int col = 0; col < RulesEngine.COLS; col++)
-            {
-                for (int startRow = RulesEngine.ROWS - 1; startRow >= 2; startRow--)
-                {
-                    if (rules.GetCell(col, startRow) == null) continue;
-
-                    var sb = new System.Text.StringBuilder();
-                    for (int r = startRow; r >= 0; r--)
-                    {
-                        var cell = rules.GetCell(col, r);
-                        if (cell == null) break;
-                        sb.Append(cell.Letter);
-
-                        if (sb.Length >= 3 && sb.Length <= 7)
-                        {
-                            if (WordDictionary.IsValidWord(sb.ToString()))
-                                return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        // ── Apply ───────────────────────────────────────────────────────────────
-
-        private static void ApplySeed(Seed seed, RulesEngine rules)
-        {
-            for (int i = 0; i < seed.Placements.Length; i++)
-            {
-                var p = seed.Placements[i];
-                rules.SetCell(p.Col, p.Row, new RulesCellData
-                {
-                    Letter = p.Letter,
-                    Col = p.Col,
-                    Row = p.Row,
-                    PlayerIndex = -1, // neutral — no owner
-                });
-            }
-
-            // Mark these words as already "scored" so the first drop doesn't
-            // re-detect them as new words (they aren't words, but just in case)
-            // Not needed — validation ensures no words exist.
+//             Debug.Log($"[OpeningSeed] Legacy seed '{chosen.Name}'");
+            return chosen.Name;
         }
     }
 }

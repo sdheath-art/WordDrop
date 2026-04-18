@@ -120,7 +120,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-            Debug.Log("[AIAgent] Awake — new RulesEngine-based AI");
+//             Debug.Log("[AIAgent] Awake — new RulesEngine-based AI");
         }
 
         public float Delay => AI_DELAY;
@@ -186,7 +186,7 @@ namespace WordDrop
 
             if (allMoves.Count == 0)
             {
-                Debug.Log("[AIAgent] No valid move found.");
+//                 Debug.Log("[AIAgent] No valid move found.");
                 return false;
             }
 
@@ -197,7 +197,7 @@ namespace WordDrop
             // Difficulty gate: chance to play random instead
             if (best.ImmediateScore > 0 && Random.value < RandomChance)
             {
-                Debug.Log($"[AIAgent] Difficulty ({DifficultyName}): ignoring best, playing random.");
+//                 Debug.Log($"[AIAgent] Difficulty ({DifficultyName}): ignoring best, playing random.");
                 if (PickRandomMove(aiHand, out bestCol, out bestSlot, out bestLetter))
                     return true;
             }
@@ -215,7 +215,7 @@ namespace WordDrop
                     // Pick 2nd or 3rd best move instead
                     int pick = Random.Range(1, Mathf.Min(3, allMoves.Count));
                     best = allMoves[pick];
-                    Debug.Log($"[AIAgent] Rubber-band: AI leads by {lead}, downgraded to move #{pick + 1}");
+//                     Debug.Log($"[AIAgent] Rubber-band: AI leads by {lead}, downgraded to move #{pick + 1}");
                 }
             }
 
@@ -225,17 +225,17 @@ namespace WordDrop
 
             if (Difficulty == 2) // Hard: log breakdown for tuning
             {
-                Debug.Log($"[AIAgent] Hard pick: '{best.Letter}'→col{best.Col} " +
-                          $"total={best.Total:F1} (imm={best.ImmediateScore:F0} " +
-                          $"trig={best.TriggerBonus:F0} blk={best.BlockValue:F1} " +
-                          $"set={best.SetupValue:F1} ctr={best.CenterBias:F1} " +
-                          $"stl={best.AntiStallValue:F1})");
+//                 Debug.Log($"[AIAgent] Hard pick: '{best.Letter}'→col{best.Col} " +
+                          // $"total={best.Total:F1} (imm={best.ImmediateScore:F0} " +
+                          // $"trig={best.TriggerBonus:F0} blk={best.BlockValue:F1} " +
+                          // $"set={best.SetupValue:F1} ctr={best.CenterBias:F1} " +
+                          // $"stl={best.AntiStallValue:F1})");
             }
             else
             {
                 string trigStr = best.TriggerBonus > 0 ? " [TRIGGERS!]" : "";
-                Debug.Log($"[AIAgent] Best move ({DifficultyName}): '{best.Letter}' → col {best.Col} " +
-                          $"(score={best.ImmediateScore:F0}{trigStr}, slot={best.Slot})");
+//                 Debug.Log($"[AIAgent] Best move ({DifficultyName}): '{best.Letter}' → col {best.Col} " +
+                          // $"(score={best.ImmediateScore:F0}{trigStr}, slot={best.Slot})");
             }
 
             return bestCol >= 0;

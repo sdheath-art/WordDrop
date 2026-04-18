@@ -77,7 +77,7 @@ namespace WordDrop
             {
                 var go = new GameObject("WordDropFX");
                 go.AddComponent<WordDropFX>();
-                Debug.Log("[WordDropFX] Auto-created with DOTween.");
+//                 Debug.Log("[WordDropFX] Auto-created with DOTween.");
             }
         }
 
@@ -179,19 +179,42 @@ namespace WordDrop
 
             float punch = SCORE_POP_STRENGTH + chainStep * 0.05f;
 
-            // All tiles flash simultaneously — boost sorting so they render above neighbors
+            // Staggered fuse-lit flash across tiles — each tile pops in sequence
             for (int i = 0; i < tiles.Count; i++)
             {
                 Tile tile = tiles[i];
                 if (tile == null) continue;
 
                 tile.transform.DOComplete();
-                tile.FlashHighlight(color);
-                tile.SetSortingOrder(15); // temporarily above all other tiles (normal = 5)
+                tile.SetScoredSprite(true);
+                tile.SetSortingOrder(15);
+
+                // Stagger: each tile flashes white slightly after the previous
+                float delay = i * 0.06f;
+                int idx = i;
+                SpriteRenderer sr = tile.GetComponent<SpriteRenderer>();
+
+                // Flash white → fade to normal over staggered timing
+                if (sr != null)
+                {
+                    sr.color = Color.white;
+                    DOTween.Sequence()
+                        .AppendInterval(delay)
+                        .AppendCallback(() => { if (sr != null) sr.color = new Color(2f, 2f, 2f, 1f); }) // HDR bright flash
+                        .Append(DOTween.To(() => sr.color, c => { if (sr != null) sr.color = c; },
+                            Color.white, 0.15f).SetEase(DG.Tweening.Ease.OutQuad));
+                }
+
                 tile.transform
                     .DOPunchScale(Vector3.one * punch, SCORE_POP_DURATION, 1, 0.5f)
+                    .SetDelay(delay)
                     .SetEase(DG.Tweening.Ease.OutBack)
-                    .OnComplete(() => { if (tile != null) tile.SetSortingOrder(5); });
+                    .OnComplete(() => {
+                        if (tile != null) {
+                            tile.SetSortingOrder(5);
+                            tile.SetScoredSprite(false);
+                        }
+                    });
 
                 // Temporary shadow under the tile during the pop
                 // Shadow disabled — cleaner without floating shadows during animations
@@ -231,7 +254,7 @@ namespace WordDrop
             sr.color = new Color(0.02f, 0.01f, 0.08f, 0.6f);
 
             // Hold while flash is active
-            yield return new WaitForSeconds(0.18f);
+            yield return WaitCache.Get(0.18f);
 
             // Fade out
             float fadeDur = 0.12f;
@@ -299,8 +322,8 @@ namespace WordDrop
                 }
             }
 
-            Debug.Log($"[FuseTrace] Drew {directPositions.Count * chainPositions.Count} trace(s) " +
-                      $"from {directPositions.Count} direct → {chainPositions.Count} chain");
+//             Debug.Log($"[FuseTrace] Drew {directPositions.Count * chainPositions.Count} trace(s) " +
+                      // $"from {directPositions.Count} direct → {chainPositions.Count} chain");
         }
 
         private IEnumerator AnimateFuseLine(Vector3 from, Vector3 to, Color color)
@@ -341,7 +364,7 @@ namespace WordDrop
         {
             if (tiles == null || tiles.Count == 0) return;
             GameAudio.Instance?.PlayDetonation(chainStep);
-            // Particles on detonation
+
             Vector3 center = Vector3.zero;
             foreach (var tile in tiles)
                 if (tile != null) center += tile.transform.position;
@@ -355,91 +378,164 @@ namespace WordDrop
                 Vector3 orig = t.localScale;
 
                 Sequence seq = DOTween.Sequence();
-
-                // Squeeze in tight (anticipation — builds tension)
                 seq.Append(t.DOScale(orig * DETONATE_SQUEEZE, DETONATE_SQUEEZE_DUR)
                     .SetEase(DG.Tweening.Ease.InBack, 2f));
-
-                // Pop out big with elastic overshoot + flash
                 seq.AppendCallback(() =>
                 {
                     if (tile != null) tile.FlashHighlight(Color.white);
                 });
                 seq.Append(t.DOScale(orig * 1.3f, DETONATE_POP_DUR * 0.4f)
                     .SetEase(DG.Tweening.Ease.OutBack, 4f));
-
-                // Elastic settle back to original
                 seq.Append(t.DOScale(orig, DETONATE_POP_DUR * 0.8f)
                     .SetEase(DG.Tweening.Ease.OutElastic, 0.5f, 0.3f));
             }
-
-            // No shake here — explosion shake handles it
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
         // EXPLOSION — staggered shrink + rotation punch
         // ═══════════════════════════════════════════════════════════════════════════
 
-        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0)
+        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3)
         {
             if (tiles == null || tiles.Count == 0) return null;
-            return StartCoroutine(ExplosionCoroutine(tiles, chainStep));
+            return StartCoroutine(ExplosionCoroutine(tiles, chainStep, wordLength));
         }
 
-        private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep)
+        private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
         {
-            float dissolveDur = 0.28f + chainStep * 0.02f; // was 0.35 — snappier
+            bool mobile = Application.isMobilePlatform;
+            int tileCount = tiles.Count;
 
-            // Phase 0: Anticipation pre-flash — tiles glow bright before exploding (staging)
+            // Determine tier by tiles exploded + chain depth
+            int tier;
+            if (chainStep >= 3 || tileCount >= 15) tier = 4;
+            else if (chainStep >= 2 || tileCount >= 9) tier = 3;
+            else if (tileCount >= 5) tier = 2;
+            else tier = 1;
+
+            Debug.Log($"[VFX] Explosion tier={tier} tiles={tileCount} chain={chainStep}");
+
+            // Tiered haptic feedback
+            HapticsManager.Explosion(tier);
+
+            // All tiers: flash → dissolve → particles → shake
+            // NO DOScale or DORotate — dissolve handles the visual death.
+            // Tiers differ by: flash color, particle count, shake strength,
+            // dissolve speed, and whether screen flash / confetti fires.
+
+            // ── Tier-specific parameters ──
+            float dissolveDur;
+            int particlesPerTile;
+            Color flashColor;
+            bool screenFlash;
+            bool boardShake;
+            bool confetti;
+
+            switch (tier)
+            {
+                case 1: // Pop — quick and clean
+                    dissolveDur = 0.15f;
+                    particlesPerTile = mobile ? 4 : 6;
+                    flashColor = Color.white;
+                    screenFlash = false;
+                    boardShake = false;
+                    confetti = false;
+                    break;
+                case 2: // Burst — screen flash + shake
+                    dissolveDur = 0.22f;
+                    particlesPerTile = mobile ? 8 : 14;
+                    flashColor = new Color(1f, 0.95f, 0.7f, 1f);
+                    screenFlash = true;
+                    boardShake = true;
+                    confetti = false;
+                    break;
+                case 3: // Blast — heavy shake + more particles
+                    dissolveDur = 0.28f;
+                    particlesPerTile = mobile ? 12 : 20;
+                    flashColor = new Color(1f, 0.85f, 0.3f, 1f);
+                    screenFlash = true;
+                    boardShake = true;
+                    confetti = false;
+                    break;
+                default: // Chain Bomb — everything
+                    dissolveDur = 0.32f;
+                    particlesPerTile = mobile ? 14 : 24;
+                    flashColor = new Color(1f, 0.7f, 0.15f, 1f);
+                    screenFlash = true;
+                    boardShake = true;
+                    confetti = true;
+                    break;
+            }
+
+            // ── Flash all tiles ──
             for (int i = 0; i < tiles.Count; i++)
             {
-                Tile tile = tiles[i];
-                if (tile == null) continue;
-                tile.FlashHighlight(new Color(1f, 0.9f, 0.5f, 1f)); // warm white flash
+                if (tiles[i] == null) continue;
+                tiles[i].transform.DOComplete(); // kill any in-progress tweens cleanly
+                tiles[i].FlashHighlight(flashColor);
             }
-            yield return new WaitForSeconds(0.08f);
 
-            // Phase 1: Quick scale pop on all tiles (anticipation before dissolve)
+            // ── Screen flash + sound (tier 2+) ──
+            if (screenFlash) PlayScreenFlash(tier - 1);
+            Debug.Log($"[DetonationSFX] WordDropFX.PlayExplosion calling PlayDetonation(tier={tier}, arg={tier-1}). GameAudio.Instance null? {GameAudio.Instance == null}");
+            GameAudio.Instance?.PlayDetonation(tier - 1);
+
+            // ── Flipbook explosion per tile ──
+            if (FlipbookExplosion.Instance != null)
+            {
+                for (int i = 0; i < tiles.Count; i++)
+                    if (tiles[i] != null)
+                        FlipbookExplosion.Instance.Play(tiles[i].transform.position, tier);
+            }
+
+            // ── Shatter + particles + sparkles ──
             for (int i = 0; i < tiles.Count; i++)
             {
-                Tile tile = tiles[i];
-                if (tile == null) continue;
+                if (tiles[i] == null) continue;
+                Vector3 pos = tiles[i].transform.position;
 
-                tile.transform.DOComplete();
-                tile.transform.DOPunchScale(Vector3.one * 0.2f, 0.08f, 1, 0.5f)
-                    .SetEase(DG.Tweening.Ease.OutQuad);
+                // Tile fragments
+                if (TileFragments.Instance != null)
+                    TileFragments.Instance.Shatter(tiles[i]);
+
+                // Ember particles removed — flipbook + bubble + fragments is enough
+
+                // Sparkle stars + glow (tier 2+)
+                if (tier >= 2 && GameParticles.Instance != null)
+                {
+                    GameParticles.Instance.PlayPrimed(pos);
+                    if (tier >= 3)
+                        GameParticles.Instance.PlayWordScored(pos, tier * 3);
+                }
+
+                // Hide tile — flipbook + fragments cover the visual
+                tiles[i].gameObject.SetActive(false);
             }
-            yield return new WaitForSeconds(0.06f);
 
-            // Phase 2: Screen flash — white overlay, instant on, quick fade
-            PlayScreenFlash(chainStep);
-
-            // Phase 3: Dissolve + particles + rotation
-            for (int i = 0; i < tiles.Count; i++)
+            // ── Shake (tier 2+) ──
+            if (boardShake)
             {
-                Tile tile = tiles[i];
-                if (tile == null) continue;
-
-                float randomRot = Random.Range(-EXPLODE_PUNCH_ROT, EXPLODE_PUNCH_ROT);
-                tile.transform.DORotate(new Vector3(0, 0, randomRot), dissolveDur)
-                    .SetEase(DG.Tweening.Ease.InQuad);
-
-                // Particles — capped to avoid frame drops on mobile
-                int burstCount = Mathf.Min(PARTICLE_BURST_COUNT + chainStep * 2, 24);
-                EmitDetonationBurst(tile.transform.position, burstCount);
-
-                tile.Dissolve(dissolveDur);
+                PlayBoardShake(tier - 1, tileCount);
+                if (tier >= 3) ShakeHandCards(tier - 1, tileCount);
+                if (tier >= 4) PlayNeighborRipple(tiles, chainStep);
             }
 
-            PlayBoardShake(chainStep, tiles.Count);
-            ShakeHandCards(chainStep, tiles.Count);
-            PlayNeighborRipple(tiles, chainStep);
-            PlayHitStop(chainStep);
+            // ── Confetti (tier 4) ──
+            if (confetti)
+            {
+                Vector3 center = Vector3.zero;
+                int count = 0;
+                for (int i = 0; i < tiles.Count; i++)
+                    if (tiles[i] != null) { center += tiles[i].transform.position; count++; }
+                if (count > 0)
+                {
+                    center /= count;
+                    GameParticles.Instance?.PlayDetonation(center, chainStep);
+                    GameParticles.Instance?.PlayMeltdown(center);
+                }
+            }
 
-            yield return new WaitForSeconds(dissolveDur + 0.03f);
-
-            foreach (var tile in tiles)
-                if (tile != null) tile.transform.rotation = Quaternion.identity;
+            yield return WaitCache.Get(dissolveDur + 0.03f);
         }
 
         // ═══════════════════════════════════════════════════════════════════════════

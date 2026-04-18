@@ -113,7 +113,7 @@ namespace WordDrop
             if (score > prevBest)
             {
                 PlayerPrefs.SetInt(scoreKey, score);
-                Debug.Log($"[DailyDropManager] New daily best: {score} (was {prevBest})");
+//                 Debug.Log($"[DailyDropManager] New daily best: {score} (was {prevBest})");
             }
 
             // Submit to HighScoreManager for mode "daily"
@@ -127,8 +127,8 @@ namespace WordDrop
 
             PlayerPrefs.Save();
 
-            Debug.Log($"[DailyDropManager] MarkPlayedToday: score={score} streak={GetStreak()} " +
-                      $"puzzle=#{GetPuzzleNumber()} newBest={isNewBest}");
+//             Debug.Log($"[DailyDropManager] MarkPlayedToday: score={score} streak={GetStreak()} " +
+                      // $"puzzle=#{GetPuzzleNumber()} newBest={isNewBest}");
 
             return isNewBest;
         }
@@ -190,7 +190,7 @@ namespace WordDrop
             PlayerPrefs.DeleteKey("daily_streak");
             PlayerPrefs.DeleteKey($"daily_best_{TodayString()}");
             PlayerPrefs.Save();
-            Debug.Log("[DailyDropManager] Daily reset — can replay today's puzzle.");
+//             Debug.Log("[DailyDropManager] Daily reset — can replay today's puzzle.");
         }
 
         // ── Internal helpers ────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ namespace WordDrop
             PlayerPrefs.DeleteKey("daily_launch_date");
             HighScoreManager.Submit(0, "daily"); // won't save (0 never beats)
             PlayerPrefs.Save();
-            Debug.Log("[DailyDropManager] All daily data reset.");
+//             Debug.Log("[DailyDropManager] All daily data reset.");
         }
     }
 }

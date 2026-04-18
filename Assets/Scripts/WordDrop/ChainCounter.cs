@@ -66,15 +66,15 @@ namespace WordDrop
             _labelRT.sizeDelta = new Vector2(400f, 100f);
 
             _label = labelGO.AddComponent<TextMeshProUGUI>();
-            TMP_FontAsset font = GameFont.GetUITMP();
+            TMP_FontAsset font = GameFont.GetDisplayTMP();
             if (font != null) _label.font = font;
             _label.fontSize = 48f;
-            _label.fontStyle = FontStyles.Bold;
+            _label.fontStyle = FontStyles.Normal;
             _label.alignment = TextAlignmentOptions.Center;
             _label.enableWordWrapping = false;
             _label.overflowMode = TextOverflowModes.Overflow;
-            _label.outlineWidth = 0.2f;
-            _label.outlineColor = new Color32(0, 0, 0, 200);
+            _label.outlineWidth = 0f;
+            _label.richText = true;
 
             _visible = false;
             _currentDepth = 0;
@@ -86,8 +86,10 @@ namespace WordDrop
         /// </summary>
         public void OnDetonation(int chainDepth)
         {
-            if (chainDepth < 1) return;
-            GameAudio.Instance?.PlayChainReaction();
+            // Disabled — MeltdownManager handles chain celebrations now.
+            // Having both creates overlapping shadow text.
+            return;
+            // GameAudio.Instance?.PlayChainReaction();
 
             if (_fadeCoroutine != null)
             {
@@ -97,15 +99,18 @@ namespace WordDrop
 
             _currentDepth = chainDepth;
             int multiplier = chainDepth + 1; // depth 1 = x2, depth 2 = x3, etc.
-            _label.text = $"CHAIN x{multiplier}";
+            _label.text = $"CHAIN <size=150%><color=#FFE066>x{multiplier}</color></size>";
 
-            // Escalating color
+            // Escalating color with hue-matched outline
+            Color chainColor;
             if (chainDepth >= 3)
-                _label.color = CHAIN_4_COLOR;
+                chainColor = CHAIN_4_COLOR;
             else if (chainDepth >= 2)
-                _label.color = CHAIN_3_COLOR;
+                chainColor = CHAIN_3_COLOR;
             else
-                _label.color = CHAIN_2_COLOR;
+                chainColor = CHAIN_2_COLOR;
+            _label.color = chainColor;
+            _label.outlineWidth = 0f; // no outline — keep it clean and readable
 
             // Escalating font size
             float targetSize = 48f + (chainDepth - 1) * 12f;

@@ -108,9 +108,8 @@ namespace WordDrop
 
         public static bool ShouldRunTutorial()
         {
-            if (_skipForSession) return false;
-            if (PlayerPrefs.GetInt("tutorial_complete", 0) == 1) return false;
-            return true;
+            // Tutorial disabled for testing — always skip
+            return false;
         }
 
         public void BeginTutorial()
@@ -121,7 +120,7 @@ namespace WordDrop
                 return;
             }
 
-            Debug.Log("[TutorialManager] === TUTORIAL BEGIN ===");
+//             Debug.Log("[TutorialManager] === TUTORIAL BEGIN ===");
 
             _step = TutorialStep.WaitForDrop;
             AllowedColumn = -1;
@@ -172,7 +171,7 @@ namespace WordDrop
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(true);
 
-            Debug.Log("[TutorialManager] Step 1 ready — waiting for O drop at column 3.");
+//             Debug.Log("[TutorialManager] Step 1 ready — waiting for O drop at column 3.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -222,7 +221,7 @@ namespace WordDrop
                 HandManager.Instance.SetInteractable(true);
 
             _transitioning = false;
-            Debug.Log("[TutorialManager] Step 2 ready — waiting for D drop at column 2 to form DOG.");
+//             Debug.Log("[TutorialManager] Step 2 ready — waiting for D drop at column 2 to form DOG.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -308,7 +307,7 @@ namespace WordDrop
                 HandManager.Instance.SetInteractable(true);
 
             _transitioning = false;
-            Debug.Log("[TutorialManager] Step 4 ready — waiting for P drop at column 4 to form PIG → detonation.");
+//             Debug.Log("[TutorialManager] Step 4 ready — waiting for P drop at column 4 to form PIG → detonation.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -340,7 +339,7 @@ namespace WordDrop
             if (_step != TutorialStep.WaitForDrop) return;
             if (_transitioning) return;
 
-            Debug.Log($"[TutorialManager] Tile dropped during step 1: '{evt.Letter}' at col {evt.Col}");
+//             Debug.Log($"[TutorialManager] Tile dropped during step 1: '{evt.Letter}' at col {evt.Col}");
 
             // Step 1 complete — they learned to drop
             _step = TutorialStep.WaitForWord;
@@ -353,7 +352,7 @@ namespace WordDrop
             if (_step != TutorialStep.WaitForWord) return;
             if (_transitioning) return;
 
-            Debug.Log($"[TutorialManager] Word scored during step 2: '{evt.Word}'");
+//             Debug.Log($"[TutorialManager] Word scored during step 2: '{evt.Word}'");
 
             // Step 2 complete — word formed, now show primed state
             _step = TutorialStep.ShowPrimed;
@@ -366,8 +365,8 @@ namespace WordDrop
             if (_step != TutorialStep.WaitForDetonation) return;
             if (_transitioning) return;
 
-            Debug.Log($"[TutorialManager] DETONATION during step 4! " +
-                      $"Triggered='{evt.TriggeredWord}' by '{evt.TriggerWord}'");
+//             Debug.Log($"[TutorialManager] DETONATION during step 4! " +
+                      // $"Triggered='{evt.TriggeredWord}' by '{evt.TriggerWord}'");
 
             _step = TutorialStep.ShowBoom;
             _transitioning = true;
@@ -399,7 +398,7 @@ namespace WordDrop
             _skipForSession = true;
             PlayerPrefs.SetInt("tutorial_complete", 1);
             PlayerPrefs.Save();
-            Debug.Log("[TutorialManager] Tutorial complete — PlayerPrefs saved.");
+//             Debug.Log("[TutorialManager] Tutorial complete — PlayerPrefs saved.");
 
             EndTutorial();
 
@@ -423,12 +422,12 @@ namespace WordDrop
             HideSkipButton();
             DimShuffle(false);
 
-            Debug.Log("[TutorialManager] === TUTORIAL END ===");
+//             Debug.Log("[TutorialManager] === TUTORIAL END ===");
         }
 
         private void StartNormalGame()
         {
-            Debug.Log("[TutorialManager] Starting normal game after tutorial.");
+//             Debug.Log("[TutorialManager] Starting normal game after tutorial.");
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
@@ -501,10 +500,15 @@ namespace WordDrop
             {
                 var pw = registry.GetByIndex(p);
                 if (pw == null) continue;
+                int currentTurn = rules.GlobalTurn;
+                int survived = Mathf.Max(0, currentTurn - pw.PrimedOnTurn);
+                int heatLevel = Mathf.Min(survived, RulesEngine.HEAT_FUSE_MAX_BONUS);
+                int fuse = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
+                Color glowColor = pw.IsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
                 for (int c = 0; c < pw.Cells.Count; c++)
                 {
                     Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
-                    if (t != null) t.SetPrimedGlow(Tile.PRIMED_GLOW);
+                    if (t != null) t.SetPrimedGlow(glowColor, playFlash: false, heatLevel: heatLevel, fuseRemaining: fuse, isGold: pw.IsGold);
                 }
             }
         }
@@ -540,8 +544,8 @@ namespace WordDrop
             _instructionGO.transform.position = new Vector3(0f, y, -5f);
 
             _instructionText = _instructionGO.AddComponent<TMPro.TextMeshPro>();
-            TMPro.TMP_FontAsset heavyFont = Resources.Load<TMPro.TMP_FontAsset>("Cartoon SDF");
-            if (heavyFont != null) _instructionText.font = heavyFont;
+            TMPro.TMP_FontAsset uiFont = GameFont.GetUITMP();
+            if (uiFont != null) _instructionText.font = uiFont;
             _instructionText.text           = text;
             _instructionText.fontSize       = 7f;
             _instructionText.color          = TEXT_COLOR;
@@ -550,7 +554,7 @@ namespace WordDrop
             _instructionText.rectTransform.sizeDelta = new Vector2(10f, 3f);
             _instructionText.enableWordWrapping = false;
             _instructionText.overflowMode   = TMPro.TextOverflowModes.Overflow;
-            TMPHelper.ApplyEffects(_instructionText, TEXT_COLOR);
+            TMPHelper.ApplyEffects(_instructionText, TEXT_COLOR, TMPHelper.TextTier.HUD);
 
             // Scale-in
             _instructionGO.transform.localScale = Vector3.zero;
@@ -642,7 +646,7 @@ namespace WordDrop
 
         private void OnSkipClicked()
         {
-            Debug.Log("[TutorialManager] Tutorial skipped by player.");
+//             Debug.Log("[TutorialManager] Tutorial skipped by player.");
             _skipForSession = true;
             PlayerPrefs.SetInt("tutorial_complete", 1);
             PlayerPrefs.Save();
@@ -832,7 +836,7 @@ namespace WordDrop
             HighScoreManager.ResetAll();
             PlayerPrefs.Save();
             _skipForSession = false;
-            Debug.Log("[TutorialManager] Tutorial reset (+ high scores cleared) — will run on next game.");
+//             Debug.Log("[TutorialManager] Tutorial reset (+ high scores cleared) — will run on next game.");
         }
     }
 }

@@ -592,7 +592,7 @@ namespace WordDrop
             float elapsed = 0f;
             float frequency = oscillations / duration * Mathf.PI * 2f;
 
-            Debug.Log($"[ScoringDisplay] JiggleRotation START: angle={maxAngle} osc={oscillations} dur={duration}");
+//             Debug.Log($"[ScoringDisplay] JiggleRotation START: angle={maxAngle} osc={oscillations} dur={duration}");
 
             while (elapsed < duration)
             {
@@ -607,7 +607,7 @@ namespace WordDrop
             if (t != null)
                 t.localRotation = Quaternion.identity;
 
-            Debug.Log("[ScoringDisplay] JiggleRotation END");
+//             Debug.Log("[ScoringDisplay] JiggleRotation END");
         }
 
         private void SpawnBalatroPointText(float x, float y, int points, Color color)

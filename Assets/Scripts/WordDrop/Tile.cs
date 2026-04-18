@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using TMPro;
+using DG.Tweening;
 
 namespace WordDrop
 {
@@ -37,12 +38,15 @@ namespace WordDrop
         // Kept as compile stub for any callers that reference it
         public static readonly Color TILE_BORDER_WILD = new Color(0.20f, 0.90f, 1.00f, 1f);
 
-        public static readonly Color PRIMED_GLOW      = new Color(1.8f, 0.5f, 1.3f, 1f);  // HDR magenta — bloom catches this
-        public static readonly Color PRIMED_GOLD_GLOW = new Color(2.0f, 1.5f, 0.3f, 1f);  // HDR gold — bloom catches this
+        public static readonly Color PRIMED_GLOW       = new Color(1.8f, 0.5f, 1.3f, 1f);  // HDR magenta — bloom catches this
+        public static readonly Color PRIMED_GOLD_GLOW  = new Color(2.0f, 1.5f, 0.3f, 1f);  // HDR gold — bloom catches this
+        // Final-turn warning: primed word has 1 drop left. Shifts to HDR red-orange
+        // so the player gets a clear "USE THIS OR LOSE IT" signal on their last chance.
+        public static readonly Color PRIMED_DANGER_GLOW = new Color(2.2f, 0.6f, 0.15f, 1f); // HDR red-orange
         public static readonly Color PLAYER_GLOW = PRIMED_GLOW;
         public static readonly Color AI_GLOW     = PRIMED_GLOW;
 
-        private const float FALL_DURATION     = 0.12f;   // snappy drop
+        private const float FALL_DURATION     = 0.30f;   // snappier drop (Candy Crush ~0.25-0.3s)
         private const float BOUNCE_OVERSHOOT  = 0.12f;  // visible overshoot
         private const float BOUNCE_SETTLE_DUR = 0.06f;  // quick snap back
 
@@ -55,11 +59,27 @@ namespace WordDrop
         public int   Row         { get; private set; }
         public bool  IsAnimating { get; private set; }
 
-        // Stub properties kept for compile compatibility
-        public bool IsWild => false;
+        // Phase C — real wild state. Uncommitted wilds (IsWild && Letter=='\0')
+        // render a ★ glyph; committed wilds show the resolved letter in a wild
+        // color so the player can read what it matched while still seeing it's a wild.
+        public bool IsWild => _isWild;
+        private bool _isWild = false;
+
+        private static readonly Color WILD_LETTER_COLOR = new Color(0.75f, 0.40f, 1.00f, 1f); // purple
+        // "?" reads as blank/wild (Scrabble convention). ★ wasn't in the font atlas.
+        private const string WILD_GLYPH = "?";
+
+        // Wild halo — shared sprite + additive material, loaded on first SetWild.
+        // Parallels HandManager's card halo so the wild tile keeps its "special"
+        // presence as it moves from hand → board.
+        private static Sprite   s_wildHaloSprite;
+        private static Material s_wildHaloMaterial;
+        private GameObject      _wildHaloGO;
+        private SpriteRenderer  _wildHaloSR;
         // ColorState removed (was for Wordle mode)
 
         private SpriteRenderer _spriteRenderer;
+        private Material       _defaultMaterial; // saved on first init for pool reset
         private TextMeshPro    _letterTMP;
         private TextMeshPro    _pointTMP;
         private AudioSource    _audioSource;
@@ -67,6 +87,10 @@ namespace WordDrop
 
         private bool  _isHighlighted    = false;
         private bool  _isGoldBonus      = false;
+        private bool  _isSwapRefill    = false;
+        private bool  _isEditRefill    = false;
+        private bool  _isWildRefill   = false;
+        private bool  _isStone        = false;
         private bool  _hasPrimedGlow    = false;
         private Color _primedGlowColor  = new Color(0.812f, 0.812f, 0.863f, 1f);
         private Color _currentBorderColor = new Color(0.812f, 0.812f, 0.863f, 1f);
@@ -102,8 +126,17 @@ namespace WordDrop
 
         public int OwnerIndex { get; private set; } = -1;
 
+        private bool _poolInitialized = false;
+
         public void Initialise(char letter, int col, int row, float cellSize, int ownerIndex = -1)
         {
+            if (letter == '\0')
+            {
+                Debug.LogError($"[Tile] Initialise with NULL letter at ({col},{row}) — destroying");
+                Destroy(gameObject);
+                return;
+            }
+
             Letter    = letter;
             Col       = col;
             Row       = row;
@@ -112,8 +145,103 @@ namespace WordDrop
 
             BuildSpriteCache();
             BuildVisuals(cellSize);
+            if (_spriteRenderer != null) _defaultMaterial = _spriteRenderer.sharedMaterial;
             SetupAudio();
             UpdateLetterDisplay(letter);
+            _poolInitialized = true;
+        }
+
+        public void Reinitialise(char letter, int col, int row, float cellSize, int ownerIndex = -1)
+        {
+            if (!_poolInitialized) { Initialise(letter, col, row, cellSize, ownerIndex); return; }
+
+            // Pool reuse: wild flag does not survive, caller must re-SetWild if needed.
+            _isWild    = false;
+            Letter     = letter;
+            Col        = col;
+            Row        = row;
+            _cellSize  = cellSize;
+            OwnerIndex = ownerIndex;
+
+            gameObject.SetActive(true);
+            gameObject.name = $"Tile_{letter}_{col}_{row}";
+
+            if (_spriteRenderer != null)
+            {
+                _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
+                _spriteRenderer.color = Color.white;
+                _spriteRenderer.enabled = true;
+            }
+
+            _currentBorderColor = TILE_BORDER_NORMAL;
+            ApplyBorderColor(TILE_BORDER_NORMAL);
+
+            float displaySize = cellSize * 0.93f;
+            float nativeSize = _spriteRenderer != null && _spriteRenderer.sprite != null
+                ? _spriteRenderer.sprite.bounds.size.x : 1f;
+            float scale = displaySize / nativeSize;
+            transform.localScale = new Vector3(scale, scale, 1f);
+            transform.localRotation = Quaternion.identity;
+
+            UpdateLetterDisplay(letter);
+            if (_letterTMP != null) { _letterTMP.gameObject.SetActive(true); _letterTMP.enabled = true; }
+            if (_pointTMP != null) { _pointTMP.gameObject.SetActive(true); _pointTMP.enabled = true; }
+        }
+
+        public void ResetForPool()
+        {
+            StopAllCoroutines();
+            _gravityCoroutine = null;
+            _fallCoroutine = null;
+            _flashCoroutine = null;
+            _dissolveCoroutine = null;
+            _rotateCoroutine = null;
+
+            DOTween.Kill(transform);
+
+            if (_hasPrimedGlow) ClearPrimedGlow();
+            if (_hasFake3D) ClearFake3D();
+            if (_isHighlighted) Highlight(false);
+            if (_isGoldBonus) SetGoldBonus(false);
+            if (_isStone) SetStoneVisual(false);
+            if (_isSwapRefill) SetSwapRefillVisual(false);
+            if (_isEditRefill) SetEditRefillVisual(false);
+            if (_isWildRefill) SetWildRefillVisual(false);
+            if (_isWild) SetWild(false);
+
+            IsAnimating = false;
+            IsDissolving = false;
+            _hasPreviewHighlight = false;
+            if (_dissolveMatInstance != null)
+            {
+                Destroy(_dissolveMatInstance);
+                _dissolveMatInstance = null;
+            }
+            // Restore default material and ensure sprite renderer is clean
+            if (_spriteRenderer != null)
+            {
+                if (_defaultMaterial != null) _spriteRenderer.material = _defaultMaterial;
+                _spriteRenderer.enabled = true;
+                _spriteRenderer.color = Color.white;
+            }
+            // Reset TMP colors — dissolve fades these to alpha 0
+            if (_letterTMP != null)
+            {
+                _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                _letterTMP.gameObject.SetActive(true);
+                _letterTMP.enabled = true;
+            }
+            if (_pointTMP != null)
+            {
+                _pointTMP.color = new Color(0.4f, 0.4f, 0.45f, 0.85f);
+                _pointTMP.gameObject.SetActive(true);
+                _pointTMP.enabled = true;
+            }
+
+            Letter = '\0';
+            Col = -1;
+            Row = -1;
+            gameObject.SetActive(false);
         }
 
         private void BuildVisuals(float cellSize)
@@ -131,7 +259,7 @@ namespace WordDrop
             // Skip lit material for now — debug: does the tile render without it?
             // LightingSetup.Instance?.ApplyLitMaterial(_spriteRenderer);
 
-            float displaySize = cellSize * 0.88f;
+            float displaySize = cellSize * 0.93f;
             // Use actual sprite bounds for sizing (works with both procedural and hand-drawn sprites)
             float nativeSize = _spriteRenderer.sprite != null
                 ? _spriteRenderer.sprite.bounds.size.x
@@ -152,7 +280,7 @@ namespace WordDrop
             TMP_FontAsset tileFont = GameFont.GetTMP();
             if (tileFont != null) _letterTMP.font = tileFont;
             _letterTMP.text           = "";
-            _letterTMP.fontSize       = 5.5f;
+            _letterTMP.fontSize       = 6.0f;
             _letterTMP.fontStyle      = FontStyles.Bold;
             _letterTMP.color          = new Color(0.145f, 0.153f, 0.200f, 1f); // #252733
             _letterTMP.alignment      = TextAlignmentOptions.Center;
@@ -161,7 +289,7 @@ namespace WordDrop
             _letterTMP.enableWordWrapping = false;
             _letterTMP.overflowMode  = TextOverflowModes.Overflow;
 
-            // No effects — clean flat text
+            // No effects — tile sprite already has bevel/shadow baked in
 
             letterGO.transform.localScale = new Vector3(invScale, invScale, 1f);
 
@@ -169,7 +297,7 @@ namespace WordDrop
             GameObject pointGO = new GameObject("TilePoints");
             pointGO.transform.SetParent(transform, false);
             // Offset point number to sit on the face (same bevel adjustment as letter)
-            pointGO.transform.localPosition = new Vector3(nativeSize * 0.28f, -nativeSize * 0.20f, -0.1f);
+            pointGO.transform.localPosition = new Vector3(nativeSize * 0.22f, -nativeSize * 0.22f, -0.1f);
 
             _pointTMP = pointGO.AddComponent<TextMeshPro>();
             if (tileFont != null) _pointTMP.font = tileFont;
@@ -217,13 +345,121 @@ namespace WordDrop
         private void UpdateLetterDisplay(char letter)
         {
             if (_letterTMP != null)
-                _letterTMP.text = letter.ToString().ToUpper();
+            {
+                if (_isWild)
+                {
+                    // Uncommitted wild ('\0' or the WILD_CHAR sentinel) renders the
+                    // glyph; committed wild shows the resolved letter so the player
+                    // can read what it matched.
+                    bool uncommitted = (letter == '\0' || letter == TileBag.WILD_CHAR);
+                    _letterTMP.text = uncommitted ? WILD_GLYPH : letter.ToString().ToUpper();
+                    _letterTMP.color = WILD_LETTER_COLOR;
+                }
+                else
+                {
+                    _letterTMP.text = letter.ToString().ToUpper();
+                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                }
+                // Force visibility — Fake3D or stone may have disabled these
+                if (!_isStone)
+                {
+                    _letterTMP.gameObject.SetActive(true);
+                    _letterTMP.enabled = true;
+                }
+            }
 
             if (_pointTMP != null)
             {
-                int pts = LetterData.GetPoints(letter);
-                _pointTMP.text = pts > 0 ? pts.ToString() : "";
+                if (_isWild)
+                {
+                    // Corner ★ marker so committed wilds stay identifiable
+                    _pointTMP.text = WILD_GLYPH;
+                    _pointTMP.color = WILD_LETTER_COLOR;
+                }
+                else
+                {
+                    int pts = LetterData.GetPoints(letter);
+                    _pointTMP.text = pts > 0 ? pts.ToString() : "";
+                    _pointTMP.color = new Color(0.40f, 0.40f, 0.50f, 1f);
+                }
+                if (!_isStone)
+                {
+                    _pointTMP.gameObject.SetActive(true);
+                    _pointTMP.enabled = true;
+                }
             }
+        }
+
+        // ---------------------------------------------------------------------------
+        // Wild state control
+        // ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Mark (or clear) this tile as a wild. Updates visuals to match. The
+        /// RulesEngine owns the logical wild flag in RulesCellData.IsWild; this
+        /// method keeps the view in sync. Safe to call on pooled/re-used tiles.
+        /// </summary>
+        public void SetWild(bool active)
+        {
+            if (_isWild == active) return;
+            _isWild = active;
+            UpdateLetterDisplay(Letter);
+            // Board-tile halo removed (per playtest) — hand card keeps the halo so
+            // the wild reads as special before it's dropped, but once the wild is
+            // on the board the purple "?" / resolved-letter color is enough. Hide
+            // the halo unconditionally in case one was created previously.
+            UpdateWildHalo(false);
+        }
+
+        /// <summary>
+        /// Create-on-demand halo child that glows behind the wild tile. Additive
+        /// blend so it lights up surrounding cells; lower sortingOrder than the
+        /// tile so the letter stays readable on top.
+        /// </summary>
+        private void UpdateWildHalo(bool active)
+        {
+            if (!active)
+            {
+                if (_wildHaloGO != null) _wildHaloGO.SetActive(false);
+                return;
+            }
+
+            if (_wildHaloGO == null)
+            {
+                // Lazy-load the shared sprite + material once per process
+                if (s_wildHaloSprite == null)
+                {
+                    Texture2D tex = Resources.Load<Texture2D>("Particles/wild_halo");
+                    if (tex != null)
+                    {
+                        s_wildHaloSprite = Sprite.Create(
+                            tex, new Rect(0, 0, tex.width, tex.height),
+                            new Vector2(0.5f, 0.5f), 100f);
+                        Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
+                        if (addShader == null) addShader = Shader.Find("Sprites/Default");
+                        s_wildHaloMaterial = new Material(addShader);
+                    }
+                }
+                if (s_wildHaloSprite == null) return; // asset missing — skip silently
+
+                _wildHaloGO = new GameObject("TileWildHalo");
+                _wildHaloGO.transform.SetParent(transform, false);
+                _wildHaloGO.transform.localPosition = new Vector3(0f, 0f, 0.3f);
+                _wildHaloSR = _wildHaloGO.AddComponent<SpriteRenderer>();
+                _wildHaloSR.sprite = s_wildHaloSprite;
+                if (s_wildHaloMaterial != null) _wildHaloSR.sharedMaterial = s_wildHaloMaterial;
+                _wildHaloSR.sortingOrder = 3; // tiles render at 5, halo renders behind
+                // Scale halo to ~1.7× cell footprint for a glow that spills past the tile edges.
+                float haloNative = (_wildHaloSR.sprite != null && _wildHaloSR.sprite.bounds.size.x > 0)
+                    ? _wildHaloSR.sprite.bounds.size.x : 1f;
+                float tileScale = transform.localScale.x;
+                float haloScale = (_cellSize * 1.2f) / (haloNative * Mathf.Max(tileScale, 0.01f));
+                _wildHaloGO.transform.localScale = new Vector3(haloScale, haloScale, 1f);
+                // Same animator as hand cards — slow rotation + breathing + twinkle.
+                _wildHaloGO.AddComponent<WildHaloAnimator>();
+            }
+
+            _wildHaloGO.SetActive(true);
         }
 
         // ---------------------------------------------------------------------------
@@ -236,6 +472,17 @@ namespace WordDrop
         /// </summary>
         public void SetLetter(char letter)
         {
+            if (letter == '\0')
+            {
+                if (_isWild)
+                {
+                    Letter = '\0';
+                    UpdateLetterDisplay(letter);
+                    return;
+                }
+                Debug.LogWarning($"[Tile] SetLetter called with '\\0' at ({Col},{Row}) — rejected to prevent blank tile.");
+                return;
+            }
             Letter = letter;
             UpdateLetterDisplay(letter);
 
@@ -261,37 +508,93 @@ namespace WordDrop
             Row = row;
         }
 
-        // OnDestroy not needed — no persistent shadow objects
+        private void OnDestroy()
+        {
+            // Clean up orphaned Fake3D baked renderer (not parented to this tile)
+            if (_bakedRenderer != null)
+            {
+                Destroy(_bakedRenderer.gameObject);
+                _bakedRenderer = null;
+            }
+        }
+
+        /// <summary>
+        /// Forces letter and point TMP to be visible. Call periodically to fix
+        /// any tiles that lost their text due to Fake3D, stone, or other bugs.
+        /// </summary>
+        public void RepairLetterVisibility()
+        {
+            if (_isStone) return; // stones intentionally hide letters
+            if (_hasFake3D)
+            {
+                // Fake3D should have been cleared by now. If the baked renderer
+                // is gone but the flag is still set, the coroutine was interrupted.
+                // Force recovery so the tile doesn't stay blank forever.
+                if (_bakedRenderer == null) ClearFake3D();
+                else return; // Fake3D is active and valid — let it manage visibility
+            }
+
+            if (_letterTMP != null)
+            {
+                if (!_letterTMP.gameObject.activeSelf) _letterTMP.gameObject.SetActive(true);
+                if (!_letterTMP.enabled) _letterTMP.enabled = true;
+                // If text is blank but Letter is valid, re-set it
+                if (string.IsNullOrEmpty(_letterTMP.text) && Letter != '\0' && Letter != '#')
+                    _letterTMP.text = Letter.ToString().ToUpper();
+            }
+            if (_pointTMP != null)
+            {
+                if (!_pointTMP.gameObject.activeSelf) _pointTMP.gameObject.SetActive(true);
+                if (!_pointTMP.enabled) _pointTMP.enabled = true;
+                if (string.IsNullOrEmpty(_pointTMP.text) && Letter != '\0' && Letter != '#')
+                {
+                    int pts = LetterData.GetPoints(Letter);
+                    _pointTMP.text = pts > 0 ? pts.ToString() : "";
+                }
+            }
+        }
 
         /// <summary>
         /// Animates this tile falling to targetWorldPos over the given duration.
         /// Used for gravity drops — smooth linear fall, no bounce.
         /// Preserves primed glow throughout the animation.
         /// </summary>
-        public void AnimateGravityFall(Vector3 targetWorldPos, float duration)
+        public void AnimateGravityFall(Vector3 targetWorldPos, float duration, float startDelay = 0f, bool mechanical = false)
         {
             if (_gravityCoroutine != null)
             {
                 StopCoroutine(_gravityCoroutine);
                 _gravityCoroutine = null;
             }
-            _gravityCoroutine = StartCoroutine(GravityFallCoroutine(targetWorldPos, duration));
+            _gravityCoroutine = StartCoroutine(GravityFallCoroutine(targetWorldPos, duration, startDelay, mechanical));
         }
 
-        private IEnumerator GravityFallCoroutine(Vector3 target, float duration)
+        private IEnumerator GravityFallCoroutine(Vector3 target, float duration, float startDelay, bool mechanical)
         {
             IsAnimating = true;
 
+            // Per-column stagger delay — hold start pose until our turn to fall
+            if (startDelay > 0f)
+            {
+                float waited = 0f;
+                while (waited < startDelay)
+                {
+                    waited += Time.deltaTime;
+                    yield return null;
+                }
+            }
+
             Vector3 start = transform.position;
-            float dur = Mathf.Max(duration, 0.06f);
+            float dur = Mathf.Max(duration, 0.20f);
             float elapsed = 0f;
 
-            // Accelerating fall
+            // Mechanical: constant-speed linear (conveyor/piston feel)
+            // Organic: quadratic ease-in (natural gravity)
             while (elapsed < dur)
             {
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / dur);
-                float easedT = t * t * t; // cubic ease-in — faster acceleration
+                float easedT = mechanical ? t : (t * t);
                 transform.position = Vector3.Lerp(start, target, easedT);
                 yield return null;
             }
@@ -300,8 +603,9 @@ namespace WordDrop
             IsAnimating        = false;
             _gravityCoroutine  = null;
 
-            // Fire-and-forget soft squish — less pronounced than initial drop
-            PlayGravitySquish();
+            // Organic lands get a soft squish; mechanical lands hard-stop (machine feel)
+            if (!mechanical)
+                PlayGravitySquish();
         }
 
         // ---------------------------------------------------------------------------
@@ -379,6 +683,17 @@ namespace WordDrop
         /// P1 color = green, AI color = orange.
         /// </summary>
         private Coroutine _primedPulseCoroutine;
+        private float _primedStartTime;
+
+        /// <summary>Reset the primed timer so the pulse animation restarts from calm.</summary>
+        public void ResetPrimedTimer(float newMaxAge = -1f)
+        {
+            _primedStartTime = Time.time;
+            _heatLevel = 0;
+            _fuseRemaining = -1;
+            if (newMaxAge > 0f) _primedMaxAge = newMaxAge;
+        }
+        private float _primedMaxAge = 30f;
 
         private int _heatLevel = 0;
         private TextMeshPro _fuseTMP; // small countdown number on primed tiles
@@ -386,8 +701,8 @@ namespace WordDrop
 
         // ── Gold Bonus tile ──────────────────────────────────────────────────
 
-        public static readonly Color GOLD_LOW  = new Color(1.1f, 0.95f, 0.5f, 1f);  // warm gold — subtle
-        public static readonly Color GOLD_HIGH = new Color(1.8f, 1.5f, 0.4f, 1f);   // HDR gold — bloom peak
+        public static readonly Color GOLD_LOW  = new Color(0.65f, 0.55f, 0.20f, 1f);  // dim gold
+        public static readonly Color GOLD_HIGH = new Color(1.0f, 0.88f, 0.35f, 1f);  // bright gold — just under bloom
 
         public bool IsGoldBonus => _isGoldBonus;
         private Coroutine _goldPulseCoroutine;
@@ -400,6 +715,7 @@ namespace WordDrop
 
             if (gold && _spriteRenderer != null)
             {
+                GameAudio.Instance?.PlayGoldSpawnNew();
                 if (_letterTMP != null)
                     _letterTMP.color = new Color(0.15f, 0.1f, 0f, 1f);
                 if (_pointTMP != null)
@@ -419,38 +735,177 @@ namespace WordDrop
             }
         }
 
+        // ── Swap refill visual — orange tint ──────────────────────────────────
+        private static readonly Color SWAP_REFILL_TINT = new Color(1f, 0.7f, 0.2f, 1f);
+        public bool IsSwapRefill => _isSwapRefill;
+
+        public void SetSwapRefillVisual(bool active)
+        {
+            _isSwapRefill = active;
+            if (_spriteRenderer == null) return;
+            if (active)
+            {
+                _spriteRenderer.color = SWAP_REFILL_TINT;
+                if (_letterTMP != null) _letterTMP.color = new Color(0.3f, 0.15f, 0f, 1f);
+                if (_pointTMP != null) _pointTMP.color = new Color(0.4f, 0.2f, 0f, 0.8f);
+            }
+            else
+            {
+                _spriteRenderer.color = Color.white;
+            }
+        }
+
+        // ── Edit refill visual — cyan tint ────────────────────────────────────
+        private static readonly Color EDIT_REFILL_TINT = new Color(0.2f, 0.9f, 0.95f, 1f);
+        public bool IsEditRefill => _isEditRefill;
+
+        public void SetEditRefillVisual(bool active)
+        {
+            _isEditRefill = active;
+            if (_spriteRenderer == null) return;
+            if (active)
+            {
+                _spriteRenderer.color = EDIT_REFILL_TINT;
+                if (_letterTMP != null) _letterTMP.color = new Color(0f, 0.15f, 0.2f, 1f);
+                if (_pointTMP != null) _pointTMP.color = new Color(0f, 0.2f, 0.25f, 0.8f);
+            }
+            else
+            {
+                _spriteRenderer.color = Color.white;
+            }
+        }
+
+        // ── Wild refill visual — purple/rainbow tint ──────────────────────────
+        private static readonly Color WILD_REFILL_TINT = new Color(0.75f, 0.4f, 1f, 1f);
+        public bool IsWildRefill => _isWildRefill;
+
+        public void SetWildRefillVisual(bool active)
+        {
+            _isWildRefill = active;
+            if (_spriteRenderer == null) return;
+            if (active)
+            {
+                _spriteRenderer.color = WILD_REFILL_TINT;
+                if (_letterTMP != null) _letterTMP.color = new Color(0.2f, 0.05f, 0.3f, 1f);
+                if (_pointTMP != null) _pointTMP.color = new Color(0.3f, 0.1f, 0.4f, 0.8f);
+            }
+            else
+            {
+                _spriteRenderer.color = Color.white;
+            }
+        }
+
+        // ── Stone tile visual — dark grey, no letter ──────────────────────────
+        private static readonly Color STONE_TINT = new Color(0.25f, 0.23f, 0.28f, 1f); // much darker — clearly not a normal tile
+        public bool IsStone => _isStone;
+
+        public void SetStoneVisual(bool active)
+        {
+            _isStone = active;
+            if (_spriteRenderer == null) return;
+            if (active)
+            {
+                _spriteRenderer.color = STONE_TINT;
+                // Hide letter entirely — the dark tint is enough to identify stones
+                if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
+                if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
+            }
+            else
+            {
+                _spriteRenderer.color = Color.white;
+                if (_letterTMP != null)
+                {
+                    _letterTMP.gameObject.SetActive(true);
+                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                }
+                if (_pointTMP != null)
+                {
+                    _pointTMP.gameObject.SetActive(true);
+                    _pointTMP.color = new Color(0.4f, 0.4f, 0.45f, 0.85f);
+                }
+            }
+        }
+
         private IEnumerator GoldPulseLoop()
         {
-            float speed = 1.8f; // pulse speed — not too fast, not too slow
+            Vector3 origScale = transform.localScale;
+            Vector3 peakScale = origScale * 1.10f;  // same 10% scale bump as FlashHighlight
             float shimmerTimer = 0f;
+
             while (_isGoldBonus && _spriteRenderer != null)
             {
-                float t = (Mathf.Sin(Time.time * speed) + 1f) * 0.5f; // 0→1→0 smooth
-                _spriteRenderer.color = Color.Lerp(GOLD_LOW, GOLD_HIGH, t);
+                // Phase 1: Flash UP (0.05s) — white to gold tint + scale up
+                float elapsed = 0f;
+                while (elapsed < 0.05f && _isGoldBonus && _spriteRenderer != null)
+                {
+                    elapsed += Time.deltaTime;
+                    float t = Mathf.Clamp01(elapsed / 0.05f);
+                    t = 1f - (1f - t) * (1f - t); // ease-out
+                    _spriteRenderer.color = Color.Lerp(Color.white, GOLD_HIGH, t);
+                    transform.localScale = Vector3.Lerp(origScale, peakScale, t);
+                    yield return null;
+                }
 
-                // Ambient shimmer — emit 1-2 tiny sparkles every ~0.8s
-                shimmerTimer += Time.deltaTime;
+                // Phase 2: Hold at peak (0.10s)
+                if (_spriteRenderer != null) _spriteRenderer.color = GOLD_HIGH;
+                if (transform != null) transform.localScale = peakScale;
+                yield return WaitCache.Get(0.10f);
+
+                // Phase 3: Fade back (0.15s) — gold to white + scale down
+                elapsed = 0f;
+                while (elapsed < 0.15f && _isGoldBonus && _spriteRenderer != null)
+                {
+                    elapsed += Time.deltaTime;
+                    float t = Mathf.Clamp01(elapsed / 0.15f);
+                    t = t < 0.5f ? 2f * t * t : 1f - Mathf.Pow(-2f * t + 2f, 2f) / 2f; // ease-in-out
+                    _spriteRenderer.color = Color.Lerp(GOLD_HIGH, Color.white, t);
+                    transform.localScale = Vector3.Lerp(peakScale, origScale, t);
+                    yield return null;
+                }
+
+                if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+                if (transform != null) transform.localScale = origScale;
+
+                // Ambient shimmer — emit 1-2 tiny sparkles
+                shimmerTimer += 0.30f; // each cycle is ~0.30s
                 if (shimmerTimer >= 0.8f)
                 {
                     shimmerTimer = 0f;
                     GameParticles.Instance?.PlayShimmer(transform.position, Random.Range(1, 3));
                 }
 
-                yield return null;
+                // Pause before next pulse
+                yield return WaitCache.Get(0.6f);
             }
             _goldPulseCoroutine = null;
         }
 
         // ── Primed glow ─────────────────────────────────────────────────────
 
-        public void SetPrimedGlow(Color color, bool playFlash = false, int heatLevel = 0, int fuseRemaining = 0, bool isGold = false)
+        public void SetPrimedGlow(Color color, bool playFlash = false, int heatLevel = 0, int fuseRemaining = -1, bool isGold = false, float maxAge = 30f)
         {
             bool wasAlreadyPrimed = _hasPrimedGlow;
+            int oldFuse = _fuseRemaining;
             _hasPrimedGlow   = true;
             _heatLevel       = heatLevel;
             _fuseRemaining   = fuseRemaining;
+            _primedStartTime = Time.time;
+            _primedMaxAge    = maxAge;
 
-            Color glowColor = isGold ? PRIMED_GOLD_GLOW : PRIMED_GLOW;
+            // DIAGNOSTIC — kept silent in normal play, uncomment to re-enable.
+            // Debug.Log($"[PrimedTile] ({Col},{Row}) fuse {oldFuse}→{fuseRemaining} heat={heatLevel} isGold={isGold} wasAlreadyPrimed={wasAlreadyPrimed}");
+
+            // Final-turn warning — if caller tells us this is the final displayed
+            // turn (fuse 0 or 1), shift to HDR red-orange so the player sees
+            // "last chance" clearly. Covers fuse=0 ("about to auto-expire") AND
+            // fuse=1 ("one turn left") so the danger state is stable through
+            // both final frames. Gold primed words stay gold (their color is
+            // part of the reward identity).
+            Color glowColor;
+            if (fuseRemaining >= 0 && fuseRemaining <= 1 && !isGold)
+                glowColor = PRIMED_DANGER_GLOW;
+            else
+                glowColor = isGold ? PRIMED_GOLD_GLOW : PRIMED_GLOW;
             _primedGlowColor = glowColor;
             _currentBorderColor = glowColor;
 
@@ -473,7 +928,7 @@ namespace WordDrop
         private System.Collections.IEnumerator DelayedShineSweep()
         {
             // Wait for squash + flash to fully finish before sweeping
-            yield return new WaitForSeconds(0.45f);
+            yield return WaitCache.Get(0.45f);
             yield return ShineSweep();
         }
 
@@ -530,10 +985,11 @@ namespace WordDrop
         /// </summary>
         private System.Collections.IEnumerator PrimedPulseLoop()
         {
-            yield return new WaitForSeconds(Random.Range(0f, 1.0f));
-
-            float baseTime = 0f;
-            float shimmerTimer = Random.Range(0f, 0.5f); // stagger so tiles don't all shimmer at once
+            // Removed per-tile random stagger + per-tile baseTime. All primed
+            // tiles now pulse from a shared clock (Time.time) so a primed word
+            // pulses and transitions color as one unit — no more staggered
+            // per-tile phase drift during fuse state changes.
+            float shimmerTimer = Random.Range(0f, 0.5f); // particle emission can stay desynced
 
             // Colors: gold base, hot magenta peak
             Color goldTint   = new Color(1f, 0.90f, 0.70f, 1f);   // warm gold
@@ -542,7 +998,7 @@ namespace WordDrop
             // Cache base scale
             float spriteNativeSize = (_spriteRenderer != null && _spriteRenderer.sprite != null)
                 ? _spriteRenderer.sprite.bounds.size.x : Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512) / 100f;
-            float baseScale = (_cellSize * 0.88f) / spriteNativeSize;
+            float baseScale = (_cellSize * 0.93f) / spriteNativeSize;
 
             // Set the heat-appropriate border sprite immediately
             ApplyHeatSprite();
@@ -555,12 +1011,26 @@ namespace WordDrop
                     continue;
                 }
 
-                baseTime += Time.deltaTime;
+                // Use global Time.time as the pulse clock so all primed tiles
+                // share the same phase — the word pulses as a unit.
+                float baseTime = Time.time;
 
-                // Pulse speed ramps with heat — like a bomb about to go off
-                // Heat 0: brisk (1.2s), Heat 1: (0.8s), Heat 2: (0.5s), Heat 3: urgent (0.3s)
-                float[] periods = { 1.2f, 0.8f, 0.5f, 0.3f };
-                float period = periods[Mathf.Clamp(_heatLevel, 0, 3)];
+                // Pulse speed ramps with DROPS REMAINING on this primed word.
+                // Fuse is move-based now (April 17) — no more age heat in the
+                // visual state machine. Final turn (fuse=1) also gets a color
+                // shift to HDR red-orange via SetPrimedGlow.
+                //   fuse=1 → +3 (critical, red-orange, 0.18s pulse)
+                //   fuse=2 → +2 (urgent)
+                //   fuse=3 → +1 (brisk)
+                //   fuse>=4 → +0 (calm)
+                int dropsUrgency = GetDropsUrgency();
+                int effectiveHeat = (_fuseRemaining >= 0)
+                    ? dropsUrgency
+                    : Mathf.Clamp(_heatLevel, 0, 4);
+
+                // Heat 0: calm (1.2s), 1: brisk (0.8s), 2: fast (0.5s), 3: urgent (0.3s), 4: critical (0.18s)
+                float[] periods = { 1.2f, 0.8f, 0.5f, 0.3f, 0.18f };
+                float period = periods[Mathf.Clamp(effectiveHeat, 0, 4)];
                 float cycle = Mathf.Repeat(baseTime, period) / period;
 
                 // Asymmetric pulse: quick bright pop (30% of cycle), slower dim recovery (70%)
@@ -573,17 +1043,18 @@ namespace WordDrop
 
                 pulse = Mathf.Clamp01(pulse);
 
-                // Face tint — visible at all heat levels
-                float baseTint = 0.12f + _heatLevel * 0.06f; // 12% → 30%
-                float tintAmount = baseTint + pulse * (0.10f + _heatLevel * 0.05f);
+                // Face tint — ramps with effective heat (turn heat + time urgency)
+                float baseTint = 0.12f + effectiveHeat * 0.06f; // 12% → 36%
+                float tintAmount = baseTint + pulse * (0.10f + effectiveHeat * 0.05f);
+                tintAmount = Mathf.Max(tintAmount, 0.35f);
                 _spriteRenderer.color = Color.Lerp(Color.white, _primedGlowColor, tintAmount);
 
                 // Scale: visible breathe at all levels, punchier at high heat
-                float scalePulse = 0.035f + _heatLevel * 0.015f; // 3.5% → 8% scale change
+                float scalePulse = 0.035f + effectiveHeat * 0.015f; // 3.5% → 9.5% scale change
                 float scaleMult = 1f + scalePulse * pulse;
 
-                // Tiny jitter at max heat — nervous energy
-                if (_heatLevel >= 3 && pulse < 0.2f)
+                // Tiny jitter at high urgency — nervous energy
+                if (effectiveHeat >= 3 && pulse < 0.2f)
                 {
                     float jx = Random.Range(-0.005f, 0.005f);
                     float jy = Random.Range(-0.005f, 0.005f);
@@ -593,8 +1064,8 @@ namespace WordDrop
                 if (!IsAnimating && _flashCoroutine == null)
                     transform.localScale = new Vector3(baseScale * scaleMult, baseScale * scaleMult, 1f);
 
-                // Shimmer particles — more frequent at higher heat
-                float shimmerInterval = 1.2f - _heatLevel * 0.25f; // heat 0: 1.2s, heat 3: 0.45s
+                // Shimmer particles — more frequent at higher urgency
+                float shimmerInterval = 1.2f - effectiveHeat * 0.20f; // heat 0: 1.2s, heat 4: 0.4s
                 shimmerTimer += Time.deltaTime;
                 if (shimmerTimer >= shimmerInterval)
                 {
@@ -617,12 +1088,29 @@ namespace WordDrop
             _primedPulseCoroutine = null;
         }
 
+        private int GetDropsUrgency()
+        {
+            // Escalation: calm → brisk → fast → urgent → critical. fuse=0 is
+            // the "about to expire" state and hits the top tier (critical —
+            // 0.18s period, largest pulse, max jitter). fuse=1 is one step
+            // below (urgent — 0.3s) so the final two turns are visibly
+            // different, not identical.
+            if (_fuseRemaining == 0) return 4;  // critical — frantic, about to expire
+            if (_fuseRemaining == 1) return 3;  // urgent — one turn left
+            if (_fuseRemaining == 2) return 2;  // fast
+            if (_fuseRemaining == 3) return 1;  // brisk
+            return 0;                            // calm (fuse >= 4)
+        }
+
         /// <summary>Swap to the correct border sprite based on heat level (thicker = hotter).</summary>
         private void ApplyHeatSprite()
         {
             if (_spriteRenderer == null) return;
 
-            switch (_heatLevel)
+            int effectiveHeat = (_fuseRemaining >= 0)
+                ? GetDropsUrgency()
+                : Mathf.Clamp(_heatLevel, 0, 4);
+            switch (effectiveHeat)
             {
                 case 0:  _spriteRenderer.sprite = s_spriteGoldThick; break;
                 case 1:  _spriteRenderer.sprite = s_spriteHeat1 ?? s_spriteGoldThick; break;
@@ -645,8 +1133,9 @@ namespace WordDrop
             if (_spriteRenderer == null) return;
             // Cancel any existing flash so they don't overlap
             if (_flashCoroutine != null) StopCoroutine(_flashCoroutine);
-            // Force-reset before starting new flash
-            _spriteRenderer.color = Color.white;
+            // Start the flash from whatever color we're currently in — do NOT
+            // snap to white first. Reverting to white causes a visible flicker
+            // when a primed tile changes fuse state.
             _flashCoroutine = StartCoroutine(FlashBorderCoroutine(color));
         }
 
@@ -654,7 +1143,20 @@ namespace WordDrop
         public void ResetVisuals()
         {
             if (_flashCoroutine != null) { StopCoroutine(_flashCoroutine); _flashCoroutine = null; }
-            if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+            if (_spriteRenderer != null)
+            {
+                // Preserve special tile tints — they stay until cleared
+                if (_isStone)
+                    _spriteRenderer.color = STONE_TINT;
+                else if (_isSwapRefill)
+                    _spriteRenderer.color = SWAP_REFILL_TINT;
+                else if (_isEditRefill)
+                    _spriteRenderer.color = EDIT_REFILL_TINT;
+                else if (_isWildRefill)
+                    _spriteRenderer.color = WILD_REFILL_TINT;
+                else if (!_isGoldBonus)
+                    _spriteRenderer.color = Color.white;
+            }
             SetSortingOrder(5); // restore default sorting
             Color border = _hasPrimedGlow ? _primedGlowColor : TILE_BORDER_NORMAL;
             ApplyBorderColor(border);
@@ -665,18 +1167,28 @@ namespace WordDrop
             if (_spriteRenderer == null) yield break;
 
             Color glowColor = color;
+            // Snapshot the color we're currently in so the flash lerps FROM
+            // our current state, not from a hard-coded white. Fixes the
+            // visible white-flicker that used to appear whenever a primed
+            // tile's color state changed between fuse turns.
+            Color startColor = _spriteRenderer.color;
+            // Target settling color: if this tile is still primed, settle to
+            // its current pulse state; otherwise back to white (normal tiles).
+            Color settleColor = _hasPrimedGlow
+                ? Color.Lerp(Color.white, _primedGlowColor, 0.35f)
+                : Color.white;
 
             Vector3 origScale = transform.localScale;
             Vector3 glowScale = origScale * 1.10f;
 
-            // Phase 1: Flash UP (0.05s)
+            // Phase 1: Flash UP (0.05s) — from current color to peak glow
             float elapsed = 0f;
             while (elapsed < 0.05f && _spriteRenderer != null)
             {
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / 0.05f);
                 t = 1f - (1f - t) * (1f - t);
-                _spriteRenderer.color = Color.Lerp(Color.white, glowColor, t);
+                _spriteRenderer.color = Color.Lerp(startColor, glowColor, t);
                 transform.localScale = Vector3.Lerp(origScale, glowScale, t);
                 yield return null;
             }
@@ -684,22 +1196,23 @@ namespace WordDrop
             // Phase 2: Hold at peak glow (0.10s)
             if (_spriteRenderer != null) _spriteRenderer.color = glowColor;
             if (transform != null) transform.localScale = glowScale;
-            yield return new WaitForSeconds(0.10f);
+            yield return WaitCache.Get(0.10f);
 
-            // Phase 3: Fade back (0.15s)
+            // Phase 3: Fade back (0.15s) — toward settle color, not white
             elapsed = 0f;
             while (elapsed < 0.15f && _spriteRenderer != null)
             {
                 elapsed += Time.deltaTime;
                 float t = Mathf.Clamp01(elapsed / 0.15f);
                 t = t < 0.5f ? 2f * t * t : 1f - Mathf.Pow(-2f * t + 2f, 2f) / 2f;
-                _spriteRenderer.color = Color.Lerp(glowColor, Color.white, t);
+                _spriteRenderer.color = Color.Lerp(glowColor, settleColor, t);
                 transform.localScale = Vector3.Lerp(glowScale, origScale, t);
 
                 yield return null;
             }
 
-            if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+            // Final settle — pulse loop (if still primed) will take over from here
+            if (_spriteRenderer != null) _spriteRenderer.color = settleColor;
             if (transform != null) transform.localScale = origScale;
             _flashCoroutine = null;
         }
@@ -719,17 +1232,26 @@ namespace WordDrop
             if (!_isHighlighted)
                 ApplyBorderColor(TILE_BORDER_NORMAL);
 
-            // Reset any pulse-induced tint/scale
+            // Reset any pulse-induced tint/scale — preserve special tile tints
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.color = Color.white;
+                if (_isStone)
+                    _spriteRenderer.color = STONE_TINT;
+                else if (_isSwapRefill)
+                    _spriteRenderer.color = SWAP_REFILL_TINT;
+                else if (_isEditRefill)
+                    _spriteRenderer.color = EDIT_REFILL_TINT;
+                else if (_isWildRefill)
+                    _spriteRenderer.color = WILD_REFILL_TINT;
+                else if (!_isGoldBonus)
+                    _spriteRenderer.color = Color.white;
                 _spriteRenderer.sprite = s_spriteNormal;
             }
 
             // Reset scale to correct base
             float sprNative = (_spriteRenderer != null && _spriteRenderer.sprite != null)
                 ? _spriteRenderer.sprite.bounds.size.x : Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512) / 100f;
-            float correctScale = (_cellSize * 0.88f) / sprNative;
+            float correctScale = (_cellSize * 0.93f) / sprNative;
             transform.localScale = new Vector3(correctScale, correctScale, 1f);
 
             _heatLevel = 0;
@@ -751,9 +1273,12 @@ namespace WordDrop
                 _savedBorderBeforePreview = _currentBorderColor;
             _hasPreviewHighlight = true;
 
+            // Swap sprite to scored look instead of tinting
             if (_spriteRenderer != null)
-                _spriteRenderer.color = new Color(color.r, color.g, color.b, 1f);
-            ApplyBorderColor(new Color(color.r, color.g, color.b, Mathf.Max(color.a, 0.6f)));
+            {
+                _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
+                _spriteRenderer.color = Color.white;
+            }
         }
 
         /// <summary>Restore tile to its state before preview highlight.</summary>
@@ -762,8 +1287,14 @@ namespace WordDrop
             if (!_hasPreviewHighlight) return;
             _hasPreviewHighlight = false;
 
+            // Swap back to normal sprite
             if (_spriteRenderer != null)
+            {
+                _spriteRenderer.sprite = _hasPrimedGlow
+                    ? (s_spriteGold ?? s_spriteNormal)
+                    : s_spriteNormal;
                 _spriteRenderer.color = Color.white;
+            }
             ApplyBorderColor(_savedBorderBeforePreview);
         }
 
@@ -778,7 +1309,7 @@ namespace WordDrop
         {
             if (_hasPrimedGlow)
             {
-                Debug.Log($"[Tile] ({Col},{Row}) '{Letter}' already has primed glow — keeping.");
+//                 Debug.Log($"[Tile] ({Col},{Row}) '{Letter}' already has primed glow — keeping.");
                 return;
             }
             SetPrimedGlow(color);
@@ -791,6 +1322,24 @@ namespace WordDrop
         public void Highlight(bool on)
         {
             Highlight(on, TILE_BORDER_GOLD);
+        }
+
+        /// <summary>Swap sprite to scored look (tile_selected2) and back.</summary>
+        public void SetScoredSprite(bool scored)
+        {
+            if (_spriteRenderer == null) return;
+            if (scored)
+            {
+                _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
+                _spriteRenderer.color = Color.white;
+            }
+            else
+            {
+                _spriteRenderer.sprite = _hasPrimedGlow
+                    ? (s_spriteGold ?? s_spriteNormal)
+                    : s_spriteNormal;
+                _spriteRenderer.color = Color.white;
+            }
         }
 
         public void Highlight(bool on, Color color)
@@ -857,6 +1406,7 @@ namespace WordDrop
         private static Sprite s_spriteHeat2;     // hot orange border
         private static Sprite s_spriteHeat3;     // white-hot border
         private static Sprite s_spriteWhiteThick;
+        private static Sprite s_spriteScored;     // tile_selected2 — used when a word is scored
         private static bool s_spriteCacheBuilt;
 
         // AI tile sprite — loaded from Resources alongside the others
@@ -870,16 +1420,19 @@ namespace WordDrop
             int border  = Mathf.Max(3, texSize / 12);
 
             // Try loading hand-drawn sprites from Resources/Tiles
-            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/master_tile");
-            Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/primed_tile");
+            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/test_tile");
+            Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/primed_test@2x");
             Sprite loadedAI     = Resources.Load<Sprite>("Tiles/ai_tile");
+
+            Sprite loadedScored = Resources.Load<Sprite>("Tiles/selected_test@2x");
 
             if (loadedNormal != null)
             {
                 // Use hand-drawn sprites
                 s_spriteNormal    = loadedNormal;
-                s_spriteThick     = loadedNormal; // same base for thick variant
+                s_spriteThick     = loadedNormal;
                 s_spriteAI        = loadedAI ?? loadedNormal;
+                s_spriteScored    = loadedScored ?? loadedNormal;
 
                 // Primed states all use the primed sprite (code handles flash/pulse)
                 s_spriteGold      = loadedPrimed ?? loadedNormal;
@@ -889,7 +1442,7 @@ namespace WordDrop
                 s_spriteHeat3     = loadedPrimed ?? loadedNormal;
                 s_spriteWhiteThick= loadedNormal;
 
-                Debug.Log("[Tile] Loaded hand-drawn tile sprites from Resources/Tiles.");
+//                 Debug.Log("[Tile] Loaded hand-drawn tile sprites from Resources/Tiles.");
             }
             else
             {
@@ -903,7 +1456,7 @@ namespace WordDrop
                 s_spriteHeat3 = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border + 7);
                 s_spriteWhiteThick= TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, Color.white, border + 3);
                 s_spriteAI        = s_spriteNormal;
-                Debug.Log("[Tile] Fallback: procedural sprite cache built.");
+//                 Debug.Log("[Tile] Fallback: procedural sprite cache built.");
             }
 
             s_spriteCacheBuilt = true;
@@ -914,13 +1467,25 @@ namespace WordDrop
             if (_spriteRenderer == null) return;
             bool thick = _isHighlighted || _hasPrimedGlow;
 
-            // Use cached sprite if color matches a known state
+            // Use cached sprite if color matches a known state.
+            // Primed glow variants (magenta + danger red-orange) both use the
+            // primed sprite family — missing PRIMED_DANGER_GLOW here was the
+            // root cause of the white flash on fuse→1 / fuse→0 transitions.
             if (ColorsClose(borderColor, TILE_BORDER_NORMAL))
                 _spriteRenderer.sprite = thick ? s_spriteThick : s_spriteNormal;
-            else if (ColorsClose(borderColor, TILE_BORDER_GOLD) || ColorsClose(borderColor, PRIMED_GLOW))
+            else if (ColorsClose(borderColor, TILE_BORDER_GOLD)
+                  || ColorsClose(borderColor, PRIMED_GLOW)
+                  || ColorsClose(borderColor, PRIMED_DANGER_GLOW)
+                  || ColorsClose(borderColor, PRIMED_GOLD_GLOW))
                 _spriteRenderer.sprite = thick ? s_spriteGoldThick : s_spriteGold;
             else if (ColorsClose(borderColor, Color.white))
                 _spriteRenderer.sprite = s_spriteWhiteThick;
+            else if (_hasPrimedGlow)
+            {
+                // Any other color while primed — keep the primed sprite family,
+                // don't fall through to normal sprite (which causes the white flash).
+                _spriteRenderer.sprite = thick ? s_spriteGoldThick : s_spriteGold;
+            }
             else
             {
                 // Unknown color (player green / AI orange flash) — use SpriteRenderer tint instead of regenerating
@@ -1008,6 +1573,7 @@ namespace WordDrop
         private void PlayLandSound()
         {
             GameAudio.Instance?.PlayTileDrop();
+            HapticsManager.TileLand();
         }
 
         // ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ namespace WordDrop
     {
         // ── Constants ─────────────────────────────────────────────────────────────
 
-        private const int   HAND_SIZE           = PlayerHand.HAND_SIZE; // 5
+        private static int  HAND_SIZE            => PlayerHand.HAND_SIZE;
         private const float CARD_SIZE_FRACTION  = 0.85f;
 
         // Card visual colors
@@ -45,20 +45,27 @@ namespace WordDrop
 
         // ── Runtime state ─────────────────────────────────────────────────────────
 
-        private char[]           _hand          = new char[HAND_SIZE];
+        private char[]           _hand          = new char[PlayerHand.MAX_HAND_SIZE];
         private int              _selectedIndex = -1;
         private bool             _swapModeActive = false;
 
-        private GameObject[]     _cardObjects   = new GameObject[HAND_SIZE];
-        private SpriteRenderer[] _cardSRs       = new SpriteRenderer[HAND_SIZE];
-        private TMPro.TextMeshPro[] _cardTexts    = new TMPro.TextMeshPro[HAND_SIZE];
-        private TMPro.TextMeshPro[] _cardPtsTexts = new TMPro.TextMeshPro[HAND_SIZE];
-        private SpriteRenderer[]   _cardShadows  = new SpriteRenderer[HAND_SIZE];
+        private GameObject[]     _cardObjects   = new GameObject[PlayerHand.MAX_HAND_SIZE];
+        private SpriteRenderer[] _cardSRs       = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
+        private TMPro.TextMeshPro[] _cardTexts    = new TMPro.TextMeshPro[PlayerHand.MAX_HAND_SIZE];
+        private TMPro.TextMeshPro[] _cardPtsTexts = new TMPro.TextMeshPro[PlayerHand.MAX_HAND_SIZE];
+        private SpriteRenderer[]   _cardShadows  = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
 
         private Sprite           _spriteNormal;
         private Sprite           _spriteSelected;
         private Sprite           _spriteSwap;
         private Sprite           _spriteSwapSelected;
+        // Wild halo — multicolor glow sprite placed behind the wild card so the
+        // slot reads as "special" at a glance. One child GO per card, toggled
+        // on/off via RefreshCardVisual based on IsWildSlot.
+        private Sprite           _spriteWildHalo;
+        private Material         _wildHaloMaterial;
+        private GameObject[]     _cardHalos = new GameObject[PlayerHand.MAX_HAND_SIZE];
+        private SpriteRenderer[] _cardHaloSRs = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
 
         private Camera           _cam;
         private GridManager      _grid;
@@ -69,7 +76,9 @@ namespace WordDrop
         private GameObject       _nextTilePreview;
         private SpriteRenderer   _nextTileSR;
         private TMPro.TextMeshPro _nextTileLetter;
-        private TextMesh         _nextTileLabel;
+        private TMPro.TextMeshPro _nextTileLabel;
+        private GameObject       _nextTileSocket;
+        private GameObject       _controlTray;
 
         public bool IsInteractable { get; set; } = false;
 
@@ -101,7 +110,7 @@ namespace WordDrop
             BuildShuffleButton();
             BuildNextTilePreview();
             BuildTileBagButton();
-            Debug.Log("[HandManager] Awake complete — cards + shuffle + next-tile + tile-bag built, IsInteractable=false.");
+//             Debug.Log("[HandManager] Awake complete — cards + shuffle + next-tile + tile-bag built, IsInteractable=false.");
         }
 
         private void Start()
@@ -110,7 +119,7 @@ namespace WordDrop
             if (MatchController.Instance != null)
             {
                 MatchController.Instance.OnHandRefilled += OnHandRefilled;
-                Debug.Log("[HandManager] Subscribed to MatchController.OnHandRefilled");
+//                 Debug.Log("[HandManager] Subscribed to MatchController.OnHandRefilled");
             }
             else
             {
@@ -133,10 +142,124 @@ namespace WordDrop
             if (evt.Letters == null) return;
 
             SetHand(evt.Letters);
-            Debug.Log($"[HandManager] Hand updated from OnHandRefilled: {new string(evt.Letters)}");
+//             Debug.Log($"[HandManager] Hand updated from OnHandRefilled: {new string(evt.Letters)}");
         }
 
         // ── Public API ────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Repositions all hand UI elements (cards, shuffle, next, tile bag) for the current
+        /// grid layout. Call after GridManager.RebuildGrid() changes grid dimensions.
+        /// </summary>
+        public void RebuildHandLayout()
+        {
+            _cam = Camera.main;
+            _grid = GridManager.Instance;
+            if (_grid == null) return;
+
+            DestroyHandUI();
+            BuildCardSprites();
+            BuildControlTray();
+            BuildCardObjects();
+            BuildShuffleButton();
+            BuildNextTilePreview();
+            BuildTileBagButton();
+            RefreshAllCardVisuals();
+
+//             Debug.Log($"[HandManager] RebuildHandLayout — cardRowY={GetCardRowY():F2} shuffleY={_shuffleButtonY:F2}");
+        }
+
+        private void DestroyHandUI()
+        {
+            CancelInvoke(nameof(ResetShuffleButtonColor));
+
+            if (_shadowAnimCoroutine != null)
+            {
+                StopCoroutine(_shadowAnimCoroutine);
+                _shadowAnimCoroutine = null;
+            }
+
+            if (_shuffleFillCoroutine != null)
+            {
+                StopCoroutine(_shuffleFillCoroutine);
+                _shuffleFillCoroutine = null;
+            }
+
+            if (_controlTray != null)
+            {
+                Destroy(_controlTray);
+                _controlTray = null;
+            }
+
+            if (_shuffleFillSR != null)
+            {
+                Destroy(_shuffleFillSR.gameObject);
+                _shuffleFillSR = null;
+            }
+
+            if (_shuffleButton != null)
+            {
+                Destroy(_shuffleButton);
+                _shuffleButton = null;
+            }
+
+            if (_nextTileSocket != null)
+            {
+                Destroy(_nextTileSocket);
+                _nextTileSocket = null;
+            }
+
+            if (_nextTilePreview != null)
+            {
+                Destroy(_nextTilePreview);
+                _nextTilePreview = null;
+            }
+
+            if (_nextTileLabel != null)
+            {
+                Destroy(_nextTileLabel.gameObject);
+                _nextTileLabel = null;
+            }
+
+            if (_tileBagButton != null)
+            {
+                Destroy(_tileBagButton);
+                _tileBagButton = null;
+            }
+
+            if (_swapLabel != null)
+            {
+                Destroy(_swapLabel);
+                _swapLabel = null;
+            }
+
+            DismissSwapTilePopup();
+
+            for (int i = 0; i < _cardObjects.Length; i++)
+            {
+                if (_cardObjects[i] != null)
+                    Destroy(_cardObjects[i]);
+
+                if (_cardShadows[i] != null)
+                    Destroy(_cardShadows[i].gameObject);
+
+                _cardObjects[i] = null;
+                _cardSRs[i] = null;
+                _cardTexts[i] = null;
+                _cardPtsTexts[i] = null;
+                _cardShadows[i] = null;
+            }
+
+            _nextTileSR = null;
+            _nextTileLetter = null;
+            _shuffleButtonY = 0f;
+            _shuffleButtonX = 0f;
+            _shuffleButtonSize = 0f;
+            _tileBagX = 0f;
+            _tileBagY = 0f;
+            _tileBagSize = 0f;
+            _shuffleFilling = false;
+        }
 
         /// <summary>
         /// Updates the hand display from current MatchController PlayerHand data.
@@ -179,13 +302,17 @@ namespace WordDrop
 
             RefreshAllCardVisuals();
 
+            // Hide all cards before deal animation starts (prevents flash of cards in final position)
+            for (int i = 0; i < HAND_SIZE; i++)
+                if (_cardObjects[i] != null) _cardObjects[i].SetActive(false);
+
             // Deal cards in one at a time (Balatro style)
             StartCoroutine(DealCardsAnimation(() =>
             {
                 IsInteractable = true;
                 if (ColumnArrowManager.Instance != null)
                     ColumnArrowManager.Instance.ShowArrows(false); // No arrows until card selected
-                Debug.Log($"[HandManager] InitialiseHand complete — hand: {new string(_hand)}");
+//                 Debug.Log($"[HandManager] InitialiseHand complete — hand: {new string(_hand)}");
             }));
         }
 
@@ -275,7 +402,7 @@ namespace WordDrop
         {
             _swapModeActive = active;
             RefreshAllCardVisuals();
-            Debug.Log($"[HandManager] Swap mode: {active}");
+//             Debug.Log($"[HandManager] Swap mode: {active}");
         }
 
         // ── Input handling ────────────────────────────────────────────────────────
@@ -305,11 +432,84 @@ namespace WordDrop
         // _rewriteLabel removed — rewrite is now triggered by board long-press
 
         // ── Rewrite mode state ──────────────────────────────────────────
-        private bool _rewriteModeActive = false;
-        private int  _rewriteTargetCol = -1;
-        private int  _rewriteTargetRow = -1;
+        private const float REWRITE_TIMEOUT = 5f; // auto-cancel after 5s to prevent pause abuse
+        private bool  _rewriteModeActive = false;
+        private int   _rewriteTargetCol = -1;
+        private int   _rewriteTargetRow = -1;
+        private float _rewriteTimeoutTimer = 0f;
+
+        /// <summary>
+        /// Called after a rising row shifts the board up by 1.
+        /// Updates the rewrite target so it follows the selected tile.
+        /// </summary>
+        public void OnBoardShiftedUp()
+        {
+            if (_rewriteModeActive && _rewriteTargetRow >= 0)
+            {
+                // Clear highlight on old tile
+                Tile oldTile = _grid != null ? _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow) : null;
+                if (oldTile != null) { oldTile.Highlight(false); oldTile.ResetVisuals(); }
+
+                _rewriteTargetRow += 1;
+
+                // If shifted off the top, cancel rewrite
+                if (_rewriteTargetRow >= RulesEngine.ROWS)
+                {
+//                     Debug.Log("[HandManager] Rewrite target shifted off board — cancelling");
+                    CancelRewriteMode();
+                    return;
+                }
+
+                // Re-apply highlight to tile at new position
+                Tile newTile = _grid != null ? _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow) : null;
+                if (newTile != null)
+                {
+                    newTile.Highlight(true, REWRITE_HIGHLIGHT_COLOR);
+                    // Restart pulse on the new tile reference
+                    if (_rewritePulseCoroutine != null) StopCoroutine(_rewritePulseCoroutine);
+                    _rewritePulseCoroutine = StartCoroutine(RewritePulseCoroutine(newTile));
+                }
+                else
+                {
+                    // Tile disappeared during shift — cancel
+                    CancelRewriteMode();
+                    return;
+                }
+
+//                 Debug.Log($"[HandManager] Rewrite target shifted up → ({_rewriteTargetCol},{_rewriteTargetRow})");
+            }
+
+            // Also update board hold tracking if player is mid-long-press
+            if (_boardHoldCell.x >= 0 && _boardHoldCell.y >= 0)
+            {
+                _boardHoldCell = new Vector2Int(_boardHoldCell.x, _boardHoldCell.y + 1);
+                if (_boardHoldCell.y >= RulesEngine.ROWS)
+                {
+                    _boardHoldCell = new Vector2Int(-1, -1);
+                    _boardHoldTimer = 0f;
+                    _boardHoldTriggered = false;
+                }
+            }
+        }
+        public  bool IsRewriteModeActive => _rewriteModeActive;
         private int  _rewriteMatchRewriteCount = 0; // debug: total rewrites this match
         private static readonly Color REWRITE_HIGHLIGHT_COLOR = new Color(0.6f, 1.9f, 1.8f, 1f); // HDR teal — blooms on pulse
+
+        // ── Wild Tiles Phase C — per-resolution injection cap ───────────────────────
+        // Multiple injection triggers (wild-refill tile detonation + chain depth reward)
+        // can fire during one resolution pass. Only the first one lands.
+        private bool _wildInjectedThisResolution = false;
+
+        // Wall-clock time (unscaled) the wild BECAME VISIBLE in hand. Anchored by
+        // TickWildExpiry on the first frame HasWild is true (NOT when queued via
+        // TryInjectWildReward — the chain resolution + popup + refill delay can
+        // eat several seconds before the wild actually appears in a slot, which
+        // used to expire the wild almost immediately after it showed up).
+        private float _wildInjectedAt = -1f;
+        private const float WILD_EXPIRY_SECONDS = 20f; // generous — player needs time to plan a wild drop
+        private const int   WILD_EXPIRY_DROPS   = 3;
+        private bool  _wildExpiryPaused = false;
+        private float _wildExpiryPauseStarted = -1f;
 
         // ── Board long-press tracking for rewrite ──
         private Vector2Int _boardHoldCell = new Vector2Int(-1, -1);
@@ -328,6 +528,10 @@ namespace WordDrop
         private void Update()
         {
             if (_grid == null) return;
+
+            // Phase C: wild expiry. Fires on 3-drop count OR 20s playable-time elapsed,
+            // whichever comes first. Drop count is tracked in PlayerHand.DrawSlot.
+            TickWildExpiry();
 
             Vector3 screenPos = Vector3.zero;
             bool mouseDown = Input.GetMouseButtonDown(0);
@@ -352,8 +556,9 @@ namespace WordDrop
 
             UpdateSelectedCardShadow();
 
-            // Block ALL input when not interactable
-            if (!IsInteractable)
+            // Block ALL input when not interactable or during processing (rising rows, chain resolution)
+            if (!IsInteractable ||
+                (MatchController.Instance != null && MatchController.Instance.IsProcessing))
             {
                 if (DropPreview.Instance != null)
                     DropPreview.Instance.ClearPreview();
@@ -362,15 +567,26 @@ namespace WordDrop
                 return;
             }
 
-            // Board long-press for rewrite (runs in Idle only)
+            // Board long-press for rewrite (runs in Idle only, blocked during rising row)
+            bool risingRowActive = SurvivalManager.Instance != null && SurvivalManager.Instance.IsRisingRow;
             if (_boardHoldCell.x >= 0 && mouseHeld && !_boardHoldTriggered && !_rewriteModeActive
-                && _inputMode == InputMode.Idle)
+                && _inputMode == InputMode.Idle && !risingRowActive)
             {
                 _boardHoldTimer += Time.deltaTime;
                 if (_boardHoldTimer >= LONG_PRESS_TIME)
                 {
                     _boardHoldTriggered = true;
                     TryEnterRewriteMode(_boardHoldCell.x, _boardHoldCell.y);
+                }
+            }
+
+            // Rewrite mode timeout — auto-cancel to prevent indefinite pause
+            if (_rewriteModeActive)
+            {
+                _rewriteTimeoutTimer -= Time.deltaTime;
+                if (_rewriteTimeoutTimer <= 0f)
+                {
+                    CancelRewriteMode();
                 }
             }
 
@@ -395,9 +611,25 @@ namespace WordDrop
                     {
                         int rewriteTapped = GetCardIndexAtPosition(worldPos);
                         if (rewriteTapped >= 0)
+                        {
+                            // Tap hand card → Replace (existing rewrite)
                             TryExecuteRewrite(_rewriteTargetCol, _rewriteTargetRow, rewriteTapped);
+                        }
                         else
-                            CancelRewriteMode();
+                        {
+                            // Check if tapped any board tile → Board Swap (any two regular tiles)
+                            Vector2Int boardTap = _grid.WorldToCell(worldPos);
+                            if (boardTap.x >= 0 && boardTap.y >= 0
+                                && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow)
+                                && TryBoardSwap(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y))
+                            {
+                                // Swap succeeded — rewrite mode exits inside TryBoardSwap
+                            }
+                            else
+                            {
+                                CancelRewriteMode();
+                            }
+                        }
                         return;
                     }
 
@@ -443,21 +675,10 @@ namespace WordDrop
                         return;
                     }
 
-                    // Board area tapped — either drop (if card selected) or start rewrite hold
+                    // Tapping the board with a selected card no longer drops — drag only
+                    // Clear selection if player taps the board
                     if (_selectedIndex >= 0 && worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f)
-                    {
-                        int tapCol = _grid.WorldXToColumn(worldPos.x);
-                        bool tutColOk  = TutorialManager.AllowedColumn < 0    || tapCol == TutorialManager.AllowedColumn;
-                        bool tutCardOk = TutorialManager.AllowedCardIndex < 0 || _selectedIndex == TutorialManager.AllowedCardIndex;
-
-                        if (tapCol >= 0 && _grid.IsColumnAvailable(tapCol) && tutColOk && tutCardOk)
-                        {
-                            if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
-                                TutorialManager.Instance.HideArrowsOnDrop();
-                            DropSelectedLetterInColumn(tapCol);
-                            break;
-                        }
-                    }
+                        _selectedIndex = -1;
 
                     // Start rewrite hold tracking
                     Vector2Int boardCell = _grid.WorldToCell(worldPos);
@@ -476,10 +697,11 @@ namespace WordDrop
                 {
                     if (mouseUp)
                     {
-                        // Quick tap — select/deselect the card
-                        SelectCard(_touchCardIndex);
+                        // Quick tap — ignore. Drag-only mode.
+                        // No tap-to-select: cards must be dragged to the board.
                         _inputMode = InputMode.Idle;
                         _touchCardIndex = -1;
+                        _selectedIndex = -1;
                         return;
                     }
 
@@ -527,7 +749,7 @@ namespace WordDrop
                                         dragSR.sprite = _spriteSelected;
                                 }
 
-                                Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
+//                                 Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
                             }
                             else if (dx > dy * REORDER_LOCK_RATIO
                                      && !TutorialManager.BlockShuffleAndSwap)
@@ -538,10 +760,10 @@ namespace WordDrop
                                 _isDragging = true;
                                 RestoreAllCardSortOrder();
                                 BoostCardSortOrder(_touchCardIndex);
-                                GameAudio.Instance?.PlayTileSelect();
+                                GameAudio.Instance?.PlayButtonClick();
                                 _dragStartX = worldPos.x;
 
-                                Debug.Log($"[Input] Reordering: card={_touchCardIndex}");
+//                                 Debug.Log($"[Input] Reordering: card={_touchCardIndex}");
                             }
                         }
                     }
@@ -615,7 +837,6 @@ namespace WordDrop
                             if (col != _lastCarryCol)
                             {
                                 _lastCarryCol = col;
-                                GameAudio.Instance?.PlayLightTick();
                             }
                             if (DropPreview.Instance != null)
                                 DropPreview.Instance.UpdatePreview(letter, col);
@@ -646,7 +867,14 @@ namespace WordDrop
                         bool tutColOk  = TutorialManager.AllowedColumn < 0    || dropCol == TutorialManager.AllowedColumn;
                         bool tutCardOk = TutorialManager.AllowedCardIndex < 0 || _touchCardIndex == TutorialManager.AllowedCardIndex;
 
-                        if (dropCol >= 0 && overBoard && _touchCardIndex >= 0
+                        // Check if released over the tile bag → swap
+                        bool overBag = TryHandleTileBagButton(worldPos);
+                        if (overBag && _touchCardIndex >= 0 && !TutorialManager.BlockShuffleAndSwap)
+                        {
+                            // Dissolve the card into the bag, then deal replacement
+                            StartCoroutine(SwapViaBagDrop(_touchCardIndex));
+                        }
+                        else if (dropCol >= 0 && overBoard && _touchCardIndex >= 0
                             && _grid.IsColumnAvailable(dropCol)
                             && tutColOk && tutCardOk
                             && MatchController.Instance != null
@@ -713,7 +941,7 @@ namespace WordDrop
                                     dragSR.sprite = _spriteSelected;
                             }
 
-                            Debug.Log($"[Input] Reordering → CarryToBoard: card={cardIdx}");
+//                             Debug.Log($"[Input] Reordering → CarryToBoard: card={cardIdx}");
                             break;
                         }
 
@@ -741,6 +969,7 @@ namespace WordDrop
                 if (DropPreview.Instance != null)
                     DropPreview.Instance.ClearPreview();
                 SnapCardBack(_touchCardIndex);
+                _selectedIndex = -1; // Clear selection so tapping the board doesn't drop this card
             }
             else if (_inputMode == InputMode.Reordering)
             {
@@ -890,7 +1119,7 @@ namespace WordDrop
             int swapsLeft = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
             if (swapsLeft <= 0)
             {
-                Debug.Log("[HandManager] No swaps remaining.");
+//                 Debug.Log("[HandManager] No swaps remaining.");
                 return;
             }
 
@@ -911,7 +1140,7 @@ namespace WordDrop
                 GetCardRowY() + CARD_SELECT_RAISE * 1.8f + _cardSize * 0.7f,
                 Color.white);
 
-            Debug.Log($"[HandManager] Swap confirmation triggered for card {cardIndex} ({swapsLeft} swaps left)");
+//             Debug.Log($"[HandManager] Swap confirmation triggered for card {cardIndex} ({swapsLeft} swaps left)");
         }
 
         private GameObject CreateConfirmLabel(string text, float x, float y, Color color)
@@ -952,6 +1181,98 @@ namespace WordDrop
             }
         }
 
+        /// <summary>
+        /// Drag-to-bag swap: card dissolves with particles, then replacement deals in.
+        /// </summary>
+        private IEnumerator SwapViaBagDrop(int cardIndex)
+        {
+            if (TutorialManager.BlockShuffleAndSwap) yield break;
+            if (MatchController.Instance == null) yield break;
+            if (cardIndex < 0 || cardIndex >= HAND_SIZE) yield break;
+            if (_hand[cardIndex] == '\0') yield break;
+
+            // Preflight: check swap is actually possible before animating
+            if (!MatchController.Instance.IsMatchActive ||
+                MatchController.Instance.IsGameOver ||
+                MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN) <= 0)
+            {
+                SnapCardBack(cardIndex);
+                GameAudio.Instance?.PlayButtonClick();
+                yield break;
+            }
+
+            IsInteractable = false;
+
+            GameObject cardGO = _cardObjects[cardIndex];
+            if (cardGO == null) { IsInteractable = true; yield break; }
+
+            // Move card to bag position with a quick tween
+            Vector3 bagPos = new Vector3(_tileBagX, _tileBagY, -2f);
+            cardGO.transform.DOMove(bagPos, 0.12f).SetEase(DG.Tweening.Ease.InQuad);
+            yield return WaitCache.Get(0.10f);
+
+            // Dissolve with particles
+            GameParticles.Instance?.PlayDetonation(bagPos, 0);
+            GameAudio.Instance?.PlayPoofExplosion();
+            HapticsManager.Light();
+
+            // Shrink + fade
+            cardGO.transform.DOScale(Vector3.zero, 0.15f).SetEase(DG.Tweening.Ease.InBack);
+            SpriteRenderer cardSR = cardGO.GetComponent<SpriteRenderer>();
+            if (cardSR != null)
+            {
+                Color startCol = cardSR.color;
+                float fadeElapsed = 0f;
+                while (fadeElapsed < 0.15f)
+                {
+                    fadeElapsed += Time.deltaTime;
+                    float t = Mathf.Clamp01(fadeElapsed / 0.15f);
+                    cardSR.color = new Color(startCol.r, startCol.g, startCol.b, 1f - t);
+                    yield return null;
+                }
+            }
+            else
+            {
+                yield return WaitCache.Get(0.15f);
+            }
+
+            // Execute the actual swap in data
+            bool success = MatchController.Instance.UseSwap(cardIndex);
+            if (success)
+            {
+//                 Debug.Log($"[HandManager] SwapViaBagDrop: card {cardIndex} swapped");
+                RestoreAllCardSortOrder();
+                RefreshHandFromMatchController();
+
+                // Reset card visual for the new letter
+                if (_cardObjects[cardIndex] != null)
+                {
+                    _cardObjects[cardIndex].transform.localScale = Vector3.zero;
+                    if (cardSR != null) cardSR.color = Color.white;
+
+                    // Deal animation: pop in from zero
+                    Vector3 restPos = new Vector3(GetCardX(cardIndex), GetCardRowY(), -1f);
+                    _cardObjects[cardIndex].transform.position = restPos;
+                    _cardObjects[cardIndex].transform.DOScale(GetCardBaseScale(), 0.2f)
+                        .SetEase(DG.Tweening.Ease.OutBack, 2f);
+                    GameAudio.Instance?.PlayCardDeal();
+                }
+
+                RefreshAllCardVisuals();
+            }
+            else
+            {
+                // Swap failed — restore card fully
+                if (cardSR != null) cardSR.color = Color.white;
+                if (_cardObjects[cardIndex] != null)
+                    _cardObjects[cardIndex].transform.localScale = GetCardBaseScale();
+                SnapCardBack(cardIndex);
+            }
+
+            yield return WaitCache.Get(0.1f);
+            IsInteractable = true;
+        }
+
         private void ExecuteSwap(int cardIndex)
         {
             if (TutorialManager.BlockShuffleAndSwap) return;
@@ -974,7 +1295,7 @@ namespace WordDrop
             bool success = MatchController.Instance.UseSwap(cardIndex);
             if (success)
             {
-                Debug.Log($"[HandManager] Swap executed on card {cardIndex}");
+//                 Debug.Log($"[HandManager] Swap executed on card {cardIndex}");
                 RefreshHandFromMatchController();
                 RefreshAllCardVisuals();
             }
@@ -994,18 +1315,23 @@ namespace WordDrop
             int rewritesLeft = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
             if (rewritesLeft <= 0)
             {
-                Debug.Log("[HandManager] Rewrite: no rewrites remaining.");
+//                 Debug.Log("[HandManager] Rewrite: no rewrites remaining.");
                 return;
             }
 
             var cell = RulesEngine.Instance.GetCell(col, row);
             if (cell == null) return;
 
-            // Gold tiles cannot be rewritten — they're too valuable to discard
+            // Gold and stone tiles cannot be rewritten
             Tile existingTile = _grid.GetTile(col, row);
             if (existingTile != null && existingTile.IsGoldBonus)
             {
-                Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is gold — cannot rewrite.");
+//                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is gold — cannot rewrite.");
+                return;
+            }
+            if (cell.IsStone)
+            {
+//                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is stone — cannot rewrite.");
                 return;
             }
 
@@ -1013,7 +1339,7 @@ namespace WordDrop
                 .GetPrimedWordsContaining(new Vector2Int(col, row));
             if (primed != null && primed.Count > 0)
             {
-                Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is primed.");
+//                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is primed.");
                 return;
             }
 
@@ -1032,7 +1358,9 @@ namespace WordDrop
             _rewriteModeActive = true;
             _rewriteTargetCol = col;
             _rewriteTargetRow = row;
+            _rewriteTimeoutTimer = REWRITE_TIMEOUT;
             GameAudio.Instance?.PlayTileSelect();
+            HapticsManager.Strong(); // haptic feedback so player knows edit mode is active
 
             // Pulse the target tile
             Tile targetTile = _grid.GetTile(col, row);
@@ -1048,8 +1376,758 @@ namespace WordDrop
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(false);
 
-            Debug.Log($"[HandManager] Entered REWRITE mode: target ({col},{row}) " +
-                      $"letter='{cell.Letter}' — tap a hand card to replace it");
+//             Debug.Log($"[HandManager] Entered REWRITE mode: target ({col},{row}) " +
+                      // $"letter='{cell.Letter}' — tap a hand card to replace it");
+        }
+
+        private static bool IsAdjacent(int c1, int r1, int c2, int r2)
+        {
+            int dx = Mathf.Abs(c1 - c2);
+            int dy = Mathf.Abs(r1 - r2);
+            return (dx + dy) == 1; // orthogonal only
+        }
+
+        /// <summary>
+        /// Legal board swap: swap two adjacent non-primed tiles IF the result creates a valid word.
+        /// Costs 1 rewrite charge. Returns true if swap executed.
+        /// </summary>
+        /// <summary>
+        /// Board Swap: swap any two regular tiles on the board (no adjacency required,
+        /// no word requirement). Costs 1 edit charge. Cannot swap primed, gold, or stone tiles.
+        /// </summary>
+        private bool TryBoardSwap(int col1, int row1, int col2, int row2)
+        {
+            var rules = RulesEngine.Instance;
+            var mc = MatchController.Instance;
+            if (rules == null || mc == null) return false;
+
+            // Both tiles must exist
+            var cell1 = rules.GetCell(col1, row1);
+            var cell2 = rules.GetCell(col2, row2);
+            if (cell1 == null || cell2 == null) return false;
+
+            // Cannot swap special tiles
+            if (cell1.IsStone || cell2.IsStone) return false;
+            if (cell1.IsSwapRefill || cell1.IsEditRefill || cell1.IsWildRefill) return false;
+            if (cell2.IsSwapRefill || cell2.IsEditRefill || cell2.IsWildRefill) return false;
+            if (cell1.IsWild || cell2.IsWild) return false;
+
+            // Cannot swap gold tiles
+            Tile t1 = _grid.GetTile(col1, row1);
+            Tile t2 = _grid.GetTile(col2, row2);
+            if (t1 != null && t1.IsGoldBonus) return false;
+            if (t2 != null && t2.IsGoldBonus) return false;
+
+            // Cannot swap primed tiles
+            var reg = rules.PrimedRegistry;
+            if (reg != null)
+            {
+                if (reg.GetPrimedWordsContaining(new Vector2Int(col1, row1)).Count > 0) return false;
+                if (reg.GetPrimedWordsContaining(new Vector2Int(col2, row2)).Count > 0) return false;
+            }
+
+            // Must have edit charges
+            if (mc.GetRewritesRemaining(MatchController.PLAYER_HUMAN) <= 0)
+            {
+                GameAudio.Instance?.PlayButtonClick();
+                return false;
+            }
+
+            // Reject same-letter swaps — no-op waste of edit
+            char letter1 = cell1.Letter;
+            char letter2 = cell2.Letter;
+            if (char.ToUpper(letter1) == char.ToUpper(letter2))
+            {
+                GameAudio.Instance?.PlayButtonClick();
+                return false;
+            }
+
+            // Consume edit charge
+            mc.UseRewriteCharge(MatchController.PLAYER_HUMAN);
+
+            // Swap the letters in data
+            cell1.Letter = letter2;
+            cell2.Letter = letter1;
+
+            // Purge scored keys for both cells so new words can be detected
+            rules.PurgeScoredKeysForCells(new System.Collections.Generic.List<Vector2Int> {
+                new Vector2Int(col1, row1), new Vector2Int(col2, row2)
+            });
+
+            CancelRewriteMode();
+
+//             Debug.Log($"[HandManager] Board swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}'");
+
+            // Disable input and run the SAME resolution pipeline as a regular edit
+            IsInteractable = false;
+            _selectedIndex = -1;
+            if (ColumnArrowManager.Instance != null)
+                ColumnArrowManager.Instance.ShowArrows(false);
+
+            // Use BoardSwapTurnSequence which animates both tiles then runs full resolution
+            StartCoroutine(BoardSwapTurnSequence(col1, row1, letter2, col2, row2, letter1));
+            return true;
+        }
+
+        /// <summary>
+        /// Animates a board swap (dissolve both tiles, pop in with new letters)
+        /// then runs the full rewrite resolution pipeline for scoring/priming/detonation.
+        /// </summary>
+        private IEnumerator BoardSwapTurnSequence(int col1, int row1, char newLetter1, int col2, int row2, char newLetter2)
+        {
+            if (JamHint.Instance != null) JamHint.Instance.ClearHint();
+            if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
+            var rules = RulesEngine.Instance;
+            var grid = GridManager.Instance;
+
+            if (rules == null || grid == null)
+            {
+                IsInteractable = true;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                yield break;
+            }
+
+            // Animate both tiles — shake, swap letters, squish (same as edit)
+            Tile tile1 = grid.GetTile(col1, row1);
+            Tile tile2 = grid.GetTile(col2, row2);
+
+            float shakeDur = 0.2f;
+            float elapsed = 0f;
+            float cellSize = grid.CellSize;
+            float posJitter = cellSize * 0.08f;
+            float rotJitter = 10f;
+            Vector3 restPos1 = tile1 != null ? tile1.transform.position : Vector3.zero;
+            Vector3 restPos2 = tile2 != null ? tile2.transform.position : Vector3.zero;
+
+            GameAudio.Instance?.PlayShuffle();
+
+            // Phase 1: shake both
+            while (elapsed < shakeDur)
+            {
+                elapsed += Time.deltaTime;
+                if (tile1 != null)
+                {
+                    tile1.transform.position = restPos1 + new Vector3(
+                        Random.Range(-posJitter, posJitter), Random.Range(-posJitter, posJitter) * 0.5f, 0f);
+                    tile1.transform.localRotation = Quaternion.Euler(0f, 0f, Random.Range(-rotJitter, rotJitter));
+                }
+                if (tile2 != null)
+                {
+                    tile2.transform.position = restPos2 + new Vector3(
+                        Random.Range(-posJitter, posJitter), Random.Range(-posJitter, posJitter) * 0.5f, 0f);
+                    tile2.transform.localRotation = Quaternion.Euler(0f, 0f, Random.Range(-rotJitter, rotJitter));
+                }
+                yield return null;
+            }
+
+            // Phase 2: swap letters
+            if (tile1 != null) { tile1.SetLetter(newLetter1); tile1.transform.position = restPos1; tile1.transform.localRotation = Quaternion.identity; }
+            if (tile2 != null) { tile2.SetLetter(newLetter2); tile2.transform.position = restPos2; tile2.transform.localRotation = Quaternion.identity; }
+
+            // Phase 3: squish
+            if (tile1 != null) tile1.PlayLandingSquish();
+            if (tile2 != null) tile2.PlayLandingSquish();
+
+            // Now run the FULL rewrite resolution on the first cell
+            // BeginRewrite won't re-swap since we already swapped in TryBoardSwap
+            // Instead, use BeginSwapResolution with detected words from both positions
+            var words1 = rules.FindNewWords(col1, row1);
+            var words2 = rules.FindNewWords(col2, row2);
+            var allNew = new System.Collections.Generic.List<RulesWordMatch>();
+
+            if (words1 != null)
+                for (int i = 0; i < words1.Count; i++)
+                {
+                    string key = words1[i].Word + "|" + words1[i].CellKey;
+                    if (!rules.IsScoredKey(key)) allNew.Add(words1[i]);
+                }
+            if (words2 != null)
+                for (int i = 0; i < words2.Count; i++)
+                {
+                    string key = words2[i].Word + "|" + words2[i].CellKey;
+                    if (!rules.IsScoredKey(key))
+                    {
+                        bool dup = false;
+                        for (int j = 0; j < allNew.Count; j++)
+                            if (allNew[j].CellKey == words2[i].CellKey) { dup = true; break; }
+                        if (!dup) allNew.Add(words2[i]);
+                    }
+                }
+
+            if (allNew.Count > 0)
+            {
+                // Score, prime, and show visuals for each word — same as RewriteTurnSequence
+                var registry = rules.PrimedRegistry;
+                int globalTurn = rules.GlobalTurn;
+                int playerIdx = MatchController.PLAYER_HUMAN;
+                var justPrimedIds = new HashSet<int>();
+
+                for (int i = 0; i < allNew.Count; i++)
+                {
+                    var match = allNew[i];
+                    match.Score = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                    rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
+
+                    int fuse = rules.GetFuseLengthPublic(match.Word.Length);
+                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score);
+                    justPrimedIds.Add(primedId);
+
+                    // Visual: primed glow + particles
+                    var scoredTiles = new System.Collections.Generic.List<Tile>();
+                    if (match.Cells != null)
+                    {
+                        for (int c = 0; c < match.Cells.Count; c++)
+                        {
+                            Tile t = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
+                            if (t != null)
+                            {
+                                t.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse, maxAge: match.Word.Length <= 3 ? 25f : match.Word.Length == 4 ? 30f : match.Word.Length == 5 ? 38f : 45f);
+                                GameParticles.Instance?.PlayPrimed(t.transform.position);
+                                scoredTiles.Add(t);
+                            }
+                        }
+                    }
+
+                    // Word scored FX + popup
+                    if (WordDropFX.Instance != null)
+                        WordDropFX.Instance.PlayWordScored(scoredTiles, new Color(0.9f, 0.2f, 0.8f), i);
+                    HapticsManager.Light();
+
+                    if (BonusPopup.Instance != null && scoredTiles.Count > 0)
+                    {
+                        Vector3 center = Vector3.zero;
+                        for (int c = 0; c < scoredTiles.Count; c++)
+                            if (scoredTiles[c] != null) center += scoredTiles[c].transform.position;
+                        center /= Mathf.Max(1, scoredTiles.Count);
+                        BonusPopup.Instance.ShowWordScore(match.Word, match.Score, center);
+                    }
+
+                    // Survival rewrite meter
+                    if (MatchController.Instance != null)
+                        MatchController.Instance.SurvivalWordScored();
+                }
+                GameAudio.Instance?.PlayTilePrimed();
+
+                // Global fuse reset: sync all existing primed words to the new
+                // fuse timeline, same as BeginDrop/BeginRewrite paths do via
+                // DoScoreAndPrime. Without this the board-swap path leaves
+                // pre-existing primes on their original, stale timers.
+                rules.ResetExistingPrimedWordsExternal(justPrimedIds);
+
+                // Swaps intentionally do NOT count as a move (Balatro-discard
+                // analog — no hand card consumed, pure board reshuffle).
+                // They DO contribute score (CurrentStageScore auto-derives
+                // from PlayerScore so swap points count automatically).
+                // Trigger the clear check in case this swap crossed target.
+                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                    SurvivalManager.Instance.CheckStageClear();
+
+                yield return WaitCache.Get(0.3f);
+
+                // Check for detonation triggers
+                bool triggeredPrimed = false;
+                for (int i = 0; i < allNew.Count && !triggeredPrimed; i++)
+                {
+                    if (allNew[i].Cells == null) continue;
+                    for (int c = 0; c < allNew[i].Cells.Count; c++)
+                    {
+                        var overlapping = registry.GetPrimedWordsContaining(allNew[i].Cells[c]);
+                        if (overlapping != null)
+                            for (int p = 0; p < overlapping.Count; p++)
+                                if (!justPrimedIds.Contains(overlapping[p].Id))
+                                { triggeredPrimed = true; break; }
+                        if (triggeredPrimed) break;
+
+                        if (RulesEngine.AdjacencyTriggerEnabled)
+                        {
+                            var adj = registry.GetPrimedWordsAdjacentTo(allNew[i].Cells[c]);
+                            if (adj != null)
+                                for (int p = 0; p < adj.Count; p++)
+                                    if (!justPrimedIds.Contains(adj[p].Id))
+                                    { triggeredPrimed = true; break; }
+                        }
+                        if (triggeredPrimed) break;
+                    }
+                }
+
+//                 Debug.Log($"[BoardSwap] triggeredPrimed={triggeredPrimed}, allNew={allNew.Count}, justPrimed={justPrimedIds.Count}, registry={registry.Count}");
+
+                // Apply base scores for the swap-created words
+                int swapBaseScore = 0;
+                for (int i = 0; i < allNew.Count; i++)
+                    swapBaseScore += allNew[i].Score;
+                if (swapBaseScore > 0 && ScoreManager.Instance != null)
+                    ScoreManager.Instance.AddScore(swapBaseScore, MatchController.PLAYER_HUMAN);
+
+                // If detonation triggered, run full step resolution
+                if (triggeredPrimed)
+                {
+                    rules.BeginSwapResolution(allNew, MatchController.PLAYER_HUMAN, justPrimedIds);
+
+                    bool resolving = true;
+                    int swapScore = 0;
+
+                    while (resolving)
+                    {
+                        var step = rules.NextStep();
+                        if (step == null) { resolving = false; break; }
+
+                        switch (step.Phase)
+                        {
+                            case RulesEngine.ResolutionPhase.WordsDetected:
+                                break;
+                            case RulesEngine.ResolutionPhase.WordsScored:
+                                if (step.ScoredWords != null && step.ScoredWords.Count > 0)
+                                {
+                                    HapticsManager.Light();
+                                    GameAudio.Instance?.PlayTilePrimed();
+                                }
+                                break;
+
+                            case RulesEngine.ResolutionPhase.TriggersFound:
+                                CacheBurstTriggers(step);
+                                yield return WaitCache.Get(0.05f);
+                                break;
+
+                            case RulesEngine.ResolutionPhase.Exploding:
+                            {
+                                if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
+                                {
+                                    var dyingTiles = new System.Collections.Generic.List<Tile>();
+                                    foreach (var c in step.ExplodedCells)
+                                    {
+                                        Tile t = grid.GetTile(c.x, c.y);
+                                        if (t != null) dyingTiles.Add(t);
+                                    }
+
+                                    HapticsManager.Strong();
+
+                                    // Tiered explosion (handles sound + visuals)
+                                    if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
+                                    {
+                                        if (step.ChainDepth >= 2)
+                                            yield return StartCoroutine(WordDropFX.HitStop(0.04f));
+                                        // Flash fires AFTER hitstop, immediately before
+                                        // PlayExplosion, so timeScale=0 doesn't freeze the
+                                        // tween during the pause and the flash plays in sync
+                                        // with the actual tile-dissolve animation.
+                                        FirePerWordBurst();
+                                        FireTileFlashBoxes(dyingTiles);
+                                        int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
+                                        yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
+                                    }
+                                    grid.RemoveTiles(step.ExplodedCells);
+
+                                    if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                                        SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
+
+                                    if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dyingTiles.Count > 0)
+                                    {
+                                        Vector3 center = Vector3.zero;
+                                        foreach (var t in dyingTiles)
+                                            if (t != null) center += t.transform.position;
+                                        center /= Mathf.Max(1, dyingTiles.Count);
+                                        BonusPopup.Instance.ShowDetonation("", step.DetonationBonus, center, step.ChainDepth);
+                                    }
+                                }
+                                swapScore = step.TotalScore;
+                                break;
+                            }
+
+                            case RulesEngine.ResolutionPhase.GravityApplied:
+                                yield return StartCoroutine(grid.ApplyGravity());
+                                yield return WaitCache.Get(0.1f);
+                                break;
+
+                            case RulesEngine.ResolutionPhase.Complete:
+                                resolving = false;
+                                rules.FinalizeDrop();
+                                grid.SyncToRulesState(rules);
+                                break;
+
+                            default:
+                                resolving = false;
+                                break;
+                        }
+                    }
+
+                    if (swapScore > 0 && ScoreManager.Instance != null)
+                        ScoreManager.Instance.AddScore(swapScore, MatchController.PLAYER_HUMAN);
+
+                    if (MatchController.Instance != null)
+                    {
+                        MatchController.Instance.RefundRewriteCharge(MatchController.PLAYER_HUMAN);
+//                         Debug.Log("[BoardSwap] Detonation → edit refunded");
+                    }
+                }
+            }
+
+            // Finalize — even if no detonation, sync state
+            if (rules != null)
+            {
+                rules.FinalizeDrop();
+                if (grid != null) grid.SyncToRulesState(rules);
+            }
+
+            IsInteractable = true;
+            if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+        }
+
+        private bool TryLegalSwap(int col1, int row1, int col2, int row2)
+        {
+            var rules = RulesEngine.Instance;
+            var mc = MatchController.Instance;
+            if (rules == null || mc == null) return false;
+
+            // Validate both tiles exist and aren't primed/stone/gold/wild
+            var cell1 = rules.GetCell(col1, row1);
+            var cell2 = rules.GetCell(col2, row2);
+            if (cell1 == null || cell2 == null) return false;
+            if (cell1.IsStone || cell2.IsStone) return false;
+            if (cell1.IsWild || cell2.IsWild) return false;
+
+            // Gold tiles can't be swapped
+            Tile t1Check = _grid.GetTile(col1, row1);
+            Tile t2Check = _grid.GetTile(col2, row2);
+            if (t1Check != null && t1Check.IsGoldBonus) return false;
+            if (t2Check != null && t2Check.IsGoldBonus) return false;
+
+            var reg = rules.PrimedRegistry;
+            if (reg != null)
+            {
+                if (reg.GetPrimedWordsContaining(new Vector2Int(col1, row1)).Count > 0) return false;
+                if (reg.GetPrimedWordsContaining(new Vector2Int(col2, row2)).Count > 0) return false;
+            }
+
+            // Temporarily swap in rules engine
+            char letter1 = cell1.Letter;
+            char letter2 = cell2.Letter;
+            cell1.Letter = letter2;
+            cell2.Letter = letter1;
+
+            // Check if the swap creates any new valid word
+            var words1 = rules.FindNewWords(col1, row1);
+            var words2 = rules.FindNewWords(col2, row2);
+
+            bool createsWord = false;
+            if (words1 != null)
+                for (int i = 0; i < words1.Count; i++)
+                {
+                    string key = words1[i].Word + "|" + words1[i].CellKey;
+                    if (!rules.IsScoredKey(key)) { createsWord = true; break; }
+                }
+            if (!createsWord && words2 != null)
+                for (int i = 0; i < words2.Count; i++)
+                {
+                    string key = words2[i].Word + "|" + words2[i].CellKey;
+                    if (!rules.IsScoredKey(key)) { createsWord = true; break; }
+                }
+
+            if (!createsWord)
+            {
+                // Swap doesn't create a word — revert
+                cell1.Letter = letter1;
+                cell2.Letter = letter2;
+//                 Debug.Log($"[HandManager] Legal swap ({col1},{row1})↔({col2},{row2}): no valid word — rejected");
+                GameAudio.Instance?.PlayButtonClick(); // feedback: "nope"
+                return false;
+            }
+
+            // Swap creates a word! Commit it.
+            // Update cell positions
+            cell1.Col = col1; cell1.Row = row1;
+            cell2.Col = col2; cell2.Row = row2;
+
+            // Consume rewrite charge
+            mc.UseRewriteCharge(MatchController.PLAYER_HUMAN);
+
+            // Update visuals
+            if (_grid != null)
+            {
+                Tile t1 = _grid.GetTile(col1, row1);
+                Tile t2 = _grid.GetTile(col2, row2);
+                if (t1 != null) t1.SetLetter(letter2);
+                if (t2 != null) t2.SetLetter(letter1);
+
+                // Quick swap animation
+                if (t1 != null) t1.PlayLandingSquish();
+                if (t2 != null) t2.PlayLandingSquish();
+            }
+
+            CancelRewriteMode();
+            GameAudio.Instance?.PlayTilePrimed(); // satisfying feedback
+
+//             Debug.Log($"[HandManager] Legal swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}' — word created!");
+
+            // Run resolution from the swap (words will be detected, primed, possibly detonated)
+            StartCoroutine(SwapResolutionSequence(col1, row1, col2, row2));
+            return true;
+        }
+
+        private System.Collections.IEnumerator SwapResolutionSequence(int col1, int row1, int col2, int row2)
+        {
+            if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+            if (JamHint.Instance != null) JamHint.Instance.ClearHint();
+
+            var rules = RulesEngine.Instance;
+            var grid = GridManager.Instance;
+            if (rules == null || grid == null)
+            {
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                yield break;
+            }
+
+            int playerIdx = MatchController.PLAYER_HUMAN;
+
+            // Find new words at both swap positions
+            var words1 = rules.FindNewWords(col1, row1);
+            var words2 = rules.FindNewWords(col2, row2);
+            var allNew = new List<RulesWordMatch>();
+
+            // Collect genuinely new words (not already scored)
+            if (words1 != null)
+                for (int i = 0; i < words1.Count; i++)
+                {
+                    string key = words1[i].Word + "|" + words1[i].CellKey;
+                    if (!rules.IsScoredKey(key)) allNew.Add(words1[i]);
+                }
+            if (words2 != null)
+                for (int i = 0; i < words2.Count; i++)
+                {
+                    string key = words2[i].Word + "|" + words2[i].CellKey;
+                    if (!rules.IsScoredKey(key))
+                    {
+                        // Avoid duplicates
+                        bool dup = false;
+                        for (int j = 0; j < allNew.Count; j++)
+                            if (allNew[j].CellKey == words2[i].CellKey) { dup = true; break; }
+                        if (!dup) allNew.Add(words2[i]);
+                    }
+                }
+
+            // Score and prime new words — attributed to HUMAN player
+            bool triggeredPrimed = false;
+            var justPrimedIds = new HashSet<int>();
+            if (allNew.Count > 0)
+            {
+                var registry = rules.PrimedRegistry;
+                int globalTurn = rules.GlobalTurn;
+
+                for (int i = 0; i < allNew.Count; i++)
+                {
+                    var match = allNew[i];
+                    match.Score = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                    rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
+
+                    // Check if this new word overlaps or is adjacent to existing primed words → trigger
+                    if (registry != null && match.Cells != null)
+                    {
+                        for (int c = 0; c < match.Cells.Count && !triggeredPrimed; c++)
+                        {
+                            var overlapping = registry.GetPrimedWordsContaining(match.Cells[c]);
+                            if (overlapping != null && overlapping.Count > 0)
+                            {
+                                triggeredPrimed = true;
+                                break;
+                            }
+
+                            if (RulesEngine.AdjacencyTriggerEnabled)
+                            {
+                                var adjacent = registry.GetPrimedWordsAdjacentTo(match.Cells[c]);
+                                if (adjacent != null && adjacent.Count > 0)
+                                {
+                                    triggeredPrimed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Prime the word (human-owned)
+                    int fuse = rules.GetFuseLengthPublic(match.Word.Length);
+                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score);
+                    justPrimedIds.Add(primedId);
+
+                    // Visual: apply primed glow
+                    if (match.Cells != null)
+                    {
+                        for (int c = 0; c < match.Cells.Count; c++)
+                        {
+                            Tile tile = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
+                            if (tile != null)
+                            {
+                                tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+                                GameParticles.Instance?.PlayPrimed(tile.transform.position);
+                            }
+                        }
+                    }
+
+                    // Score popup
+                    if (BonusPopup.Instance != null && match.Cells != null && match.Cells.Count > 0)
+                    {
+                        Vector3 center = Vector3.zero;
+                        for (int c = 0; c < match.Cells.Count; c++)
+                        {
+                            Tile t = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
+                            if (t != null) center += t.transform.position;
+                        }
+                        center /= Mathf.Max(1, match.Cells.Count);
+                        BonusPopup.Instance.ShowWordScore(match.Word, match.Score, center);
+                    }
+                }
+                GameAudio.Instance?.PlayTilePrimed();
+            }
+
+            // If the swap created words that trigger primed words, run full
+            // detonation resolution via RulesEngine's step system.
+            // This is the fix for Codex audit #10: swaps must detonate, not just prime.
+            if (triggeredPrimed && allNew.Count > 0)
+            {
+//                 Debug.Log("[SwapResolution] Swap triggered primed word — running full resolution");
+
+                // Feed swap words into RulesEngine for resolution.
+                // Use BeginRewrite-style init since the tile is already on the board.
+                // We pick the first swap cell as the "drop" origin.
+                rules.BeginSwapResolution(allNew, playerIdx, justPrimedIds);
+
+                bool resolving = true;
+                int swapScore = 0;
+
+                while (resolving)
+                {
+                    var step = rules.NextStep();
+                    if (step == null) { resolving = false; break; }
+
+                    switch (step.Phase)
+                    {
+                        case RulesEngine.ResolutionPhase.WordsDetected:
+                            break;
+                        case RulesEngine.ResolutionPhase.WordsScored:
+                            // Play word scored feedback for chain words found after gravity
+                            if (step.ScoredWords != null && step.ScoredWords.Count > 0)
+                            {
+                                HapticsManager.Light();
+                                GameAudio.Instance?.PlayTilePrimed();
+                            }
+                            break;
+
+                        case RulesEngine.ResolutionPhase.TriggersFound:
+                        {
+                            if (step.Triggers != null)
+                            {
+                                foreach (var trig in step.Triggers)
+                                {
+                                    var pw = rules.PrimedRegistry != null ? rules.PrimedRegistry.GetById(trig.PrimedWordId) : null;
+                                    int currentTurn = rules.GlobalTurn;
+                                    int heatLevel = pw != null ? Mathf.Min(Mathf.Max(0, currentTurn - pw.PrimedOnTurn), RulesEngine.HEAT_FUSE_MAX_BONUS) : 0;
+                                    int fuse = pw != null ? Mathf.Max(0, pw.ExpiresOnTurn - currentTurn) : 0;
+                                    bool isGold = pw != null && pw.IsGold;
+                                    Color glowColor = isGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+                                    foreach (var c in trig.TriggeredCells)
+                                    {
+                                        Tile t = grid.GetTile(c.x, c.y);
+                                        if (t != null)
+                                            t.SetPrimedGlow(glowColor, playFlash: true, heatLevel: heatLevel, fuseRemaining: fuse, isGold: isGold);
+                                    }
+                                }
+                            }
+                            CacheBurstTriggers(step);
+                            yield return WaitCache.Get(0.05f);
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.Exploding:
+                        {
+                            if (ChainCounter.Instance != null)
+                                ChainCounter.Instance.OnDetonation(step.ChainDepth);
+
+                            if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
+                            {
+                                var dyingTiles = new System.Collections.Generic.List<Tile>();
+                                foreach (var c in step.ExplodedCells)
+                                {
+                                    Tile t = grid.GetTile(c.x, c.y);
+                                    if (t != null) dyingTiles.Add(t);
+                                }
+
+                                // Haptic + hitstop
+                                HapticsManager.Strong();
+                                if (dyingTiles.Count > 0)
+                                {
+                                    float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
+                                    yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                                }
+
+                                // Flash after hitstop so timeScale=0 doesn't freeze its tween.
+                                FirePerWordBurst();
+                                FireTileFlashBoxes(dyingTiles);
+                                if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
+                                    yield return WordDropFX.Instance.PlayExplosion(dyingTiles, 0);
+                                grid.RemoveTiles(step.ExplodedCells);
+
+                                // Notify post-clear boost
+                                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                                    && step.ExplodedCells != null)
+                                    SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
+
+                                // Show detonation score
+                                if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dyingTiles.Count > 0)
+                                {
+                                    Vector3 center = Vector3.zero;
+                                    foreach (var t in dyingTiles)
+                                        if (t != null) center += t.transform.position;
+                                    center /= Mathf.Max(1, dyingTiles.Count);
+                                    BonusPopup.Instance.Show($"+{step.DetonationBonus}", new Color(1f, 0.5f, 0.1f), center);
+                                }
+
+//                                 Debug.Log($"[SwapResolution] Exploded {step.ExplodedCells.Count} tiles, bonus={step.DetonationBonus}");
+                            }
+                            swapScore = step.TotalScore; // cumulative — just take the latest
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.GravityApplied:
+                        {
+                            yield return StartCoroutine(grid.ApplyGravity());
+                            yield return WaitCache.Get(0.1f);
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.Complete:
+                        {
+                            if (ChainCounter.Instance != null)
+                                ChainCounter.Instance.OnChainComplete();
+                            resolving = false;
+                            rules.FinalizeDrop();
+                            grid.SyncToRulesState(rules);
+                            break;
+                        }
+
+                        default:
+                            resolving = false;
+                            break;
+                    }
+                }
+
+                // Refund rewrite on detonation
+                if (MatchController.Instance != null)
+                {
+                    MatchController.Instance.RefundRewriteCharge(playerIdx);
+//                     Debug.Log("[SwapResolution] Swap detonation → rewrite refunded");
+                }
+
+                // Update score
+                if (swapScore > 0 && ScoreManager.Instance != null)
+                    ScoreManager.Instance.AddScore(swapScore, playerIdx);
+            }
+            else
+            {
+                yield return WaitCache.Get(0.3f);
+            }
+
+            IsInteractable = true;
+            if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
         }
 
         private void CancelRewriteMode()
@@ -1069,11 +2147,275 @@ namespace WordDrop
             _rewriteModeActive = false;
             _rewriteTargetCol = -1;
             _rewriteTargetRow = -1;
-            Debug.Log("[HandManager] Rewrite mode cancelled.");
+//             Debug.Log("[HandManager] Rewrite mode cancelled.");
         }
 
         private static readonly Color REWRITE_LOW  = new Color(0.85f, 0.95f, 0.95f, 1f); // subtle teal tint
         private static readonly Color REWRITE_HIGH = new Color(0.6f, 1.9f, 1.8f, 1f);   // HDR teal — bloom peak
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Big Burst Flash — per-word wall-of-light on detonation
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        // step.Triggers is populated in TriggersFound and null'd by the time
+        // Exploding fires — but we want the flash to land WITH the actual explosion,
+        // not during the pre-anticipation. Cache here, then fire in Exploding.
+        private List<PrimedTriggeredEvent>       _pendingBurstTriggers;
+        private List<RulesWordMatch> _pendingBurstTriggerWords;
+        private int  _pendingBurstChainDepth;
+        private int  _pendingBurstLongestWord;
+
+        /// <summary>
+        /// Fires a TileFlashBox under each dying tile. Single coin flip PER
+        /// DETONATION — either the whole cluster lights up, or none does. Keeps
+        /// the effect as a moment-to-moment surprise rather than a uniform overlay.
+        /// Tune TILE_FLASH_BOX_CHANCE to taste.
+        /// </summary>
+        private const float TILE_FLASH_BOX_CHANCE = 0.6f; // 60% of detonations show boxes
+        private void FireTileFlashBoxes(IList<Tile> dying)
+        {
+            if (TileFlashBox.Instance == null || _grid == null || dying == null) return;
+            if (dying.Count == 0) return;
+
+            // One roll for the entire detonation — all-or-nothing variety.
+            if (Random.value >= TILE_FLASH_BOX_CHANCE) return;
+
+            float cellSize = _grid.CellSize;
+            for (int i = 0; i < dying.Count; i++)
+            {
+                Tile t = dying[i];
+                if (t == null) continue;
+                TileFlashBox.Instance.Play(t.transform.position, cellSize);
+            }
+        }
+
+        private void CacheBurstTriggers(RulesEngine.StepResult step)
+        {
+            if (step == null || step.Triggers == null || step.Triggers.Count == 0)
+            {
+                _pendingBurstTriggers     = null;
+                _pendingBurstTriggerWords = null;
+                return;
+            }
+            _pendingBurstTriggers     = new List<PrimedTriggeredEvent>(step.Triggers);
+            _pendingBurstTriggerWords = step.TriggerWords != null
+                ? new List<RulesWordMatch>(step.TriggerWords) : null;
+            _pendingBurstChainDepth  = step.ChainDepth;
+            _pendingBurstLongestWord = step.LongestWordLength;
+        }
+
+        /// <summary>
+        /// Fires one BigBurstFlash per triggered primed word, using the cached
+        /// triggers captured during TriggersFound. Called from every Exploding
+        /// phase handler so the flash lands in sync with the actual explosion.
+        ///
+        /// Gated to BIG moments so it stays a rare "whoa" beat:
+        ///   - chain depth >= 2 (cascading detonation)
+        ///   - OR longest primed word >= 6 letters
+        ///   - OR 3+ primed words in a single cluster
+        /// All other (small solo) detonations fall back to the existing flipbook +
+        /// particle stack without the screen-wide flash.
+        /// </summary>
+        private void FirePerWordBurst()
+        {
+            if (BigBurstFlash.Instance == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
+            if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
+            if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;
+
+            // Loosened gate — chainDepth >= 1 means "this is a chain continuation"
+            // (the 2nd+ detonation in a chain reaction), so any chain reaction fires
+            // the sweep on its continuation step. Word/cluster thresholds dropped
+            // so big first detonations also qualify without being freakishly rare.
+            bool bigMoment = _pendingBurstChainDepth >= 1
+                          || _pendingBurstLongestWord >= 5
+                          || _pendingBurstTriggers.Count >= 2;
+            Debug.Log($"[BigBurst] bigMoment={bigMoment} — chainDepth={_pendingBurstChainDepth} " +
+                      $"longestWord={_pendingBurstLongestWord} triggers={_pendingBurstTriggers.Count}");
+            if (!bigMoment)
+            {
+                // Small detonation — no screen-wide flash. Clear cache and bail so
+                // we don't leak stale triggers into the next big moment.
+                _pendingBurstTriggers     = null;
+                _pendingBurstTriggerWords = null;
+                return;
+            }
+
+            Color burstTint = (_pendingBurstChainDepth >= 2 && _pendingBurstLongestWord >= 6)
+                ? new Color(1.8f, 1.4f, 0.7f, 1f)   // HDR warm gold — big + skilled
+                : new Color(1.6f, 1.6f, 1.6f, 1f);  // HDR white
+
+            foreach (var trig in _pendingBurstTriggers)
+            {
+                if (trig.TriggeredCells == null || trig.TriggeredCells.Count == 0) continue;
+
+                int minCol = int.MaxValue, maxCol = int.MinValue;
+                int minRow = int.MaxValue, maxRow = int.MinValue;
+                Vector3 wordCenter = Vector3.zero;
+                int tileCount = 0;
+                foreach (var cell in trig.TriggeredCells)
+                {
+                    if (cell.x < minCol) minCol = cell.x;
+                    if (cell.x > maxCol) maxCol = cell.x;
+                    if (cell.y < minRow) minRow = cell.y;
+                    if (cell.y > maxRow) maxRow = cell.y;
+                    Tile wt = _grid.GetTile(cell.x, cell.y);
+                    if (wt != null) { wordCenter += wt.transform.position; tileCount++; }
+                }
+                if (tileCount == 0) continue;
+                wordCenter /= tileCount;
+
+                bool vertical = (maxCol - minCol) == 0 && (maxRow - minRow) > 0;
+                int wordLen = vertical ? (maxRow - minRow + 1) : (maxCol - minCol + 1);
+
+                // Flash spans the full viewport along the word's axis — extends past
+                // the screen edges so the impact feels unbounded.
+                // Horizontal word → flash covers the full screen WIDTH.
+                // Vertical word   → flash covers the full screen HEIGHT.
+                Camera cam = _cam != null ? _cam : Camera.main;
+                float halfH = cam != null ? cam.orthographicSize : 10f;
+                float halfW = halfH * ((float)Screen.width / Screen.height);
+                float targetLength = (vertical ? halfH : halfW) * 2.4f; // 2x = screen edge; 2.4x bleeds past
+
+                // Thickness spans just a bit more than one tile row (cell + bleed) so
+                // the blast reads as a narrow beam through the word, not a fat slab.
+                float thickness = _grid.CellSize * 1.4f;
+                BigBurstFlash.Instance.Play(wordCenter, targetLength, thickness, vertical, burstTint);
+
+                // Radial burst accent at the word's center — "the star at the center
+                // of the explosion" that BigBurstFlash radiates from. Size matches
+                // ~3 cells so it reads as a punchy point, not another wide sweep.
+                if (RadialBurst.Instance != null)
+                    RadialBurst.Instance.Play(wordCenter, _grid.CellSize * 3.0f, burstTint);
+
+                // Scatter flare_star sparkles along the full blast line — matches
+                // the Candy Crush look where stars are scattered across the entire
+                // flash, not just the detonation cells.
+                if (GameParticles.Instance != null)
+                {
+                    Vector3 lineStart, lineEnd;
+                    if (vertical)
+                    {
+                        lineStart = new Vector3(wordCenter.x, wordCenter.y - halfH * 1.1f, wordCenter.z);
+                        lineEnd   = new Vector3(wordCenter.x, wordCenter.y + halfH * 1.1f, wordCenter.z);
+                    }
+                    else
+                    {
+                        lineStart = new Vector3(wordCenter.x - halfW * 1.1f, wordCenter.y, wordCenter.z);
+                        lineEnd   = new Vector3(wordCenter.x + halfW * 1.1f, wordCenter.y, wordCenter.z);
+                    }
+                    // Sparkle count scales lightly with word length so longer words
+                    // get proportionally more stars without flooding the screen.
+                    int sparkleCount = Mathf.Clamp(14 + wordLen * 2, 14, 26);
+                    GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, sparkleCount);
+                }
+            }
+            // Second pass: the TRIGGER words themselves (the new words the player
+            // just formed that ignited the primed cluster). Each gets its own blast
+            // so the player's own word lights up too, not only the primed casualties.
+            if (_pendingBurstTriggerWords != null)
+            {
+                foreach (var tw in _pendingBurstTriggerWords)
+                {
+                    if (tw == null || tw.Cells == null || tw.Cells.Count == 0) continue;
+
+                    int minCol = int.MaxValue, maxCol = int.MinValue;
+                    int minRow = int.MaxValue, maxRow = int.MinValue;
+                    Vector3 twCenter = Vector3.zero;
+                    int twTileCount = 0;
+                    foreach (var cell in tw.Cells)
+                    {
+                        if (cell.x < minCol) minCol = cell.x;
+                        if (cell.x > maxCol) maxCol = cell.x;
+                        if (cell.y < minRow) minRow = cell.y;
+                        if (cell.y > maxRow) maxRow = cell.y;
+                        Tile wtTile = _grid.GetTile(cell.x, cell.y);
+                        if (wtTile != null) { twCenter += wtTile.transform.position; twTileCount++; }
+                    }
+                    if (twTileCount == 0) continue;
+                    twCenter /= twTileCount;
+
+                    bool twVertical = (maxCol - minCol) == 0 && (maxRow - minRow) > 0;
+                    int  twWordLen  = twVertical ? (maxRow - minRow + 1) : (maxCol - minCol + 1);
+
+                    Camera cam = _cam != null ? _cam : Camera.main;
+                    float halfH = cam != null ? cam.orthographicSize : 10f;
+                    float halfW = halfH * ((float)Screen.width / Screen.height);
+                    float targetLength = (twVertical ? halfH : halfW) * 2.4f;
+                    float thickness    = _grid.CellSize * 1.4f;
+
+                    BigBurstFlash.Instance.Play(twCenter, targetLength, thickness, twVertical, burstTint);
+
+                    // Radial burst on the trigger word too — the player's own word
+                    // gets the same center-of-impact treatment as the primed words.
+                    if (RadialBurst.Instance != null)
+                        RadialBurst.Instance.Play(twCenter, _grid.CellSize * 3.0f, burstTint);
+
+                    if (GameParticles.Instance != null)
+                    {
+                        Vector3 lineStart, lineEnd;
+                        if (twVertical)
+                        {
+                            lineStart = new Vector3(twCenter.x, twCenter.y - halfH * 1.1f, twCenter.z);
+                            lineEnd   = new Vector3(twCenter.x, twCenter.y + halfH * 1.1f, twCenter.z);
+                        }
+                        else
+                        {
+                            lineStart = new Vector3(twCenter.x - halfW * 1.1f, twCenter.y, twCenter.z);
+                            lineEnd   = new Vector3(twCenter.x + halfW * 1.1f, twCenter.y, twCenter.z);
+                        }
+                        int twSparkleCount = Mathf.Clamp(14 + twWordLen * 2, 14, 26);
+                        GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, twSparkleCount);
+                    }
+                }
+            }
+
+            // Consume the cache — next Exploding phase won't double-fire stale triggers.
+            _pendingBurstTriggers     = null;
+            _pendingBurstTriggerWords = null;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Wild Tiles Phase C — reward injection
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Per-frame check for wild expiry. Clears the wild to a vowel when either
+        /// the 3-drop counter (PlayerHand._wildDropsElapsed) or the 20s playable-time
+        /// timer elapses. No-op when no wild is in hand.
+        /// </summary>
+        private void TickWildExpiry()
+        {
+            // Wild tiles no longer time out — player design decision (2026-04-17).
+            // Rationale: wilds are already scarce (chain-reward only). Opportunity
+            // cost of using a wild is its natural balance; artificial timeout
+            // punishes careful planning. Supporting machinery below is preserved
+            // in case we want to re-enable soft-timeout later.
+            return;
+        }
+
+        /// <summary>
+        /// Queue a wild injection as a chain-reward. Gated by the per-resolution cap
+        /// and by PlayerHand's max-one-wild invariant. Fires popup + SFX on success.
+        /// </summary>
+        private void TryInjectWildReward(Vector3 popupWorldPos)
+        {
+            if (_wildInjectedThisResolution) return;
+            if (MatchController.Instance == null) return;
+            PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+            if (hand == null) return;
+            if (!hand.InjectWildFromChainReward()) return;
+
+            _wildInjectedThisResolution = true;
+            // Do NOT anchor _wildInjectedAt here — the wild is only QUEUED in pending
+            // state at this point, not visible in hand. TickWildExpiry anchors the
+            // clock to the first frame HasWild becomes true (after DrawSlot fills
+            // the pending wild into a slot), which gives the player a fair 20s from
+            // when they can actually see and plan around the wild.
+
+            if (BonusPopup.Instance != null)
+                BonusPopup.Instance.Show("WILD!", WILD_CARD_COLOR, popupWorldPos, 1.4f);
+            GameAudio.Instance?.PlayScorePowerup();
+        }
 
         private IEnumerator RewritePulseCoroutine(Tile tile)
         {
@@ -1106,13 +2448,31 @@ namespace WordDrop
                 return;
             }
 
-            char letter = _hand[handSlot];
+            // Read letter from MatchController's authoritative hand, not local cache
+            PlayerHand authHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+            char letter = authHand != null ? authHand.GetSlot(handSlot) : _hand[handSlot];
+
+            if (letter == '\0')
+            {
+//                 Debug.Log("[HandManager] Rewrite: hand slot is empty — cancelling.");
+                CancelRewriteMode();
+                return;
+            }
+
+            // Phase C: wild slots cannot be used as rewrite source. Wilds have no
+            // committed letter to stamp onto the target cell, and we don't want to
+            // burn a rewrite charge on a no-op. Cancel cleanly instead.
+            if (authHand != null && authHand.IsWildSlot(handSlot))
+            {
+                CancelRewriteMode();
+                return;
+            }
 
             // Use MatchController to validate and consume swap charge
             bool success = MatchController.Instance.UseRewrite(handSlot, col, row);
             if (!success)
             {
-                Debug.Log("[HandManager] Rewrite: MatchController.UseRewrite rejected.");
+//                 Debug.Log("[HandManager] Rewrite: MatchController.UseRewrite rejected.");
                 CancelRewriteMode();
                 return;
             }
@@ -1121,8 +2481,8 @@ namespace WordDrop
             char oldLetter = cell != null ? cell.Letter : '?';
 
             _rewriteMatchRewriteCount++;
-            Debug.Log($"[HandManager] Rewrite ACCEPTED: '{letter}' → ({col},{row}) " +
-                      $"replacing '{oldLetter}' | rewrite #{_rewriteMatchRewriteCount} this match");
+//             Debug.Log($"[HandManager] Rewrite ACCEPTED: '{letter}' → ({col},{row}) " +
+                      // $"replacing '{oldLetter}' | rewrite #{_rewriteMatchRewriteCount} this match");
 
             // Stop pulse and clear highlight
             if (_rewritePulseCoroutine != null) { StopCoroutine(_rewritePulseCoroutine); _rewritePulseCoroutine = null; }
@@ -1144,7 +2504,12 @@ namespace WordDrop
 
         private IEnumerator RewriteTurnSequence(int col, int row, char letter, int handSlot)
         {
+            if (JamHint.Instance != null) JamHint.Instance.ClearHint();
             if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
+            // Reset the wild-injection gate so stale state from a prior drop can't
+            // suppress a rewrite-triggered wild-refill reward (Codex MEDIUM #1).
+            _wildInjectedThisResolution = false;
 
             var rules = RulesEngine.Instance;
             var grid  = GridManager.Instance;
@@ -1167,7 +2532,7 @@ namespace WordDrop
             if (handSlot >= 0 && handSlot < HAND_SIZE && _cardObjects[handSlot] != null)
                 _cardObjects[handSlot].SetActive(false);
 
-            // Animate the tile swap — shuffle jitter then letter change
+            // Animate the tile edit — shake then letter change then squish
             Tile boardTile = grid.GetTile(col, row);
             if (boardTile != null)
             {
@@ -1175,6 +2540,8 @@ namespace WordDrop
                 float cellSize = grid.CellSize;
                 float posJitter = cellSize * 0.08f;
                 float rotJitter = 10f;
+
+                GameAudio.Instance?.PlayShuffle();
 
                 // Phase 1: shake/jitter
                 float shakeDur = 0.2f;
@@ -1200,7 +2567,6 @@ namespace WordDrop
             }
             else
             {
-                // Fallback — create tile if somehow missing
                 grid.CreateSingleTile(col, row, letter);
             }
 
@@ -1213,14 +2579,16 @@ namespace WordDrop
             if (beginResult == null)
             {
                 Debug.LogError("[HandManager] RewriteTurnSequence: BeginRewrite returned null.");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                IsInteractable = true;
                 yield break;
             }
 
             // Detonation Replay: record the rewritten tile
             if (DetonationRecorder.Instance != null)
-                DetonationRecorder.Instance.RecordDrop(letter, col, row);
+                DetonationRecorder.Instance.RecordRewrite(letter, col, row);
 
-            yield return new WaitForSeconds(0.15f);
+            yield return WaitCache.Get(0.15f);
 
             // Step-by-step resolution loop (mirrors GameVisualBridge phases)
             bool resolving = true;
@@ -1244,7 +2612,7 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.WordsDetected:
                     {
                         int wc = step.NewWords != null ? step.NewWords.Count : 0;
-                        Debug.Log($"[Rewrite] WordsDetected: {wc} word(s)");
+//                         Debug.Log($"[Rewrite] WordsDetected: {wc} word(s)");
                         break;
                     }
                     case RulesEngine.ResolutionPhase.WordsScored:
@@ -1262,8 +2630,12 @@ namespace WordDrop
                             for (int w = 0; w < step.ScoredWords.Count; w++)
                             {
                                 var sw = step.ScoredWords[w];
-                                Debug.Log($"[Rewrite] Word scored: '{sw.Word}' +{sw.FinalScore}");
+//                                 Debug.Log($"[Rewrite] Word scored: '{sw.Word}' +{sw.FinalScore}");
                                 totalScore += sw.FinalScore;
+
+                                // Survival rewrite meter: rewrites that score words count too
+                                if (MatchController.Instance != null)
+                                    MatchController.Instance.SurvivalWordScored();
 
                                 // Track first word this turn for LastWordDisplay
                                 if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
@@ -1279,11 +2651,11 @@ namespace WordDrop
                                         if (t != null) tiles.Add(t);
                                     }
                                 }
-                                Color hlColor = new Color(0.2f, 0.9f, 0.4f, 1f);
+                                Color hlColor = new Color(0.9f, 0.2f, 0.8f, 1f);
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(tiles, hlColor, wordIndex);
 
-                                // Haptic feedback — light tap on word scored (rewrite path)
+                                GameAudio.Instance?.PlayTilePrimed();
                                 HapticsManager.Light();
 
                                 if (!rwDetonationComing && BonusPopup.Instance != null && tiles.Count > 0)
@@ -1298,14 +2670,54 @@ namespace WordDrop
                                 wordIndex++;
                             }
                         }
-                        yield return new WaitForSeconds(rwDetonationComing ? 0f : 0.25f);
+                        yield return WaitCache.Get(rwDetonationComing ? 0f : 0.25f);
                         break;
                     }
                     case RulesEngine.ResolutionPhase.TriggersFound:
                     {
                         rewriteTriggeredPrimed = true;
-                        Debug.Log("[Rewrite] Primed word triggered!");
-                        yield return new WaitForSeconds(0.05f); // Micro-anticipation
+//                         Debug.Log("[Rewrite] Primed word triggered!");
+
+                        // Multi-trigger callout (rewrite path)
+                        if (step.Triggers != null && step.Triggers.Count >= 2 && step.ChainDepth == 0)
+                        {
+                            string multiLabel = step.Triggers.Count == 2 ? "DOUBLE!" : "TRIPLE!";
+                            Color multiColor = new Color(1f, 0.6f, 0.15f, 1f);
+                            Vector3 multiCenter = Vector3.zero;
+                            int multiCount = 0;
+                            foreach (var trig in step.Triggers)
+                            {
+                                if (trig.TriggeredCells == null) continue;
+                                foreach (var c in trig.TriggeredCells)
+                                {
+                                    Tile mt = grid.GetTile(c.x, c.y);
+                                    if (mt != null) { multiCenter += mt.transform.position; multiCount++; }
+                                }
+                            }
+                            if (multiCount > 0) multiCenter /= multiCount;
+                            if (BonusPopup.Instance != null)
+                                BonusPopup.Instance.Show(multiLabel, multiColor, multiCenter + Vector3.up * 0.5f, 1.3f);
+                            GameAudio.Instance?.PlayScorePowerup();
+//                             Debug.Log($"[Rewrite] Multi-trigger: {multiLabel} ({step.Triggers.Count} primed words)");
+                        }
+
+                        // Play detonation trigger visual + sound (same as normal drop path)
+                        if (step.Triggers != null && WordDropFX.Instance != null)
+                        {
+                            foreach (var trig in step.Triggers)
+                            {
+                                if (trig.TriggeredCells == null) continue;
+                                var trigTiles = new System.Collections.Generic.List<Tile>();
+                                foreach (var c in trig.TriggeredCells)
+                                {
+                                    Tile t = grid.GetTile(c.x, c.y);
+                                    if (t != null) trigTiles.Add(t);
+                                }
+                            }
+                        }
+
+                        CacheBurstTriggers(step);
+                        yield return WaitCache.Get(0.05f); // Micro-anticipation
                         break;
                     }
                     case RulesEngine.ResolutionPhase.Exploding:
@@ -1367,10 +2779,21 @@ namespace WordDrop
                                 yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
                             }
 
+                            // Flash after hitstop so timeScale=0 doesn't freeze its tween.
+                            FirePerWordBurst();
+                            FireTileFlashBoxes(dyingTiles);
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
-                                yield return WordDropFX.Instance.PlayExplosion(dyingTiles, wordIndex);
+                            {
+                                int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
+                                yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
+                            }
                             grid.RemoveTiles(step.ExplodedCells);
-                            Debug.Log($"[Rewrite] Exploded {step.ExplodedCells.Count} tiles");
+//                             Debug.Log($"[Rewrite] Exploded {step.ExplodedCells.Count} tiles");
+
+                            // Notify post-clear boost system
+                            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                                && step.ExplodedCells != null)
+                                SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
 
                             // Meltdown outro — fade stamp after chain played out (rewrite path)
                             if (rwMeltdownActive && MeltdownManager.Instance != null)
@@ -1385,7 +2808,7 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.GravityApplied:
                     {
                         yield return StartCoroutine(grid.ApplyGravity());
-                        yield return new WaitForSeconds(0.1f);
+                        yield return WaitCache.Get(0.1f);
                         break;
                     }
                     case RulesEngine.ResolutionPhase.Complete:
@@ -1396,8 +2819,8 @@ namespace WordDrop
 
                         int finalScore = step.TotalScore;
 
-                        Debug.Log($"[Rewrite] Resolution complete. Score={finalScore} " +
-                                  $"chainContinues={step.ChainContinues}");
+//                         Debug.Log($"[Rewrite] Resolution complete. Score={finalScore} " +
+                                  // $"chainContinues={step.ChainContinues}");
 
                         rules.FinalizeDrop();
 
@@ -1408,21 +2831,29 @@ namespace WordDrop
                         try { grid.SyncToRulesState(rules); }
                         catch (System.Exception ex) { Debug.LogError($"[Rewrite] SyncToRulesState: {ex}"); }
 
-                        // Bookkeeping — consumes turn, switches player, refills hand slot
-                        mc.CompleteDropBookkeeping(playerIdx, finalScore, handSlot);
+                        // Bookkeeping — consumes turn, switches player, refills hand slot.
+                        // isRewrite=true so the refill doesn't tick the wild-expiry
+                        // drops counter (rewrites shouldn't shorten an untouched wild).
+                        mc.CompleteDropBookkeeping(playerIdx, finalScore, handSlot, isRewrite: true);
 
-                        // Rewrite Refund: if the rewrite scored or triggered, refund 1 swap charge
-                        if (rewriteScoredWord || rewriteTriggeredPrimed)
+                        // Rewrite Refund: refund on detonation/chain trigger
+                        // Survival: ONLY refund on detonation (not basic word scoring)
+                        // Classic: refund on any score or detonation
+                        bool shouldRefund = SurvivalManager.IsSurvivalMode
+                            ? rewriteTriggeredPrimed
+                            : (rewriteScoredWord || rewriteTriggeredPrimed);
+
+                        if (shouldRefund)
                         {
-                            mc.RefundSwapCharge(playerIdx);
-                            Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) " +
-                                      $"scored={rewriteScoredWord} triggered={rewriteTriggeredPrimed} refund=true");
+                            mc.RefundRewriteCharge(playerIdx);
+//                             Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) " +
+                                      // $"scored={rewriteScoredWord} triggered={rewriteTriggeredPrimed} refund=true");
                             if (BonusPopup.Instance != null && grid != null)
                                 BonusPopup.Instance.ShowRefund(grid.CellToWorld(col, row));
                         }
                         else
                         {
-                            Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) no score/no detonation refund=false");
+//                             Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) no detonation refund=false");
                         }
 
                         break;
@@ -1461,7 +2892,7 @@ namespace WordDrop
             // Check if match ended during rewrite resolution
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
-                Debug.Log("[HandManager] RewriteTurnSequence: match ended during rewrite.");
+//                 Debug.Log("[HandManager] RewriteTurnSequence: match ended during rewrite.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
@@ -1471,7 +2902,7 @@ namespace WordDrop
             {
                 if (BlitzManager.Instance != null && BlitzManager.Instance.CheckBlitzTimeUp())
                 {
-                    Debug.Log("[HandManager] RewriteTurnSequence: Blitz time expired.");
+//                     Debug.Log("[HandManager] RewriteTurnSequence: Blitz time expired.");
                     if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                     yield break;
                 }
@@ -1480,8 +2911,16 @@ namespace WordDrop
                 yield break;
             }
 
+            // Survival mode: no AI, re-enable input immediately
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                IsInteractable = true;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                yield break;
+            }
+
             // AI turn — do NOT re-enable input until AI is done
-            yield return new WaitForSeconds(0.3f);
+            yield return WaitCache.Get(0.3f);
             if (mc.IsMatchActive && mc.CurrentPlayer == MatchController.PLAYER_AI)
             {
                 if (GameVisualBridge.Instance != null)
@@ -1491,7 +2930,7 @@ namespace WordDrop
             // Check again if match ended after AI turn
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
-                Debug.Log("[HandManager] RewriteTurnSequence: match ended after AI turn.");
+//                 Debug.Log("[HandManager] RewriteTurnSequence: match ended after AI turn.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
@@ -1499,7 +2938,7 @@ namespace WordDrop
             // If human has no turns left, force game over
             if (mc.IsPlayerDone(MatchController.PLAYER_HUMAN))
             {
-                Debug.Log("[HandManager] RewriteTurnSequence: human has no turns — forcing game over.");
+//                 Debug.Log("[HandManager] RewriteTurnSequence: human has no turns — forcing game over.");
                 IsInteractable = false;
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 mc.ForceGameOver();
@@ -1567,9 +3006,13 @@ namespace WordDrop
             }
 
             // Deal all cards with DOTween — staggered slide-in with overshoot
+            // Play the drop-in-hand sound once for the whole deal
+            GameAudio.Instance?.PlayCardDropHand();
+
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
+                _cardObjects[i].SetActive(true); // re-activate (was hidden before deal)
                 Vector3 startPos = new Vector3(offScreenX, baseY - 0.3f, -1f);
                 Vector3 endPos = new Vector3(GetCardX(i), baseY, -1f);
                 _cardObjects[i].transform.position = startPos;
@@ -1580,7 +3023,6 @@ namespace WordDrop
                 _cardObjects[i].transform.DOMove(endPos, 0.25f)
                     .SetDelay(delay)
                     .SetEase(DG.Tweening.Ease.OutBack, 2.5f)
-                    .OnStart(() => GameAudio.Instance?.PlayLightTick())
                     .OnComplete(() =>
                     {
                         // Show shadow when card lands
@@ -1597,7 +3039,7 @@ namespace WordDrop
             }
 
             // Wait for all cards to land
-            yield return new WaitForSeconds(0.3f + HAND_SIZE * 0.05f + 0.05f);
+            yield return WaitCache.Get(0.3f + HAND_SIZE * 0.05f + 0.05f);
             onComplete?.Invoke();
         }
 
@@ -1623,7 +3065,7 @@ namespace WordDrop
                 UpdateCardPositions();
                 if (ColumnArrowManager.Instance != null)
                     ColumnArrowManager.Instance.ShowArrows(false);
-                Debug.Log($"[HandManager] Card {index} deselected");
+//                 Debug.Log($"[HandManager] Card {index} deselected");
                 return;
             }
 
@@ -1649,7 +3091,7 @@ namespace WordDrop
             HideAllCardShadows(true); // animate old shadow dropping
             ShowCardShadow(index);
 
-            Debug.Log($"[HandManager] Card {index} selected: '{_hand[index]}'");
+//             Debug.Log($"[HandManager] Card {index} selected: '{_hand[index]}'");
 
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(true);
@@ -1665,17 +3107,13 @@ namespace WordDrop
             _hand[a] = _hand[b];
             _hand[b] = tempChar;
 
-            // Swap in MatchController's hand too
+            // Swap in MatchController's hand too — use wild-aware swap so the
+            // ★ flag travels with its letter (otherwise a moved wild card shows
+            // as normal and a moved normal card shows as wild).
             if (MatchController.Instance != null)
             {
                 PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
-                if (hand != null)
-                {
-                    char ca = hand.GetSlot(a);
-                    char cb = hand.GetSlot(b);
-                    hand.SetSlot(a, cb);
-                    hand.SetSlot(b, ca);
-                }
+                if (hand != null) hand.SwapSlotsWithFlags(a, b);
             }
 
             // Swap visual references
@@ -1691,12 +3129,30 @@ namespace WordDrop
             _cardTexts[a] = _cardTexts[b];
             _cardTexts[b] = tempTM;
 
+            // Swap point-value TMP refs too (was missing — caused stale point value
+            // to persist on the swapped card, e.g. wild card showing "4" from prior letter).
+            var tempPtsTM = _cardPtsTexts[a];
+            _cardPtsTexts[a] = _cardPtsTexts[b];
+            _cardPtsTexts[b] = tempPtsTM;
+
             // Swap shadows too
             SpriteRenderer tempShadow = _cardShadows[a];
             _cardShadows[a] = _cardShadows[b];
             _cardShadows[b] = tempShadow;
 
-            Debug.Log($"[HandManager] Swapped slots {a}↔{b}: '{_hand[a]}' '{_hand[b]}'");
+            // Swap halo child references — without this, the halo lights up
+            // behind the wrong slot after a drag-reorder (the halo GO is a child
+            // of the card, but _cardHalos indexes by slot, so the array index
+            // has to travel with the card).
+            GameObject tempHalo = _cardHalos[a];
+            _cardHalos[a] = _cardHalos[b];
+            _cardHalos[b] = tempHalo;
+
+            SpriteRenderer tempHaloSR = _cardHaloSRs[a];
+            _cardHaloSRs[a] = _cardHaloSRs[b];
+            _cardHaloSRs[b] = tempHaloSR;
+
+//             Debug.Log($"[HandManager] Swapped slots {a}↔{b}: '{_hand[a]}' '{_hand[b]}'");
         }
 
         /// <summary>Smoothly move cards to their target positions. Selected card pops up.</summary>
@@ -1798,7 +3254,7 @@ namespace WordDrop
             // Check if it's the human player's turn
             if (MatchController.Instance.CurrentPlayer != MatchController.PLAYER_HUMAN)
             {
-                Debug.Log("[HandManager] Not player's turn — ignoring drop.");
+//                 Debug.Log("[HandManager] Not player's turn — ignoring drop.");
                 return;
             }
 
@@ -1807,7 +3263,7 @@ namespace WordDrop
             // Check if human player still has turns
             if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))
             {
-                Debug.Log("[HandManager] Human player has no turns remaining.");
+//                 Debug.Log("[HandManager] Human player has no turns remaining.");
                 IsInteractable = false;
                 // Force game over if match should be done
                 if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI) ||
@@ -1821,7 +3277,7 @@ namespace WordDrop
             char letter = GetSelectedLetter();
             if (letter == '\0')
             {
-                Debug.Log("[HandManager] No letter selected — ignoring drop.");
+//                 Debug.Log("[HandManager] No letter selected — ignoring drop.");
                 return;
             }
 
@@ -1833,8 +3289,8 @@ namespace WordDrop
             if (DropPreview.Instance != null)
                 DropPreview.Instance.ClearPreview();
 
-            Debug.Log($"[HandManager] Player dropping '{letter}' into column {col} " +
-                      $"(slot {_selectedIndex})");
+//             Debug.Log($"[HandManager] Player dropping '{letter}' into column {col} " +
+                      // $"(slot {_selectedIndex})");
 
             // Disable input during animation
             IsInteractable = false;
@@ -1851,16 +3307,45 @@ namespace WordDrop
 
             int handSlot = _selectedIndex;
 
+            // Phase C: pull wild flag from authoritative PlayerHand state, then
+            // clear it immediately so HasWild becomes false before the resolution
+            // runs. Without this, a chain-depth or wild-refill reward earned on the
+            // SAME turn the wild is played would be silently dropped (Codex HIGH #2).
+            bool dropIsWild = false;
+            if (MatchController.Instance != null)
+            {
+                PlayerHand pHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+                if (pHand != null)
+                {
+                    dropIsWild = pHand.IsWildSlot(handSlot);
+                    // Defensive: if the slot's LETTER is the wild sentinel ('*') but
+                    // the wild flag is somehow false (swap/refresh desync), promote
+                    // to wild anyway. Never let '*' land as a literal letter on board.
+                    if (!dropIsWild && letter == TileBag.WILD_CHAR)
+                        dropIsWild = true;
+                    if (dropIsWild) pHand.ConsumeWildSlot(handSlot);
+                }
+            }
+
             // Start the full turn sequence coroutine
-            StartCoroutine(FullTurnSequence(col, letter, handSlot));
+            StartCoroutine(FullTurnSequence(col, letter, handSlot, dropIsWild));
         }
 
         // ── Full turn sequence (player + AI) ──────────────────────────────────────
 
         private IEnumerator FullTurnSequence(int col, char letter, int handSlot)
         {
+            return FullTurnSequence(col, letter, handSlot, isWild: false);
+        }
+
+        private IEnumerator FullTurnSequence(int col, char letter, int handSlot, bool isWild)
+        {
             // Mark processing so BlitzManager defers game-over until resolution completes
             if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
+            // Phase C: reset per-resolution wild-injection gate. Local `maxChainDepth`
+            // (tracked in the step loop below) is used for the chain-depth reward check.
+            _wildInjectedThisResolution = false;
 
             // --- Job 4: Log state BEFORE the drop ---
             int playerIndexBeforeDrop = MatchController.Instance != null
@@ -1868,10 +3353,13 @@ namespace WordDrop
             bool matchActiveBeforeDrop = MatchController.Instance != null
                 ? MatchController.Instance.IsMatchActive : false;
 
-            Debug.Log($"[HandManager] FullTurnSequence BEGIN: " +
-                      $"CurrentPlayer={playerIndexBeforeDrop} " +
-                      $"IsMatchActive={matchActiveBeforeDrop} " +
-                      $"col={col} letter='{letter}' handSlot={handSlot}");
+            // Clear jam hint on any player action
+            if (JamHint.Instance != null) JamHint.Instance.ClearHint();
+
+//             Debug.Log($"[HandManager] FullTurnSequence BEGIN: " +
+                      // $"CurrentPlayer={playerIndexBeforeDrop} " +
+                      // $"IsMatchActive={matchActiveBeforeDrop} " +
+                      // $"col={col} letter='{letter}' handSlot={handSlot}");
 
             // 1. Use step-by-step RulesEngine directly from HandManager
             //    (bypasses GameVisualBridge entirely — no timeout issues)
@@ -1882,6 +3370,7 @@ namespace WordDrop
             if (rules == null || grid == null)
             {
                 Debug.LogError("[HandManager] Missing RulesEngine or GridManager");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 IsInteractable = true;
                 yield break;
             }
@@ -1891,10 +3380,11 @@ namespace WordDrop
                 DetonationRecorder.Instance.SnapshotBoard();
 
             // ── STEP 1: Animate hand tile flying to column, then drop into grid ──
-            RulesEngine.StepResult beginResult = rules.BeginDrop(col, letter, playerIdx);
+            RulesEngine.StepResult beginResult = rules.BeginDrop(col, letter, playerIdx, isWild);
             if (beginResult == null || beginResult.Row < 0)
             {
                 Debug.LogWarning("[HandManager] BeginDrop failed");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 IsInteractable = true;
                 yield break;
             }
@@ -1909,7 +3399,7 @@ namespace WordDrop
                 {
                     // Quick dissolve animation on the replaced tile
                     oldTile.Dissolve(0.15f);
-                    yield return new WaitForSeconds(0.12f);
+                    yield return WaitCache.Get(0.12f);
                     grid.RemoveTiles(new System.Collections.Generic.List<Vector2Int> { new Vector2Int(col, targetRow) });
                 }
             }
@@ -1919,36 +3409,51 @@ namespace WordDrop
                 DetonationRecorder.Instance.RecordDrop(letter, col, targetRow);
 
             // ── Card launch animation: anticipation squash → stretch upward → hide ──
+            // If card was dragged near the board, skip the launch anim and just hide it
             GameObject handCard = (handSlot >= 0 && handSlot < HAND_SIZE) ? _cardObjects[handSlot] : null;
             if (handCard != null)
             {
                 Transform ct = handCard.transform;
-                Vector3 cardScale = ct.localScale;
+                Vector3 cardScale = GetCardBaseScale();
+                float cardY = GetCardRowY();
+                bool wasDragged = ct.position.y > cardY + _grid.CellSize * 0.5f;
 
-                // Anticipation: squash down (wind-up)
                 ct.DOComplete();
-                ct.DOScale(new Vector3(cardScale.x * 1.15f, cardScale.y * 0.85f, 1f), 0.06f)
-                    .SetEase(DG.Tweening.Ease.InQuad);
-                yield return new WaitForSeconds(0.06f);
 
-                // Launch: stretch upward + fly toward grid
-                ct.DOScale(new Vector3(cardScale.x * 0.8f, cardScale.y * 1.25f, 1f), 0.08f)
-                    .SetEase(DG.Tweening.Ease.OutQuad);
-                ct.DOMove(ct.position + Vector3.up * _grid.CellSize * 0.5f, 0.08f)
-                    .SetEase(DG.Tweening.Ease.OutQuad);
-                yield return new WaitForSeconds(0.06f);
+                if (wasDragged)
+                {
+                    // Card was dragged up — just hide immediately, no squash animation
+                    handCard.SetActive(false);
+                    ct.localScale = cardScale;
+                }
+                else
+                {
+                    // Card was tapped — play the launch animation from the hand row
+                    ct.DOScale(new Vector3(cardScale.x * 1.15f, cardScale.y * 0.85f, 1f), 0.06f)
+                        .SetEase(DG.Tweening.Ease.InQuad);
+                    yield return WaitCache.Get(0.06f);
 
-                handCard.SetActive(false);
-                ct.localScale = cardScale; // reset for next use
+                    ct.DOScale(new Vector3(cardScale.x * 0.8f, cardScale.y * 1.25f, 1f), 0.08f)
+                        .SetEase(DG.Tweening.Ease.OutQuad);
+                    ct.DOMove(ct.position + Vector3.up * _grid.CellSize * 0.5f, 0.08f)
+                        .SetEase(DG.Tweening.Ease.OutQuad);
+                    yield return WaitCache.Get(0.06f);
+
+                    handCard.SetActive(false);
+                    ct.localScale = cardScale;
+                }
             }
 
             // Create grid tile at the top of the column and drop it straight down
-            Tile droppedTile = grid.CreateSingleTile(col, targetRow, letter);
+            Tile droppedTile = grid.CreateSingleTile(col, targetRow, letter, isWild);
             if (droppedTile != null)
             {
                 Vector3 targetPos = droppedTile.transform.position;
                 float spawnY = grid.GridTop + grid.CellSize * 1.5f;
                 droppedTile.transform.position = new Vector3(targetPos.x, spawnY, targetPos.z);
+
+                // Swish sound during fall
+                GameAudio.Instance?.PlayTileFall();
 
                 // Enable fake 3D tilt for the drop
                 float tiltX = Random.Range(8f, 15f);
@@ -1956,7 +3461,7 @@ namespace WordDrop
                 droppedTile.SetFake3D(tiltX, tiltY);
 
                 float elapsed = 0f;
-                float duration = (spawnY - targetPos.y) / 38f;
+                float duration = (spawnY - targetPos.y) / 54f;
                 while (elapsed < duration && droppedTile != null)
                 {
                     elapsed += Time.deltaTime;
@@ -1985,11 +3490,12 @@ namespace WordDrop
             int chainBonusAccum = 0;
             int detonationBonusAccum = 0;
             int wordIdx = 0;
+            int maxChainDepth = 0;
 
             // Reset scoring display chain counter for this resolution
             if (ScoringDisplay.Instance != null)
                 ScoringDisplay.Instance.ResetChain();
-            Color playerColor = new Color(0.29f, 0.87f, 0.31f);  // bright lime green #4ADE50
+            Color playerColor = new Color(0.9f, 0.2f, 0.8f);  // magenta
             Color aiColor = new Color(0.96f, 0.57f, 0.18f);  // warm orange #F5922E
 
             // Deferred scoring state — when detonation is coming, we skip the
@@ -2001,6 +3507,10 @@ namespace WordDrop
             {
                 RulesEngine.StepResult step = rules.NextStep();
                 if (step == null) { Debug.LogError("[HandManager] NextStep null"); break; }
+
+                // Track max chain depth for Survival stats
+                if (step.ChainDepth > maxChainDepth)
+                    maxChainDepth = step.ChainDepth;
 
                 // Detonation Replay: record every step
                 if (DetonationRecorder.Instance != null)
@@ -2044,13 +3554,12 @@ namespace WordDrop
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(scoredTiles, playerColor, wordIdx);
 
-                                // Haptic feedback — light tap on word scored
+                                GameAudio.Instance?.PlayTilePrimed();
                                 HapticsManager.Light();
 
                                 if (detonationComing)
                                 {
-                                    // Detonation coming — no delay, explosion fires on impact
-                                    yield return null; // single frame for visual sync
+                                    yield return WaitCache.Get(0.15f);
                                 }
                                 else
                                 {
@@ -2064,12 +3573,16 @@ namespace WordDrop
                                         BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, wordCenter);
                                     }
 
-                                    yield return new WaitForSeconds(0.35f);
+                                    yield return WaitCache.Get(0.35f);
                                 }
                                 wordIdx++;
                                 totalScore += sw.FinalScore;
                                 baseScoreAccum += sw.BaseScore;
                                 chainBonusAccum += (sw.FinalScore - sw.BaseScore);
+
+                                // Survival rewrite meter: 2 words → +1 rewrite
+                                if (MatchController.Instance != null)
+                                    MatchController.Instance.SurvivalWordScored();
                             }
                         }
                         break;
@@ -2078,8 +3591,37 @@ namespace WordDrop
                         // Fuse Trace for player path
                         if (step.Triggers != null && WordDropFX.Instance != null)
                             WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
+
+                        // Multi-trigger callout — "DOUBLE DETONATE" / "TRIPLE DETONATE"
+                        if (step.Triggers != null && step.Triggers.Count >= 2 && step.ChainDepth == 0)
+                        {
+                            string multiLabel = step.Triggers.Count == 2 ? "DOUBLE!" : "TRIPLE!";
+                            Color multiColor = new Color(1f, 0.6f, 0.15f, 1f); // orange
+                            Vector3 multiCenter = Vector3.zero;
+                            int multiCount = 0;
+                            foreach (var trig in step.Triggers)
+                            {
+                                if (trig.TriggeredCells == null) continue;
+                                foreach (var cell in trig.TriggeredCells)
+                                {
+                                    Tile mt = grid.GetTile(cell.x, cell.y);
+                                    if (mt != null) { multiCenter += mt.transform.position; multiCount++; }
+                                }
+                            }
+                            if (multiCount > 0) multiCenter /= multiCount;
+                            if (BonusPopup.Instance != null)
+                                BonusPopup.Instance.Show(multiLabel, multiColor, multiCenter + Vector3.up * 0.5f, 1.3f);
+                            GameAudio.Instance?.PlayScorePowerup();
+//                             Debug.Log($"[HandManager] Multi-trigger: {multiLabel} ({step.Triggers.Count} primed words)");
+                        }
+
+                        // Big burst flash — rises during the micro-anticipation below,
+                        // peaks as the explosion begins. Helper is shared across all
+                        // four resolution paths so every detonation fires.
+                        CacheBurstTriggers(step);
+
                         // Micro-anticipation — just enough for the squeeze to register
-                        yield return new WaitForSeconds(0.05f);
+                        yield return WaitCache.Get(0.05f);
                         if (step.Triggers != null)
                         {
                             foreach (var trig in step.Triggers)
@@ -2093,14 +3635,8 @@ namespace WordDrop
                                         if (t != null) trigTiles.Add(t);
                                     }
 
-                                // Procedural detonation sequence (squeeze → flash → pop → shake)
-                                if (WordDropFX.Instance != null)
-                                    WordDropFX.Instance.PlayDetonation(trigTiles, wordIdx);
-
                                 // Haptic feedback — medium pulse on primed tile trigger
                                 HapticsManager.Medium();
-
-                                yield return new WaitForSeconds(WordDropFX.DETONATE_TOTAL_DUR);
                             }
                         }
                         break;
@@ -2111,11 +3647,18 @@ namespace WordDrop
                         if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                         {
                             List<Tile> dying = new List<Tile>();
+                            int stoneDying = 0;
                             foreach (var cell in step.ExplodedCells)
                             {
                                 Tile t = grid.GetTile(cell.x, cell.y);
-                                if (t != null) dying.Add(t);
+                                if (t != null)
+                                {
+                                    dying.Add(t);
+                                    if (t.IsStone) stoneDying++;
+                                }
                             }
+                            // if (stoneDying > 0)
+//                                 Debug.Log($"[HandManager] Exploding: {stoneDying} stone tile(s) in blast zone");
 
                             // Chain counter — persistent on-screen combo display
                             if (ChainCounter.Instance != null)
@@ -2153,11 +3696,25 @@ namespace WordDrop
                                 yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
                             }
 
-                            // Procedural staggered explosion with escalating shake
+                            // Flash fires AFTER hitstop so timeScale=0 doesn't freeze the
+                            // tween during the pause. Plays in sync with PlayExplosion
+                            // below, matching Candy Crush's "bang + wash" sequence.
+                            FirePerWordBurst();
+                            FireTileFlashBoxes(dying);
+
+                            // Tiered explosion (handles sound + visuals)
                             if (WordDropFX.Instance != null)
-                                yield return WordDropFX.Instance.PlayExplosion(dying, wordIdx);
+                            {
+                                int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dying.Count;
+                                yield return WordDropFX.Instance.PlayExplosion(dying, step.ChainDepth, wLen);
+                            }
 
                             grid.RemoveTiles(step.ExplodedCells);
+
+                            // Notify post-clear boost system
+                            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                                && step.ExplodedCells != null)
+                                SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
 
                             // Score popups AFTER the explosion — rising from the blast zone
                             if (BonusPopup.Instance != null && step.DetonationBonus > 0)
@@ -2179,7 +3736,45 @@ namespace WordDrop
                                 _deferredScoredWords = null;
                             }
 
-                            yield return new WaitForSeconds(0.08f);
+                            yield return WaitCache.Get(0.08f);
+
+                            // Collect refills from detonated special tiles
+                            if (SurvivalManager.IsSurvivalMode && MatchController.Instance != null)
+                            {
+                                float popY = 0.8f;
+                                if (step.SwapRefillCount > 0)
+                                {
+                                    for (int sr = 0; sr < step.SwapRefillCount; sr++)
+                                        MatchController.Instance.RefundSwapResource();
+                                    if (BonusPopup.Instance != null)
+                                        BonusPopup.Instance.Show($"SWAP +{step.SwapRefillCount}", new Color(0.85f, 0.60f, 0.10f, 1f), center + Vector3.up * popY, 1.2f);
+                                    GameAudio.Instance?.PlayScorePowerup();
+                                    popY += 0.5f;
+                                }
+                                if (step.EditRefillCount > 0)
+                                {
+                                    for (int er = 0; er < step.EditRefillCount; er++)
+                                        MatchController.Instance.RefundSwapCharge(MatchController.PLAYER_HUMAN);
+                                    if (BonusPopup.Instance != null)
+                                        BonusPopup.Instance.Show($"EDIT +{step.EditRefillCount}", new Color(0.0f, 0.85f, 0.9f, 1f), center + Vector3.up * popY, 1.2f);
+                                    GameAudio.Instance?.PlayScorePowerup();
+                                    popY += 0.5f;
+                                }
+                                // Stone clear popup
+                                if (stoneDying > 0 && BonusPopup.Instance != null)
+                                {
+                                    BonusPopup.Instance.Show($"STONE x{stoneDying}", new Color(0.6f, 0.55f, 0.65f, 1f), center + Vector3.up * popY, 1.1f);
+                                    popY += 0.5f;
+                                }
+
+                                if (step.WildRefillCount > 0)
+                                {
+                                    // Phase C: inject one wild into the player's hand via the
+                                    // pending-wild queue. The next DrawSlot fills that slot as a
+                                    // wild. Gated by per-resolution cap and max-1-in-hand invariant.
+                                    TryInjectWildReward(center + Vector3.up * popY);
+                                }
+                            }
 
                             // Meltdown outro — fade stamp after chain played out
                             if (meltdownActive && MeltdownManager.Instance != null)
@@ -2196,7 +3791,7 @@ namespace WordDrop
                         yield return StartCoroutine(grid.ApplyGravity());
                         // No RebuildFromRulesEngine here — it destroys/recreates all tiles
                         // causing a visual glitch. Final rebuild happens after FinalizeDrop.
-                        yield return new WaitForSeconds(0.08f);
+                        yield return WaitCache.Get(0.08f);
                         break;
 
                     case RulesEngine.ResolutionPhase.Complete:
@@ -2210,6 +3805,18 @@ namespace WordDrop
                         resolving = false;
                         break;
                 }
+            }
+
+            // Phase C chain-depth reward: a big chain (>= WILD_CHAIN_DEPTH_REQ) earns
+            // a wild injection in Survival. Per-resolution cap suppresses duplicate
+            // awards if a wild-refill tile also detonated this turn.
+            if (SurvivalManager.IsSurvivalMode
+                && maxChainDepth >= SurvivalManager.WILD_CHAIN_DEPTH_REQ)
+            {
+                Vector3 rewardAt = _grid != null
+                    ? new Vector3(0f, _grid.GridBottom + _grid.CellSize * 2f, 0f)
+                    : Vector3.zero;
+                TryInjectWildReward(rewardAt);
             }
 
             // ── STEP 3: Finalize ──
@@ -2233,7 +3840,7 @@ namespace WordDrop
                     SpriteRenderer tSR = t.GetComponent<SpriteRenderer>();
                     float ns = (tSR != null && tSR.sprite != null) ? tSR.sprite.bounds.size.x
                         : Mathf.Clamp(Mathf.RoundToInt(grid.CellSize * 200f), 64, 512) / 100f;
-                    float correctScale = (grid.CellSize * 0.88f) / ns;
+                    float correctScale = (grid.CellSize * 0.93f) / ns;
                     t.transform.localScale = new Vector3(correctScale, correctScale, 1f);
                     t.ResetVisuals();
                     t.ClearPrimedGlow();
@@ -2260,12 +3867,27 @@ namespace WordDrop
                 }
             }
 
-            // Let the primed flash animation play before anything else happens
-            yield return new WaitForSeconds(0.4f);
+            // Record chain depth for Survival stats
+            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && maxChainDepth > 0)
+                SurvivalManager.Instance.RecordChainDepth(maxChainDepth);
 
             // ── STEP 4: Bookkeeping (refills hand slot with new letter) ──
             MatchController.Instance.CompleteDropBookkeeping(playerIdx, totalScore, handSlot,
                 baseScoreAccum, chainBonusAccum, detonationBonusAccum);
+
+            // Survival: re-enable input IMMEDIATELY — no waiting for primed flash or card deal
+            if (SurvivalManager.IsSurvivalMode
+                && MatchController.Instance != null && MatchController.Instance.IsMatchActive
+                && !MatchController.Instance.IsGameOver)
+            {
+                IsInteractable = true;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+            }
+
+            // Let the primed flash animation play (non-Survival waits here, Survival already has input back)
+            // In Survival, skip the wait — deal card immediately so player can act faster
+            if (!SurvivalManager.IsSurvivalMode)
+                yield return WaitCache.Get(0.4f);
 
             if (HUDManager.Instance != null && ScoreManager.Instance != null)
             {
@@ -2273,62 +3895,48 @@ namespace WordDrop
                 HUDManager.Instance.SetAIScore(ScoreManager.Instance.AIScore);
             }
 
-            // ── STEP 5: Animate new tile dealing into the empty slot ──
-            // Refresh hand data from MatchController
+            // ── STEP 5: Deal new tile into the empty slot ──
+            _selectedIndex = -1; // clear selection so new card appears as normal, not selected
             PlayerHand updatedHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
             if (updatedHand != null)
                 SetHand(updatedHand.GetAllSlots());
             RefreshAllCardVisuals();
 
-            // Re-activate the hand card object (it was hidden when placed)
             if (handSlot >= 0 && handSlot < HAND_SIZE && _cardObjects[handSlot] != null)
             {
                 float baseY = GetCardRowY();
-                float offScreenX = grid.GridRight + grid.CellSize * 3f;
+                Vector3 cardPos = new Vector3(GetCardX(handSlot), baseY, -1f);
 
                 _cardObjects[handSlot].transform.DOKill();
-                _cardObjects[handSlot].transform.localScale = GetCardBaseScale();
                 _cardObjects[handSlot].SetActive(true);
-                _cardObjects[handSlot].transform.position = new Vector3(offScreenX, baseY - 0.2f, -1f);
+                _cardObjects[handSlot].transform.position = cardPos;
 
-                // Hide shadow until card is visible
+                // Start slightly small, pop to full size
+                Vector3 baseScale = GetCardBaseScale();
+                _cardObjects[handSlot].transform.localScale = baseScale * 0.5f;
+                _cardObjects[handSlot].transform.DOScale(baseScale, 0.15f)
+                    .SetEase(DG.Tweening.Ease.OutBack);
+
                 if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
                 {
-                    _cardShadows[handSlot].color = Color.clear;
-                    _cardShadows[handSlot].transform.position = new Vector3(offScreenX, baseY - 0.2f, 0f);
-                }
-
-                // Slide in from right with bounce
-                GameAudio.Instance?.PlayTileSelect();
-                Vector3 from = _cardObjects[handSlot].transform.position;
-                Vector3 to = new Vector3(GetCardX(handSlot), baseY, -1f);
-                float dealElapsed = 0f;
-                float dealDuration = 0.2f;
-
-                while (dealElapsed < dealDuration)
-                {
-                    dealElapsed += Time.deltaTime;
-                    float t = Mathf.Clamp01(dealElapsed / dealDuration);
-                    float overshoot = 1.2f;
-                    float eased = 1f + (overshoot + 1f) * Mathf.Pow(t - 1f, 3f) + overshoot * Mathf.Pow(t - 1f, 2f);
-                    if (_cardObjects[handSlot] != null)
-                        _cardObjects[handSlot].transform.position = Vector3.LerpUnclamped(from, to, eased);
-                    yield return null;
+                    _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.25f);
+                    _cardShadows[handSlot].transform.position = cardPos + new Vector3(0.03f, -0.03f, 0.5f);
                 }
                 if (_cardObjects[handSlot] != null)
-                    _cardObjects[handSlot].transform.position = to;
+                    _cardObjects[handSlot].transform.position = cardPos;
 
                 // Show shadow now that card has landed
                 if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
                 {
                     _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.15f);
-                    _cardShadows[handSlot].transform.position = new Vector3(to.x, to.y - _cardSize * 0.03f, 0f);
+                    _cardShadows[handSlot].transform.position = new Vector3(cardPos.x, cardPos.y - _cardSize * 0.03f, 0f);
                 }
             }
 
-            _selectedIndex = -1; // Deselect after placing
+            if (!SurvivalManager.IsSurvivalMode)
+                _selectedIndex = -1; // Deselect after placing (skip in Survival — player may have selected a new card)
 
-            yield return new WaitForSeconds(0.5f);
+            yield return WaitCache.Get(0.5f);
 
             // --- Job 4: Log state AFTER the wait loop ---
             int playerIndexAfterDrop = MatchController.Instance != null
@@ -2344,17 +3952,18 @@ namespace WordDrop
             int aiTurnsUsed = MatchController.Instance != null
                 ? MatchController.Instance.GetPlayerTurns(MatchController.PLAYER_AI) : -1;
 
-            Debug.Log($"[HandManager] FullTurnSequence AFTER WAIT: " +
-                      $"CurrentPlayer={playerIndexAfterDrop} " +
-                      $"(was {playerIndexBeforeDrop} before drop) " +
-                      $"IsMatchActive={matchActiveAfterDrop} " +
-                      $"HumanTurns={humanTurnsUsed} AiTurns={aiTurnsUsed} " +
-                      $"HumanDone={humanDone} AiDone={aiDone}");
+//             Debug.Log($"[HandManager] FullTurnSequence AFTER WAIT: " +
+                      // $"CurrentPlayer={playerIndexAfterDrop} " +
+                      // $"(was {playerIndexBeforeDrop} before drop) " +
+                      // $"IsMatchActive={matchActiveAfterDrop} " +
+                      // $"HumanTurns={humanTurnsUsed} AiTurns={aiTurnsUsed} " +
+                      // $"HumanDone={humanDone} AiDone={aiDone}");
 
             // Check if match ended during player's drop
             if (MatchController.Instance == null || !MatchController.Instance.IsMatchActive)
             {
-                Debug.Log("[HandManager] FullTurnSequence: Match ended after player drop — skipping AI turn.");
+//                 Debug.Log("[HandManager] FullTurnSequence: Match ended after player drop — skipping AI turn.");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
 
@@ -2366,7 +3975,8 @@ namespace WordDrop
             {
                 if (BlitzManager.Instance != null && BlitzManager.Instance.CheckBlitzTimeUp())
                 {
-                    Debug.Log("[HandManager] FullTurnSequence: Blitz time expired after resolution.");
+//                     Debug.Log("[HandManager] FullTurnSequence: Blitz time expired after resolution.");
+                    if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                     yield break;
                 }
 
@@ -2377,9 +3987,15 @@ namespace WordDrop
                     IsInteractable = true;
                     if (ColumnArrowManager.Instance != null)
                         ColumnArrowManager.Instance.ShowArrows(true);
-                    Debug.Log("[HandManager] FullTurnSequence END (blitz): Player input re-enabled.");
+//                     Debug.Log("[HandManager] FullTurnSequence END (blitz): Player input re-enabled.");
                 }
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                yield break;
+            }
+
+            // Survival mode: input was already re-enabled after bookkeeping — just exit
+            if (SurvivalManager.IsSurvivalMode)
+            {
                 yield break;
             }
 
@@ -2392,22 +4008,22 @@ namespace WordDrop
             bool aiShouldAct = currentPlayerIsAI && aiHasTurnsRemaining && matchStillActive && !tutorialActive;
 
             // --- Job 4: Detailed logging of aiShouldAct determination ---
-            Debug.Log($"[HandManager] FullTurnSequence AI TURN CHECK: " +
-                      $"aiShouldAct={aiShouldAct} " +
-                      $"| currentPlayerIsAI={currentPlayerIsAI} (CurrentPlayer={playerIndexAfterDrop}, PLAYER_AI={MatchController.PLAYER_AI}) " +
-                      $"| aiHasTurnsRemaining={aiHasTurnsRemaining} (AiTurns={aiTurnsUsed}/{MatchController.MAX_TURNS}) " +
-                      $"| matchStillActive={matchStillActive}");
+//             Debug.Log($"[HandManager] FullTurnSequence AI TURN CHECK: " +
+                      // $"aiShouldAct={aiShouldAct} " +
+                      // $"| currentPlayerIsAI={currentPlayerIsAI} (CurrentPlayer={playerIndexAfterDrop}, PLAYER_AI={MatchController.PLAYER_AI}) " +
+                      // $"| aiHasTurnsRemaining={aiHasTurnsRemaining} (AiTurns={aiTurnsUsed}/{MatchController.MAX_TURNS}) " +
+                      // $"| matchStillActive={matchStillActive}");
 
             if (aiShouldAct)
             {
-                Debug.Log("[HandManager] AI turn should trigger: true — starting AI turn coroutine.");
+//                 Debug.Log("[HandManager] AI turn should trigger: true — starting AI turn coroutine.");
             }
             else
             {
-                Debug.Log($"[HandManager] AI turn should trigger: false — reason: " +
-                          $"{(matchStillActive ? "" : "match not active, ")} " +
-                          $"{(currentPlayerIsAI ? "" : $"current player is {playerIndexAfterDrop} not AI, ")} " +
-                          $"{(aiHasTurnsRemaining ? "" : "AI has no turns remaining")}");
+//                 Debug.Log($"[HandManager] AI turn should trigger: false — reason: " +
+                          // $"{(matchStillActive ? "" : "match not active, ")} " +
+                          // $"{(currentPlayerIsAI ? "" : $"current player is {playerIndexAfterDrop} not AI, ")} " +
+                          // $"{(aiHasTurnsRemaining ? "" : "AI has no turns remaining")}");
             }
 
             // --- Job 4: Fallback — if aiShouldAct is false but AI still has turns, investigate ---
@@ -2428,14 +4044,14 @@ namespace WordDrop
                 bool freshAiDone = MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI);
                 bool freshMatchActive = MatchController.Instance.IsMatchActive;
 
-                Debug.Log($"[HandManager] FullTurnSequence FALLBACK recheck: " +
-                          $"freshCurrentPlayer={freshCurrentPlayer} " +
-                          $"freshAiDone={freshAiDone} " +
-                          $"freshMatchActive={freshMatchActive}");
+//                 Debug.Log($"[HandManager] FullTurnSequence FALLBACK recheck: " +
+                          // $"freshCurrentPlayer={freshCurrentPlayer} " +
+                          // $"freshAiDone={freshAiDone} " +
+                          // $"freshMatchActive={freshMatchActive}");
 
                 if (freshCurrentPlayer == MatchController.PLAYER_AI && !freshAiDone && freshMatchActive)
                 {
-                    Debug.Log("[HandManager] FullTurnSequence FALLBACK: AI turn detected on recheck — triggering.");
+//                     Debug.Log("[HandManager] FullTurnSequence FALLBACK: AI turn detected on recheck — triggering.");
                     aiShouldAct = true;
                 }
                 else if (!freshAiDone && freshMatchActive)
@@ -2450,16 +4066,17 @@ namespace WordDrop
 
             if (aiShouldAct && GameVisualBridge.Instance != null)
             {
-                Debug.Log("[HandManager] Triggering AI turn...");
+//                 Debug.Log("[HandManager] Triggering AI turn...");
                 yield return StartCoroutine(GameVisualBridge.Instance.ExecuteAITurnCoroutine());
-                Debug.Log("[HandManager] AI turn coroutine completed.");
+//                 Debug.Log("[HandManager] AI turn coroutine completed.");
             }
 
             // 4. Check match state again after AI turn
             if (MatchController.Instance == null || !MatchController.Instance.IsMatchActive
                 || MatchController.Instance.IsGameOver)
             {
-                Debug.Log("[HandManager] FullTurnSequence: Match ended after AI turn — forcing GameOver transition.");
+//                 Debug.Log("[HandManager] FullTurnSequence: Match ended after AI turn — forcing GameOver transition.");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 if (GameManager.Instance != null)
                     GameManager.Instance.TransitionTo(GameState.GameOver);
                 yield break;
@@ -2473,7 +4090,7 @@ namespace WordDrop
                 int globalTurn = RulesEngine.Instance != null ? RulesEngine.Instance.GlobalTurn : 0;
                 if (RisingRowManager.Instance.ShouldRiseThisTurn(globalTurn))
                 {
-                    Debug.Log($"[HandManager] Rising row triggered at globalTurn={globalTurn}");
+//                     Debug.Log($"[HandManager] Rising row triggered at globalTurn={globalTurn}");
                     bool overflowed = false;
                     yield return StartCoroutine(RisingRowManager.Instance.RiseRow((overflow) =>
                     {
@@ -2484,15 +4101,18 @@ namespace WordDrop
                     {
                         if (MatchController.Instance != null && !MatchController.Instance.IsLastWord)
                         {
-                            Debug.Log("[HandManager] Rising row overflow → triggering LAST WORD phase!");
+//                             Debug.Log("[HandManager] Rising row overflow → triggering LAST WORD phase!");
                             MatchController.Instance.TriggerLastWord();
                             // Continue — let players have their final turns
                         }
                         else
                         {
-                            Debug.Log("[HandManager] Rising row overflow during Last Word — game over.");
+//                             Debug.Log("[HandManager] Rising row overflow during Last Word — game over.");
                             if (MatchController.Instance != null)
+                            {
                                 MatchController.Instance.ForceGameOver();
+                                MatchController.Instance.EndProcessing();
+                            }
                             if (GameManager.Instance != null)
                                 GameManager.Instance.TransitionTo(GameState.GameOver);
                             yield break;
@@ -2507,7 +4127,8 @@ namespace WordDrop
             // 6. Check if match ended after player's turn (human was last)
             if (!MatchController.Instance.IsMatchActive || MatchController.Instance.IsGameOver)
             {
-                Debug.Log("[HandManager] FullTurnSequence: Match ended (human last turn) — forcing GameOver.");
+//                 Debug.Log("[HandManager] FullTurnSequence: Match ended (human last turn) — forcing GameOver.");
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 if (GameManager.Instance != null)
                     GameManager.Instance.TransitionTo(GameState.GameOver);
                 yield break;
@@ -2523,11 +4144,14 @@ namespace WordDrop
                 if (ColumnArrowManager.Instance != null)
                     ColumnArrowManager.Instance.ShowArrows(true);
 
-                Debug.Log("[HandManager] FullTurnSequence END: Player input re-enabled.");
+                // Refresh next tile preview — may not have been set during hand refresh
+                UpdateNextTilePreview();
+
+//                 Debug.Log("[HandManager] FullTurnSequence END: Player input re-enabled.");
             }
             else
             {
-                Debug.Log($"[HandManager] FullTurnSequence END: No more turns. Forcing GameOver.");
+//                 Debug.Log($"[HandManager] FullTurnSequence END: No more turns. Forcing GameOver.");
                 if (GameManager.Instance != null && !MatchController.Instance.IsGameOver)
                     MatchController.Instance.ForceGameOver();
                 if (GameManager.Instance != null)
@@ -2549,12 +4173,16 @@ namespace WordDrop
             PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
             if (hand != null)
             {
+                // Ensure next tile cache is populated before refreshing visuals
+                if (MatchController.Instance.CurrentPlayer == MatchController.PLAYER_HUMAN)
+                    hand.EnsureCachedNextLetter(MatchController.Instance.Bag);
+
                 char[] slots = hand.GetAllSlots();
                 for (int i = 0; i < HAND_SIZE && i < slots.Length; i++)
                     _hand[i] = slots[i];
 
                 RefreshAllCardVisuals();
-                Debug.Log($"[HandManager] Hand refreshed: {new string(_hand)}");
+//                 Debug.Log($"[HandManager] Hand refreshed: {new string(_hand)}");
             }
         }
 
@@ -2570,10 +4198,18 @@ namespace WordDrop
 
             float cardY = GetCardRowY();
             float trayTop = cardY + _grid.CellSize * 0.45f;
-            float shuffleY = cardY - _grid.CellSize * 1.0f;
-            float trayBottom = shuffleY - _grid.CellSize * 0.18f;
+            float trayBottom = (cardY - _grid.CellSize * 1.0f) - _grid.CellSize * 0.18f;
             float trayH = trayTop - trayBottom;
             float trayW = (_grid.GridRight - _grid.GridLeft) + _grid.CellSize * 0.3f;
+
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                float actionRowY = GetActionRowY();
+                trayTop = cardY + _cardSize * 0.60f;
+                trayBottom = actionRowY - _cardSize * 0.48f;
+                trayH = trayTop - trayBottom;
+                trayW = (_grid.GridRight - _grid.GridLeft) + _grid.CellSize * 0.18f;
+            }
 
             int texW = Mathf.Clamp(Mathf.RoundToInt(trayW * 150f), 64, 1024);
             int texH = Mathf.Clamp(Mathf.RoundToInt(trayH * 150f), 64, 1024);
@@ -2583,17 +4219,17 @@ namespace WordDrop
             Color trayColor = new Color(0.085f, 0.105f, 0.260f, 0.60f); // darker, desaturated — distinct from purple bg
             Sprite traySprite = TileRenderer.CreateSolidRoundedRect(texW, texH, radius, trayColor);
 
-            GameObject trayGO = new GameObject("ControlTray");
-            trayGO.transform.SetParent(transform, false);
-            trayGO.transform.position = new Vector3(0f, (trayTop + trayBottom) / 2f, 0.5f);
+            _controlTray = new GameObject("ControlTray");
+            _controlTray.transform.SetParent(transform, false);
+            _controlTray.transform.position = new Vector3(0f, (trayTop + trayBottom) / 2f, 0.5f);
 
-            SpriteRenderer sr = trayGO.AddComponent<SpriteRenderer>();
+            SpriteRenderer sr = _controlTray.AddComponent<SpriteRenderer>();
             sr.sprite = traySprite;
             sr.sortingOrder = -1; // behind cards
 
             float nativeW = texW / 100f;
             float nativeH = texH / 100f;
-            trayGO.transform.localScale = new Vector3(trayW / nativeW, trayH / nativeH, 1f);
+            _controlTray.transform.localScale = new Vector3(trayW / nativeW, trayH / nativeH, 1f);
         }
 
         private void BuildCardSprites()
@@ -2606,8 +4242,8 @@ namespace WordDrop
             int border  = Mathf.Max(3, texSize / 16);
 
             // Try loading hand-drawn sprites
-            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/master_tile");
-            Sprite loadedSelected = Resources.Load<Sprite>("Tiles/selected_tile");
+            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/test_tile");
+            Sprite loadedSelected = Resources.Load<Sprite>("Tiles/selected_test@2x");
             Sprite loadedSwap     = Resources.Load<Sprite>("Tiles/swap_tile");
 
             if (loadedNormal != null)
@@ -2616,7 +4252,19 @@ namespace WordDrop
                 _spriteSelected     = loadedSelected ?? loadedNormal;
                 _spriteSwap         = loadedSwap ?? loadedNormal;
                 _spriteSwapSelected = loadedSwap ?? loadedNormal; // swap+selected uses swap sprite
-                Debug.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
+//                 Debug.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
+            }
+
+            // Wild halo — loaded once, reused across all hand slots.
+            Texture2D haloTex = Resources.Load<Texture2D>("Particles/wild_halo");
+            if (haloTex != null)
+            {
+                _spriteWildHalo = Sprite.Create(
+                    haloTex, new Rect(0, 0, haloTex.width, haloTex.height),
+                    new Vector2(0.5f, 0.5f), 100f);
+                Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
+                if (addShader == null) addShader = Shader.Find("Sprites/Default");
+                _wildHaloMaterial = new Material(addShader);
             }
             else
             {
@@ -2629,7 +4277,7 @@ namespace WordDrop
                                         CARD_FILL_NORMAL, CARD_BORDER_SWAP, border + 1);
                 _spriteSwapSelected= TileRenderer.CreateRoundedRect(texSize, texSize, radius,
                                         CARD_FILL_NORMAL, CARD_BORDER_SWAP_SEL, border + 2);
-                Debug.Log("[HandManager] Fallback: procedural card sprites.");
+//                 Debug.Log("[HandManager] Fallback: procedural card sprites.");
             }
         }
 
@@ -2638,7 +4286,12 @@ namespace WordDrop
             if (_grid == null || _spriteNormal == null) return;
 
             for (int i = 0; i < HAND_SIZE; i++)
+            {
                 if (_cardObjects[i] != null) Destroy(_cardObjects[i]);
+                if (_cardHalos[i] != null) Destroy(_cardHalos[i]);
+                _cardHalos[i] = null;
+                _cardHaloSRs[i] = null;
+            }
 
             float cardY = GetCardRowY();
 
@@ -2688,7 +4341,7 @@ namespace WordDrop
                 // Point value — TMP, matches board tiles exactly
                 GameObject ptsGO = new GameObject("CardPoints");
                 ptsGO.transform.SetParent(cardGO.transform, false);
-                ptsGO.transform.localPosition = new Vector3(nativeSize * 0.28f, -nativeSize * 0.20f, -0.1f);
+                ptsGO.transform.localPosition = new Vector3(nativeSize * 0.22f, -nativeSize * 0.22f, -0.1f);
 
                 var ptsTm = ptsGO.AddComponent<TMPro.TextMeshPro>();
                 if (tileFont != null) ptsTm.font = tileFont;
@@ -2713,9 +4366,34 @@ namespace WordDrop
                 _cardSRs[i]      = sr;
                 _cardTexts[i]    = tm;
                 _cardPtsTexts[i] = ptsTm;
+
+                // Wild halo child — sits BEHIND the card (lower sortingOrder), scaled
+                // ~1.8× wider than the card so the glow spills past the card edges.
+                // Starts disabled; RefreshCardVisual enables it when the slot is wild.
+                if (_spriteWildHalo != null)
+                {
+                    GameObject haloGO = new GameObject("HandCardHalo");
+                    haloGO.transform.SetParent(cardGO.transform, false);
+                    haloGO.transform.localPosition = new Vector3(0f, 0f, 0.3f); // slightly behind card
+                    var haloSR = haloGO.AddComponent<SpriteRenderer>();
+                    haloSR.sprite = _spriteWildHalo;
+                    if (_wildHaloMaterial != null) haloSR.sharedMaterial = _wildHaloMaterial;
+                    haloSR.sortingOrder = 9; // card is 10, halo renders just behind
+                    // Halo occupies roughly 1.25× card footprint — tight enough to
+                    // read as "this card glows" without dominating the hand row.
+                    float haloNativeSize = (haloSR.sprite != null && haloSR.sprite.bounds.size.x > 0)
+                        ? haloSR.sprite.bounds.size.x : 1f;
+                    float haloScale = (_cardSize * 1.25f) / (haloNativeSize * scale);
+                    haloGO.transform.localScale = new Vector3(haloScale, haloScale, 1f);
+                    // Animator — rotates + pulses so the halo reads as alive, not a sticker.
+                    haloGO.AddComponent<WildHaloAnimator>();
+                    haloGO.SetActive(false);
+                    _cardHalos[i]   = haloGO;
+                    _cardHaloSRs[i] = haloSR;
+                }
             }
 
-            Debug.Log($"[HandManager] Built {HAND_SIZE} card objects at Y={cardY:F2}");
+//             Debug.Log($"[HandManager] Built {HAND_SIZE} card objects at Y={cardY:F2}");
         }
 
         // ── Card shadow helpers ───────────────────────────────────────────────────
@@ -2911,6 +4589,19 @@ namespace WordDrop
             char letter     = _hand[index];
             bool isEmpty    = (letter == '\0');
 
+            // Phase C: wild flag lives on PlayerHand. Cheap lookup each refresh.
+            bool isWild = false;
+            if (MatchController.Instance != null)
+            {
+                PlayerHand pHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+                if (pHand != null) isWild = pHand.IsWildSlot(index);
+            }
+
+            // Toggle the wild halo child on this card — glows out from behind so
+            // the wild card reads as "special" even at a glance.
+            if (_cardHalos[index] != null)
+                _cardHalos[index].SetActive(isWild);
+
             // Choose sprite based on mode and selection
             if (_swapModeActive)
             {
@@ -2926,6 +4617,13 @@ namespace WordDrop
             {
                 _cardTexts[index].text  = "";
                 _cardTexts[index].color = CARD_TEXT_COLOR;
+            }
+            else if (isWild)
+            {
+                // Wild slot: ★ glyph in the wild color. No letter visible until it
+                // resolves on the board; hand-side is always "uncommitted".
+                _cardTexts[index].text  = WILD_CARD_GLYPH;
+                _cardTexts[index].color = WILD_CARD_COLOR;
             }
             else if (_swapModeActive)
             {
@@ -2945,6 +4643,11 @@ namespace WordDrop
                 {
                     _cardPtsTexts[index].text = "";
                 }
+                else if (isWild)
+                {
+                    // Suppress point value on wild cards — it has no fixed letter
+                    _cardPtsTexts[index].text = "";
+                }
                 else
                 {
                     int pts = LetterData.GetPoints(letter);
@@ -2952,6 +4655,12 @@ namespace WordDrop
                 }
             }
         }
+
+        // "?" reads as "blank/unknown tile" (classic Scrabble wild convention) and
+        // is in every font atlas — ★ (U+2605) isn't in AvenirNext SDF so it rendered
+        // as a missing-glyph square box. Player reads "?" as "any letter" immediately.
+        private const string WILD_CARD_GLYPH = "?";
+        private static readonly Color WILD_CARD_COLOR = new Color(0.75f, 0.40f, 1.00f, 1f); // purple — matches Tile.WILD_LETTER_COLOR
 
         // ── Layout helpers ────────────────────────────────────────────────────────
 
@@ -2967,7 +4676,9 @@ namespace WordDrop
             if (_grid == null) return;
 
             float cardY = GetCardRowY();
-            _shuffleButtonY = cardY - _cardSize * 1.0f;
+            _shuffleButtonY = SurvivalManager.IsSurvivalMode
+                ? GetActionRowY()
+                : cardY - _cardSize * 1.0f;
             _shuffleButtonX = -_cardSize * 1.0f;   // left side
             _shuffleButtonSize = _cardSize * 0.7f;
 
@@ -2999,11 +4710,11 @@ namespace WordDrop
             textGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
             var tm = textGO.AddComponent<TMPro.TextMeshPro>();
-            TMPro.TMP_FontAsset heavyFont = Resources.Load<TMPro.TMP_FontAsset>("Cartoon SDF");
-            if (heavyFont != null) tm.font = heavyFont;
+            TMPro.TMP_FontAsset btnFont = GameFont.GetUITMP();
+            if (btnFont != null) tm.font = btnFont;
             tm.text = "SHUFFLE";
             tm.fontSize = 2.8f;
-            tm.fontStyle = TMPro.FontStyles.Normal;
+            tm.fontStyle = TMPro.FontStyles.Bold;
             tm.color = new Color(0.145f, 0.153f, 0.200f, 0.95f);
             tm.alignment = TMPro.TextAlignmentOptions.Center;
             tm.sortingOrder = 12;
@@ -3114,16 +4825,18 @@ namespace WordDrop
             }
 
             // ── Phase 2: SHUFFLE DATA ──
+            // Permute letters AND wild flags together so a shuffled wild lands in
+            // the correct new slot instead of stranding its flag at the old index.
             char[] letters = hand.GetAllSlots();
-            for (int i = letters.Length - 1; i > 0; i--)
+            bool[] wilds   = hand.GetAllWildFlags();
+            int activeSize = HAND_SIZE;
+            for (int i = activeSize - 1; i > 0; i--)
             {
                 int j = Random.Range(0, i + 1);
-                char temp = letters[i];
-                letters[i] = letters[j];
-                letters[j] = temp;
+                char tempC = letters[i]; letters[i] = letters[j]; letters[j] = tempC;
+                bool tempW = wilds[i];   wilds[i]   = wilds[j];   wilds[j]   = tempW;
             }
-            for (int i = 0; i < letters.Length; i++)
-                hand.SetSlot(i, letters[i]);
+            hand.ReorderSlotsWithFlags(letters, wilds);
 
             _hand = (char[])letters.Clone();
             RefreshAllCardVisuals();
@@ -3140,7 +4853,7 @@ namespace WordDrop
                     .SetEase(DG.Tweening.Ease.OutQuad);
             }
 
-            yield return new WaitForSeconds(0.18f);
+            yield return WaitCache.Get(0.18f);
 
             // Snap clean
             for (int i = 0; i < HAND_SIZE; i++)
@@ -3151,7 +4864,7 @@ namespace WordDrop
             }
 
             _selectedIndex = -1;
-            Debug.Log($"[HandManager] Hand shuffled: {new string(letters)}");
+//             Debug.Log($"[HandManager] Hand shuffled: {new string(letters)}");
         }
 
         private static Sprite _softShadowSprite;
@@ -3222,7 +4935,27 @@ namespace WordDrop
         private float GetCardRowY()
         {
             if (_grid == null) return -8f;
-            return _grid.GridBottom - _grid.CellSize * 0.9f;  // clear gap below board
+            if (!SurvivalManager.IsSurvivalMode)
+                return _grid.GridBottom - _grid.CellSize * 0.9f;
+
+            float boardGapY = _grid.GridBottom - _grid.CellSize * 0.55f;
+            float actionAnchoredY = GetActionRowY() + _cardSize * 1.15f;
+            return Mathf.Min(boardGapY, actionAnchoredY);
+        }
+
+        private float GetActionRowY()
+        {
+            if (_grid == null) return -9f;
+            if (!SurvivalManager.IsSurvivalMode)
+                return GetCardRowY() - _cardSize * 1.0f;
+
+            float halfH = _cam != null ? _cam.orthographicSize : Camera.main.orthographicSize;
+            // Account for iPhone safe area (home indicator) + padding
+            float safeBottom = 0f;
+            if (Screen.safeArea.y > 0)
+                safeBottom = (Screen.safeArea.y / Screen.height) * halfH * 2f;
+            float bottomInset = _cardSize * 0.50f + safeBottom;
+            return -halfH + bottomInset;
         }
 
         private float GetCardX(int index)
@@ -3245,17 +4978,17 @@ namespace WordDrop
             // Layout: action row sits below hand cards
             // SHUFFLE is on the left, NEXT tile on the right
             // Both centered vertically on the same row
-            float actionRowY = _shuffleButtonY;  // same Y as shuffle button
+            float actionRowY = SurvivalManager.IsSurvivalMode ? GetActionRowY() : _shuffleButtonY;
             float nextX = _shuffleButtonX + _cardSize * 2.5f;
             float previewSize = _cardSize * 0.65f;
 
             // No separate floating NEXT label — it goes on the tile itself (see below)
 
             // -- Socket/holder behind the next tile --
-            GameObject socketGO = new GameObject("NextSocket");
-            socketGO.transform.SetParent(transform, false);
-            socketGO.transform.position = new Vector3(nextX, actionRowY, -0.5f);
-            SpriteRenderer socketSR = socketGO.AddComponent<SpriteRenderer>();
+            _nextTileSocket = new GameObject("NextSocket");
+            _nextTileSocket.transform.SetParent(transform, false);
+            _nextTileSocket.transform.position = new Vector3(nextX, actionRowY, -0.5f);
+            SpriteRenderer socketSR = _nextTileSocket.AddComponent<SpriteRenderer>();
             socketSR.sprite = _spriteNormal;
             socketSR.color = new Color(0.06f, 0.08f, 0.20f, 0.50f); // deep inset — matches board family
             socketSR.sortingOrder = 9;
@@ -3263,7 +4996,7 @@ namespace WordDrop
                 ? _spriteNormal.bounds.size.x
                 : Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512) / 100f;
             float socketScale = (previewSize * 1.15f) / socketNative;
-            socketGO.transform.localScale = new Vector3(socketScale, socketScale, 1f);
+            _nextTileSocket.transform.localScale = new Vector3(socketScale, socketScale, 1f);
 
             // -- Preview tile --
             _nextTilePreview = new GameObject("NextTilePreview");
@@ -3309,23 +5042,24 @@ namespace WordDrop
             if (mr != null) mr.sortingOrder = 15;
 
             // "NEXT" label — to the left of the tile
-            float labelX = nextX - previewSize * 0.5f - _cardSize * 0.35f;
+            float labelX = nextX - previewSize * 0.5f - _cardSize * 0.55f;
             GameObject labelGO = new GameObject("NextLabel");
             labelGO.transform.position = new Vector3(labelX, actionRowY, -1f);
 
-            TextMesh labelTm = labelGO.AddComponent<TextMesh>();
-            labelTm.anchor = TextAnchor.MiddleRight;
-            labelTm.alignment = TextAlignment.Right;
-            labelTm.fontSize = 38;
-            labelTm.characterSize = 0.055f;
-            labelTm.fontStyle = FontStyle.Bold;
-            labelTm.color = new Color(0.78f, 0.78f, 0.88f, 0.95f);  // brighter, more readable
-            labelTm.text = "NEXT";
-            GameFont.ApplyBody(labelTm);
-            _nextTileLabel = labelTm;
-
-            MeshRenderer labelMr = labelGO.GetComponent<MeshRenderer>();
-            if (labelMr != null) labelMr.sortingOrder = 15;
+            var labelTmp = labelGO.AddComponent<TMPro.TextMeshPro>();
+            var uiFont = GameFont.GetUITMP();
+            if (uiFont != null) labelTmp.font = uiFont;
+            labelTmp.text = "NEXT";
+            labelTmp.fontSize = 2.5f;
+            labelTmp.fontStyle = TMPro.FontStyles.Bold;
+            labelTmp.color = new Color(0.78f, 0.78f, 0.88f, 0.95f);
+            labelTmp.alignment = TMPro.TextAlignmentOptions.Center;
+            labelTmp.sortingOrder = 15;
+            labelTmp.rectTransform.sizeDelta = new Vector2(2f, 1f);
+            labelTmp.enableWordWrapping = false;
+            labelTmp.overflowMode = TMPro.TextOverflowModes.Overflow;
+            TMPHelper.ApplyEffects(labelTmp, labelTmp.color, TMPHelper.TextTier.HUD);
+            _nextTileLabel = labelTmp;
         }
 
         // ── Tile Bag button ─────────────────────────────────────────────────
@@ -3339,7 +5073,7 @@ namespace WordDrop
         {
             if (_grid == null) return;
 
-            float actionRowY = _shuffleButtonY;
+            float actionRowY = SurvivalManager.IsSurvivalMode ? GetActionRowY() : _shuffleButtonY;
             float nextX = _shuffleButtonX + _cardSize * 2.5f;
             float previewSize = _cardSize * 0.65f;
             _tileBagX = nextX + previewSize * 0.5f + _cardSize * 0.85f;
@@ -3486,7 +5220,7 @@ namespace WordDrop
             MeshRenderer noMr = _swapTileNoLabel.GetComponent<MeshRenderer>();
             if (noMr != null) noMr.sortingOrder = 30;
 
-            Debug.Log("[HandManager] Showing Swap Tile? popup");
+//             Debug.Log("[HandManager] Showing Swap Tile? popup");
         }
 
         private void DismissSwapTilePopup()
@@ -3522,11 +5256,16 @@ namespace WordDrop
                 return;
             }
 
-            // Use the pre-cached letter from PlayerHand — this is the actual letter
-            // the player will receive, accounting for drought assist and hand protection.
+            // Show the cached next letter, but only if it would actually be used.
+            // The cache can be rejected at draw time due to vowel floor/ceiling/dupe checks.
             PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
-            char next = (hand != null) ? hand.CachedNextLetter : '\0';
-            _nextTileLetter.text = (next != '\0') ? next.ToString() : "";
+            if (hand == null) { _nextTileLetter.text = ""; return; }
+
+            char next = hand.CachedNextLetter;
+            if (next != '\0' && hand.WouldCacheBeUsed(next))
+                _nextTileLetter.text = next.ToString();
+            else
+                _nextTileLetter.text = "?";
         }
     }
 

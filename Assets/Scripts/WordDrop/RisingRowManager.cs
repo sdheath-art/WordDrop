@@ -40,8 +40,8 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-            Debug.Log("[RisingRowManager] Awake — Enabled=" + Enabled +
-                      " TurnInterval=" + TurnInterval);
+//             Debug.Log("[RisingRowManager] Awake — Enabled=" + Enabled +
+                      // " TurnInterval=" + TurnInterval);
         }
 
         // ── Public API ────────────────────────────────────────────────────────────
@@ -77,10 +77,13 @@ namespace WordDrop
                 yield break;
             }
 
-            // 1. Check for overflow: if any tile exists in the top row, game over
-            if (rules.HasTilesInTopRow())
+            // 1. Check for overflow based on top-out mode
+            bool overflow = SurvivalManager.Instance != null && SurvivalManager.Instance.topOutMode == SurvivalManager.TopOutMode.Strict
+                ? rules.HasAnyTileInTopRow()
+                : rules.HasTilesInTopRow();
+            if (overflow)
             {
-                Debug.Log("[RisingRowManager] Board overflow! Tiles in top row would be pushed off.");
+//                 Debug.Log("[RisingRowManager] Board overflow! Tiles in top row would be pushed off.");
                 onComplete?.Invoke(true); // overflow = true
                 yield break;
             }
@@ -90,7 +93,15 @@ namespace WordDrop
                 : new TileBag();
 
             // 2. Shift board data up one row in RulesEngine
-            var shiftMoves = rules.ShiftBoardUp();
+            List<Vector2Int> crushedCells;
+            var shiftMoves = rules.ShiftBoardUp(out crushedCells);
+
+            // Remove tiles that were pushed off the top
+            if (crushedCells.Count > 0)
+            {
+                grid.RemoveTiles(crushedCells);
+//                 Debug.Log($"[RisingRowManager] Crushed {crushedCells.Count} tiles off the top row.");
+            }
 
             // 2b. Shift bonus cells up before filling new row
             rules.ShiftBonusCellsUp();
@@ -105,43 +116,28 @@ namespace WordDrop
             if (rules.PrimedRegistry != null && shiftMoves.Count > 0)
                 rules.PrimedRegistry.UpdateCellPositions(shiftMoves);
 
-            // 5. Detect new words created by the rise, prime them, THEN rebuild scored keys
-            var newWords = rules.DetectAndPrimeRiseWords();
-
-            // 5b. Rebuild scored word keys — marks all current words (including new primed ones)
-            // as already scored so they don't re-trigger on the next drop
+            // 5. Remap scored keys to post-shift positions FIRST (y+1),
+            //    THEN register bottom-row words as scored so they don't auto-prime.
             rules.RebuildScoredKeysAfterRise();
+            rules.RegisterWordsAtRow(0);
 
-            // 6. Play rising row sound
+            // 6. Update rewrite target IMMEDIATELY after data shift (before animation)
+            //    so rising rows during rewrite mode don't cause wrong-tile edits.
+            if (HandManager.Instance != null)
+                HandManager.Instance.OnBoardShiftedUp();
+
+            // 7. Play rising row sound
             GameAudio.Instance?.PlayRisingRow();
+            HapticsManager.RisingRow();
 
-            // 7. Animate: shift existing visual tiles up, create new bottom row tiles
+            // 8. Animate: shift existing visual tiles up, create new bottom row tiles
             yield return StartCoroutine(grid.AnimateRiseRow(rules, shiftMoves, newLetters));
 
-            // 8. Refresh bonus cell visual overlays
+            // 9. Refresh bonus cell visual overlays
             grid.RefreshBonusCellOverlays();
 
-            // 9. Apply primed glow to any tiles in newly created words
-            if (newWords.Count > 0)
-            {
-                foreach (var word in newWords)
-                {
-                    if (word.Cells == null) continue;
-                    foreach (var cell in word.Cells)
-                    {
-                        Tile tile = grid.GetTile(cell.x, cell.y);
-                        if (tile != null)
-                        {
-                            tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true);
-                            GameParticles.Instance?.PlayPrimed(tile.transform.position);
-                        }
-                    }
-                }
-                GameAudio.Instance?.PlayTilePrimed();
-            }
-
-            Debug.Log("[RisingRowManager] Rising row complete. New bottom row: " +
-                      new string(newLetters));
+//             Debug.Log("[RisingRowManager] Rising row complete. New bottom row: " +
+//                       new string(newLetters));
 
             onComplete?.Invoke(false); // no overflow
         }

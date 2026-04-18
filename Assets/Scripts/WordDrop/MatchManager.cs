@@ -28,7 +28,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-            Debug.Log("[MatchManager] Awake (legacy stub)");
+//             Debug.Log("[MatchManager] Awake (legacy stub)");
         }
 
         /// <summary>
@@ -47,11 +47,11 @@ namespace WordDrop
             if (MatchController.Instance != null)
             {
                 MatchController.Instance.StartMatch();
-                Debug.Log("[MatchManager] StartMatch delegated to MatchController.");
+//                 Debug.Log("[MatchManager] StartMatch delegated to MatchController.");
             }
             else
             {
-                Debug.Log("[MatchManager] StartMatch (legacy stub — no MatchController).");
+//                 Debug.Log("[MatchManager] StartMatch (legacy stub — no MatchController).");
             }
         }
 
@@ -65,8 +65,8 @@ namespace WordDrop
             TotalTilesPlaced = totalTiles;
             IsGameOver       = true;
             IsMatchActive    = false;
-            Debug.Log($"[MatchManager] Synced from MatchController: " +
-                      $"playerTurns={playerTurns} totalTiles={totalTiles}");
+//             Debug.Log($"[MatchManager] Synced from MatchController: " +
+                      // $"playerTurns={playerTurns} totalTiles={totalTiles}");
         }
 
         // ── Legacy stubs — kept so HandManager and others compile ──────────────────

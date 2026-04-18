@@ -82,7 +82,7 @@ namespace WordDrop
             Instance = this;
             BuildUI();
             SetVisible(false);
-            Debug.Log("[GameOverUI] Awake — panel built and hidden");
+//             Debug.Log("[GameOverUI] Awake — panel built and hidden");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -147,16 +147,19 @@ namespace WordDrop
             int shareFS  = cfg != null ? cfg.gameOverShareFontSize : 26;
             Color shareBg = cfg != null ? cfg.gameOverShareColor : new Color(0.40f, 0.65f, 0.90f, 1f);
 
-            // Title: "GAME OVER"
+            // Title: "GAME OVER" — celebration font
             _titleText = MakeLabel(_panel.transform, "Title",
                 new Vector2(0.05f, 0.78f), new Vector2(0.95f, 0.95f),
                 "GAME OVER", titleFS, FontStyle.Normal, GOLD, TextAnchor.MiddleCenter);
+            TMP_FontAsset displayFont = GameFont.GetDisplayTMP();
+            if (displayFont != null) _titleText.font = displayFont;
             stagger.Add(_titleText.gameObject);
 
-            // Winner text
+            // Winner text — celebration font
             _winnerText = MakeLabel(_panel.transform, "Winner",
                 new Vector2(0.05f, 0.62f), new Vector2(0.95f, 0.78f),
                 "PLAYER WINS!", winnerFS, FontStyle.Normal, PLAYER_GREEN, TextAnchor.MiddleCenter);
+            if (displayFont != null) _winnerText.font = displayFont;
             stagger.Add(_winnerText.gameObject);
 
             // Player score
@@ -218,7 +221,7 @@ namespace WordDrop
             if (_showInProgress) return;
             _showInProgress = true;
             GameAudio.Instance?.PlayGameOver();
-            GameAudio.Instance?.PlayWhoosh();
+            GameAudio.Instance?.PlayWhooshBig();
 
             // Check for detonation replay before showing the panel
             if (DetonationRecorder.Instance != null && DetonationRecorder.Instance.HasReplay
@@ -233,7 +236,7 @@ namespace WordDrop
 
         private IEnumerator ShowWithReplay()
         {
-            Debug.Log("[GameOverUI] Playing detonation replay before showing scores.");
+//             Debug.Log("[GameOverUI] Playing detonation replay before showing scores.");
 
             var chain = DetonationRecorder.Instance.GetBestChain();
             Coroutine replay = DetonationReplay.Instance.PlayReplay(chain);
@@ -284,6 +287,60 @@ namespace WordDrop
 
                 if (_shareButton != null) _shareButton.SetActive(true);
                 if (_turnsPlayedText != null) _turnsPlayedText.text = "";
+
+                SetVisible(true);
+                StartCoroutine(ShowAnimation());
+                return;
+            }
+
+            // ── Survival mode ────────────────────────────────────────────────────
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                float timeSurvived = SurvivalManager.Instance != null ? SurvivalManager.Instance.ElapsedTime : 0f;
+                int totalDrops = SurvivalManager.Instance != null ? SurvivalManager.Instance.TotalAutoDrops : 0;
+                int longestChain = SurvivalManager.Instance != null ? SurvivalManager.Instance.LongestChain : 0;
+                int humanDrops = MatchController.Instance != null
+                    ? MatchController.Instance.GetPlayerTurns(MatchController.PLAYER_HUMAN) : 0;
+
+                string timeStr = FormatSurvivalTime(timeSurvived);
+                bool survNewBest = HighScoreManager.Submit(playerScore, "survival");
+                int survBest = HighScoreManager.GetBest("survival");
+
+                TMP_FontAsset displayFont = GameFont.GetDisplayTMP();
+                if (_titleText != null)
+                {
+                    _titleText.text = "TOP OUT";
+                    _titleText.color = DEFEAT_RED;
+                    if (displayFont != null) _titleText.font = displayFont;
+                }
+                if (_winnerText != null)
+                {
+                    _winnerText.text = $"{playerScore} PTS";
+                    _winnerText.color = GOLD;
+                    if (displayFont != null) _winnerText.font = displayFont;
+                }
+                int stage = SurvivalManager.Instance != null ? SurvivalManager.Instance.GetCurrentStage() : 1;
+                if (_playerScoreText != null)
+                {
+                    _playerScoreText.text = $"{timeStr}  |  S{stage}  |  {humanDrops} drops";
+                    _playerScoreText.fontSize = 24; // tighter fit for stats line
+                }
+                if (_aiScoreText != null)
+                {
+                    _aiScoreText.gameObject.SetActive(true);
+                    _aiScoreText.text = $"Words: {humanDrops}  |  Best Chain: {longestChain}";
+                    _aiScoreText.fontSize = 22;
+                    _aiScoreText.color = TEXT_DIM;
+                }
+                if (_turnsPlayedText != null)
+                    _turnsPlayedText.text = "";
+                if (_bestScoreText != null)
+                {
+                    _bestScoreText.text = survNewBest ? "NEW BEST!" : $"Best: {survBest}";
+                    _bestScoreText.color = survNewBest ? GOLD : TEXT_DIM;
+                }
+                if (_dailyStreakText != null) _dailyStreakText.gameObject.SetActive(false);
+                if (_shareButton != null) _shareButton.SetActive(false);
 
                 SetVisible(true);
                 StartCoroutine(ShowAnimation());
@@ -443,6 +500,7 @@ namespace WordDrop
             if (_bestScoreText != null && _bestScoreText.text.Contains("NEW BEST"))
             {
                 yield return new WaitForSeconds(0.15f);
+                GameAudio.Instance?.PlayPersonalBest();
                 _bestScoreText.transform.DOScale(1.25f, 0.15f).SetEase(Ease.OutBack, 4f)
                     .OnComplete(() =>
                     {
@@ -479,7 +537,7 @@ namespace WordDrop
             string shareText = DailyDropManager.GenerateShareText(playerScore, streak);
 
             GUIUtility.systemCopyBuffer = shareText;
-            Debug.Log($"[GameOverUI] Share text copied to clipboard:\n{shareText}");
+//             Debug.Log($"[GameOverUI] Share text copied to clipboard:\n{shareText}");
 
             // Brief visual feedback on share button
             if (_shareButton != null)
@@ -557,6 +615,13 @@ namespace WordDrop
             }
         }
 
+        private static string FormatSurvivalTime(float seconds)
+        {
+            int m = Mathf.FloorToInt(seconds / 60f);
+            int s = Mathf.FloorToInt(seconds % 60f);
+            return $"{m}:{s:D2}";
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // UI BUILDERS
         // ═══════════════════════════════════════════════════════════════════════════
@@ -616,7 +681,7 @@ namespace WordDrop
             cb.pressedColor     = Color.Lerp(bgColor, Color.black, 0.2f);
             cb.fadeDuration     = 0.08f;
             btn.colors = cb;
-            btn.onClick.AddListener(() => GameAudio.Instance?.PlayUIClick());
+            btn.onClick.AddListener(() => GameAudio.Instance?.PlayButtonClick());
             btn.onClick.AddListener(onClick);
 
             // Label
@@ -639,6 +704,11 @@ namespace WordDrop
             t.overflowMode = TextOverflowModes.Overflow;
             t.enableWordWrapping = false;
             t.margin = new Vector4(0f, 8f, 0f, 8f);
+
+            // Button-tier outline (between HUD and Announcement)
+            t.outlineWidth = 0.1f;
+            Color btnTextColor = t.color;
+            t.outlineColor = (Color32)Color.Lerp(btnTextColor, Color.black, 0.5f);
 
             return btnGO;
         }

@@ -106,11 +106,23 @@ namespace WordDrop
                     if (match.Cells == null) continue;
                     for (int c = 0; c < match.Cells.Count; c++)
                     {
+                        // Direct overlap
                         var overlapping = registry.GetPrimedWordsContaining(match.Cells[c]);
                         for (int p = 0; p < overlapping.Count; p++)
                         {
                             if (triggerIds.Add(overlapping[p].Id))
                                 _triggeredPrimedWords.Add(overlapping[p]);
+                        }
+
+                        // Adjacency trigger preview
+                        if (RulesEngine.AdjacencyTriggerEnabled)
+                        {
+                            var adjacent = registry.GetPrimedWordsAdjacentTo(match.Cells[c]);
+                            for (int p = 0; p < adjacent.Count; p++)
+                            {
+                                if (triggerIds.Add(adjacent[p].Id))
+                                    _triggeredPrimedWords.Add(adjacent[p]);
+                            }
                         }
                     }
                 }
@@ -143,8 +155,8 @@ namespace WordDrop
                 ? string.Join(",", _previewWords.ConvertAll(w => w.Word))
                 : "none";
             int chainSize = _chainPrimedWords != null ? _chainPrimedWords.Count : 0;
-            Debug.Log($"[Preview] Tile={letter} Col={col} Landing=({col},{targetRow}) " +
-                      $"Words={wordStr} Trigger={_wouldTriggerPrimed} ChainSize={chainSize}");
+//             Debug.Log($"[Preview] Tile={letter} Col={col} Landing=({col},{targetRow}) " +
+                      // $"Words={wordStr} Trigger={_wouldTriggerPrimed} ChainSize={chainSize}");
         }
 
         /// <summary>Clear all preview state and visuals.</summary>
@@ -162,7 +174,7 @@ namespace WordDrop
             _chainPrimedWords = null;
 
             ClearVisuals();
-            Debug.Log("[Preview] Cleared");
+//             Debug.Log("[Preview] Cleared");
         }
 
         public bool IsActive => _previewActive;
@@ -186,7 +198,7 @@ namespace WordDrop
             _ghostTile.SetActive(true);
 
             // Use the selected (green) tile sprite if available, fallback to procedural
-            Sprite selectedSprite = Resources.Load<Sprite>("Tiles/selected_tile");
+            Sprite selectedSprite = Resources.Load<Sprite>("Tiles/selected_test@2x");
             if (selectedSprite != null)
             {
                 _ghostSR.sprite = selectedSprite;

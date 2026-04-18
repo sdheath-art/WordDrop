@@ -33,7 +33,7 @@ namespace WordDrop
             _cam = Camera.main;
             BuildArrows();
             ShowArrows(false);
-            Debug.Log("[ColumnArrowManager] Awake — arrows built and hidden");
+//             Debug.Log("[ColumnArrowManager] Awake — arrows built and hidden");
         }
 
         private void BuildArrows()
@@ -45,8 +45,8 @@ namespace WordDrop
                 return;
             }
 
-            // Place arrows slightly above the grid top
-            float arrowY = grid.GridTop + grid.CellSize * 0.45f;
+            // Place arrows above the grid top with clearance
+            float arrowY = grid.GridTop + grid.CellSize * 0.65f;
 
             for (int col = 0; col < GridManager.COLS; col++)
             {
@@ -78,13 +78,33 @@ namespace WordDrop
                 _arrowTexts[col]   = tm;
             }
 
-            Debug.Log($"[ColumnArrowManager] Built {GridManager.COLS} column arrows " +
-                      $"at Y={arrowY:F2} (fontSize=24, characterSize=0.035)");
+//             Debug.Log($"[ColumnArrowManager] Built {GridManager.COLS} column arrows " +
+                      // $"at Y={arrowY:F2} (fontSize=24, characterSize=0.035)");
         }
 
         public void ShowArrows(bool visible)
         {
             _arrowsVisible = visible;
+
+            // Reposition arrows to current GridTop each time they're shown
+            // (grid layout changes between modes / rebuilds)
+            if (visible)
+            {
+                GridManager grid = GridManager.Instance;
+                if (grid != null)
+                {
+                    float arrowY = grid.GridTop + grid.CellSize * 0.65f;
+                    for (int col = 0; col < GridManager.COLS; col++)
+                    {
+                        if (_arrowObjects[col] != null)
+                        {
+                            float x = grid.GetColumnCenterX(col);
+                            _arrowObjects[col].transform.position = new Vector3(x, arrowY, -1f);
+                        }
+                    }
+                }
+            }
+
             for (int col = 0; col < GridManager.COLS; col++)
             {
                 if (_arrowObjects[col] != null)

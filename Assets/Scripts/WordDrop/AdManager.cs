@@ -13,7 +13,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-            Debug.Log("[AdManager] Initialized (stub mode).");
+//             Debug.Log("[AdManager] Initialized (stub mode).");
         }
 
         /// <summary>
@@ -21,7 +21,7 @@ namespace WordDrop
         /// </summary>
         public void ShowInterstitial()
         {
-            Debug.Log("[AdManager] ShowInterstitial() — stub. Round interstitial would show here.");
+//             Debug.Log("[AdManager] ShowInterstitial() — stub. Round interstitial would show here.");
             AnalyticsManager.AdShown("interstitial", completed: true);
         }
 
@@ -30,7 +30,7 @@ namespace WordDrop
         /// </summary>
         public void ShowRewardedAd(System.Action onRewardGranted = null)
         {
-            Debug.Log("[AdManager] ShowRewardedAd() — stub. Rewarded ad would show here. Granting reward immediately.");
+//             Debug.Log("[AdManager] ShowRewardedAd() — stub. Rewarded ad would show here. Granting reward immediately.");
             AnalyticsManager.AdShown("rewarded", completed: true);
             onRewardGranted?.Invoke();
         }

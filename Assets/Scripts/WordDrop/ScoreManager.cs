@@ -61,7 +61,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-            Debug.Log("[ScoreManager] Awake");
+//             Debug.Log("[ScoreManager] Awake");
         }
 
         // ── Combo API ─────────────────────────────────────────────────────────────
@@ -80,15 +80,15 @@ namespace WordDrop
             }
 
             TurnsUntilComboExpires--;
-            Debug.Log($"[ScoreManager] AdvancePlayerTurn — " +
-                      $"TurnsUntilComboExpires={TurnsUntilComboExpires} ComboCount={ComboCount}");
+//             Debug.Log($"[ScoreManager] AdvancePlayerTurn — " +
+                      // $"TurnsUntilComboExpires={TurnsUntilComboExpires} ComboCount={ComboCount}");
 
             if (TurnsUntilComboExpires == 0 && ComboCount > 0)
             {
                 int oldCombo = ComboCount;
                 ComboCount = 0;
-                Debug.Log($"[ScoreManager] Combo EXPIRED — was {oldCombo} → reset to 0. " +
-                          $"No word scored for 2 consecutive turns.");
+//                 Debug.Log($"[ScoreManager] Combo EXPIRED — was {oldCombo} → reset to 0. " +
+                          // $"No word scored for 2 consecutive turns.");
                 NotifyHUDCombo();
             }
         }
@@ -111,7 +111,7 @@ namespace WordDrop
         {
             if (!isPlayer)
             {
-                Debug.Log("[ScoreManager] RecordWordScored(AI) — player combo unchanged.");
+//                 Debug.Log("[ScoreManager] RecordWordScored(AI) — player combo unchanged.");
                 return;
             }
 
@@ -122,9 +122,9 @@ namespace WordDrop
             TurnsUntilComboExpires = 2;
 
             float mult = GetComboMultiplier();
-            Debug.Log($"[ScoreManager] RecordWordScored(Player) — " +
-                      $"ComboCount={ComboCount}  multiplier=×{mult:F1}  " +
-                      $"expiresIn={TurnsUntilComboExpires} turns");
+//             Debug.Log($"[ScoreManager] RecordWordScored(Player) — " +
+                      // $"ComboCount={ComboCount}  multiplier=×{mult:F1}  " +
+                      // $"expiresIn={TurnsUntilComboExpires} turns");
 
             NotifyHUDCombo();
         }
@@ -162,7 +162,7 @@ namespace WordDrop
         public void AddPlayerScore(int pts)
         {
             PlayerScore += pts;
-            Debug.Log($"[ScoreManager] AddPlayerScore({pts}) → PlayerScore={PlayerScore}");
+//             Debug.Log($"[ScoreManager] AddPlayerScore({pts}) → PlayerScore={PlayerScore}");
 
             if (HUDManager.Instance != null)
                 HUDManager.Instance.SetScore(PlayerScore);
@@ -172,7 +172,7 @@ namespace WordDrop
         public void AddAIScore(int pts)
         {
             AIScore += pts;
-            Debug.Log($"[ScoreManager] AddAIScore({pts}) → AIScore={AIScore}");
+//             Debug.Log($"[ScoreManager] AddAIScore({pts}) → AIScore={AIScore}");
         }
 
         /// <summary>
@@ -194,7 +194,7 @@ namespace WordDrop
             if (HUDManager.Instance != null)
                 HUDManager.Instance.SetScore(0);
 
-            Debug.Log("[ScoreManager] Scores reset — PlayerScore=0, AIScore=0, Combo=0");
+//             Debug.Log("[ScoreManager] Scores reset — PlayerScore=0, AIScore=0, Combo=0");
         }
 
         // ── Legacy per-round API stubs ────────────────────────────────────────────

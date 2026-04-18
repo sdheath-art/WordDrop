@@ -57,7 +57,7 @@ namespace WordDrop
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             BuildLabel();
-            Debug.Log("[DetonationReplay] Awake");
+//             Debug.Log("[DetonationReplay] Awake");
         }
 
         // ── Label setup ─────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ namespace WordDrop
             rt.offsetMax = Vector2.zero;
 
             _labelText = _labelGO.AddComponent<TextMeshProUGUI>();
-            TMP_FontAsset uiFont = GameFont.GetUITMP();
+            TMP_FontAsset uiFont = GameFont.GetDisplayTMP();
             if (uiFont != null) _labelText.font = uiFont;
             _labelText.text = "BEST CHAIN";
             _labelText.fontSize = 42;
@@ -96,7 +96,7 @@ namespace WordDrop
             _labelText.color = REPLAY_LABEL_COLOR;
             _labelText.alignment = TextAlignmentOptions.Center;
             _labelText.enableWordWrapping = false;
-            TMPHelper.ApplyEffects(_labelText, REPLAY_LABEL_COLOR);
+            TMPHelper.ApplyEffects(_labelText, REPLAY_LABEL_COLOR, TMPHelper.TextTier.Announcement);
 
             _labelCG = _labelGO.AddComponent<CanvasGroup>();
             _labelCG.alpha = 0f;
@@ -132,8 +132,8 @@ namespace WordDrop
                 yield break;
             }
 
-            Debug.Log($"[DetonationReplay] Starting replay: {chain.Steps.Count} steps, " +
-                      $"depth={chain.MaxChainDepth}, bonus={chain.TotalDetonationBonus}");
+//             Debug.Log($"[DetonationReplay] Starting replay: {chain.Steps.Count} steps, " +
+                      // $"depth={chain.MaxChainDepth}, bonus={chain.TotalDetonationBonus}");
 
             // 1. Clear the board and rebuild from snapshot
             grid.ClearAllCells();
@@ -146,11 +146,48 @@ namespace WordDrop
             ShowLabel();
             yield return new WaitForSeconds(PRE_REPLAY_PAUSE);
 
-            // 2.5. Drop the triggering tile — the tile that started the chain
+            // 2.5. Show the triggering action — drop or rewrite
             if (chain.DroppedLetter != '\0')
             {
-                grid.DropTile(chain.DroppedCol, chain.DroppedLetter, TileOwner.Player);
-                yield return new WaitForSeconds(0.4f * REPLAY_SPEED_MULT);
+                if (chain.IsRewrite)
+                {
+                    // Rewrite: swap the letter on the existing tile with a shake animation
+                    Tile rewriteTile = grid.GetTile(chain.DroppedCol, chain.DroppedRow);
+                    if (rewriteTile != null)
+                    {
+                        Vector3 restPos = rewriteTile.transform.position;
+                        float cellSize = grid.CellSize;
+                        float posJitter = cellSize * 0.08f;
+                        float rotJitter = 10f;
+
+                        // Shake
+                        float shakeDur = 0.2f * REPLAY_SPEED_MULT;
+                        float elapsed = 0f;
+                        while (elapsed < shakeDur)
+                        {
+                            elapsed += Time.deltaTime;
+                            float ox = Random.Range(-posJitter, posJitter);
+                            float oy = Random.Range(-posJitter, posJitter) * 0.5f;
+                            rewriteTile.transform.position = restPos + new Vector3(ox, oy, 0f);
+                            float rz = Random.Range(-rotJitter, rotJitter);
+                            rewriteTile.transform.localRotation = Quaternion.Euler(0f, 0f, rz);
+                            yield return null;
+                        }
+
+                        // Swap letter
+                        rewriteTile.SetLetter(chain.DroppedLetter);
+                        rewriteTile.transform.position = restPos;
+                        rewriteTile.transform.localRotation = Quaternion.identity;
+                        rewriteTile.PlayLandingSquish();
+                    }
+                    yield return new WaitForSeconds(0.3f * REPLAY_SPEED_MULT);
+                }
+                else
+                {
+                    // Normal drop
+                    grid.DropTile(chain.DroppedCol, chain.DroppedLetter, TileOwner.Player);
+                    yield return new WaitForSeconds(0.4f * REPLAY_SPEED_MULT);
+                }
             }
 
             // 3. Play through each step in slow motion
@@ -182,7 +219,7 @@ namespace WordDrop
             yield return null;
 
             _isPlaying = false;
-            Debug.Log("[DetonationReplay] Replay complete.");
+//             Debug.Log("[DetonationReplay] Replay complete.");
         }
 
         // ── Step playback ───────────────────────────────────────────────────────
@@ -255,15 +292,7 @@ namespace WordDrop
                 if (trigTiles.Count > 0 && WordDropFX.Instance != null)
                     WordDropFX.Instance.PlayDetonation(trigTiles, step.ChainDepth);
 
-                // Show detonation label as popup from triggered tiles
-                if (BonusPopup.Instance != null && trigTiles.Count > 0)
-                {
-                    Vector3 trigCenter = Vector3.zero;
-                    for (int tc = 0; tc < trigTiles.Count; tc++)
-                        if (trigTiles[tc] != null) trigCenter += trigTiles[tc].transform.position;
-                    trigCenter /= Mathf.Max(1, trigTiles.Count);
-                    BonusPopup.Instance.ShowWordScore(trig.TriggeredWord, RulesEngine.BREAKER_BONUS, trigCenter);
-                }
+                // Replay: no score popups — just the visual explosion
 
                 yield return new WaitForSeconds(TRIGGER_BEAT * REPLAY_SPEED_MULT);
             }
@@ -300,16 +329,56 @@ namespace WordDrop
                 yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
             }
 
-            // Explosion FX
+            // Big-moment burst during replay — same gate as in-game play.
+            // Recorded steps only carry chain depth + explode cells, so we infer
+            // orientation from the cell spread and fire a single centered sweep.
+            bool replayBigMoment = step.ChainDepth >= 2 || dying.Count >= 6;
+            if (replayBigMoment && BigBurstFlash.Instance != null && step.ExplodedCells != null && step.ExplodedCells.Count > 0)
+            {
+                int minCol = int.MaxValue, maxCol = int.MinValue;
+                int minRow = int.MaxValue, maxRow = int.MinValue;
+                foreach (var cell in step.ExplodedCells)
+                {
+                    if (cell.x < minCol) minCol = cell.x; if (cell.x > maxCol) maxCol = cell.x;
+                    if (cell.y < minRow) minRow = cell.y; if (cell.y > maxRow) maxRow = cell.y;
+                }
+                bool vertical = (maxCol - minCol) < (maxRow - minRow);
+                Camera cam = Camera.main;
+                float halfH = cam != null ? cam.orthographicSize : 10f;
+                float halfW = halfH * ((float)Screen.width / Screen.height);
+                float length = (vertical ? halfH : halfW) * 2.4f;
+                float thickness = grid.CellSize * 1.4f;
+                Color tint = new Color(1.8f, 1.4f, 0.7f, 1f); // warm gold — it's a "best chain" highlight
+                BigBurstFlash.Instance.Play(center, length, thickness, vertical, tint);
+
+                if (RadialBurst.Instance != null)
+                    RadialBurst.Instance.Play(center, grid.CellSize * 3.0f, tint);
+
+                if (GameParticles.Instance != null)
+                {
+                    Vector3 lineStart, lineEnd;
+                    if (vertical)
+                    {
+                        lineStart = new Vector3(center.x, center.y - halfH * 1.1f, center.z);
+                        lineEnd   = new Vector3(center.x, center.y + halfH * 1.1f, center.z);
+                    }
+                    else
+                    {
+                        lineStart = new Vector3(center.x - halfW * 1.1f, center.y, center.z);
+                        lineEnd   = new Vector3(center.x + halfW * 1.1f, center.y, center.z);
+                    }
+                    GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, 20);
+                }
+            }
+
+            // Explosion FX — pass tile count so the tier matches the actual blast size
             if (WordDropFX.Instance != null && dying.Count > 0)
-                yield return WordDropFX.Instance.PlayExplosion(dying, step.ChainDepth);
+                yield return WordDropFX.Instance.PlayExplosion(dying, step.ChainDepth, dying.Count);
 
             // Remove tiles from grid
             grid.RemoveTiles(step.ExplodedCells);
 
-            // Bonus popup
-            if (BonusPopup.Instance != null && step.DetonationBonus > 0)
-                BonusPopup.Instance.ShowDetonation("", step.DetonationBonus, center, step.ChainDepth);
+            // Replay: no bonus popups — pure visual replay
 
             yield return new WaitForSeconds(EXPLOSION_EXTRA_PAUSE * REPLAY_SPEED_MULT);
         }
@@ -336,6 +405,15 @@ namespace WordDrop
                     var snap = snapshot[col, row];
                     if (snap == null) continue;
 
+                    // Skip stones in replay — don't show '#' as a letter
+                    if (snap.IsStone || snap.Letter == '#')
+                    {
+                        Tile stoneTile = grid.CreateSingleTile(col, row, 'X'); // placeholder letter
+                        if (stoneTile != null) stoneTile.SetStoneVisual(true);
+                        created++;
+                        continue;
+                    }
+
                     Tile tile = grid.CreateSingleTile(col, row, snap.Letter);
                     if (tile != null)
                     {
@@ -343,7 +421,7 @@ namespace WordDrop
                         if (snap.IsPrimed)
                         {
                             tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: false,
-                                heatLevel: snap.HeatLevel, fuseRemaining: 3);
+                                heatLevel: snap.HeatLevel, fuseRemaining: snap.FuseRemaining);
                         }
                         created++;
                     }
@@ -363,8 +441,8 @@ namespace WordDrop
                 }
                 sb.Append("\n");
             }
-            Debug.Log(sb.ToString());
-            Debug.Log($"[DetonationReplay] Rebuilt board from snapshot: {created} tiles");
+//             Debug.Log(sb.ToString());
+//             Debug.Log($"[DetonationReplay] Rebuilt board from snapshot: {created} tiles");
         }
 
         // ── Label animation ─────────────────────────────────────────────────────

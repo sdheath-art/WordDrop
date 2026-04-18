@@ -23,18 +23,18 @@ namespace WordDrop
     /// </summary>
     public class PlayerHand
     {
-        public const int HAND_SIZE = 5;
+        public const int MAX_HAND_SIZE = 5;
+        public static int HAND_SIZE => SurvivalManager.IsSurvivalMode ? 4 : 5;
 
         // ══════════════════════════════════════════════════════════════════════════
         // LAYER 2 — Hand-aware refill tuning
         // ══════════════════════════════════════════════════════════════════════════
 
-        // Vowel band: target 2 vowels in a 5-card hand
-        // 0-1 vowels: force one if last chance
-        // 2 vowels: ideal
-        // 3+ vowels: actively reject
-        private const int VOWEL_FLOOR   = 2;   // guarantee at least 2 vowels
-        private const int VOWEL_CEILING = 3;   // reject vowels at or above this count
+        // Vowel band: target ratio scales with hand size
+        // 5-card hand: 2 vowels (40%) — 3+ rejected
+        // 4-card hand (Survival): 1 vowel (25%) — 2+ rejected
+        private static int VOWEL_FLOOR   => SurvivalManager.IsSurvivalMode ? 1 : 2;
+        private static int VOWEL_CEILING => SurvivalManager.IsSurvivalMode ? 2 : 3;
 
         public const int MAX_LOW_UTILITY = 1;
         private static readonly string LOW_UTILITY = "QXZJVK";
@@ -63,15 +63,186 @@ namespace WordDrop
         // State
         // ══════════════════════════════════════════════════════════════════════════
 
-        private readonly char[] _slots = new char[HAND_SIZE];
+        private readonly char[] _slots     = new char[MAX_HAND_SIZE];
+        // _wildFlags was a parallel bool[] tracking which slots held wilds. It
+        // kept desyncing from _slots (shuffles, swaps, window focus, etc.) which
+        // caused the wild-becomes-asterisk and wild-disappears-on-shuffle bugs.
+        // Replaced with a DERIVED definition: a slot is wild iff its letter IS
+        // the wild sentinel (TileBag.WILD_CHAR '*'). Letter and flag can no
+        // longer disagree because there's only one source of truth.
         private readonly int    _playerIndex;
         private int  _droughtTurns = 0;
         private char _cachedNextLetter = '\0';
 
+        // Wild Tiles Phase C — pending-wild queue. When true, the next DrawSlot
+        // fills the drawn slot with a wild instead of consulting GovernedDraw.
+        // Set by InjectWildFromChainReward(); cleared by DrawSlot on consumption.
+        private bool _pendingWildInjection = false;
+
+        // Drops-since-wild-injected counter for expiry (3 drops => convert to vowel).
+        // Incremented by DrawSlot when a non-wild slot refills while a wild is in hand.
+        private int _wildDropsElapsed = 0;
+
+        // Unscaled time the current wild BECAME VISIBLE in hand (i.e. DrawSlot
+        // filled the pending injection). Used by HandManager for the 20s time
+        // expiry. Owned here so HandManager can't drift out of sync with the
+        // actual injection moment (previous bug: stale HandManager-side timestamp
+        // from a prior wild caused immediate expiry on the NEXT wild).
+        private float _wildVisibleSinceUnscaled = -1f;
+        public float WildVisibleSinceUnscaled => _wildVisibleSinceUnscaled;
+
         public int  PlayerIndex      => _playerIndex;
         public int  DroughtTurns     => _droughtTurns;
         public char CachedNextLetter => _cachedNextLetter;
+
+        public bool IsWildSlot(int index)
+        {
+            if (index < 0 || index >= HAND_SIZE) return false;
+            return _slots[index] == TileBag.WILD_CHAR;
+        }
+
+        public bool HasWild
+        {
+            get
+            {
+                for (int i = 0; i < HAND_SIZE; i++)
+                    if (_slots[i] == TileBag.WILD_CHAR) return true;
+                return false;
+            }
+        }
+
+        public int WildSlotIndex
+        {
+            get
+            {
+                for (int i = 0; i < HAND_SIZE; i++)
+                    if (_slots[i] == TileBag.WILD_CHAR) return i;
+                return -1;
+            }
+        }
+
+        public bool HasPendingWildInjection => _pendingWildInjection;
+        public int  WildDropsElapsed        => _wildDropsElapsed;
+
+        /// <summary>
+        /// Queue a wild injection as a chain-reward. The next DrawSlot will fill
+        /// that slot as a wild. Rejects if a wild already exists in hand or is
+        /// already queued (max 1 wild in hand invariant).
+        /// Returns true if queued, false if skipped.
+        /// </summary>
+        public bool InjectWildFromChainReward()
+        {
+            if (HasWild || _pendingWildInjection) return false;
+            _pendingWildInjection = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Clear a specific wild slot when the player drops it. The slot is blanked
+        /// immediately so any resolution abort before bookkeeping cannot leave the
+        /// wild sentinel visible as a normal '*' card.
+        /// </summary>
+        public void ConsumeWildSlot(int index)
+        {
+            if (index < 0 || index >= HAND_SIZE) return;
+            if (_slots[index] != TileBag.WILD_CHAR) return;
+            Debug.Log($"[WildExpiry] ConsumeWildSlot FIRED — slot {index} (player dropped their wild)");
+            _slots[index]      = '\0';
+            _wildDropsElapsed  = 0;
+            _wildVisibleSinceUnscaled = -1f;
+        }
+
+        /// <summary>
+        /// Swap two hand slots. Kept for API compat — callers passed wild flags
+        /// separately before, but wildness is now derived from _slots content so
+        /// a plain slot swap preserves wild identity automatically.
+        /// </summary>
+        public void SwapSlotsWithFlags(int a, int b)
+        {
+            if (a < 0 || a >= HAND_SIZE || b < 0 || b >= HAND_SIZE) return;
+            if (a == b) return;
+            char cTmp = _slots[a]; _slots[a] = _slots[b]; _slots[b] = cTmp;
+        }
+
+        /// <summary>
+        /// Apply a full-hand permutation of letters. Second array (wild flags)
+        /// ignored — wildness travels with the letter automatically.
+        /// </summary>
+        public void ReorderSlotsWithFlags(char[] newSlots, bool[] newWildFlags)
+        {
+            if (newSlots == null) return;
+            int n = Mathf.Min(HAND_SIZE, newSlots.Length);
+            for (int i = 0; i < n; i++)
+                _slots[i] = newSlots[i];
+        }
+
+        /// <summary>
+        /// Returns a derived wild-flag snapshot. Each entry is true iff that slot's
+        /// letter is the wild sentinel. Callers can still use this for ReorderSlotsWithFlags.
+        /// </summary>
+        public bool[] GetAllWildFlags()
+        {
+            bool[] flags = new bool[MAX_HAND_SIZE];
+            for (int i = 0; i < MAX_HAND_SIZE; i++)
+                flags[i] = _slots[i] == TileBag.WILD_CHAR;
+            return flags;
+        }
+
+        /// <summary>
+        /// Convert the current wild slot into a random vowel and clear its flag.
+        /// Called by HandManager when the wild's 3-drop / 20s playable-time expiry fires.
+        /// No-op if no wild is present.
+        /// </summary>
+        public void ExpireWildToVowel()
+        {
+            int idx = WildSlotIndex;
+            if (idx < 0) return;
+            char[] vowels = VOWELS;
+            char pick = vowels[Random.Range(0, vowels.Length)];
+            // Avoid duplicate collisions when possible
+            for (int attempt = 0; attempt < 5; attempt++)
+            {
+                if (CountLetter(pick) == 0) break;
+                pick = vowels[Random.Range(0, vowels.Length)];
+            }
+            Debug.Log($"[WildExpiry] ExpireWildToVowel FIRED — slot {idx} → '{pick}'. _wildDropsElapsed was {_wildDropsElapsed}");
+            _slots[idx] = pick;
+            _wildDropsElapsed = 0;
+            _wildVisibleSinceUnscaled = -1f;
+        }
+
+        /// <summary>
+        /// Push the wall-clock wild expiry anchor forward while the player cannot act.
+        /// Drop-count expiry is intentionally unaffected.
+        /// </summary>
+        public void DeferWildExpiryTimer(float seconds)
+        {
+            if (seconds <= 0f) return;
+            if (!HasWild || _wildVisibleSinceUnscaled < 0f) return;
+            _wildVisibleSinceUnscaled += seconds;
+        }
+
+        /// <summary>Check if the cached letter would pass validation with current hand state.</summary>
+        public bool WouldCacheBeUsed(char cached)
+        {
+            if (cached == '\0') return false;
+            // Simulate the same checks DrawSlot does — find first empty slot
+            int emptySlot = -1;
+            for (int i = 0; i < HAND_SIZE; i++)
+                if (_slots[i] == '\0') { emptySlot = i; break; }
+            int vowelsNow = CountVowelsExcluding(emptySlot >= 0 ? emptySlot : 0);
+            bool isVowelChar = IsVowel(cached);
+            bool vowelOk = !isVowelChar || vowelsNow < VOWEL_CEILING;
+            bool dupeOk = CountLetter(cached) < MAX_SAME_LETTER;
+            bool floorOk = isVowelChar || vowelsNow >= VOWEL_FLOOR;
+            return vowelOk && dupeOk && floorOk;
+        }
         public void SetCachedNextLetter(char c) { _cachedNextLetter = c; }
+        public void EnsureCachedNextLetter(TileBag bag)
+        {
+            if (_cachedNextLetter == '\0')
+                PreCacheNext(bag);
+        }
 
         // Backward compat
         public const int MIN_VOWELS = 1;
@@ -90,14 +261,10 @@ namespace WordDrop
         public void IncrementDrought()
         {
             _droughtTurns++;
-            if (_droughtTurns == DROUGHT_TIER1 || _droughtTurns == DROUGHT_TIER2 || _droughtTurns == DROUGHT_TIER3)
-                Debug.Log($"[Hand P{_playerIndex}] Drought tier reached: {_droughtTurns} turns");
         }
 
         public void ResetDrought()
         {
-            if (_droughtTurns > 0)
-                Debug.Log($"[Hand P{_playerIndex}] Drought ended after {_droughtTurns} turns");
             _droughtTurns = 0;
         }
 
@@ -126,40 +293,107 @@ namespace WordDrop
         public void FillAll(TileBag bag)
         {
             if (bag == null) return;
-            for (int i = 0; i < HAND_SIZE; i++)
-                _slots[i] = '\0';
+            for (int i = 0; i < HAND_SIZE; i++) _slots[i] = '\0';
+            _pendingWildInjection = false;
+            _wildDropsElapsed = 0;
+            _wildVisibleSinceUnscaled = -1f;
             for (int i = 0; i < HAND_SIZE; i++)
                 _slots[i] = GovernedDraw(bag, i);
             PostDrawEnforce();
             PreCacheNext(bag);
-            Debug.Log($"[Hand P{_playerIndex}] FillAll: {HandString()} vowels={CountVowels()} " +
-                      $"playability={CalcPlayability()} next={_cachedNextLetter}");
+//             Debug.Log($"[Hand P{_playerIndex}] FillAll: {HandString()} vowels={CountVowels()} " +
+                      // $"playability={CalcPlayability()} next={_cachedNextLetter}");
         }
 
         public void DrawSlot(int index, TileBag bag)
         {
+            DrawSlot(index, bag, countsAsWildDrop: true);
+        }
+
+        /// <summary>
+        /// Draw a fresh letter into the slot. When countsAsWildDrop=false, this
+        /// refill does NOT tick the wild-expiry drops counter — used by rewrite
+        /// bookkeeping so editing a board tile doesn't shorten an untouched wild's
+        /// life. Rewrites consume a rewrite charge, not a tile-drop.
+        /// </summary>
+        public void DrawSlot(int index, TileBag bag, bool countsAsWildDrop)
+        {
             if (bag == null || index < 0 || index >= HAND_SIZE) return;
+
+            // Clear the slot being refilled. Wildness is derived from _slots so
+            // setting _slots[index] = '\0' implicitly clears the wild flag too.
             _slots[index] = '\0';
+
+            // Pending chain-reward wild takes priority over the cached next letter.
+            // The cached letter is preserved for the *next* draw.
+            if (_pendingWildInjection)
+            {
+                _slots[index]     = TileBag.WILD_CHAR;
+                _pendingWildInjection = false;
+                _wildDropsElapsed = 0;
+                // Anchor the time-expiry clock exactly when the wild becomes
+                // visible — prevents the HandManager-side clock from firing
+                // immediately on a new wild due to stale state from a previous one.
+                _wildVisibleSinceUnscaled = Time.unscaledTime;
+                Debug.Log($"[WildExpiry] Wild INJECTED into slot {index} at t={Time.unscaledTime:F1}s");
+                PostDrawEnforce();
+                // Do NOT re-cache here; PreCacheNext will recompute against the new hand.
+                PreCacheNext(bag);
+                return;
+            }
+
+            // If another slot still holds a wild, this draw counts toward its expiry
+            // — BUT only if the caller says this refill is a genuine tile-drop.
+            // Rewrites pass countsAsWildDrop=false so editing a board tile doesn't
+            // shorten an untouched wild's life.
+            if (HasWild && countsAsWildDrop)
+            {
+                _wildDropsElapsed++;
+                Debug.Log($"[WildExpiry] Non-wild drop refilled slot {index} — wild dropsElapsed now {_wildDropsElapsed}/3");
+            }
 
             if (_cachedNextLetter != '\0')
             {
-                _slots[index] = _cachedNextLetter;
-                _cachedNextLetter = '\0';
+                // Validate cached letter against CURRENT hand state before using it.
+                // The cache was computed at a different hand state — vowel ceiling,
+                // vowel floor, or duplicate limits may now be violated.
+                int vowelsNow = CountVowelsExcluding(index);
+                bool cachedIsVowel = IsVowel(_cachedNextLetter);
+                bool vowelOk = !cachedIsVowel || vowelsNow < VOWEL_CEILING;
+                bool dupeOk = CountLetter(_cachedNextLetter) < MAX_SAME_LETTER;
+                bool floorOk = cachedIsVowel || vowelsNow >= VOWEL_FLOOR;
+
+                if (vowelOk && dupeOk && floorOk)
+                {
+                    _slots[index] = _cachedNextLetter;
+                    _cachedNextLetter = '\0';
+                }
+                else
+                {
+                    _cachedNextLetter = '\0';
+                    _slots[index] = GovernedDraw(bag, index);
+                }
             }
             else
             {
                 _slots[index] = GovernedDraw(bag, index);
             }
+            // No post-draw vowel forcing — GovernedDraw handles vowel balance
+            // during the draw itself. Tough hands are part of the game.
+
             PostDrawEnforce();
             PreCacheNext(bag);
 
-            Debug.Log($"[Hand P{_playerIndex}] DrawSlot({index}): {HandString()} " +
-                      $"playability={CalcPlayability()} drought={_droughtTurns} next={_cachedNextLetter}");
+//             Debug.Log($"[Hand P{_playerIndex}] DrawSlot({index}): {HandString()} " +
+                      // $"playability={CalcPlayability()} drought={_droughtTurns} next={_cachedNextLetter}");
         }
 
         public char SwapSlot(int index, TileBag bag)
         {
             if (bag == null || index < 0 || index >= HAND_SIZE) return '\0';
+            // Swap cannot target a wild — hand-to-board swap UI already gates this,
+            // but defend the invariant here too.
+            if (_slots[index] == TileBag.WILD_CHAR) return '\0';
             char old = _slots[index];
             _slots[index] = '\0';
 
@@ -185,11 +419,41 @@ namespace WordDrop
         // THREE-LAYER GOVERNED DRAW
         // ══════════════════════════════════════════════════════════════════════════
 
+        // Survival board-aware draw — the board should almost always be playable.
+        // 70% of draws try to give a letter that could form a word somewhere on the board.
+        // The player still has to FIND and PLACE the word — the skill is intact.
+        // Scales up further during drought so the player never gets completely stuck.
+        // EXPERIMENT: reduced from 0.55/0.85 — revert if game feels too hard
+        private const float SURVIVAL_BOARD_ASSIST_BASE    = 0.38f; // was 0.55
+        private const float SURVIVAL_BOARD_ASSIST_DROUGHT = 0.85f; // kept — drought should still help
+
         private char GovernedDraw(TileBag bag, int slotIndex)
         {
             int vowelsInHand = CountVowelsExcluding(slotIndex);
 
-            // ── LAYER 3: Stale-state assist ─────────────────────────────────────
+            // ── SURVIVAL LAYER: Board-aware draw as DEFAULT behavior ────────────
+            // Skipped entirely under NoAssistMode — raw bag draws only.
+            if (SurvivalManager.IsSurvivalMode && !SurvivalManager.NoAssistMode)
+            {
+                // Post-clear boost: after big detonations, ramp board-assist to 95%
+                // so the next few draws reconnect the board instead of random fill
+                bool postClearBoosted = SurvivalManager.Instance != null && SurvivalManager.Instance.IsPostClearBoosted;
+                float chance = postClearBoosted ? 0.85f
+                    : (_droughtTurns >= 2 ? SURVIVAL_BOARD_ASSIST_DROUGHT : SURVIVAL_BOARD_ASSIST_BASE);
+                if (Random.value < chance)
+                {
+                    char helper = DroughtAssist.GetHelperLetter();
+                    if (helper != '\0' && CountLetter(helper) < MAX_SAME_LETTER)
+                    {
+                        if (!IsVowel(helper) || vowelsInHand < VOWEL_CEILING)
+                            return helper;
+                    }
+                }
+                // Board-assist didn't find anything — fall through to normal draw
+            }
+
+            // ── LAYER 3: Stale-state assist (Classic/Blitz/Daily) ───────────────
+            // Skipped under NoAssistMode — no drought-tier rescue.
             int effectiveDrought = _droughtTurns;
             if (RulesEngine.Instance != null)
             {
@@ -198,7 +462,7 @@ namespace WordDrop
                     effectiveDrought++;
             }
 
-            if (effectiveDrought >= DROUGHT_TIER1)
+            if (!SurvivalManager.NoAssistMode && effectiveDrought >= DROUGHT_TIER1)
             {
                 float chance;
                 if (effectiveDrought >= DROUGHT_TIER3)      chance = DROUGHT_CHANCE_T3;
@@ -213,7 +477,7 @@ namespace WordDrop
                         // Respect vowel ceiling even for drought assist
                         if (!IsVowel(helper) || vowelsInHand < VOWEL_CEILING)
                         {
-                            Debug.Log($"[Hand P{_playerIndex}] L3 board-assist: '{helper}' (drought={_droughtTurns})");
+//                             Debug.Log($"[Hand P{_playerIndex}] L3 board-assist: '{helper}' (drought={_droughtTurns})");
                             return helper;
                         }
                     }
@@ -227,7 +491,7 @@ namespace WordDrop
             if (vowelsInHand < VOWEL_FLOOR)
             {
                 int unfilled = 0;
-                for (int i = slotIndex; i < HAND_SIZE; i++)
+                for (int i = Mathf.Max(0, slotIndex); i < HAND_SIZE; i++)
                     if (_slots[i] == '\0') unfilled++;
 
                 // Only force if this is the last chance to get a vowel
@@ -290,21 +554,9 @@ namespace WordDrop
 
         private void PostDrawEnforce()
         {
-            // Only enforce low-utility max. Vowel balance is handled by GovernedDraw.
-            // No vowel replacement here — that was causing overcorrection.
-            int lowCount = CountLowUtility();
-            if (lowCount > MAX_LOW_UTILITY)
-            {
-                int excess = lowCount - MAX_LOW_UTILITY;
-                for (int i = HAND_SIZE - 1; i >= 0 && excess > 0; i--)
-                {
-                    if (IsLowUtility(_slots[i]))
-                    {
-                        _slots[i] = CONNECTORS[Random.Range(0, CONNECTORS.Length)];
-                        excess--;
-                    }
-                }
-            }
+            // Low-utility enforcement REMOVED — was corrupting existing hand cards.
+            // GovernedDraw already blocks low-utility letters during draw.
+            // Vowel floor is handled inline in DrawSlot (only modifies the just-drawn slot).
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -356,7 +608,9 @@ namespace WordDrop
         private void PreCacheNext(TileBag bag)
         {
             if (bag == null) { _cachedNextLetter = '\0'; return; }
-            _cachedNextLetter = GovernedDraw(bag, 0);
+            // Use slot -1 so CountVowelsExcluding counts ALL current slots.
+            // The real validation happens in DrawSlot when the cache is consumed.
+            _cachedNextLetter = GovernedDraw(bag, -1);
         }
 
         // ══════════════════════════════════════════════════════════════════════════

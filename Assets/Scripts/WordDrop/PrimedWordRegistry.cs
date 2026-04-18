@@ -31,13 +31,16 @@ namespace WordDrop
             public int PrimedOnTurn { get; set; }
             public int ExpiresOnTurn { get; set; }
             public int OverlapFuseBonusGranted { get; set; } = 0; // total +turns from overlap extensions
+            public int GlobalFuseResetCount { get; set; } = 0; // capped board-wide fuse resets
             public bool IsGold { get; set; } = false; // gold primed word — worth 3x on detonation
+            public float CreatedAtTime { get; set; } // wall-clock time when primed (for idle expiry)
+            public float MaxAgeSeconds { get; set; } = 30f; // how long this prime lives (longer words get more time)
 
             public override string ToString()
                 => $"PrimedWord[id={Id} word={Word} owner={OwnerPlayer} " +
                    $"turns={PrimedOnTurn}→{ExpiresOnTurn} cells={CellsString()}]";
 
-            private string CellsString()
+            public string CellsString()
             {
                 if (Cells == null || Cells.Count == 0) return "[]";
                 var sb = new System.Text.StringBuilder("[");
@@ -85,6 +88,15 @@ namespace WordDrop
 
             int id = _nextId++;
 
+            // Longer words earn more time before expiry:
+            // 3 letters = 25s, 4 = 30s, 5 = 38s, 6 = 45s, 7 = 50s
+            int wordLen = word.Trim().Length;
+            float maxAge = wordLen <= 3 ? 25f
+                         : wordLen == 4 ? 30f
+                         : wordLen == 5 ? 38f
+                         : wordLen == 6 ? 45f
+                         : 50f;
+
             var record = new PrimedWord
             {
                 Id            = id,
@@ -95,12 +107,14 @@ namespace WordDrop
                 PrimedOnTurn  = primedOnTurn,
                 ExpiresOnTurn = expiresOnTurn,
                 IsGold        = isGold,
+                CreatedAtTime = Time.time,
+                MaxAgeSeconds = maxAge,
             };
 
             _primedWords.Add(record);
 
-            Debug.Log($"[PrimedWordRegistry] Added: {record}  " +
-                      $"(registry size: {_primedWords.Count})");
+//             Debug.Log($"[PrimedWordRegistry] Added: {record}  " +
+                      // $"(registry size: {_primedWords.Count})");
 
             return id;
         }
@@ -132,16 +146,59 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Returns all primed words that have at least one cell orthogonally adjacent
+        /// to the given cell (but NOT containing it — that's GetPrimedWordsContaining).
+        /// Used for adjacency-based detonation triggering.
+        /// </summary>
+        public List<PrimedWord> GetPrimedWordsAdjacentTo(Vector2Int cell)
+        {
+            var results = new List<PrimedWord>();
+            int[] dx = { 1, -1, 0, 0 };
+            int[] dy = { 0, 0, 1, -1 };
+
+            for (int i = 0; i < _primedWords.Count; i++)
+            {
+                PrimedWord pw = _primedWords[i];
+                if (pw.Cells == null) continue;
+
+                bool found = false;
+                for (int j = 0; j < pw.Cells.Count && !found; j++)
+                {
+                    for (int d = 0; d < 4; d++)
+                    {
+                        if (pw.Cells[j].x + dx[d] == cell.x &&
+                            pw.Cells[j].y + dy[d] == cell.y)
+                        {
+                            results.Add(pw);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
         /// Finds the full connected group of primed words starting from the given seed IDs.
         /// Two primed words are connected if they share at least one tile.
         /// Traverses transitively: if A shares with B and B shares with C, all three are connected.
         /// Excludes any primed word whose ID is in excludeIds (e.g. words just primed this resolution).
+        /// </summary>
+        /// <summary>
+        /// Finds all primed words connected to the seed set — through shared tiles
+        /// OR orthogonal adjacency. One trigger cascades through the entire cluster.
         /// </summary>
         public List<PrimedWord> FindConnectedGroup(HashSet<int> seedIds, HashSet<int> excludeIds)
         {
             var visited = new HashSet<int>(seedIds);
             var queue = new Queue<int>(seedIds);
             var result = new List<PrimedWord>();
+
+            // Orthogonal neighbor offsets (+ self)
+            int[] dx = { 0, 1, -1, 0, 0 };
+            int[] dy = { 0, 0, 0, 1, -1 };
 
             while (queue.Count > 0)
             {
@@ -151,18 +208,22 @@ namespace WordDrop
 
                 result.Add(pw);
 
-                // Check each cell of this word for overlap with other primed words
+                // Check each cell of this word + orthogonal neighbors
                 for (int c = 0; c < pw.Cells.Count; c++)
                 {
-                    var overlapping = GetPrimedWordsContaining(pw.Cells[c]);
-                    for (int o = 0; o < overlapping.Count; o++)
+                    for (int d = 0; d < 5; d++)
                     {
-                        int otherId = overlapping[o].Id;
-                        if (visited.Contains(otherId)) continue;
-                        if (excludeIds != null && excludeIds.Contains(otherId)) continue;
+                        var checkCell = new Vector2Int(pw.Cells[c].x + dx[d], pw.Cells[c].y + dy[d]);
+                        var overlapping = GetPrimedWordsContaining(checkCell);
+                        for (int o = 0; o < overlapping.Count; o++)
+                        {
+                            int otherId = overlapping[o].Id;
+                            if (visited.Contains(otherId)) continue;
+                            if (excludeIds != null && excludeIds.Contains(otherId)) continue;
 
-                        visited.Add(otherId);
-                        queue.Enqueue(otherId);
+                            visited.Add(otherId);
+                            queue.Enqueue(otherId);
+                        }
                     }
                 }
             }
@@ -182,8 +243,8 @@ namespace WordDrop
                 {
                     string word = _primedWords[i].Word;
                     _primedWords.RemoveAt(i);
-                    Debug.Log($"[PrimedWordRegistry] Removed id={id} ('{word}'). " +
-                              $"Registry size: {_primedWords.Count}");
+//                     Debug.Log($"[PrimedWordRegistry] Removed id={id} ('{word}'). " +
+                              // $"Registry size: {_primedWords.Count}");
                     return true;
                 }
             }
@@ -200,7 +261,33 @@ namespace WordDrop
         /// (e.g., tiles were removed by a previous explosion in the same chain).
         /// Pass a board-check callback for full validation, or null to skip.
         /// </summary>
-        public int ExpireOldWords(int currentTurn)
+        /// <summary>
+        /// Expires primed words that have lived longer than maxAge seconds.
+        /// Called from SurvivalManager.Update so idle players can't stockpile primes.
+        /// Returns the number of expired words.
+        /// </summary>
+        public int ExpireByTime(float unusedParam = 0f, List<PrimedWord> expiredOut = null)
+        {
+            int expired = 0;
+            float now = Time.time;
+
+            for (int i = _primedWords.Count - 1; i >= 0; i--)
+            {
+                PrimedWord pw = _primedWords[i];
+                float age = now - pw.CreatedAtTime;
+                if (age >= pw.MaxAgeSeconds)
+                {
+//                     Debug.Log($"[PrimedWordRegistry] Time-expired '{pw.Word}' (id={pw.Id}, age={age:F1}s/{pw.MaxAgeSeconds:F0}s)");
+                    if (expiredOut != null) expiredOut.Add(pw);
+                    _primedWords.RemoveAt(i);
+                    expired++;
+                }
+            }
+
+            return expired;
+        }
+
+        public int ExpireOldWords(int currentTurn, List<PrimedWord> expiredOut = null)
         {
             int expiredCount = 0;
 
@@ -209,17 +296,13 @@ namespace WordDrop
                 PrimedWord pw = _primedWords[i];
                 if (pw.ExpiresOnTurn <= currentTurn)
                 {
-                    Debug.Log($"[PrimedWordRegistry] Expiring '{pw.Word}' (id={pw.Id}) — " +
-                              $"expiresOnTurn={pw.ExpiresOnTurn} <= currentTurn={currentTurn}");
+//                     Debug.Log($"[PrimedWordRegistry] Expiring '{pw.Word}' (id={pw.Id}) — " +
+                              // $"expiresOnTurn={pw.ExpiresOnTurn} <= currentTurn={currentTurn}");
+                    if (expiredOut != null) expiredOut.Add(pw);
                     _primedWords.RemoveAt(i);
                     expiredCount++;
                 }
             }
-
-            if (expiredCount > 0)
-                Debug.Log($"[PrimedWordRegistry] ExpireOldWords(turn={currentTurn}) — " +
-                          $"expired {expiredCount} word(s). " +
-                          $"Registry size: {_primedWords.Count}");
 
             return expiredCount;
         }
@@ -271,8 +354,8 @@ namespace WordDrop
 
                 if (stale)
                 {
-                    Debug.Log($"[PrimedWordRegistry] Removing stale primed word " +
-                              $"'{pw.Word}' (id={pw.Id}) — cell(s) no longer occupied.");
+//                     Debug.Log($"[PrimedWordRegistry] Removing stale primed word " +
+                              // $"'{pw.Word}' (id={pw.Id}) — cell(s) no longer occupied.");
                     _primedWords.RemoveAt(i);
                     removedCount++;
                 }
@@ -315,7 +398,7 @@ namespace WordDrop
             int count = _primedWords.Count;
             _primedWords.Clear();
             _nextId = 1;
-            Debug.Log($"[PrimedWordRegistry] Cleared {count} primed word(s). ID counter reset.");
+//             Debug.Log($"[PrimedWordRegistry] Cleared {count} primed word(s). ID counter reset.");
         }
 
         // Count property defined above (line 244)
@@ -324,7 +407,7 @@ namespace WordDrop
 
         public static void RunVerificationTests()
         {
-            Debug.Log("[PrimedWordRegistry] ══ BEGIN VERIFICATION TESTS ══");
+//             Debug.Log("[PrimedWordRegistry] ══ BEGIN VERIFICATION TESTS ══");
 
             var registry = new PrimedWordRegistry();
 
@@ -339,28 +422,28 @@ namespace WordDrop
             int id1 = registry.AddPrimedWord("CAT", cells, ownerPlayer: 0, primedOnTurn: 1, expiresOnTurn: 5);
             var found1 = registry.GetPrimedWordsContaining(new Vector2Int(1, 0));
             bool test1Pass = found1.Count == 1 && found1[0].Word == "CAT" && found1[0].Id == id1;
-            Debug.Log($"[PrimedWordRegistry] Test 1 — query cell in 'CAT': " +
-                      $"{(test1Pass ? "✓ PASS" : "✗ FAIL")}");
+//             Debug.Log($"[PrimedWordRegistry] Test 1 — query cell in 'CAT': " +
+                      // $"{(test1Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 2: Query cell NOT in any word
             var found2 = registry.GetPrimedWordsContaining(new Vector2Int(5, 3));
             bool test2Pass = found2.Count == 0;
-            Debug.Log($"[PrimedWordRegistry] Test 2 — query empty cell: " +
-                      $"{(test2Pass ? "✓ PASS" : "✗ FAIL")}");
+//             Debug.Log($"[PrimedWordRegistry] Test 2 — query empty cell: " +
+                      // $"{(test2Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 3: Expiry
             int expiredCount = registry.ExpireOldWords(currentTurn: 6);
             bool test3Pass = expiredCount == 1 && registry.Count == 0;
-            Debug.Log($"[PrimedWordRegistry] Test 3 — expire: " +
-                      $"{(test3Pass ? "✓ PASS" : "✗ FAIL")}");
+//             Debug.Log($"[PrimedWordRegistry] Test 3 — expire: " +
+                      // $"{(test3Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 4: Remove by ID
             var cells2 = new List<Vector2Int> { new Vector2Int(3, 2), new Vector2Int(4, 2) };
             int id2 = registry.AddPrimedWord("IT", cells2, ownerPlayer: 1, primedOnTurn: 2, expiresOnTurn: 10);
             bool removed = registry.RemovePrimedWord(id2);
             bool test4Pass = removed && registry.Count == 0;
-            Debug.Log($"[PrimedWordRegistry] Test 4 — remove by ID: " +
-                      $"{(test4Pass ? "✓ PASS" : "✗ FAIL")}");
+//             Debug.Log($"[PrimedWordRegistry] Test 4 — remove by ID: " +
+                      // $"{(test4Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 5: GetAllPrimedWords returns copy
             var cells3 = new List<Vector2Int> { new Vector2Int(0, 1), new Vector2Int(1, 1), new Vector2Int(2, 1) };
@@ -372,8 +455,8 @@ namespace WordDrop
             bool test5Pass = allWords.Count == 2;
             allWords.Clear();
             bool test5bPass = registry.Count == 2;
-            Debug.Log($"[PrimedWordRegistry] Test 5 — snapshot copy: " +
-                      $"{(test5Pass && test5bPass ? "✓ PASS" : "✗ FAIL")}");
+//             Debug.Log($"[PrimedWordRegistry] Test 5 — snapshot copy: " +
+                      // $"{(test5Pass && test5bPass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 6: RemoveStaleWords
             // DOG at cells (0,1),(1,1),(2,1) — simulate (1,1) being empty
@@ -383,13 +466,13 @@ namespace WordDrop
                 return !(c == 1 && r == 1);
             });
             bool test6Pass = staleRemoved == 1 && registry.Count == 1;
-            Debug.Log($"[PrimedWordRegistry] Test 6 — remove stale (DOG): " +
-                      $"removed={staleRemoved} remaining={registry.Count} " +
-                      $"{(test6Pass ? "✓ PASS" : "✗ FAIL")}");
+//             Debug.Log($"[PrimedWordRegistry] Test 6 — remove stale (DOG): " +
+                      // $"removed={staleRemoved} remaining={registry.Count} " +
+                      // $"{(test6Pass ? "✓ PASS" : "✗ FAIL")}");
 
             bool allPassed = test1Pass && test2Pass && test3Pass && test4Pass
                           && test5Pass && test5bPass && test6Pass;
-            Debug.Log($"[PrimedWordRegistry] ══ TESTS {(allPassed ? "ALL PASSED ✓" : "SOME FAILED ✗")} ══");
+//             Debug.Log($"[PrimedWordRegistry] ══ TESTS {(allPassed ? "ALL PASSED ✓" : "SOME FAILED ✗")} ══");
 
             registry.Clear();
         }

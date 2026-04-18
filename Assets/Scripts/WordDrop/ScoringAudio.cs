@@ -56,7 +56,7 @@ namespace WordDrop
 
             _sequenceClipIndex = Random.Range(0, 7);
 
-            Debug.Log($"[ScoringAudio] Loaded: {loaded}/7 points clips, total={(_totalClip != null)}");
+//             Debug.Log($"[ScoringAudio] Loaded: {loaded}/7 points clips, total={(_totalClip != null)}");
         }
 
         /// <summary>

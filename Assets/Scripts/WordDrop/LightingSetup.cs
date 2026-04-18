@@ -35,9 +35,7 @@ namespace WordDrop
 
             // Load the lit sprite material from Resources
             _spriteLitMat = Resources.Load<Material>("SpriteLit2D");
-            if (_spriteLitMat != null)
-                Debug.Log("[LightingSetup] Loaded SpriteLit2D material from Resources");
-            else
+            if (_spriteLitMat == null)
                 Debug.LogWarning("[LightingSetup] SpriteLit2D material not found in Resources!");
 
             // 2D lights disabled — causes black sprites with current material setup
@@ -108,14 +106,11 @@ namespace WordDrop
 
             // Target ALL sorting layers
             var layers = SortingLayer.layers;
-            Debug.Log($"[LightingSetup] Sorting layers count: {layers.Length}");
-            for (int i = 0; i < layers.Length; i++)
-                Debug.Log($"[LightingSetup]   Layer '{layers[i].name}' id={layers[i].id} value={layers[i].value}");
 
             int[] ids = new int[layers.Length];
             for (int i = 0; i < layers.Length; i++) ids[i] = layers[i].id;
             _globalLight.targetSortingLayers = ids;
-            Debug.Log($"[LightingSetup] Global light targeting {ids.Length} layers, first id={ids[0]}");
+//             Debug.Log($"[LightingSetup] Global light targeting {ids.Length} layers, first id={ids[0]}");
         }
 
         private void SetupBloom()
@@ -131,37 +126,30 @@ namespace WordDrop
             var profile = ScriptableObject.CreateInstance<UnityEngine.Rendering.VolumeProfile>();
             volume.profile = profile;
 
-            // Bloom — tight, punchy video game glow (not realistic light bleed)
+            // Bloom ONLY — the rest of the grading (ColorAdjustments, LiftGammaGain)
+            // was crushing the gradient background toward dark purple/black on this
+            // build. Keeping the stack minimal so normal colors render as painted;
+            // bloom still catches HDR values (primed=1.8, gold=2.0, flash=1.6).
             var bloom = profile.Add<UnityEngine.Rendering.Universal.Bloom>(true);
-            bloom.threshold.value = 1.0f;  // only HDR values bloom (primed=1.8, gold=2.0)
-            bloom.intensity.value = 0.8f;  // strong pop on what does bloom
-            bloom.scatter.value = 0.3f;    // tight glow hugs the source — Balatro/neon style
+            bloom.threshold.value = 1.0f;
+            bloom.intensity.value = 0.8f;
+            bloom.scatter.value = 0.3f;
 
-            // Add subtle vignette for focus
-            var vignette = profile.Add<UnityEngine.Rendering.Universal.Vignette>(true);
-            vignette.intensity.value = 0.25f;
-            vignette.smoothness.value = 0.4f;
-            vignette.color.value = new Color(0.1f, 0.05f, 0.15f, 1f); // dark purple edge
-
-            // Color Adjustments — boost saturation and contrast, preserve purple hue
-            var colorAdj = profile.Add<UnityEngine.Rendering.Universal.ColorAdjustments>(true);
-            colorAdj.postExposure.value = 0.05f;           // subtle brightness lift
-            colorAdj.contrast.value = 10f;                 // punch up contrast
-            colorAdj.saturation.value = 15f;               // richer colors
-            colorAdj.hueShift.value = 3f;                  // nudge blues back toward purple
-            colorAdj.colorFilter.value = new Color(1f, 0.98f, 0.97f, 1f); // near-neutral, tiny warmth
-
-            // Neutral Tonemapping — no hue shift on purples (ACES pushes purple→blue)
+            // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
+            // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams
+            // dimmed proportionally), producing a "veil of darkness over
+            // everything" effect Spencer flagged. With HDR tile colors
+            // max ~2.2, clipping to white without tonemap is acceptable —
+            // primed tiles still read as bright pink/orange, just without
+            // the dynamic-range roll-off. Re-enable (mode=Neutral) if HDR
+            // bloom ever needs the headroom compression back.
             var tonemap = profile.Add<UnityEngine.Rendering.Universal.Tonemapping>(true);
-            tonemap.mode.value = UnityEngine.Rendering.Universal.TonemappingMode.Neutral;
+            tonemap.mode.value = UnityEngine.Rendering.Universal.TonemappingMode.None;
 
-            // Lift/Gamma/Gain — keep purples true, push golds brighter
-            var curves = profile.Add<UnityEngine.Rendering.Universal.LiftGammaGain>(true);
-            curves.lift.value = new Vector4(0.02f, -0.03f, 0.03f, 0f);   // shadows: red+blue = purple
-            curves.gamma.value = new Vector4(0.01f, -0.01f, 0.01f, 0f);  // mids: slight purple warmth
-            curves.gain.value = new Vector4(0.04f, 0.02f, -0.02f, 0f);   // highlights: gold push
-
-            Debug.Log("[LightingSetup] Post-processing: bloom + vignette + color grading + ACES tonemapping");
+            // Removed: Vignette (dimmed scene), ColorAdjustments (+10 contrast crushed
+            // darks), LiftGammaGain (pushed shadows purple). Re-add individually only
+            // if a specific look is wanted and the change is reviewed against the
+            // background gradient + cream tile palette.
         }
 
         /// <summary>

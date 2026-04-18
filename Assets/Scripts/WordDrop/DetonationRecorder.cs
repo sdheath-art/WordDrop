@@ -30,6 +30,8 @@ namespace WordDrop
             public int PlayerIndex; // 0 = player, 1 = AI
             public bool IsPrimed;
             public int HeatLevel;
+            public int FuseRemaining;
+            public bool IsStone;
         }
 
         /// <summary>
@@ -55,10 +57,13 @@ namespace WordDrop
             /// <summary>Board state before the chain started (7x5 grid).</summary>
             public CellSnapshot[,] BoardSnapshot;
 
-            /// <summary>The tile that was dropped to trigger this chain.</summary>
+            /// <summary>The tile that was dropped/rewritten to trigger this chain.</summary>
             public char DroppedLetter;
             public int DroppedCol;
             public int DroppedRow;
+
+            /// <summary>True if this chain was triggered by a rewrite (letter swap) instead of a drop.</summary>
+            public bool IsRewrite;
 
             /// <summary>All recorded steps that had detonation activity.</summary>
             public List<RecordedStep> Steps = new List<RecordedStep>();
@@ -86,7 +91,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-            Debug.Log("[DetonationRecorder] Awake");
+//             Debug.Log("[DetonationRecorder] Awake");
         }
 
         // ── Public API ──────────────────────────────────────────────────────────
@@ -100,7 +105,7 @@ namespace WordDrop
             _currentChain = null;
             _pendingSnapshot = null;
             _currentChainHasDetonations = false;
-            Debug.Log("[DetonationRecorder] Reset");
+//             Debug.Log("[DetonationRecorder] Reset");
         }
 
         /// <summary>
@@ -126,6 +131,7 @@ namespace WordDrop
                         // Check if this cell is part of a primed word
                         bool isPrimed = false;
                         int heatLevel = 0;
+                        int fuseRemaining = 0;
                         if (registry != null)
                         {
                             var primedWords = registry.GetPrimedWordsContaining(new Vector2Int(col, row));
@@ -134,6 +140,7 @@ namespace WordDrop
                                 isPrimed = true;
                                 int survived = Mathf.Max(0, currentTurn - primedWords[0].PrimedOnTurn);
                                 heatLevel = Mathf.Min(survived, RulesEngine.HEAT_FUSE_MAX_BONUS);
+                                fuseRemaining = Mathf.Max(0, primedWords[0].ExpiresOnTurn - currentTurn);
                             }
                         }
 
@@ -142,7 +149,9 @@ namespace WordDrop
                             Letter = cell.Letter,
                             PlayerIndex = cell.PlayerIndex,
                             IsPrimed = isPrimed,
-                            HeatLevel = heatLevel
+                            HeatLevel = heatLevel,
+                            FuseRemaining = fuseRemaining,
+                            IsStone = cell.IsStone
                         };
                     }
                 }
@@ -166,6 +175,20 @@ namespace WordDrop
             _currentChain.DroppedLetter = letter;
             _currentChain.DroppedCol = col;
             _currentChain.DroppedRow = row;
+            _currentChain.IsRewrite = false;
+        }
+
+        /// <summary>
+        /// Records a rewrite (letter swap) that started this resolution.
+        /// Call right after BeginRewrite with the rewrite details.
+        /// </summary>
+        public void RecordRewrite(char letter, int col, int row)
+        {
+            if (_currentChain == null) return;
+            _currentChain.DroppedLetter = letter;
+            _currentChain.DroppedCol = col;
+            _currentChain.DroppedRow = row;
+            _currentChain.IsRewrite = true;
         }
 
         /// <summary>
@@ -280,9 +303,9 @@ namespace WordDrop
             if (isBetter)
             {
                 _bestChain = _currentChain;
-                Debug.Log($"[DetonationRecorder] New best chain! depth={_bestChain.MaxChainDepth} " +
-                          $"bonus={_bestChain.TotalDetonationBonus} triggers={_bestChain.TotalTriggeredCount} " +
-                          $"steps={_bestChain.Steps.Count}");
+//                 Debug.Log($"[DetonationRecorder] New best chain! depth={_bestChain.MaxChainDepth} " +
+                          // $"bonus={_bestChain.TotalDetonationBonus} triggers={_bestChain.TotalTriggeredCount} " +
+                          // $"steps={_bestChain.Steps.Count}");
             }
 
             _currentChain = null;

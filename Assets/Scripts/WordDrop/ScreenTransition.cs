@@ -38,7 +38,7 @@ namespace WordDrop
         private IEnumerator SlideCoroutine(bool toGame, Action onMidpoint, Action onComplete)
         {
             _isTransitioning = true;
-            GameAudio.Instance?.PlayWhoosh();
+            GameAudio.Instance?.PlayWhooshBig();
 
             RectTransform menuPanelRT = GetMenuPanelRT();
 

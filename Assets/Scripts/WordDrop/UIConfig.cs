@@ -189,9 +189,9 @@ namespace WordDrop
         // ═════════════════════════════════════════════════════════════════════
 
         [Header("Bonus Popup — Timing")]
-        public float popupBaseFontSize     = 5f;
-        public float popupHoldDuration     = 0.5f;
-        public float popupFadeDuration     = 0.3f;
+        public float popupBaseFontSize     = 7f;
+        public float popupHoldDuration     = 0.6f;
+        public float popupFadeDuration     = 0.25f;
         public float popupPopInDuration    = 0.12f;
 
         [Header("Bonus Popup — Colors")]

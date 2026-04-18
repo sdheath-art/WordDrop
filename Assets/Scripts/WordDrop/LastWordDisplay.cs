@@ -16,11 +16,12 @@ namespace WordDrop
 
         private TextMeshPro _text;
         private Coroutine _waveCoroutine;
+        private Coroutine _fadeCoroutine;
 
         // Styling
-        private static readonly Color PLAYER_COLOR = new Color(1.00f, 0.84f, 0.42f, 0.85f); // gold
-        private static readonly Color AI_COLOR     = new Color(1.00f, 0.56f, 0.67f, 0.85f); // pink
-        private const float FONT_SIZE = 6.5f;
+        private static readonly Color PLAYER_COLOR = new Color(1f, 1f, 1f, 1f); // clean white
+        private static readonly Color AI_COLOR     = new Color(1.00f, 0.40f, 0.55f, 1f); // strong pink
+        private const float FONT_SIZE = 7.5f;
         private const float WAVE_CHAR_DELAY = 0.04f; // delay between each character appearing
         private const float CHAR_POP_DUR = 0.15f;    // each character's pop-in duration
 
@@ -36,8 +37,10 @@ namespace WordDrop
             var grid = GridManager.Instance;
             if (grid == null) return;
 
-            // Position above board with breathing room from column arrows
-            float y = grid.GridTop + grid.CellSize * 0.9f;
+            // Position in the open space above the grid, below the HUD
+            float halfH = Camera.main != null ? Camera.main.orthographicSize : 5f;
+            float hudBottom = halfH * 0.85f; // just below the top reserve
+            float y = (grid.GridTop + hudBottom) / 2f; // midpoint of empty zone
 
             GameObject go = new GameObject("LastWordText");
             go.transform.SetParent(transform, false);
@@ -46,12 +49,12 @@ namespace WordDrop
             _text = go.AddComponent<TextMeshPro>();
 
             var cfg = UIConfig.Instance;
-            TMP_FontAsset font = GameFont.GetUITMP();
+            TMP_FontAsset font = GameFont.GetDisplayTMP();
             if (font != null) _text.font = font;
 
             _text.text = "";
-            _text.fontSize = FONT_SIZE;
-            _text.fontStyle = FontStyles.Bold;
+            _text.fontSize = Application.isMobilePlatform ? 5.5f : FONT_SIZE;
+            _text.fontStyle = FontStyles.Normal;
             _text.color = new Color(1f, 1f, 1f, 0f); // start invisible
             _text.alignment = TextAlignmentOptions.Center;
             _text.sortingOrder = 25;
@@ -59,9 +62,7 @@ namespace WordDrop
             _text.enableWordWrapping = false;
             _text.overflowMode = TextOverflowModes.Overflow;
 
-            // Outline for readability
-            _text.outlineWidth = 0.15f;
-            _text.outlineColor = new Color32(0, 0, 0, 150);
+            // Outline applied per-word in ShowWord via TMPHelper (color-matched)
         }
 
         /// <summary>
@@ -70,16 +71,56 @@ namespace WordDrop
         public void ShowWord(string word, int score, bool isPlayer)
         {
             if (_text == null) return;
+
+            // Reposition to current grid layout (grid changes between modes)
+            var grid = GridManager.Instance;
+            if (grid != null)
+            {
+                float halfH = Camera.main != null ? Camera.main.orthographicSize : 5f;
+                float hudBottom = halfH * 0.85f;
+                float y = (grid.GridTop + hudBottom) / 2f;
+                _text.transform.position = new Vector3(0f, y, -5f);
+            }
+
             GameAudio.Instance?.PlayWordPopup();
 
-            string prefix = isPlayer ? "YOU" : "AI";
-            string fullText = $"{prefix}: {word} +{score}";
+            string rivalName = RivalSystem.Instance != null ? RivalSystem.Instance.CurrentRival.Name : "AI";
+            string fullText;
+            if (SurvivalManager.IsSurvivalMode)
+                fullText = $"{word} +{score}";  // solo — no prefix needed
+            else
+                fullText = $"{(isPlayer ? "YOU" : rivalName.ToUpper())}: {word} +{score}";
             Color color = isPlayer ? PLAYER_COLOR : AI_COLOR;
+
+            // Apply color-matched outline + effects
+            TMPHelper.ApplyEffects(_text, color, TMPHelper.TextTier.Popup);
 
             if (_waveCoroutine != null)
                 StopCoroutine(_waveCoroutine);
 
             _waveCoroutine = StartCoroutine(PunchIn(fullText, color));
+
+            // On mobile, auto-fade the overlay so it doesn't obscure the grid
+            if (Application.isMobilePlatform)
+            {
+                if (_fadeCoroutine != null) StopCoroutine(_fadeCoroutine);
+                _fadeCoroutine = StartCoroutine(AutoFade(1.5f, 0.4f));
+            }
+        }
+
+        private System.Collections.IEnumerator AutoFade(float showDur, float fadeDur)
+        {
+            yield return WaitCache.Get(showDur);
+            float elapsed = 0f;
+            Color startColor = _text.color;
+            while (elapsed < fadeDur)
+            {
+                elapsed += Time.deltaTime;
+                float a = Mathf.Lerp(startColor.a, 0f, elapsed / fadeDur);
+                _text.color = new Color(startColor.r, startColor.g, startColor.b, a);
+                yield return null;
+            }
+            _text.color = new Color(startColor.r, startColor.g, startColor.b, 0f);
         }
 
         /// <summary>Clear the display (e.g., on match start).</summary>

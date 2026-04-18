@@ -143,7 +143,7 @@ namespace WordDrop
         public void ForceNextDraw(char letter)
         {
             _forcedNextDraw = char.ToUpper(letter);
-            Debug.Log($"[TileBag] Next draw forced to '{_forcedNextDraw}'");
+//             Debug.Log($"[TileBag] Next draw forced to '{_forcedNextDraw}'");
         }
 
         /// <summary>
@@ -163,7 +163,7 @@ namespace WordDrop
 
             if (_bag.Count == 0)
             {
-                Debug.Log("[TileBag] Bag empty — refilling.");
+//                 Debug.Log("[TileBag] Bag empty — refilling.");
                 Refill();
             }
 
@@ -204,13 +204,6 @@ namespace WordDrop
                 ShuffleSeeded(_bag, _seededRng);
             else
                 Shuffle(_bag);
-
-            if (_refillCount == 0)
-                Debug.Log($"[TileBag] Initial fill — {_bag.Count} tiles " +
-                          $"(no wilds, vowel-rich distribution). " +
-                          $"Total unique letters: {_distribution.Length}");
-            else
-                Debug.Log($"[TileBag] Refilled — {_bag.Count} tiles, refill #{_refillCount}.");
 
             _refillCount++;
         }

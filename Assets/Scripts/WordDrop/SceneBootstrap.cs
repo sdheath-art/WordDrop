@@ -28,16 +28,20 @@ namespace WordDrop
 
         private void Awake()
         {
-            Debug.Log("[SceneBootstrap] Awake begin");
+//             Debug.Log("[SceneBootstrap] Awake begin");
 
             // ── Mobile optimizations ──
             // Disable physics — no colliders, no rigidbodies
             Physics2D.simulationMode = SimulationMode2D.Script;
             Physics2D.autoSyncTransforms = false;
             Physics.autoSyncTransforms = false;
-#if UNITY_IOS || UNITY_ANDROID
-            // Disable accelerometer polling — not used in a puzzle game
-            Input.accelerometerFrequency = 0;
+            // Accelerometer disabled via InputSystem settings (not needed for puzzle game)
+
+            Application.targetFrameRate = 60;
+
+#if UNITY_IOS && !UNITY_EDITOR
+            // Override iOS silent switch — game audio should always play
+            UnityEngine.iOS.Device.SetNoBackupFlag(Application.persistentDataPath);
 #endif
 
             SetupCamera();
@@ -50,7 +54,7 @@ namespace WordDrop
             SetupVisualBridge();
             SetupUIScreens();
 
-            Debug.Log("[SceneBootstrap] Awake complete — all managers created and initialized");
+//             Debug.Log("[SceneBootstrap] Awake complete — all managers created and initialized");
         }
 
         private void Start()
@@ -59,7 +63,7 @@ namespace WordDrop
             if (MenuUI.Instance != null)
             {
                 MenuUI.Instance.SetVisible(true);
-                Debug.Log("[SceneBootstrap] Start — showing menu");
+//                 Debug.Log("[SceneBootstrap] Start — showing menu");
             }
             else if (GameManager.Instance != null)
             {
@@ -88,7 +92,10 @@ namespace WordDrop
             // AudioListener required for any audio playback
             camGO.AddComponent<AudioListener>();
 
-            // Enable post-processing on URP camera (bloom, vignette)
+            // Post-processing RE-ENABLED (April 17) — bloom is needed for BigBurstFlash
+            // and HDR primed glows to catch properly. Prior concern was that tonemapping
+            // + color grading dimmed the scene; if that recurs, inspect the Volume profile
+            // under /Assets/Settings/ and disable those overrides rather than the whole pipeline.
             var camData = camGO.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
             if (camData == null) camData = camGO.AddComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
             camData.renderPostProcessing = true;
@@ -113,8 +120,8 @@ namespace WordDrop
 
             // Old sprite vignette removed — URP post-processing handles vignette now
 
-            Debug.Log($"[SceneBootstrap] Camera — halfH={halfH:F2}, halfW={halfW:F2}  " +
-                      $"({Screen.width}x{Screen.height})");
+//             Debug.Log($"[SceneBootstrap] Camera — halfH={halfH:F2}, halfW={halfW:F2}  " +
+                      // $"({Screen.width}x{Screen.height})");
         }
 
         // -----------------------------------------------------------------------
@@ -125,14 +132,14 @@ namespace WordDrop
         {
             if (FindAnyObjectByType<EventSystem>() != null)
             {
-                Debug.Log("[SceneBootstrap] EventSystem already exists — skipping creation.");
+//                 Debug.Log("[SceneBootstrap] EventSystem already exists — skipping creation.");
                 return;
             }
 
             GameObject esGO = new GameObject("EventSystem");
             esGO.AddComponent<EventSystem>();
             esGO.AddComponent<StandaloneInputModule>();
-            Debug.Log("[SceneBootstrap] EventSystem created");
+//             Debug.Log("[SceneBootstrap] EventSystem created");
         }
 
         // -----------------------------------------------------------------------
@@ -164,33 +171,33 @@ namespace WordDrop
             // AIAgent — depends on MatchController + RulesEngine
             new GameObject("AIAgent").AddComponent<AIAgent>();
 
-            Debug.Log("[SceneBootstrap] Core managers created: " +
-                      "GameManager, ScoreManager, MatchManager(stub), RulesEngine, " +
-                      "MatchController, AdManager, AIAgent");
+//             Debug.Log("[SceneBootstrap] Core managers created: " +
+                      // "GameManager, ScoreManager, MatchManager(stub), RulesEngine, " +
+                      // "MatchController, AdManager, AIAgent");
         }
 
         private void SetupGrid()
         {
             new GameObject("GridManager").AddComponent<GridManager>();
-            Debug.Log("[SceneBootstrap] GridManager created");
+//             Debug.Log("[SceneBootstrap] GridManager created");
         }
 
         private void SetupHand()
         {
             new GameObject("HandManager").AddComponent<HandManager>();
-            Debug.Log("[SceneBootstrap] HandManager created");
+//             Debug.Log("[SceneBootstrap] HandManager created");
         }
 
         private void SetupHUD()
         {
             new GameObject("HUDManager").AddComponent<HUDManager>();
-            Debug.Log("[SceneBootstrap] HUDManager created");
+//             Debug.Log("[SceneBootstrap] HUDManager created");
         }
 
         private void SetupColumnArrows()
         {
             new GameObject("ColumnArrowManager").AddComponent<ColumnArrowManager>();
-            Debug.Log("[SceneBootstrap] ColumnArrowManager created");
+//             Debug.Log("[SceneBootstrap] ColumnArrowManager created");
         }
 
         private void SetupVisualBridge()
@@ -198,7 +205,7 @@ namespace WordDrop
             // GameVisualBridge subscribes to RulesEngine + MatchController events in Start().
             // Must be created after RulesEngine and MatchController exist.
             new GameObject("GameVisualBridge").AddComponent<GameVisualBridge>();
-            Debug.Log("[SceneBootstrap] GameVisualBridge created");
+//             Debug.Log("[SceneBootstrap] GameVisualBridge created");
         }
 
         private void SetupUIScreens()
@@ -214,6 +221,8 @@ namespace WordDrop
             new GameObject("DetonationRecorder").AddComponent<DetonationRecorder>();
             new GameObject("DetonationReplay").AddComponent<DetonationReplay>();
             new GameObject("BlitzManager").AddComponent<BlitzManager>();
+            new GameObject("SurvivalManager").AddComponent<SurvivalManager>();
+            new GameObject("JamHint").AddComponent<JamHint>();
             new GameObject("RisingRowManager").AddComponent<RisingRowManager>();
             new GameObject("ScreenTransition").AddComponent<ScreenTransition>();
             new GameObject("LastWordDisplay").AddComponent<LastWordDisplay>();
@@ -222,8 +231,8 @@ namespace WordDrop
             // The Scrabble-drop game does not use round-based flow.
             // RulesEngine handles all word detection.
 
-            Debug.Log("[SceneBootstrap] UI screens created (MenuUI hidden, GameOverUI hidden). " +
-                      "No RoundManager / WordleEvaluator / RoundOverUI — removed in Job 12.");
+//             Debug.Log("[SceneBootstrap] UI screens created (MenuUI hidden, GameOverUI hidden). " +
+                      // "No RoundManager / WordleEvaluator / RoundOverUI — removed in Job 12.");
         }
     }
 }

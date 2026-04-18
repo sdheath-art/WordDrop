@@ -3,47 +3,66 @@ using System.Collections.Generic;
 namespace WordDrop
 {
     /// <summary>
-    /// Simplified letter point values and tile distribution counts.
+    /// Letter point values and tile distribution counts.
     ///
-    /// Point value system (simplified, fun-first):
-    ///   Common vowels/consonants  = 1 pt   (A, E, I, O, U, L, N, R, S, T)
-    ///   Slightly uncommon         = 2 pts  (D, G)
-    ///   Medium uncommon           = 3 pts  (B, C, M, P)
-    ///   Less common               = 4 pts  (F, H, V, W, Y)
-    ///   Rare                      = 5 pts  (K)
-    ///   Very rare                 = 8 pts  (J, X)
-    ///   Rarest                    = 10 pts (Q, Z)
+    /// Point value system (inverse-frequency tiered, updated 2026-04-18):
+    ///   Points map inversely to English letter frequency in cleaner tiers than
+    ///   Scrabble. Fixes Scrabble anomalies (H was 4 despite 6% frequency;
+    ///   K was 5 despite 0.77% frequency) and eliminates the 10-letter 1-pt
+    ///   pileup that flattened scoring on 3-letter words.
+    ///
+    ///   1 pt  (12%+ freq):   E, T
+    ///   2 pts (6-9% freq):   A, H, I, N, O, S
+    ///   3 pts (4-6% freq):   D, L, R
+    ///   4 pts (2-3% freq):   C, F, M, U, W
+    ///   5 pts (~2% freq):    G, P, Y
+    ///   6 pts (~1.5% freq):  B
+    ///   7 pts (~1% freq):    V
+    ///   8 pts (~0.8% freq):  K
+    ///   9 pts (~0.15% freq): J, X
+    ///   10 pts (~0.1% freq): Q, Z
+    ///
+    /// Distribution (_tileCounts) is unchanged — the fun-first vowel-boosted
+    /// bag keeps WordDrop playable. Only base-letter scoring was rebalanced.
     ///
     /// GetPoints(), GetTileCount(), GetDistribution() signatures are unchanged.
     /// </summary>
     public static class LetterData
     {
         // ---------------------------------------------------------------------------
-        // Simplified point values
+        // Inverse-frequency point values
         // ---------------------------------------------------------------------------
 
         private static readonly Dictionary<char, int> _pointValues = new Dictionary<char, int>
         {
-            // 1-point letters — most common, appear most often
-            { 'A', 1 }, { 'E', 1 }, { 'I', 1 }, { 'O', 1 }, { 'U', 1 },
-            { 'L', 1 }, { 'N', 1 }, { 'R', 1 }, { 'S', 1 }, { 'T', 1 },
+            // 1-point letters — most common (12%+ frequency)
+            { 'E', 1 }, { 'T', 1 },
 
-            // 2-point letters
-            { 'D', 2 }, { 'G', 2 },
+            // 2-point letters (6-9% frequency)
+            { 'A', 2 }, { 'H', 2 }, { 'I', 2 }, { 'N', 2 }, { 'O', 2 }, { 'S', 2 },
 
-            // 3-point letters
-            { 'B', 3 }, { 'C', 3 }, { 'M', 3 }, { 'P', 3 },
+            // 3-point letters (4-6% frequency)
+            { 'D', 3 }, { 'L', 3 }, { 'R', 3 },
 
-            // 4-point letters
-            { 'F', 4 }, { 'H', 4 }, { 'V', 4 }, { 'W', 4 }, { 'Y', 4 },
+            // 4-point letters (2-3% frequency)
+            { 'C', 4 }, { 'F', 4 }, { 'M', 4 }, { 'U', 4 }, { 'W', 4 },
 
-            // 5-point letters
-            { 'K', 5 },
+            // 5-point letters (~2% frequency)
+            { 'G', 5 }, { 'P', 5 }, { 'Y', 5 },
 
-            // 8-point letters
-            { 'J', 8 }, { 'X', 8 },
+            // 6-point letters (~1.5% frequency)
+            { 'B', 6 },
 
-            // 10-point letters
+            // 7-point letters (~1% frequency)
+            { 'V', 7 },
+
+            // 8-point letters (~0.8% frequency)
+            { 'K', 8 },
+
+            // 9-point letters (~0.15% frequency)
+            { 'J', 9 }, { 'X', 9 },
+
+            // 10-point letters (~0.1% frequency)
             { 'Q', 10 }, { 'Z', 10 },
         };
 

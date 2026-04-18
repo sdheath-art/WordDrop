@@ -39,36 +39,6 @@ namespace WordDrop
         private static HashSet<string> _wordSet;
         private static int _wordCount;
 
-        // ── Naughty words (easter egg) ───────────────────────────────────────────
-
-        private static readonly HashSet<string> _naughtyWords = new HashSet<string>
-        {
-            "BITCH","CUNT","DAMN","FUCK","SHIT",
-            "BOOB","BOOBS","DILDO","EROTIC","HOOKER",
-            "NUDES","NUDE","ORGASM","PENIS","PORN",
-            "SCROTUM","SEX","SEXY","SLUT","SPUNK",
-            "TOPLESS","VAGINA","WHORE",
-            "COCAINE","ECSTASY","HEROIN","METH",
-            "PIMP","RAPE"
-        };
-
-        private static readonly string[] _naughtyResponses = new string[]
-        {
-            "NAUGHTY!", "Nice try!", "Keep it clean!", "Family game!", "Behave!"
-        };
-
-        /// <summary>Returns true if the word is a known naughty word.</summary>
-        public static bool IsNaughtyWord(string word)
-        {
-            if (string.IsNullOrEmpty(word)) return false;
-            return _naughtyWords.Contains(word.ToUpper().Trim());
-        }
-
-        /// <summary>Returns a random cheeky response for naughty word attempts.</summary>
-        public static string GetNaughtyResponse()
-        {
-            return _naughtyResponses[Random.Range(0, _naughtyResponses.Length)];
-        }
 
         // ── Public API ───────────────────────────────────────────────────────────
 
@@ -94,7 +64,7 @@ namespace WordDrop
             if (tier == _currentTier && _wordSet != null) return;
             _currentTier = tier;
             _wordSet = null; // force reload
-            Debug.Log($"[WordDictionary] Tier set to {tier} — will reload on next lookup.");
+//             Debug.Log($"[WordDictionary] Tier set to {tier} — will reload on next lookup.");
         }
 
         /// <summary>
@@ -145,8 +115,8 @@ namespace WordDrop
             }
 
             _wordCount = _wordSet.Count;
-            Debug.Log($"[WordDictionary] Loaded {_currentTier} tier: {_wordCount:N0} words " +
-                      $"from Resources/{resourceName}.txt");
+//             Debug.Log($"[WordDictionary] Loaded {_currentTier} tier: {_wordCount:N0} words " +
+                      // $"from Resources/{resourceName}.txt");
 
             Resources.UnloadAsset(textAsset);
         }

@@ -34,10 +34,10 @@ namespace WordDrop
             {
                 PlayerPrefs.SetInt(Key(mode), score);
                 PlayerPrefs.Save();
-                Debug.Log($"[HighScoreManager] NEW BEST for {mode}: {score} (was {prev})");
+//                 Debug.Log($"[HighScoreManager] NEW BEST for {mode}: {score} (was {prev})");
                 return true;
             }
-            Debug.Log($"[HighScoreManager] Score {score} did not beat best {prev} for {mode}");
+//             Debug.Log($"[HighScoreManager] Score {score} did not beat best {prev} for {mode}");
             return false;
         }
 
@@ -60,7 +60,7 @@ namespace WordDrop
             {
                 PlayerPrefs.SetInt(ComboKey(mode), turnScore);
                 PlayerPrefs.Save();
-                Debug.Log($"[HighScoreManager] NEW BEST COMBO for {mode}: {turnScore} (was {prev})");
+//                 Debug.Log($"[HighScoreManager] NEW BEST COMBO for {mode}: {turnScore} (was {prev})");
                 return true;
             }
             return false;
@@ -75,7 +75,7 @@ namespace WordDrop
             PlayerPrefs.DeleteKey(ComboKey("classic"));
             PlayerPrefs.DeleteKey(ComboKey("blitz"));
             PlayerPrefs.Save();
-            Debug.Log("[HighScoreManager] All high scores cleared.");
+//             Debug.Log("[HighScoreManager] All high scores cleared.");
         }
     }
 }

@@ -90,8 +90,8 @@ namespace WordDrop
             AIAgent.CurrentProfile = rival.Profile;
             AIAgent.Difficulty = rival.Difficulty;
 
-            Debug.Log($"[RivalSystem] Picked rival: {rival.Name} '{rival.Title}' " +
-                      $"(profile={rival.Profile}, difficulty={rival.Difficulty})");
+//             Debug.Log($"[RivalSystem] Picked rival: {rival.Name} '{rival.Title}' " +
+                      // $"(profile={rival.Profile}, difficulty={rival.Difficulty})");
             return rival;
         }
 
@@ -102,7 +102,7 @@ namespace WordDrop
             int wins = PlayerPrefs.GetInt(key, 0) + 1;
             PlayerPrefs.SetInt(key, wins);
             PlayerPrefs.Save();
-            Debug.Log($"[RivalSystem] Player beat {CurrentRival.Name}! Record: {wins}W-{GetLosses(CurrentRival.Name)}L");
+//             Debug.Log($"[RivalSystem] Player beat {CurrentRival.Name}! Record: {wins}W-{GetLosses(CurrentRival.Name)}L");
         }
 
         /// <summary>Record a loss for the player against the current rival.</summary>
@@ -112,7 +112,7 @@ namespace WordDrop
             int losses = PlayerPrefs.GetInt(key, 0) + 1;
             PlayerPrefs.SetInt(key, losses);
             PlayerPrefs.Save();
-            Debug.Log($"[RivalSystem] {CurrentRival.Name} beat player. Record: {GetWins(CurrentRival.Name)}W-{losses}L");
+//             Debug.Log($"[RivalSystem] {CurrentRival.Name} beat player. Record: {GetWins(CurrentRival.Name)}W-{losses}L");
         }
 
         /// <summary>Get player's wins against a rival.</summary>

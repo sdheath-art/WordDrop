@@ -46,7 +46,7 @@ namespace WordDrop
                 BakeSingleLetter(c, cellSize);
 
             s_built = true;
-            Debug.Log("[TileSpriteAtlas] Built 26 baked tile sprites.");
+//             Debug.Log("[TileSpriteAtlas] Built 26 baked tile sprites.");
         }
 
         private static Sprite BakeSingleLetter(char letter, float cellSize)
@@ -81,10 +81,10 @@ namespace WordDrop
             float tileWorldSize = cellSize * 0.88f;
             float worldSize = tileWorldSize * 1.2f; // 20% padding
 
-            Debug.Log($"[TileSpriteAtlas] Baking '{letter}': cellSize={cellSize:F3} " +
-                      $"tileWorldSize={tileWorldSize:F3} captureArea={worldSize:F3} " +
-                      $"tileScale={tileGO.transform.localScale} " +
-                      $"tilePos={tileGO.transform.position}");
+//             Debug.Log($"[TileSpriteAtlas] Baking '{letter}': cellSize={cellSize:F3} " +
+                      // $"tileWorldSize={tileWorldSize:F3} captureArea={worldSize:F3} " +
+                      // $"tileScale={tileGO.transform.localScale} " +
+                      // $"tilePos={tileGO.transform.position}");
 
             // Create bake camera centered on the tile
             GameObject camGO = new GameObject("BakeCamera");

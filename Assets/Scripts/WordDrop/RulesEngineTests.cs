@@ -24,9 +24,9 @@ namespace WordDrop
             _totalFailed = 0;
             _failures.Clear();
 
-            Debug.Log("═══════════════════════════════════════════════════════");
-            Debug.Log("  RULES ENGINE TEST SUITE");
-            Debug.Log("═══════════════════════════════════════════════════════");
+//             Debug.Log("═══════════════════════════════════════════════════════");
+//             Debug.Log("  RULES ENGINE TEST SUITE");
+//             Debug.Log("═══════════════════════════════════════════════════════");
 
             TestWordDetectionStraightLines();
             TestWordDetectionNoRearranging();
@@ -35,9 +35,9 @@ namespace WordDrop
             TestPrimedWordIntegrity();
             TestSelfPlayGames(50);
 
-            Debug.Log("═══════════════════════════════════════════════════════");
-            Debug.Log($"  RESULTS: {_totalPassed}/{_totalTests} passed, {_totalFailed} failed");
-            Debug.Log("═══════════════════════════════════════════════════════");
+//             Debug.Log("═══════════════════════════════════════════════════════");
+//             Debug.Log($"  RESULTS: {_totalPassed}/{_totalTests} passed, {_totalFailed} failed");
+//             Debug.Log("═══════════════════════════════════════════════════════");
 
             if (_failures.Count > 0)
             {
@@ -49,7 +49,7 @@ namespace WordDrop
             }
             else
             {
-                Debug.Log("  ALL TESTS PASSED!");
+//                 Debug.Log("  ALL TESTS PASSED!");
             }
         }
 
@@ -108,7 +108,7 @@ namespace WordDrop
 
         private static void TestWordDetectionStraightLines()
         {
-            Debug.Log("\n--- Test: Word Detection Straight Lines ---");
+//             Debug.Log("\n--- Test: Word Detection Straight Lines ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -150,7 +150,7 @@ namespace WordDrop
 
         private static void TestWordDetectionNoRearranging()
         {
-            Debug.Log("\n--- Test: No Word Rearranging ---");
+//             Debug.Log("\n--- Test: No Word Rearranging ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -196,7 +196,7 @@ namespace WordDrop
 
         private static void TestGravityConsistency()
         {
-            Debug.Log("\n--- Test: Gravity Consistency ---");
+//             Debug.Log("\n--- Test: Gravity Consistency ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -219,7 +219,7 @@ namespace WordDrop
 
         private static void TestNoDuplicateScoring()
         {
-            Debug.Log("\n--- Test: No Duplicate Scoring ---");
+//             Debug.Log("\n--- Test: No Duplicate Scoring ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -247,7 +247,7 @@ namespace WordDrop
 
         private static void TestPrimedWordIntegrity()
         {
-            Debug.Log("\n--- Test: Primed Word Integrity ---");
+//             Debug.Log("\n--- Test: Primed Word Integrity ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -285,7 +285,7 @@ namespace WordDrop
 
         private static void TestSelfPlayGames(int numGames)
         {
-            Debug.Log($"\n--- Test: Self-Play ({numGames} games) ---");
+//             Debug.Log($"\n--- Test: Self-Play ({numGames} games) ---");
 
             int totalMoves = 0;
             int gamesCompleted = 0;
@@ -488,7 +488,7 @@ namespace WordDrop
                 DestroyEngine(engine);
             }
 
-            Debug.Log($"  Self-play: {gamesCompleted} games, {totalMoves} total moves");
+//             Debug.Log($"  Self-play: {gamesCompleted} games, {totalMoves} total moves");
 
             // ── FUN METRICS SUMMARY ──
             if (gamesCompleted > 0)
@@ -502,17 +502,17 @@ namespace WordDrop
                 float avgFirstScore = (float)totalFirstScoreTurn / gamesCompleted;
                 float avgScorePerTurn = (float)(playerTotalScore[0] + playerTotalScore[1]) / totalMoves;
 
-                Debug.Log($"\n══ FUN METRICS ({gamesCompleted} games) ══");
-                Debug.Log($"  Avg score/turn:       {avgScorePerTurn:F1}");
-                Debug.Log($"  Zero-score turns:     {zeroScorePct:F0}%");
-                Debug.Log($"  Longest zero streak:  {longestZeroStreak}");
-                Debug.Log($"  Avg words/game:       {avgWordsPerGame:F1}");
-                Debug.Log($"  Avg primed/game:      {avgPrimedPerGame:F1}");
-                Debug.Log($"  Avg detonations/game: {avgDetonationsPerGame:F1}");
-                Debug.Log($"  Avg chains/game:      {avgChainsPerGame:F1}");
-                Debug.Log($"  Avg first score turn: {avgFirstScore:F1}");
-                Debug.Log($"  P0 wins: {playerWins[0]}  P1 wins: {playerWins[1]}  " +
-                          $"Draws: {gamesCompleted - playerWins[0] - playerWins[1]}");
+//                 Debug.Log($"\n══ FUN METRICS ({gamesCompleted} games) ══");
+//                 Debug.Log($"  Avg score/turn:       {avgScorePerTurn:F1}");
+//                 Debug.Log($"  Zero-score turns:     {zeroScorePct:F0}%");
+//                 Debug.Log($"  Longest zero streak:  {longestZeroStreak}");
+//                 Debug.Log($"  Avg words/game:       {avgWordsPerGame:F1}");
+//                 Debug.Log($"  Avg primed/game:      {avgPrimedPerGame:F1}");
+//                 Debug.Log($"  Avg detonations/game: {avgDetonationsPerGame:F1}");
+//                 Debug.Log($"  Avg chains/game:      {avgChainsPerGame:F1}");
+//                 Debug.Log($"  Avg first score turn: {avgFirstScore:F1}");
+//                 Debug.Log($"  P0 wins: {playerWins[0]}  P1 wins: {playerWins[1]}  " +
+                          // $"Draws: {gamesCompleted - playerWins[0] - playerWins[1]}");
 
                 // Warnings
                 if (zeroScorePct > 60f)

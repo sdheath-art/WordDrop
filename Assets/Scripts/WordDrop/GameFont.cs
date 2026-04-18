@@ -4,9 +4,10 @@ using TMPro;
 namespace WordDrop
 {
     /// <summary>
-    /// Font provider — Nunito Sans everywhere (UI + display).
-    /// Avenir Next for tile letters.
-    /// No bold styling — fonts carry their own weight.
+    /// Font provider — 3 distinct roles:
+    ///   Tile:    Avenir Next — clean, legible on board tiles
+    ///   UI:      Clarity (Thrill Fonts) — readable HUD, buttons, labels
+    ///   Display: Cartoon (Thrill Fonts) — celebrations, announcements, big moments
     /// </summary>
     public static class GameFont
     {
@@ -16,11 +17,12 @@ namespace WordDrop
 
         private static TMP_FontAsset _tileTMP;
         private static TMP_FontAsset _uiTMP;
-        private static bool _loadedTileTMP, _loadedUITMP;
+        private static TMP_FontAsset _displayTMP;
+        private static bool _loadedTileTMP, _loadedUITMP, _loadedDisplayTMP;
 
         // ── TMP ─────────────────────────────────────────────────────────────────
 
-        /// <summary>Tile font: Avenir Next SDF.</summary>
+        /// <summary>Tile font: Avenir Next SDF — board tile letters.</summary>
         public static TMP_FontAsset GetTMP()
         {
             if (!_loadedTileTMP)
@@ -31,21 +33,33 @@ namespace WordDrop
             return _tileTMP;
         }
 
-        /// <summary>UI font: Nunito Sans SDF — HUD, buttons, game over, shuffle, scoring.</summary>
+        /// <summary>UI font: Clarity SDF — HUD, buttons, scores, labels, game over body.</summary>
         public static TMP_FontAsset GetUITMP()
         {
             if (!_loadedUITMP)
             {
-                _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
-                if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("NunitoExtraBold SDF");
+                _uiTMP = Resources.Load<TMP_FontAsset>("Montserrat-Black SDF");
+                if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_uiTMP == null) _uiTMP = GetTMP();
                 _loadedUITMP = true;
+//                 Debug.Log($"[GameFont] UI font loaded: {(_uiTMP != null ? _uiTMP.name : "NULL")}");
             }
             return _uiTMP;
         }
 
-        /// <summary>Display font: same as UI (Nunito Sans).</summary>
-        public static TMP_FontAsset GetDisplayTMP() => GetUITMP();
+        /// <summary>Display font: Cartoon SDF — celebrations, chain counter, meltdown, DOUBLE!, YOU WIN!</summary>
+        public static TMP_FontAsset GetDisplayTMP()
+        {
+            if (!_loadedDisplayTMP)
+            {
+                _displayTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
+                if (_displayTMP == null) _displayTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
+                if (_displayTMP == null) _displayTMP = GetUITMP();
+                _loadedDisplayTMP = true;
+//                 Debug.Log($"[GameFont] Display font loaded: {(_displayTMP != null ? _displayTMP.name : "NULL")}");
+            }
+            return _displayTMP;
+        }
 
         // ── Legacy ──────────────────────────────────────────────────────────────
 

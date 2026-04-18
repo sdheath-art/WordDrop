@@ -38,7 +38,7 @@ namespace WordDrop
         // ── Thresholds (Inspector) ──────────────────────────────────────────────
         [Header("Thresholds")]
         [SerializeField, Tooltip("Minimum chain depth for any meltdown moment (1 = chains only, 0 = every detonation)")]
-        public int minChainDepthForMeltdown = 1;
+        public int minChainDepthForMeltdown = 2;
         [SerializeField, Tooltip("Minimum trigger count at chain depth 0")]
         public int minTriggersForChainReaction = 1;
 
@@ -48,7 +48,7 @@ namespace WordDrop
         [SerializeField] private float shakeStartMagnitude   = 0.02f;
         [SerializeField] private float shakeEndMagnitude     = 0.18f;
         [SerializeField] private float shakeFrequency        = 25f;
-        [SerializeField] private float vignetteTargetAlpha   = 0.30f;
+        [SerializeField] private float vignetteTargetAlpha   = 0f; // disabled — was causing dark blob over the board
 
         // ── Impact timing ───────────────────────────────────────────────────────
         [Header("Impact Phase")]
@@ -150,21 +150,25 @@ namespace WordDrop
             labelGO.transform.SetParent(canvasGO.transform, false);
 
             _titleRT = labelGO.AddComponent<RectTransform>();
-            _titleRT.anchorMin = new Vector2(0.5f, 0.5f);
-            _titleRT.anchorMax = new Vector2(0.5f, 0.5f);
+            _titleRT.anchorMin = new Vector2(0.05f, 0.4f);
+            _titleRT.anchorMax = new Vector2(0.95f, 0.6f);
             _titleRT.pivot = new Vector2(0.5f, 0.5f);
-            _titleRT.sizeDelta = new Vector2(500f, 120f);
+            _titleRT.offsetMin = Vector2.zero;
+            _titleRT.offsetMax = Vector2.zero;
 
             _titleLabel = labelGO.AddComponent<TextMeshProUGUI>();
             TMP_FontAsset font = GameFont.GetDisplayTMP();
             if (font != null) _titleLabel.font = font;
             _titleLabel.fontSize = titleFontSize;
-            _titleLabel.fontStyle = FontStyles.Bold;
+            _titleLabel.fontStyle = FontStyles.Normal;
             _titleLabel.alignment = TextAlignmentOptions.Center;
             _titleLabel.enableWordWrapping = false;
             _titleLabel.overflowMode = TextOverflowModes.Overflow;
-            _titleLabel.outlineWidth = 0.25f;
-            _titleLabel.outlineColor = new Color32(0, 0, 0, 220);
+            _titleLabel.enableAutoSizing = true;
+            _titleLabel.fontSizeMin = 30f;
+            _titleLabel.fontSizeMax = titleFontSize;
+            _titleLabel.outlineWidth = 0f;
+            _titleLabel.outlineColor = Color.clear;
             _titleLabel.color = Color.white;
 
             // Start hidden
@@ -188,7 +192,7 @@ namespace WordDrop
             if (title == null) return null;
 
             Color titleColor = GetTitleColor(title);
-            Debug.Log($"[Meltdown] Intro: \"{title}\" (depth={chainDepth}, triggers={triggerCount}, detBonus={detonationBonus}, lastTurn={isLastTurn})");
+//             Debug.Log($"[Meltdown] Intro: \"{title}\" (depth={chainDepth}, triggers={triggerCount}, detBonus={detonationBonus}, lastTurn={isLastTurn})");
             return StartCoroutine(IntroCoroutine(title, titleColor, chainDepth));
         }
 
@@ -199,7 +203,7 @@ namespace WordDrop
         public Coroutine TryMeltdownOutro()
         {
             if (!_isPlaying || _outroRunning) return null;
-            Debug.Log("[Meltdown] Outro: fading out.");
+//             Debug.Log("[Meltdown] Outro: fading out.");
             return StartCoroutine(OutroCoroutine());
         }
 
@@ -215,7 +219,7 @@ namespace WordDrop
             if (title == null) return null;
 
             Color titleColor = GetTitleColor(title);
-            Debug.Log($"[Meltdown] Full: \"{title}\" (depth={chainDepth}, triggers={triggerCount})");
+//             Debug.Log($"[Meltdown] Full: \"{title}\" (depth={chainDepth}, triggers={triggerCount})");
             return StartCoroutine(FullSequenceCoroutine(title, titleColor, chainDepth));
         }
 
@@ -230,15 +234,14 @@ namespace WordDrop
                 return null;
 
             // Priority order — most dramatic first
-            if (isLastTurn && chainDepth >= 1)
-                return "LAST-TURN THEFT";
-            if (chainDepth >= 3)
+            if (chainDepth >= 6)
                 return "AFTERSHOCK";
-            if (chainDepth >= 2)
+            if (chainDepth >= 4)
                 return "MELTDOWN";
+            if (chainDepth >= 2)
+                return "CHAIN REACTION";
 
-            // Chain depth 1 — the entry-level "oh shit" moment
-            return "CHAIN REACTION";
+            return null; // depth 0-1 = normal detonation, no celebration
         }
 
         private Color GetTitleColor(string title)
@@ -264,7 +267,7 @@ namespace WordDrop
             _canvasGroup.alpha = 1f;
 
             // ── Build-up: escalating Perlin shake + vignette dim + rising SFX ───
-            GameAudio.Instance?.PlayMeltdownRising();
+            GameAudio.Instance?.PlayEventRising();
             HapticsManager.Medium();
 
             Camera cam = Camera.main;
@@ -313,9 +316,10 @@ namespace WordDrop
             // Haptic — strong hit
             HapticsManager.Strong();
 
-            // Meltdown SFX (the big hit sound)
+            // Meltdown SFX + haptic (the big hit)
             GameAudio.Instance?.PlayMeltdown();
             GameParticles.Instance?.PlayMeltdown(Vector3.zero);
+            HapticsManager.Meltdown();
 
             // White screen flash — instant to peak
             _flashOverlay.color = new Color(1f, 1f, 1f, flashPeakAlpha);
@@ -323,6 +327,8 @@ namespace WordDrop
             // Stamp slam — starts at large scale, punches to 1x with OutBack
             _titleLabel.text = title;
             _titleLabel.color = titleColor;
+            _titleLabel.outlineWidth = 0f;
+            _titleLabel.outlineColor = Color.clear;
             _titleRT.localScale = Vector3.one * stampStartScale;
 
             // Hitstop — freeze time for dramatic weight
@@ -368,6 +374,28 @@ namespace WordDrop
             // Ensure final state
             _titleRT.localScale = Vector3.one;
             _flashOverlay.color = new Color(1f, 1f, 1f, 0f);
+
+            // ── Impact screen shake — quick punchy shake that decays ──
+            if (cam != null)
+            {
+                float impactMag = 0.15f + Mathf.Min(chainDepth, 5) * 0.04f; // bigger chains = bigger shake
+                float impactDur = 0.25f;
+                float impactElapsed = 0f;
+                float impactSeed = Random.Range(0f, 100f);
+
+                while (impactElapsed < impactDur)
+                {
+                    impactElapsed += Time.deltaTime;
+                    float decay = 1f - (impactElapsed / impactDur);
+                    decay = decay * decay; // quadratic decay — fast falloff
+                    float mag = impactMag * decay;
+                    float ix = (Mathf.PerlinNoise(impactSeed + impactElapsed * 40f, 0f) - 0.5f) * 2f * mag;
+                    float iy = (Mathf.PerlinNoise(0f, impactSeed + impactElapsed * 40f) - 0.5f) * 2f * mag;
+                    cam.transform.position = CAMERA_HOME + new Vector3(ix, iy, 0f);
+                    yield return null;
+                }
+                cam.transform.position = CAMERA_HOME;
+            }
 
             // Stamp is now visible — caller runs explosion, then calls TryMeltdownOutro()
         }

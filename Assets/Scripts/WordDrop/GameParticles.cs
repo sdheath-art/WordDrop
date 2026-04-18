@@ -55,6 +55,9 @@ namespace WordDrop
             if (tex == null) return _baseMat;
             var mat = new Material(_baseMat);
             mat.mainTexture = tex;
+            // Ensure alpha blending works for transparent textures
+            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
             return mat;
         }
 
@@ -63,7 +66,7 @@ namespace WordDrop
         private void BuildParticleSystems()
         {
             // Load textures
-            var starTex = Resources.Load<Texture2D>("Particles/star_hc");
+            var starTex = Resources.Load<Texture2D>("Particles/flare_star");
             var flareTex = Resources.Load<Texture2D>("Particles/flare_hc");
             var flashTex = Resources.Load<Texture2D>("Particles/flashfree2");
             var glowTex = Resources.Load<Texture2D>("Particles/glowfree1");
@@ -86,8 +89,8 @@ namespace WordDrop
             var smokeMat = CloneMat(smokeTex ?? fallback);
             var confettiMat = CloneMat(heartTex ?? fallback);
 
-            Debug.Log($"[GameParticles] Loaded textures: star_hc={starTex != null} flare_hc={flareTex != null} " +
-                       $"flashfree2={flashTex != null} glowfree1={glowTex != null} smokefree1={smokeTex != null}");
+//             Debug.Log($"[GameParticles] Loaded textures: star_hc={starTex != null} flare_hc={flareTex != null} " +
+                       // $"flashfree2={flashTex != null} glowfree1={glowTex != null} smokefree1={smokeTex != null}");
 
             _sparkleSystem = BuildSparkles(starMat);
             _burstSystem = BuildBurst(flashMat, flareMat);
@@ -106,8 +109,8 @@ namespace WordDrop
             var main = ps.main;
             main.startLifetime = new ParticleSystem.MinMaxCurve(0.4f, 0.7f);
             main.startSpeed = new ParticleSystem.MinMaxCurve(0.8f, 2.0f);
-            main.startSize = new ParticleSystem.MinMaxCurve(0.08f, 0.2f);
-            main.startColor = new Color(1f, 0.9f, 0.5f, 1f); // warm gold
+            main.startSize = new ParticleSystem.MinMaxCurve(0.2f, 0.5f);
+            main.startColor = new Color(1f, 1f, 1f, 1f); // white
             main.gravityModifier = -0.3f; // float upward
             main.startRotation = new ParticleSystem.MinMaxCurve(0f, Mathf.PI * 2f);
 
@@ -124,8 +127,8 @@ namespace WordDrop
                 new Keyframe(0.7f, 0.8f), new Keyframe(1f, 0f));
             sol.size = new ParticleSystem.MinMaxCurve(1f, sizeCurve);
 
-            // Color: bright gold → transparent
-            SetFadeAlpha(ps, new Color(1f, 0.92f, 0.5f, 1f));
+            // Color: white → transparent
+            SetFadeAlpha(ps, new Color(1f, 1f, 1f, 1f));
 
             // Rotation spin
             var rot = ps.rotationOverLifetime;
@@ -144,7 +147,9 @@ namespace WordDrop
             var main = ps.main;
             main.startLifetime = new ParticleSystem.MinMaxCurve(0.15f, 0.35f);
             main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 5f);
-            main.startSize = new ParticleSystem.MinMaxCurve(0.3f, 0.7f);
+            // Bumped from 0.3-0.7 → 0.7-1.5 for meatier flares on every detonation
+            // (not just big moments). Wider range keeps the scatter visually varied.
+            main.startSize = new ParticleSystem.MinMaxCurve(0.7f, 1.5f);
             main.startColor = new Color(1f, 0.7f, 0.3f, 1f); // bright orange
             main.gravityModifier = 0.8f;
 
@@ -174,7 +179,10 @@ namespace WordDrop
             var main = ps.main;
             main.startLifetime = new ParticleSystem.MinMaxCurve(0.2f, 0.5f);
             main.startSpeed = new ParticleSystem.MinMaxCurve(3f, 7f);
-            main.startSize = new ParticleSystem.MinMaxCurve(0.1f, 0.3f);
+            // Bumped from 0.1-0.3 → 0.3-0.7 so chain sparks are visible alongside
+            // the bigger burst flares. Still smaller than burst so chain sparks
+            // read as "trailing debris" not competing with the main flash.
+            main.startSize = new ParticleSystem.MinMaxCurve(0.3f, 0.7f);
             main.startColor = new ParticleSystem.MinMaxGradient(
                 new Color(1f, 0.5f, 0.1f, 1f),  // deep orange
                 new Color(1f, 0.95f, 0.7f, 1f)   // near-white hot
@@ -273,7 +281,7 @@ namespace WordDrop
             main.startLifetime = new ParticleSystem.MinMaxCurve(0.5f, 0.8f);
             main.startSpeed = new ParticleSystem.MinMaxCurve(0.1f, 0.4f);
             main.startSize = new ParticleSystem.MinMaxCurve(0.3f, 0.5f);
-            main.startColor = new Color(1f, 0.85f, 0.3f, 0.7f); // warm gold glow
+            main.startColor = new Color(1f, 1f, 1f, 0.7f); // white glow
             main.gravityModifier = -0.15f;
 
             var shape = ps.shape;
@@ -288,7 +296,7 @@ namespace WordDrop
                 new Keyframe(0f, 0.5f), new Keyframe(0.4f, 1.2f), new Keyframe(1f, 0f));
             sol.size = new ParticleSystem.MinMaxCurve(1f, sizeCurve);
 
-            SetFadeAlpha(ps, new Color(1f, 0.85f, 0.3f, 0.8f));
+            SetFadeAlpha(ps, new Color(1f, 1f, 1f, 0.8f));
 
             SetRenderer(ps, mat, 48);
             return ps;
@@ -414,19 +422,25 @@ namespace WordDrop
         /// <summary>Bright burst when tiles detonate.</summary>
         public void PlayDetonation(Vector3 worldPos, int chainDepth)
         {
-            int burstCount = Mathf.Min(12 + chainDepth * 5, 35);
+            bool mobile = Application.isMobilePlatform;
+            int burstCount = mobile ? Mathf.Min(10 + chainDepth * 3, 25)
+                                    : Mathf.Min(12 + chainDepth * 5, 35);
             EmitAt(_burstSystem, worldPos, burstCount);
-            // Chain detonations get extra spark shower
             if (chainDepth > 0)
-                EmitAt(_chainSystem, worldPos, Mathf.Min(8 + chainDepth * 6, 30));
+            {
+                int chainCount = mobile ? Mathf.Min(6 + chainDepth * 4, 20)
+                                        : Mathf.Min(8 + chainDepth * 6, 30);
+                EmitAt(_chainSystem, worldPos, chainCount);
+            }
         }
 
         /// <summary>Confetti burst for meltdown moments.</summary>
         public void PlayMeltdown(Vector3 worldPos)
         {
-            EmitAt(_confettiSystem, worldPos, 60);
-            EmitAt(_burstSystem, worldPos, 15);   // flash core
-            EmitAt(_sparkleSystem, worldPos, 20);  // extra sparkle
+            bool mobile = Application.isMobilePlatform;
+            EmitAt(_confettiSystem, worldPos, mobile ? 40 : 60);
+            EmitAt(_burstSystem, worldPos, mobile ? 12 : 15);
+            EmitAt(_sparkleSystem, worldPos, mobile ? 15 : 20);
         }
 
         /// <summary>Small dust puff when tile lands on board.</summary>
@@ -453,6 +467,47 @@ namespace WordDrop
         {
             EmitAt(_shimmerSystem, worldPos, count);
             EmitAt(_glowSystem, worldPos, 2);
+        }
+
+        /// <summary>
+        /// Scatter flare_star sparkles along a line segment with per-particle size
+        /// variation. Used by BigBurstFlash so the blast line has big, varied stars
+        /// traveling with it — not a uniform grid of small dots.
+        /// </summary>
+        public void PlaySparkleLine(Vector3 start, Vector3 end, int totalCount)
+        {
+            if (_sparkleSystem == null || totalCount <= 0) return;
+            int samples = Mathf.Clamp(totalCount, 3, 40);
+            Vector3 dir = end - start;
+            float perpJitter = Mathf.Min(dir.magnitude, 1.5f) * 0.2f;
+            Vector3 perp = new Vector3(-dir.y, dir.x, 0f).normalized;
+
+            // EmitParams lets us set a per-particle startSize that OVERRIDES the
+            // system's default — so each sparkle is a different size without
+            // modifying the shared sparkle system (which is also used for
+            // word-scored, primed, meltdown effects).
+            var emit = new ParticleSystem.EmitParams();
+            emit.applyShapeToPosition = false;
+
+            for (int i = 0; i < samples; i++)
+            {
+                float t = (samples == 1) ? 0.5f : (float)i / (samples - 1);
+                Vector3 pos = Vector3.Lerp(start, end, t);
+                pos += perp * Random.Range(-perpJitter, perpJitter);
+                pos += dir.normalized * Random.Range(-0.1f, 0.1f);
+
+                // Mix of sizes — mostly medium stars with occasional big accent ones.
+                // ~20% of sparkles are the "hero" size, rest are mid-range.
+                float size = (Random.value < 0.2f)
+                    ? Random.Range(1.1f, 1.6f)   // hero star
+                    : Random.Range(0.5f, 1.0f);  // supporting star
+
+                emit.position  = pos;
+                emit.startSize = size;
+                // Slight rotation variance so stars don't all point the same way.
+                emit.rotation  = Random.Range(0f, 360f);
+                _sparkleSystem.Emit(emit, 1);
+            }
         }
     }
 }

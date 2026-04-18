@@ -25,16 +25,23 @@ namespace WordDrop
         // Constants
         // ---------------------------------------------------------------------------
 
-        public const int COLS = 7;
-        public const int ROWS = 5;
+        public const int COLS     = 6;
+        public const int MAX_ROWS = 9;
+        public static int ROWS => RulesEngine.ROWS;
 
-        private const float GRID_HEIGHT_FRACTION = 0.82f;  // denser, less bulky
-        private const float GRAVITY_FALL_SPEED   = 14f; // was 10 originally — slightly faster
+        private const float GRID_HEIGHT_FRACTION          = 0.82f;  // denser, less bulky
+        // Board width as fraction of screen width. Tile = fraction / COLS.
+        // Target: 12-13% screen width per tile (Candy Crush / Royal Match benchmark).
+        // 6 cols × 13% = 0.78. Survival gets a touch more (chunky, high-pressure feel).
+        private const float SURVIVAL_GRID_WIDTH_FRACTION  = 0.84f;
+        private const float DEFAULT_GRID_WIDTH_FRACTION   = 0.78f;
+        private const float SURVIVAL_GRID_TOP_MARGIN      = 0.30f; // push grid down — more room above for HUD, thumb-friendly
+        private const float GRAVITY_FALL_SPEED            = 14f; // was 10 originally — slightly faster
 
         // Board: deep indigo hero object — darker and cooler than background
         private static readonly Color FRAME_OUTER    = new Color(0.040f, 0.055f, 0.150f, 1f);  // very dark indigo outer edge
         private static readonly Color FRAME_EDGE     = new Color(0.220f, 0.270f, 0.540f, 1f);  // brighter top lip — sculpted
-        private static readonly Color BOARD_INNER    = new Color(0.080f, 0.110f, 0.280f, 1f);  // deep cool indigo
+        private static readonly Color BOARD_INNER    = new Color(0.040f, 0.055f, 0.150f, 1f);  // matches FRAME_OUTER — single dark panel
 
         // Cells: readable against board — lighter face, dark inset border
         private static readonly Color CELL_FILL_COLOR   = new Color(0.150f, 0.190f, 0.410f, 1f);  // slightly brighter than board inner
@@ -54,9 +61,9 @@ namespace WordDrop
         // Cell state
         // ---------------------------------------------------------------------------
 
-        private CellData[,]    _cells      = new CellData[COLS, ROWS];
-        private Tile[,]        _tiles      = new Tile[COLS, ROWS];
-        private GameObject[,]  _cellObjects = new GameObject[COLS, ROWS];
+        private CellData[,]    _cells      = new CellData[COLS, MAX_ROWS];
+        private Tile[,]        _tiles      = new Tile[COLS, MAX_ROWS];
+        private GameObject[,]  _cellObjects = new GameObject[COLS, MAX_ROWS];
 
         // ---------------------------------------------------------------------------
         // Private refs
@@ -66,6 +73,35 @@ namespace WordDrop
         private GameObject _gridRoot;
 
         private readonly List<GameObject> _allTileObjects = new List<GameObject>();
+
+        // ── Tile Object Pool ─────────────────────────────────────────────
+        private readonly Stack<Tile> _tilePool = new Stack<Tile>(80);
+
+        private Tile CheckoutTile(char letter, int col, int row, float cellSize, int ownerIndex = -1)
+        {
+            Tile tile;
+            if (_tilePool.Count > 0)
+            {
+                tile = _tilePool.Pop();
+                tile.Reinitialise(letter, col, row, cellSize, ownerIndex);
+            }
+            else
+            {
+                GameObject go = new GameObject($"Tile_{letter}_{col}_{row}");
+                tile = go.AddComponent<Tile>();
+                tile.Initialise(letter, col, row, cellSize, ownerIndex);
+            }
+            _allTileObjects.Add(tile.gameObject);
+            return tile;
+        }
+
+        private void ReturnTile(Tile tile)
+        {
+            if (tile == null) return;
+            _allTileObjects.Remove(tile.gameObject);
+            tile.ResetForPool();
+            _tilePool.Push(tile);
+        }
 
         // ---------------------------------------------------------------------------
         // Singleton
@@ -86,8 +122,47 @@ namespace WordDrop
             CalculateLayout();
             BuildGridVisuals();
 
-            Debug.Log($"[GridManager] Awake — cellSize={CellSize:F3}, " +
-                      $"gridLeft={GridLeft:F3}, gridBottom={GridBottom:F3}");
+//             Debug.Log($"[GridManager] Awake — cellSize={CellSize:F3}, " +
+                      // $"gridLeft={GridLeft:F3}, gridBottom={GridBottom:F3}");
+        }
+
+        /// <summary>
+        /// Destroys existing grid visuals and rebuilds for current ROWS.
+        /// Call after mode flag is set (e.g., from MatchController.StartMatch).
+        /// </summary>
+        public void RebuildGrid()
+        {
+            // Destroy existing cell objects and tiles
+            for (int col = 0; col < COLS; col++)
+            {
+                for (int row = 0; row < MAX_ROWS; row++)
+                {
+                    if (_cellObjects[col, row] != null)
+                    {
+                        Destroy(_cellObjects[col, row]);
+                        _cellObjects[col, row] = null;
+                    }
+                    if (_tiles[col, row] != null)
+                    {
+                        ReturnTile(_tiles[col, row]);
+                        _tiles[col, row] = null;
+                    }
+                    _cells[col, row] = null;
+                }
+            }
+
+            // Destroy grid root (background panel + cells)
+            if (_gridRoot != null)
+            {
+                Destroy(_gridRoot);
+                _gridRoot = null;
+            }
+
+            // Recalculate layout for new ROWS and rebuild
+            CalculateLayout();
+            BuildGridVisuals();
+
+//             Debug.Log($"[GridManager] RebuildGrid — ROWS={ROWS}, cellSize={CellSize:F3}");
         }
 
         // ---------------------------------------------------------------------------
@@ -98,25 +173,57 @@ namespace WordDrop
         {
             float halfH = _cam.orthographicSize;
             float halfW = halfH * ((float)Screen.width / Screen.height);
+            bool isSurvival = SurvivalManager.IsSurvivalMode;
 
-            float availableWidth  = halfW * 2f * 0.90f;
-            float cellFromWidth   = availableWidth / COLS;
+            float widthFraction = isSurvival ? SURVIVAL_GRID_WIDTH_FRACTION : DEFAULT_GRID_WIDTH_FRACTION;
 
-            float availableHeight = halfH * 2f * GRID_HEIGHT_FRACTION;
-            float cellFromHeight  = availableHeight / ROWS;
+            // Reserve space for HUD (top) and hand cards (bottom).
+            // Benchmark targets (Candy Crush / Royal Match / Wordscapes):
+            //   top: 10-14% of screen height, bottom: 28-32%.
+            // topReserve = 0.22 * halfH → 11% of screen.
+            // bottomReserve = 0.50 * halfH → 25% of screen (slightly under benchmark so
+            // survival 9-row grid at 0.84 width fraction still fits without collision).
+            bool mobile = Application.isMobilePlatform;
+            float topReserveBase = halfH * (mobile ? 0.22f : 0.20f);
+            float bottomReserveBase = halfH * (mobile ? 0.50f : 0.48f);
+
+            // Device-adaptive safe-area insets — notch/Dynamic Island top, home-indicator bottom.
+            // Expressed in world units (halfH = half screen height in world units).
+            // Industry standard (Supercell, King, Playrix): layout respects safe area, not just
+            // screen rect. Otherwise UI bleeds under notch / gets eaten by home indicator.
+            float safeTopInset = 0f;
+            float safeBottomInset = 0f;
+            if (Screen.height > 0)
+            {
+                float h = Screen.height;
+                float safeBottomPx = Screen.safeArea.y;
+                float safeTopPx = h - (Screen.safeArea.y + Screen.safeArea.height);
+                safeBottomInset = (safeBottomPx / h) * halfH * 2f;
+                safeTopInset    = (safeTopPx    / h) * halfH * 2f;
+            }
+
+            float topReserve    = topReserveBase    + safeTopInset;
+            float bottomReserve = bottomReserveBase + safeBottomInset;
+
+            float availableWidth = halfW * 2f * widthFraction;
+            float availableHeight = (halfH * 2f) - topReserve - bottomReserve;
+
+            float cellFromWidth = availableWidth / COLS;
+            float cellFromHeight = availableHeight / ROWS;
 
             CellSize = Mathf.Min(cellFromWidth, cellFromHeight);
 
-            float gridWorldWidth  = CellSize * COLS;
+            float gridWorldWidth = CellSize * COLS;
             float gridWorldHeight = CellSize * ROWS;
 
+            // Anchor grid to bottom of available space — tiles build upward
             float gridCenterX = 0f;
-            float gridCenterY = halfH * 0.22f;  // push grid up more — reduce dead space between HUD and board
+            float gridAreaBottom = -halfH + bottomReserve;
 
             GridLeft   = gridCenterX - gridWorldWidth  / 2f;
             GridRight  = gridCenterX + gridWorldWidth  / 2f;
-            GridBottom = gridCenterY - gridWorldHeight / 2f;
-            GridTop    = gridCenterY + gridWorldHeight / 2f;
+            GridBottom = gridAreaBottom;
+            GridTop    = gridAreaBottom + gridWorldHeight;
         }
 
         // ---------------------------------------------------------------------------
@@ -128,7 +235,7 @@ namespace WordDrop
             _gridRoot = new GameObject("GridRoot");
             _gridRoot.transform.SetParent(transform, false);
 
-            float bgPadding = CellSize * 0.16f;  // sculpted frame
+            float bgPadding = CellSize * 0.16f;
             CreateBackgroundPanel(bgPadding);
 
             int texSize = Mathf.Clamp(Mathf.RoundToInt(CellSize * 200f), 64, 512);
@@ -139,8 +246,8 @@ namespace WordDrop
                 texSize, texSize, radius,
                 CELL_FILL_COLOR, CELL_BORDER_COLOR, border);
 
-            float cellDisplaySize = CellSize * 0.90f;
-
+            // Cell background squares hidden — just the dark panel behind tiles
+            // Keep the _cellObjects array populated with empty GOs for position tracking
             for (int col = 0; col < COLS; col++)
             {
                 for (int row = 0; row < ROWS; row++)
@@ -151,14 +258,7 @@ namespace WordDrop
                     cellGO.transform.SetParent(_gridRoot.transform, false);
                     cellGO.transform.position = worldPos;
 
-                    SpriteRenderer sr = cellGO.AddComponent<SpriteRenderer>();
-                    sr.sprite         = cellSprite;
-                    sr.sortingOrder   = 1;
-
-                    float nativeSize = texSize / 100f;
-                    float scale      = cellDisplaySize / nativeSize;
-                    cellGO.transform.localScale = new Vector3(scale, scale, 1f);
-
+                    // No SpriteRenderer — cells are invisible
                     _cellObjects[col, row] = cellGO;
                     _cells[col, row]       = null;
                 }
@@ -236,7 +336,7 @@ namespace WordDrop
             int targetRow = GetLowestEmptyRow(col);
             if (targetRow < 0)
             {
-                Debug.Log($"[GridManager] Column {col} is full — ignoring drop.");
+//                 Debug.Log($"[GridManager] Column {col} is full — ignoring drop.");
                 return null;
             }
 
@@ -249,12 +349,8 @@ namespace WordDrop
             };
             _cells[col, targetRow] = data;
 
-            GameObject tileGO = new GameObject($"Tile_{col}_{targetRow}_{letter}");
-            _allTileObjects.Add(tileGO);
-
-            Tile tile = tileGO.AddComponent<Tile>();
             int ownerIdx = (owner == TileOwner.AI) ? 1 : 0;
-            tile.Initialise(letter, col, targetRow, CellSize, ownerIdx);
+            Tile tile = CheckoutTile(letter, col, targetRow, CellSize, ownerIdx);
 
             _tiles[col, targetRow] = tile;
 
@@ -262,11 +358,9 @@ namespace WordDrop
             Vector3 targetPos = CellToWorld(col, targetRow);
             tile.AnimateFall(spawnPos, targetPos);
 
-            // Gold bonus: if tile lands on a bonus cell, make it golden
-            if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, targetRow))
-                tile.SetGoldBonus(true);
+            // Gold bonus cells only apply to rising row tiles, not player/AI drops
 
-            Debug.Log($"[GridManager] Dropped '{letter}' → col={col}, row={targetRow}");
+//             Debug.Log($"[GridManager] Dropped '{letter}' → col={col}, row={targetRow}");
 
             return tile;
         }
@@ -277,37 +371,42 @@ namespace WordDrop
         /// </summary>
         public Tile CreateSingleTile(int col, int row, char letter)
         {
-            // Remove existing tile at this position if any
+            return CreateSingleTile(col, row, letter, isWild: false);
+        }
+
+        public Tile CreateSingleTile(int col, int row, char letter, bool isWild)
+        {
+            // Guards
+            if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return null;
+            if (!isWild && letter == '\0')
+            {
+                Debug.LogError($"[GridManager] CreateSingleTile: REJECTED blank tile at ({col},{row})");
+                return null;
+            }
+
+            // Return existing tile to pool if any
             if (_tiles[col, row] != null)
             {
-                GameObject old = _tiles[col, row].gameObject;
-                _allTileObjects.Remove(old);
-                Destroy(old);
+                ReturnTile(_tiles[col, row]);
                 _tiles[col, row] = null;
                 _cells[col, row] = null;
             }
 
             Vector3 worldPos = CellToWorld(col, row);
-
-            GameObject tileGO = new GameObject($"Tile_{letter}_{col}_{row}");
-            tileGO.transform.position = worldPos;
-
-            Tile tile = tileGO.AddComponent<Tile>();
-            tile.Initialise(letter, col, row, CellSize);
+            // Uncommitted wilds pass the sentinel char so Tile.Initialise doesn't reject.
+            char displayLetter = isWild && letter == '\0' ? TileBag.WILD_CHAR : letter;
+            Tile tile = CheckoutTile(displayLetter, col, row, CellSize);
+            tile.transform.position = worldPos;
+            if (isWild) tile.SetWild(true);
 
             _tiles[col, row] = tile;
             _cells[col, row] = new CellData
             {
-                Letter = letter,
+                Letter = isWild ? '\0' : letter,
                 Col = col,
                 Row = row,
                 Owner = TileOwner.Player
             };
-            _allTileObjects.Add(tileGO);
-
-            // Apply gold if this position is a bonus cell
-            if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, row))
-                tile.SetGoldBonus(true);
 
             return tile;
         }
@@ -335,13 +434,11 @@ namespace WordDrop
         /// </summary>
         public void ClearAllCells()
         {
-            foreach (GameObject go in _allTileObjects)
-                if (go != null) Destroy(go);
-            _allTileObjects.Clear();
-
             for (int col = 0; col < COLS; col++)
                 for (int row = 0; row < ROWS; row++)
                 {
+                    if (_tiles[col, row] != null)
+                        ReturnTile(_tiles[col, row]);
                     _cells[col, row] = null;
                     _tiles[col, row] = null;
                 }
@@ -351,7 +448,7 @@ namespace WordDrop
                 if (_bonusOverlays[i] != null) Destroy(_bonusOverlays[i]);
             _bonusOverlays.Clear();
 
-            Debug.Log("[GridManager] All cells cleared.");
+//             Debug.Log("[GridManager] All cells cleared.");
         }
 
         /// <summary>
@@ -362,14 +459,12 @@ namespace WordDrop
         {
             if (rules == null) return;
 
-            // Destroy all existing visual tiles
-            foreach (GameObject go in _allTileObjects)
-                if (go != null) Object.Destroy(go);
-            _allTileObjects.Clear();
-
+            // Return all existing tiles to pool
             for (int col = 0; col < COLS; col++)
                 for (int row = 0; row < ROWS; row++)
                 {
+                    if (_tiles[col, row] != null)
+                        ReturnTile(_tiles[col, row]);
                     _tiles[col, row] = null;
                     _cells[col, row] = null;
                 }
@@ -382,17 +477,25 @@ namespace WordDrop
                 {
                     var rulesCell = rules.GetCell(col, row);
                     if (rulesCell == null) continue;
+                    // Auto-heal: if a cell has the wild sentinel '*' as a literal letter
+                    // but IsWild is false, it's a corrupted wild from a pre-fix bug —
+                    // promote to IsWild so ResolveUncommittedWilds can pick a letter.
+                    if (rulesCell.Letter == TileBag.WILD_CHAR && !rulesCell.IsWild)
+                    {
+                        rulesCell.IsWild = true;
+                        rulesCell.Letter = '\0';
+                    }
+                    // Skip genuinely empty cells, but keep uncommitted wilds (IsWild + Letter=='\0').
+                    if (rulesCell.Letter == '\0' && !rulesCell.IsWild) continue;
 
                     Vector3 worldPos = CellToWorld(col, row);
+                    // For uncommitted wilds pass the sentinel char so Tile.Initialise
+                    // doesn't reject '\0'. SetWild below drives the ★ visual.
+                    char displayLetter = (rulesCell.IsWild && rulesCell.Letter == '\0')
+                        ? TileBag.WILD_CHAR : rulesCell.Letter;
+                    Tile tile = CheckoutTile(displayLetter, col, row, CellSize, rulesCell.PlayerIndex);
+                    tile.transform.position = worldPos;
 
-                    // Create tile GameObject
-                    GameObject tileGO = new GameObject($"Tile_{rulesCell.Letter}_{col}_{row}");
-                    tileGO.transform.position = worldPos;
-
-                    Tile tile = tileGO.AddComponent<Tile>();
-                    tile.Initialise(rulesCell.Letter, col, row, CellSize, rulesCell.PlayerIndex);
-
-                    // Store in grid
                     _tiles[col, row] = tile;
                     _cells[col, row] = new CellData
                     {
@@ -401,9 +504,13 @@ namespace WordDrop
                         Row = row,
                         Owner = rulesCell.PlayerIndex == 0 ? TileOwner.Player : TileOwner.AI
                     };
-                    _allTileObjects.Add(tileGO);
 
-                    // Gold bonus tile
+                    // Special tile visuals
+                    if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                    if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
+                    if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
+                    if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
+                    if (rulesCell.IsWild) tile.SetWild(true);
                     if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, row))
                         tile.SetGoldBonus(true);
 
@@ -411,7 +518,7 @@ namespace WordDrop
                 }
             }
 
-            Debug.Log($"[GridManager] RebuildFromRulesEngine — created {created} tiles.");
+//             Debug.Log($"[GridManager] RebuildFromRulesEngine — created {created} tiles.");
         }
 
         /// <summary>
@@ -433,34 +540,59 @@ namespace WordDrop
                     var rulesCell = rules.GetCell(col, row);
                     Tile visualTile = _tiles[col, row];
 
+                    // Auto-heal corrupted wilds in-place before sync logic runs.
+                    if (rulesCell != null && rulesCell.Letter == TileBag.WILD_CHAR && !rulesCell.IsWild)
+                    {
+                        rulesCell.IsWild = true;
+                        rulesCell.Letter = '\0';
+                    }
+
                     if (rulesCell == null && visualTile != null)
                     {
-                        // Data says empty but visual has a tile — destroy it
-                        GameObject go = visualTile.gameObject;
-                        _allTileObjects.Remove(go);
-                        Destroy(go);
+                        // Data says empty but visual has a tile — return to pool
+                        ReturnTile(visualTile);
                         _tiles[col, row] = null;
                         _cells[col, row] = null;
                         fixed_count++;
                     }
                     else if (rulesCell != null && visualTile != null)
                     {
-                        // Both exist — snap position to correct world pos
+                        // Both exist — snap position and sync letter if mismatched
                         Vector3 correctPos = CellToWorld(col, row);
                         if (Vector3.Distance(visualTile.transform.position, correctPos) > 0.01f)
                         {
                             visualTile.transform.position = correctPos;
                             fixed_count++;
                         }
+                        // Sync wild flag (wild cells can get committed mid-resolution)
+                        if (visualTile.IsWild != rulesCell.IsWild)
+                        {
+                            visualTile.SetWild(rulesCell.IsWild);
+                            fixed_count++;
+                        }
+                        if ((rulesCell.Letter != '\0' || rulesCell.IsWild) && visualTile.Letter != rulesCell.Letter)
+                        {
+                            visualTile.SetLetter(rulesCell.Letter);
+                            fixed_count++;
+                        }
                     }
-                    else if (rulesCell != null && visualTile == null)
+                    else if (rulesCell != null && visualTile == null
+                             && (rulesCell.Letter != '\0' || rulesCell.IsWild))
                     {
-                        // Data has a tile but visual doesn't — create it
+                        // Data has a tile but visual doesn't — checkout from pool
                         Vector3 worldPos = CellToWorld(col, row);
-                        GameObject tileGO = new GameObject($"Tile_{rulesCell.Letter}_{col}_{row}");
-                        tileGO.transform.position = worldPos;
-                        Tile tile = tileGO.AddComponent<Tile>();
-                        tile.Initialise(rulesCell.Letter, col, row, CellSize, rulesCell.PlayerIndex);
+                        char displayLetter = (rulesCell.IsWild && rulesCell.Letter == '\0')
+                            ? TileBag.WILD_CHAR : rulesCell.Letter;
+                        Tile tile = CheckoutTile(displayLetter, col, row, CellSize, rulesCell.PlayerIndex);
+                        tile.transform.position = worldPos;
+
+                        if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                        if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
+                        if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
+                        if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
+                        if (rulesCell.IsWild) tile.SetWild(true);
+                        if (rules.IsBonusCell(col, row)) tile.SetGoldBonus(true);
+
                         _tiles[col, row] = tile;
                         _cells[col, row] = new CellData
                         {
@@ -469,14 +601,11 @@ namespace WordDrop
                             Row = row,
                             Owner = rulesCell.PlayerIndex == 0 ? TileOwner.Player : TileOwner.AI
                         };
-                        _allTileObjects.Add(tileGO);
                         fixed_count++;
                     }
                 }
             }
 
-            if (fixed_count > 0)
-                Debug.Log($"[GridManager] SyncToRulesState — fixed {fixed_count} tile(s).");
         }
 
         public bool IsGridFull()
@@ -560,9 +689,7 @@ namespace WordDrop
                 Tile tile = _tiles[col, row];
                 if (tile != null)
                 {
-                    GameObject go = tile.gameObject;
-                    _allTileObjects.Remove(go);
-                    Destroy(go);
+                    ReturnTile(tile);
                     removedCount++;
                 }
 
@@ -570,8 +697,8 @@ namespace WordDrop
                 _cells[col, row] = null;
             }
 
-            Debug.Log($"[GridManager] RemoveTiles — removed {removedCount} tile(s) " +
-                      $"from {cells.Count} requested positions.");
+//             Debug.Log($"[GridManager] RemoveTiles — removed {removedCount} tile(s) " +
+                      // $"from {cells.Count} requested positions.");
 
             // Refresh bonus overlays in case any were consumed by scoring
             RefreshBonusCellOverlays();
@@ -585,6 +712,10 @@ namespace WordDrop
         /// </summary>
         public IEnumerator ApplyGravity()
         {
+            // Per-column stagger — cascades feel organic instead of synchronized.
+            // Candy Crush / Royal Match use ~40-60ms per column.
+            const float STAGGER_PER_COL = 0.045f;
+
             List<Tile> animatingTiles = new List<Tile>();
             int totalMoved = 0;
 
@@ -637,7 +768,8 @@ namespace WordDrop
                     if (dist > 0.02f)
                     {
                         float fallDuration = dist / GRAVITY_FALL_SPEED;
-                        tile.AnimateGravityFall(targetPos, fallDuration);
+                        float colDelay = col * STAGGER_PER_COL;
+                        tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
                         animatingTiles.Add(tile);
                         totalMoved++;
                     }
@@ -651,7 +783,7 @@ namespace WordDrop
 
             if (totalMoved > 0)
             {
-                Debug.Log($"[GridManager] ApplyGravity — {totalMoved} tile(s) falling.");
+//                 Debug.Log($"[GridManager] ApplyGravity — {totalMoved} tile(s) falling.");
 
                 // Wait for all gravity animations to complete
                 int  safety       = 0;
@@ -672,11 +804,11 @@ namespace WordDrop
                     if (anyAnimating) yield return null;
                 }
 
-                Debug.Log("[GridManager] ApplyGravity — all tiles settled.");
+//                 Debug.Log("[GridManager] ApplyGravity — all tiles settled.");
             }
             else
             {
-                Debug.Log("[GridManager] ApplyGravity — no tiles needed to move.");
+//                 Debug.Log("[GridManager] ApplyGravity — no tiles needed to move.");
             }
         }
 
@@ -688,9 +820,12 @@ namespace WordDrop
         {
             if (tileMoves == null || tileMoves.Count == 0)
             {
-                Debug.Log("[GridManager] ApplyGravityFromEvents — no moves.");
+//                 Debug.Log("[GridManager] ApplyGravityFromEvents — no moves.");
                 yield break;
             }
+
+            // Per-column stagger — match ApplyGravity for consistent feel
+            const float STAGGER_PER_COL = 0.045f;
 
             List<Tile> animatingTiles = new List<Tile>();
 
@@ -728,7 +863,8 @@ namespace WordDrop
                 if (dist > 0.02f)
                 {
                     float fallDuration = dist / GRAVITY_FALL_SPEED;
-                    tile.AnimateGravityFall(targetPos, fallDuration);
+                    float colDelay = toCol * STAGGER_PER_COL;
+                    tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
                     animatingTiles.Add(tile);
                 }
                 else
@@ -739,7 +875,7 @@ namespace WordDrop
 
             if (animatingTiles.Count > 0)
             {
-                Debug.Log($"[GridManager] ApplyGravityFromEvents — {animatingTiles.Count} tile(s) falling.");
+//                 Debug.Log($"[GridManager] ApplyGravityFromEvents — {animatingTiles.Count} tile(s) falling.");
 
                 int safety = 0;
                 bool anyAnimating = true;
@@ -759,7 +895,7 @@ namespace WordDrop
                 }
             }
 
-            Debug.Log("[GridManager] ApplyGravityFromEvents — complete.");
+//             Debug.Log("[GridManager] ApplyGravityFromEvents — complete.");
         }
 
         // ---------------------------------------------------------------------------
@@ -812,13 +948,14 @@ namespace WordDrop
                     _tiles[newPos.x, newPos.y] = tile;
                     _cells[newPos.x, newPos.y] = cell;
 
-                    // Animate to new world position
+                    // Animate to new world position — mechanical shift, matches the
+                    // new-bottom rise so the whole event reads as one machine motion
                     Vector3 targetPos = CellToWorld(newPos.x, newPos.y);
                     float dist = Vector3.Distance(tile.transform.position, targetPos);
                     if (dist > 0.01f)
                     {
                         float dur = RISE_DURATION;
-                        tile.AnimateGravityFall(targetPos, dur);
+                        tile.AnimateGravityFall(targetPos, dur, 0f, mechanical: true);
                         animatingTiles.Add(tile);
                     }
                 }
@@ -830,15 +967,12 @@ namespace WordDrop
                 for (int col = 0; col < COLS && col < newBottomLetters.Length; col++)
                 {
                     char letter = newBottomLetters[col];
+                    if (letter == '\0') continue; // intentional gap — no tile in this column
                     Vector3 targetPos = CellToWorld(col, 0);
                     Vector3 spawnPos = new Vector3(targetPos.x, GridBottom - CellSize * 0.8f, targetPos.z);
 
-                    GameObject tileGO = new GameObject($"Tile_{letter}_{col}_0_rise");
-                    tileGO.transform.position = spawnPos;
-                    _allTileObjects.Add(tileGO);
-
-                    Tile tile = tileGO.AddComponent<Tile>();
-                    tile.Initialise(letter, col, 0, CellSize, -1); // neutral: ownerIndex = -1
+                    Tile tile = CheckoutTile(letter, col, 0, CellSize, -1);
+                    tile.transform.position = spawnPos;
 
                     _tiles[col, 0] = tile;
                     _cells[col, 0] = new CellData
@@ -849,8 +983,32 @@ namespace WordDrop
                         Owner = TileOwner.Player // neutral tiles display as player style
                     };
 
-                    // Animate rise from below
-                    tile.AnimateGravityFall(targetPos, RISE_DURATION);
+                    // Stone tile visual — check both the data layer AND the letter
+                    bool isStone = (letter == '#');
+                    if (!isStone && RulesEngine.Instance != null)
+                    {
+                        var cellData = RulesEngine.Instance.GetCell(col, 0);
+                        if (cellData != null && cellData.IsStone)
+                            isStone = true;
+                    }
+                    if (isStone)
+                    {
+                        tile.SetStoneVisual(true);
+//                         Debug.Log($"[GridManager] Stone visual applied at ({col},0) letter='{letter}'");
+                    }
+                    else if (letter == '\0' || letter == '#')
+                    {
+                        // Safety: should never reach here — log if we do
+                        Debug.LogError($"[GridManager] BAD TILE at ({col},0): letter='{letter}' isStone={isStone}");
+                    }
+
+                    // Gold bonus: only rising row tiles can become gold
+                    if (!isStone && RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, 0))
+                        tile.SetGoldBonus(true);
+
+                    // Mechanical rise — linear, hard-stop. Machine pushing a row up,
+                    // not an organic drop. Uniform across columns (no stagger).
+                    tile.AnimateGravityFall(targetPos, RISE_DURATION, 0f, mechanical: true);
                     animatingTiles.Add(tile);
                 }
             }
@@ -858,7 +1016,7 @@ namespace WordDrop
             // 3. Wait for all animations to complete
             if (animatingTiles.Count > 0)
             {
-                Debug.Log($"[GridManager] AnimateRiseRow — {animatingTiles.Count} tile(s) rising.");
+//                 Debug.Log($"[GridManager] AnimateRiseRow — {animatingTiles.Count} tile(s) rising.");
 
                 int safety = 0;
                 bool anyAnimating = true;
@@ -877,7 +1035,7 @@ namespace WordDrop
                     if (anyAnimating) yield return null;
                 }
 
-                Debug.Log("[GridManager] AnimateRiseRow — all tiles settled.");
+//                 Debug.Log("[GridManager] AnimateRiseRow — all tiles settled.");
             }
         }
 
@@ -902,18 +1060,8 @@ namespace WordDrop
 
             if (RulesEngine.Instance == null) return;
 
-            // Only SET gold on tiles sitting on bonus cells — never remove it here
-            for (int col = 0; col < COLS; col++)
-            {
-                for (int row = 0; row < ROWS; row++)
-                {
-                    Tile tile = _tiles[col, row];
-                    if (tile == null) continue;
-
-                    if (RulesEngine.Instance.IsBonusCell(col, row) && !tile.IsGoldBonus)
-                        tile.SetGoldBonus(true);
-                }
-            }
+            // Gold is only granted during rising rows — don't re-apply here
+            // Existing gold tiles keep their status through gravity/movement
         }
 
         private Sprite _cachedBonusSprite;
