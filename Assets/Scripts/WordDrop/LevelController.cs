@@ -82,6 +82,11 @@ namespace WordDrop
 
             Debug.Log($"[LevelController] StartLevel id={data.levelId} " +
                       $"name='{data.displayName}' target={data.target} moves={data.moveBudget}");
+
+            AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_START,
+                "level_id", data.levelId,
+                "target", data.target,
+                "move_budget", data.moveBudget);
         }
 
         /// <summary>
@@ -136,10 +141,20 @@ namespace WordDrop
             _completed = true;
             IsActive = false;
             IsInputLocked = true;
+            LockHandInput();
 
             int stars = ComputeStars(CurrentScore, CurrentLevel.starThresholds);
+            int movesUsed = CurrentLevel.moveBudget - MovesRemaining;
+
             Debug.Log($"[LevelController] COMPLETE score={CurrentScore} target={CurrentLevel.target} " +
-                      $"stars={stars} movesUsed={CurrentLevel.moveBudget - MovesRemaining}");
+                      $"stars={stars} movesUsed={movesUsed}");
+
+            AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_COMPLETE,
+                "level_id", CurrentLevel.levelId,
+                "score", CurrentScore,
+                "stars", stars,
+                "moves_used", movesUsed);
+
             OnLevelComplete?.Invoke(CurrentScore, stars);
         }
 
@@ -149,11 +164,33 @@ namespace WordDrop
             _failed = true;
             IsActive = false;
             IsInputLocked = true;
+            LockHandInput();
 
             int shortfall = Mathf.Max(0, CurrentLevel.target - CurrentScore);
+            int movesUsed = CurrentLevel.moveBudget - MovesRemaining;
+
             Debug.Log($"[LevelController] FAIL score={CurrentScore} target={CurrentLevel.target} " +
                       $"shortfall={shortfall}");
+
+            AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_FAIL,
+                "level_id", CurrentLevel.levelId,
+                "score", CurrentScore,
+                "shortfall", shortfall,
+                "moves_used", movesUsed);
+
             OnLevelFail?.Invoke(CurrentScore, shortfall);
+        }
+
+        /// <summary>
+        /// Defense-in-depth: the Complete/Fail event is fired synchronously but the
+        /// debug menu / Phase 4 modals transition to GameOver asynchronously. Directly
+        /// disable hand input so no extra drops sneak in during that window.
+        /// IsInputLocked remains the source of truth for any future code paths.
+        /// </summary>
+        private void LockHandInput()
+        {
+            if (HandManager.Instance != null)
+                HandManager.Instance.SetInteractable(false);
         }
 
         /// <summary>
