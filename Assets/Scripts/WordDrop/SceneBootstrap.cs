@@ -78,9 +78,13 @@ namespace WordDrop
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // M = "Mode". F-keys are intercepted by macOS (Mission Control) before
+        // reaching Unity unless the user enables "Use F1, F2 as standard keys",
+        // so letter keys are safer for debug toggles. N and T are already taken
+        // (SurvivalManager NoAssist, GameVisualBridge state dump).
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.F9))
+            if (Input.GetKeyDown(KeyCode.M))
             {
                 _debugIsLevelMode = !_debugIsLevelMode;
                 Debug.Log($"[SceneBootstrap] GameMode toggle → {(_debugIsLevelMode ? "Level" : "Survival")} (stub — Phase 2 wires this to actual mode routing)");
