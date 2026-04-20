@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "levelId": 2,
+    "displayName": "Second Wind",
+    "target": 400,
+    "moveBudget": 20,
+    "starThresholds": [400, 650, 950],
+    "allowedMechanics": [],
+    "hazards": [],
+    "startingBoard": [],
+    "bag": null,
+    "seed": 0,
+    "tutorialPrompts": []
+}

@@ -258,7 +258,14 @@ namespace WordDrop
             // Apply opening seed (places neutral letters on the board).
             // Runs even under NoAssistMode — it's a starting position, not dynamic
             // assistance. Analogous to Balatro's initial deck: fixed setup, not help.
-            OpeningSeed.ApplyRandomSeed(RulesEngine.Instance);
+            //
+            // Phase 4: Level mode opts out. Legacy seeds include patterns like "Triangle"
+            // that place tiles at row 1 with no support at row 0, producing a
+            // floating-tile visual that doesn't match the Level-mode expectation of
+            // a clean empty board. Phase 5 will read LevelData.startingBoard here
+            // and apply per-level placements instead.
+            if (!GameManager.IsLevelMode)
+                OpeningSeed.ApplyRandomSeed(RulesEngine.Instance);
 
             // First-word guarantee: ensure the player can make a word on their first drop.
             // If no valid play exists with current hand + board, re-roll hand up to 5 times.

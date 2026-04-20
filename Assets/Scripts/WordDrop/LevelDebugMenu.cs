@@ -150,6 +150,20 @@ namespace WordDrop
                 StartLevelPlay(_forceLevelId);
             }
 
+            if (GUILayout.Button("📋 Open Level Select"))
+            {
+                if (LevelSelectScreen.Instance != null)
+                {
+                    LevelSelectScreen.Instance.SetVisible(true);
+                    _visible = false; // hide the debug menu so the screen is unobstructed
+                    _lastStatus = "Opened Level Select.";
+                }
+                else
+                {
+                    _lastStatus = "LevelSelectScreen.Instance is null.";
+                }
+            }
+
             GUILayout.Space(8f);
             GUILayout.Label("Status:");
             GUILayout.Label(_lastStatus, GUI.skin.textArea, GUILayout.Height(60f));
@@ -209,29 +223,17 @@ namespace WordDrop
 
         private void OnLevelComplete(int score, int stars)
         {
+            // Phase 4+: LevelCompletedModal owns the post-complete flow. Debug
+            // menu only logs the status line for visibility in the debug menu.
             _lastStatus = $"✓ COMPLETE — score={score}, {stars}★";
             Debug.Log($"[LevelDebugMenu] {_lastStatus}");
-
-            // Phase 2 vertical slice: end the match so input stops and we return
-            // to a known state. Phase 4 replaces this with a proper modal.
-            EndLevelRunToGameOver();
         }
 
         private void OnLevelFail(int score, int shortfall)
         {
+            // Phase 4+: OutOfMovesModal owns the post-fail flow.
             _lastStatus = $"✗ FAIL — score={score}, shortfall={shortfall}";
             Debug.Log($"[LevelDebugMenu] {_lastStatus}");
-
-            EndLevelRunToGameOver();
-        }
-
-        private void EndLevelRunToGameOver()
-        {
-            if (MatchController.Instance != null)
-                MatchController.Instance.ForceGameOver();
-
-            if (GameManager.Instance != null)
-                GameManager.Instance.TransitionTo(GameState.GameOver);
         }
 
         private static GUIStyle _richLabel;

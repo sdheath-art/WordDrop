@@ -243,6 +243,9 @@ namespace WordDrop
             new GameObject("BlitzManager").AddComponent<BlitzManager>();
             new GameObject("SurvivalManager").AddComponent<SurvivalManager>();
             new GameObject("LevelController").AddComponent<LevelController>();
+            new GameObject("LevelSelectScreen").AddComponent<LevelSelectScreen>();
+            new GameObject("LevelCompletedModal").AddComponent<LevelCompletedModal>();
+            new GameObject("OutOfMovesModal").AddComponent<OutOfMovesModal>();
             new GameObject("BonusMode").AddComponent<BonusMode>();
             new GameObject("ChainMeter").AddComponent<ChainMeter>();
             new GameObject("BonusHUD").AddComponent<BonusHUD>();
