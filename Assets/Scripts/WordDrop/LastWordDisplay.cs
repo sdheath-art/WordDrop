@@ -17,6 +17,7 @@ namespace WordDrop
         private TextMeshPro _text;
         private Coroutine _waveCoroutine;
         private Coroutine _fadeCoroutine;
+        private float _pendingMagScale = 1f;
 
         // Styling
         private static readonly Color PLAYER_COLOR = new Color(1f, 1f, 1f, 1f); // clean white
@@ -53,6 +54,7 @@ namespace WordDrop
             if (font != null) _text.font = font;
 
             _text.text = "";
+            // Base size; ShowWord re-scales by magnitude so big totals visually dwarf small ones.
             _text.fontSize = Application.isMobilePlatform ? 5.5f : FONT_SIZE;
             _text.fontStyle = FontStyles.Normal;
             _text.color = new Color(1f, 1f, 1f, 0f); // start invisible
@@ -91,6 +93,13 @@ namespace WordDrop
             else
                 fullText = $"{(isPlayer ? "YOU" : rivalName.ToUpper())}: {word} +{score}";
             Color color = isPlayer ? PLAYER_COLOR : AI_COLOR;
+
+            // Font stays at base size — magnitude drives the punch-in scale, then
+            // settles back to readable so big numbers don't persistently dominate
+            // the board (Balatro lesson #3 = "feel the bigness in the MOMENT").
+            float baseSize = Application.isMobilePlatform ? 5.5f : FONT_SIZE;
+            _text.fontSize = baseSize;
+            _pendingMagScale = ScoringDisplay.GetMagnitudeScale(score);
 
             // Apply color-matched outline + effects
             TMPHelper.ApplyEffects(_text, color, TMPHelper.TextTier.Popup);
@@ -146,11 +155,21 @@ namespace WordDrop
             Transform t = _text.transform;
             t.DOKill();
 
-            // Start big and transparent, punch down to normal with fade in
-            t.localScale = Vector3.one * 1.5f;
-            t.DOScale(1f, 0.3f).SetEase(Ease.OutBack, 2.5f);
+            // Magnitude-scaled punch: big score = big arrival, then tween back
+            // to a readable "settle scale" that's still slightly larger than
+            // small-score text, but not dominating the screen. The scale curve
+            // does: start=magScale×1.15 (overshoot) → 0.10s punch → 0.25s hold
+            // at magScale → 0.35s ease-down to settleScale.
+            float magScale     = Mathf.Max(1f, _pendingMagScale);
+            float punchScale   = magScale * 1.15f;     // brief overshoot
+            float settleScale  = 1f + (magScale - 1f) * 0.30f; // keep 30% of bigness
+            _pendingMagScale = 1f; // consumed
 
-            // Fade in
+            t.localScale = Vector3.one * punchScale;
+            // Quick snap-back from overshoot to peak
+            t.DOScale(Vector3.one * magScale, 0.08f).SetEase(Ease.OutQuad);
+
+            // Fade in alpha
             float elapsed = 0f;
             float fadeDur = 0.15f;
             while (elapsed < fadeDur)
@@ -161,6 +180,13 @@ namespace WordDrop
                 yield return null;
             }
             _text.color = color;
+
+            // Hold at peak so the player registers the bigness
+            yield return new WaitForSeconds(0.25f);
+            if (_text == null) yield break;
+
+            // Settle back to readable size
+            t.DOScale(Vector3.one * settleScale, 0.35f).SetEase(Ease.InOutQuad);
 
             _waveCoroutine = null;
         }

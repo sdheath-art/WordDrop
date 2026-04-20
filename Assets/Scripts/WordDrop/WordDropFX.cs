@@ -618,11 +618,15 @@ namespace WordDrop
             }
             else
             {
-                // Scale with both chain depth and tile count
-                float tileMult = 1f + (tileCount - 1) * 0.15f; // each extra tile adds 15%
-                mag = Mathf.Min((0.22f + chainStep * 0.12f) * tileMult, 0.70f);
-                dur = Mathf.Min(0.18f + chainStep * 0.04f + tileCount * 0.015f, 0.35f);
-                vibrato = Mathf.Min(14 + chainStep * 4 + tileCount * 2, 32);
+                // Scale with both chain depth and tile count. Caps raised 2026-04-18
+                // so 20+ tile cluster detonations produce visibly bigger shake —
+                // previously capped at 0.70 which made a 3-tile word and a 25-tile
+                // cluster shake identically. Now: 25-tile cluster ≈ 1.15× vs 3-tile
+                // solo ≈ 0.29×.
+                float tileMult = 1f + (tileCount - 1) * 0.18f; // each extra tile adds 18%
+                mag = Mathf.Min((0.22f + chainStep * 0.14f) * tileMult, 1.20f);
+                dur = Mathf.Min(0.18f + chainStep * 0.05f + tileCount * 0.018f, 0.55f);
+                vibrato = Mathf.Min(14 + chainStep * 5 + tileCount * 2, 48);
             }
 
             t.DOShakePosition(dur, mag, vibrato, 90f, false, true)

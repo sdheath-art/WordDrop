@@ -610,6 +610,22 @@ namespace WordDrop
 //             Debug.Log("[ScoringDisplay] JiggleRotation END");
         }
 
+        /// <summary>
+        /// Balatro lesson #3: big scores must VISUALLY feel big. Flying score
+        /// text font scales with log-magnitude so a 5000pt chain fills the
+        /// screen while a 20pt safe word stays small. Prevents "AIR +8" and
+        /// "AIR +4800" rendering identical (flagged 2026-04-18 playtest).
+        /// </summary>
+        public static float GetMagnitudeScale(int points)
+        {
+            if (points < 50)   return 1.00f;
+            if (points < 200)  return 1.25f;
+            if (points < 500)  return 1.55f;
+            if (points < 1500) return 1.90f;
+            if (points < 5000) return 2.30f;
+            return 2.80f;
+        }
+
         private void SpawnBalatroPointText(float x, float y, int points, Color color)
         {
             GameObject go = new GameObject("BalatroPoints");
@@ -618,7 +634,7 @@ namespace WordDrop
 
             TextMeshPro tmp = go.AddComponent<TextMeshPro>();
             tmp.text = $"+{points}";
-            tmp.fontSize = 10f;
+            tmp.fontSize = 10f * GetMagnitudeScale(points);
             tmp.fontStyle = FontStyles.Bold;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = color;
@@ -654,7 +670,7 @@ namespace WordDrop
 
             TextMeshPro tmp = go.AddComponent<TextMeshPro>();
             tmp.text = $"+{points}";
-            tmp.fontSize = 8f;
+            tmp.fontSize = 8f * GetMagnitudeScale(points);
             tmp.fontStyle = FontStyles.Bold;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = color;

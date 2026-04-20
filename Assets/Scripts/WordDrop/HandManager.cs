@@ -125,6 +125,7 @@ namespace WordDrop
             {
                 Debug.LogWarning("[HandManager] MatchController not found in Start — cannot subscribe.");
             }
+
         }
 
         private void OnDestroy()
@@ -2164,6 +2165,9 @@ namespace WordDrop
         private List<RulesWordMatch> _pendingBurstTriggerWords;
         private int  _pendingBurstChainDepth;
         private int  _pendingBurstLongestWord;
+        // ScreenFlash should fire ONCE per burst pass, not once per primed word.
+        // FirePerWordBurst iterates cluster members and we only want one screen tint.
+        private bool _screenFlashFiredThisBurst;
 
         /// <summary>
         /// Fires a TileFlashBox under each dying tile. Single coin flip PER
@@ -2218,6 +2222,7 @@ namespace WordDrop
         /// </summary>
         private void FirePerWordBurst()
         {
+            _screenFlashFiredThisBurst = false; // reset per burst pass
             if (BigBurstFlash.Instance == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;
@@ -2287,6 +2292,25 @@ namespace WordDrop
                 if (RadialBurst.Instance != null)
                     RadialBurst.Instance.Play(wordCenter, _grid.CellSize * 3.0f, burstTint);
 
+                // HDR sparkle spray — 8-16 tiny stars flying radially outward.
+                // Intensity scales with word length so longer words throw more stars.
+                if (SparkleSpray.Instance != null)
+                {
+                    float intensity = Mathf.Clamp01((wordLen - 3) / 4f + 0.4f);
+                    SparkleSpray.Instance.Play(wordCenter, intensity);
+                }
+
+                // Full-screen color wash — briefly tints the whole screen so the
+                // moment reads "something big just happened" even outside the
+                // detonation area. Fires once per burst pass (not per trigger
+                // word) via the shared _screenFlashFiredThisBurst gate below.
+                if (ScreenFlash.Instance != null && !_screenFlashFiredThisBurst)
+                {
+                    float intensity = Mathf.Clamp01((wordLen - 3) / 4f + 0.5f);
+                    ScreenFlash.Instance.Play(burstTint, intensity);
+                    _screenFlashFiredThisBurst = true;
+                }
+
                 // Scatter flare_star sparkles along the full blast line — matches
                 // the Candy Crush look where stars are scattered across the entire
                 // flash, not just the detonation cells.
@@ -2349,6 +2373,12 @@ namespace WordDrop
                     // gets the same center-of-impact treatment as the primed words.
                     if (RadialBurst.Instance != null)
                         RadialBurst.Instance.Play(twCenter, _grid.CellSize * 3.0f, burstTint);
+
+                    if (SparkleSpray.Instance != null)
+                    {
+                        float intensity = Mathf.Clamp01((twWordLen - 3) / 4f + 0.4f);
+                        SparkleSpray.Instance.Play(twCenter, intensity);
+                    }
 
                     if (GameParticles.Instance != null)
                     {
@@ -2584,6 +2614,12 @@ namespace WordDrop
                 yield break;
             }
 
+            // Bonus Mode: enter ONLY after BeginRewrite accepts the rewrite.
+            // If rejection happened above we yield-break before CompleteDropBookkeeping,
+            // which would leave bonus stuck IsActive=true forever.
+            if (BonusMode.Instance != null && BonusMode.Instance.Armed)
+                BonusMode.Instance.EnterOnDrop();
+
             // Detonation Replay: record the rewritten tile
             if (DetonationRecorder.Instance != null)
                 DetonationRecorder.Instance.RecordRewrite(letter, col, row);
@@ -2637,9 +2673,19 @@ namespace WordDrop
                                 if (MatchController.Instance != null)
                                     MatchController.Instance.SurvivalWordScored();
 
-                                // Track first word this turn for LastWordDisplay
+                                // Track first word this turn for LastWordDisplay AND
+                                // fire ShowWord NOW so player sees their word immediately
+                                // instead of waiting for CompleteDropBookkeeping at end of
+                                // turn (the "LIE but display still says SEE +4" lag).
+                                // CompleteDropBookkeeping re-fires with turn total later
+                                // ONLY if total > already-shown (chain/detonation added more).
                                 if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
+                                {
                                     MatchController.Instance.LastTurnWord = sw.Word;
+                                    MatchController.Instance.LastTurnShownScore = sw.FinalScore;
+                                    if (LastWordDisplay.Instance != null && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
+                                        LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
+                                }
 
                                 // Flash tiles
                                 var tiles = new System.Collections.Generic.List<Tile>();
@@ -3381,6 +3427,15 @@ namespace WordDrop
 
             // ── STEP 1: Animate hand tile flying to column, then drop into grid ──
             RulesEngine.StepResult beginResult = rules.BeginDrop(col, letter, playerIdx, isWild);
+
+            // ── Bonus Mode: enter ONLY if BeginDrop accepted the drop ──
+            // If beginResult is null (rejected letter / invalid col) the coroutine
+            // yield-breaks below without CompleteDropBookkeeping, which would leave
+            // bonus stuck IsActive=true forever. Enter after validation, before the
+            // NextStep loop so DoScoreAndPrime still sees IsActive=true.
+            if (beginResult != null && beginResult.Row >= 0
+                && BonusMode.Instance != null && BonusMode.Instance.Armed)
+                BonusMode.Instance.EnterOnDrop();
             if (beginResult == null || beginResult.Row < 0)
             {
                 Debug.LogWarning("[HandManager] BeginDrop failed");
@@ -3537,9 +3592,19 @@ namespace WordDrop
 
                             foreach (var sw in step.ScoredWords)
                             {
-                                // Track first word this turn for LastWordDisplay
+                                // Track first word this turn for LastWordDisplay AND
+                                // fire ShowWord NOW so player sees their word immediately
+                                // instead of waiting for CompleteDropBookkeeping at end of
+                                // turn (the "LIE but display still says SEE +4" lag).
+                                // CompleteDropBookkeeping re-fires with turn total later
+                                // ONLY if total > already-shown (chain/detonation added more).
                                 if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
+                                {
                                     MatchController.Instance.LastTurnWord = sw.Word;
+                                    MatchController.Instance.LastTurnShownScore = sw.FinalScore;
+                                    if (LastWordDisplay.Instance != null && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
+                                        LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
+                                }
 
                                 // Collect tiles for FX
                                 List<Tile> scoredTiles = new List<Tile>();

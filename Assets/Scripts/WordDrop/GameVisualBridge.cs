@@ -479,9 +479,15 @@ namespace WordDrop
                             {
                                 var sw = step.ScoredWords[w];
 
-                                // Track first word this turn for LastWordDisplay
+                                // Track first word + fire ShowWord NOW so player sees their
+                                // word during scoring animation, not after CompleteDropBookkeeping.
                                 if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
+                                {
                                     MatchController.Instance.LastTurnWord = sw.Word;
+                                    MatchController.Instance.LastTurnShownScore = sw.FinalScore;
+                                    if (LastWordDisplay.Instance != null && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
+                                        LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
+                                }
 
 //                                 Debug.Log($"[GameVisualBridge]   Scored word [{w}]: '{sw.Word}' " +
                                           // $"baseScore={sw.BaseScore} finalScore={sw.FinalScore} " +

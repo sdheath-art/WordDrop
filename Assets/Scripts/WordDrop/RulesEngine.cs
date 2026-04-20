@@ -92,7 +92,7 @@ namespace WordDrop
         // Detonation sites evaluate at (_stepChainDepth + 1) so the OPENING boom is 2x,
         // not a flat 1x — fixes the "first detonation feels identical to a safe word" gap.
         public const float CHAIN_DEPTH_SCALE_PER_DEPTH = 0.5f; // unused — kept for compat, see TriangularChainMultiplier
-        public const int   CHAIN_DEPTH_SCALE_CAP       = 3;   // max chain depth for triangular scaling (was 4 — reduced to keep detonations exciting but not absurd)
+        public const int   CHAIN_DEPTH_SCALE_CAP       = 3;   // max chain depth for triangular scaling (tried 8 on 2026-04-18 + cluster boost in DoExplode — combined effect made every move a board-clearing mega-combo. Reverted to 3.)
 
         // Heat Fuse: primed words gain +N detonation bonus per survived turn, capped.
         // 2 pts/turn capped at 10 → 5 turns to max, matches Survival word-length fuse cap.
@@ -377,6 +377,12 @@ namespace WordDrop
         public event RulesEventHandler<WordScoredEvent>        OnWordScored;
         public event RulesEventHandler<WordPrimedEvent>        OnWordPrimed;
         public event RulesEventHandler<PrimedTriggeredEvent>   OnPrimedTriggered;
+        /// <summary>Fired per primed-word detonation AFTER DoExplode computes the
+        /// final bonus (includes chain multiplier + cluster boost + gold). Use this
+        /// for downstream systems that need the actual scoring impact, not the raw
+        /// primed word's original score (ChainMeter fill, FX intensity scaling, etc).
+        /// The int payload is the final bonus awarded for this detonation.</summary>
+        public event System.Action<int>                        OnDetonationScored;
         public event RulesEventHandler<TilesExplodedEvent>     OnTilesExploded;
         public event RulesEventHandler<GravityCollapseEvent>   OnGravityCollapse;
         public event RulesEventHandler<ChainStepEvent>         OnChainStep;
@@ -1127,7 +1133,12 @@ namespace WordDrop
         public char[] FillBottomRow(TileBag bag)
         {
             char[] letters = new char[COLS];
-            bool fertility = SurvivalManager.IsSurvivalMode;
+            // Fertile row (8-16 candidates → pick best by ScoreRowPlayability)
+            // is an assist: it serves word-friendly rows instead of raw random
+            // draws. Gate behind NoAssistMode so hardest-difficulty runs really
+            // get raw bag draws. Without this, "no assist" quietly still biased
+            // rows toward playability.
+            bool fertility = SurvivalManager.IsSurvivalMode && !SurvivalManager.NoAssistMode;
 
             // Stone tiles
             float stoneChance = SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
@@ -3435,6 +3446,14 @@ namespace WordDrop
 
         private void ResetExistingPrimedWordsForNewPrime(HashSet<int> justPrimedIds, int currentTurn)
         {
+            // DISABLED 2026-04-18 per Spencer's diagnosis. Global fuse reset removed
+            // the "fuse pressure" design goal: a player could indefinitely prime new
+            // words to reset ALL existing primes' timers, making setups immortal.
+            // Without it, primes now have independent timers from creation — players
+            // must commit to detonating rather than infinitely stacking.
+            return;
+
+#pragma warning disable CS0162 // Unreachable code (kept for easy revert)
             if (justPrimedIds == null || justPrimedIds.Count == 0 || _primedRegistry == null) return;
 
             int newFuseLength = 0;
@@ -3470,6 +3489,7 @@ namespace WordDrop
 
             if (resetCount > 0)
                 Debug.Log($"[FuseReset] Total: {resetCount} words reset, {_primedRegistry.Count} total primed");
+#pragma warning restore CS0162
         }
 
         public void RefreshAllPrimedWordTiles(int currentTurn = -1)
@@ -3509,6 +3529,10 @@ namespace WordDrop
         {
             var triggeredIds = new HashSet<int>();
             var triggerEvents = new List<PrimedTriggeredEvent>();
+
+            // Bonus Mode redesign (2026-04-18): auto-detonate removed. Bonus is now
+            // "5 free moves" — normal gameplay continues, just without rising-row
+            // tick or stage-budget cost. No triangular scoring, no forced ignition.
 
 //             Debug.Log($"[RulesEngine] DoCheckTriggers: {_stepPendingWords.Count} new word(s), " +
                       // $"{_primedRegistry.Count} primed word(s) on board, " +
@@ -3680,6 +3704,9 @@ namespace WordDrop
             int editRefillCount = 0;
             int wildRefillCount = 0;
             int longestPrimedWord = 0; // track for splash scaling
+            // Cluster-size boost in DoExplode removed 2026-04-18 — combined with
+            // DoScoreAndPrime's cluster boost + raised cap=8, it made mega-combos
+            // the only viable path. DoScoreAndPrime cluster boost alone is enough.
 
             // Snapshot splash sources BEFORE the loop destroys cells. Include both
             // detonating primed words and the trigger words that ignited them so
@@ -3733,15 +3760,20 @@ namespace WordDrop
                 int rawBonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
 
                 // Chain-depth scaling: each word in a cluster escalates the chain.
-                // Evaluate at depth+1 so the OPENING boom is 2x, not a flat 1x — this
-                // widens the triangularity gap (safe clean word vs. risky chain setup).
-                // First detonation = 2x, second = 4x, third = 7x (capped).
+                // Evaluate at depth+1 so the OPENING boom is 2x, not a flat 1x.
+                // First detonation = 2x, second = 4x, third = 7x (capped by CHAIN_DEPTH_SCALE_CAP=3).
                 float chainMultiplier = TriangularChainMultiplier(_stepChainDepth + 1);
                 float goldMultiplier = pw.IsGold ? 2f : 1f;
                 int bonus = Mathf.RoundToInt(rawBonus * chainMultiplier * goldMultiplier);
 
                 detonationBonus += bonus;
                 totalHeat += heatBonus;
+
+                // Fire per-detonation event with FINAL bonus (post-multiplier) so
+                // downstream systems (ChainMeter, etc.) see actual scoring impact
+                // instead of raw pw.Score — which undercounts big-cluster detonations
+                // by the full triangular + cluster multiplier.
+                OnDetonationScored?.Invoke(bonus);
 
 //                 Debug.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
                           // $"(rescore={Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER)} base={BREAKER_BONUS} heat={heatBonus} chain={_stepChainDepth} x{chainMultiplier:F1})");

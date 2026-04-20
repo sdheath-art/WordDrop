@@ -58,7 +58,7 @@ namespace WordDrop
         private int[] _swapsRemaining    = new int[NUM_PLAYERS];
         private int[] _rewritesRemaining = new int[NUM_PLAYERS];
         private int   _survivalWordsMeter = 0; // counts scored words toward rewrite refund
-        private const int SURVIVAL_WORDS_PER_REFUND = 2; // every 2 words scored → +1 rewrite
+        private const int SURVIVAL_WORDS_PER_REFUND = 4; // every 4 words scored → +1 rewrite (raised from 2 on 2026-04-18 — edits were too plentiful, players rarely ran dry so rising rows defused to "free refill" instead of pressure. Tightening to 4 creates scarcity.)
 
         private PlayerHand[] _hands = new PlayerHand[NUM_PLAYERS];
         private TileBag      _bag;
@@ -72,6 +72,10 @@ namespace WordDrop
 
         /// <summary>Set by resolution paths before CompleteDropBookkeeping. The first word formed this turn.</summary>
         public string LastTurnWord { get; set; }
+        /// <summary>Score already shown in LastWordDisplay for this turn (from the
+        /// first-word immediate fire). CompleteDropBookkeeping only re-fires if the
+        /// turn total exceeds this — avoids unnecessary re-animation on simple turns.</summary>
+        public int LastTurnShownScore { get; set; }
 
         public bool IsSuddenDeath => _isSuddenDeath;
         public bool IsLastWord    => _isLastWord;
@@ -384,6 +388,13 @@ namespace WordDrop
                 EmitHandRefilled(PLAYER_AI);
 
             AnalyticsManager.GameStart();
+
+            // Reset Bonus Mode / ChainMeter at EVERY match start. Survival's own
+            // Start/Stop already covers survival restarts, but a non-survival
+            // restart (blitz/daily/classic) would otherwise inherit armed or
+            // active state from a prior survival run in the same scene.
+            ChainMeter.Instance?.ResetForNewRun();
+            BonusMode.Instance?.ResetForNewRun();
 
             string aiHandStr = _hands[PLAYER_AI] != null ? _hands[PLAYER_AI].HandString() : "(none)";
             string modeStr = isDaily ? "DAILY DROP" : BlitzManager.IsBlitzMode ? "BLITZ" : "CLASSIC";
@@ -711,12 +722,18 @@ namespace WordDrop
                 HighScoreManager.SubmitCombo(totalScore, comboMode);
             }
 
-            // Update last word display with full turn total
-            if (totalScore > 0 && LastWordDisplay.Instance != null && !string.IsNullOrEmpty(LastTurnWord))
+            // Update last word display with FULL turn total — but only re-fire
+            // if it's bigger than what we already showed live during scoring.
+            // First-word immediate fire (in HandManager/GameVisualBridge scoring
+            // loop) already showed the first word's own score; this catches any
+            // chain/detonation additions on top.
+            if (totalScore > 0 && LastWordDisplay.Instance != null && !string.IsNullOrEmpty(LastTurnWord)
+                && totalScore > LastTurnShownScore)
             {
                 LastWordDisplay.Instance.ShowWord(LastTurnWord, totalScore, playerIndex == PLAYER_HUMAN);
-                LastTurnWord = null;
             }
+            LastTurnWord = null;
+            LastTurnShownScore = 0;
 
             // Consume post-clear boost on player drop + advance move counter +
             // funnel score delta into the stage chip-target system.
@@ -728,6 +745,16 @@ namespace WordDrop
                 SurvivalManager.Instance.ConsumeBoostDrop();
                 SurvivalManager.Instance.NotifyScoreDelta(totalScore);
                 SurvivalManager.Instance.NotifyDropCommitted();
+            }
+
+            // Bonus Mode: notify drop completion. If bonus is active, this either
+            // decrements DropsRemaining (word formed) or exits bonus (no word).
+            // Fires AFTER stage/score side-effects so CheckStageClear has already
+            // run against this drop's score before bonus potentially exits.
+            if (BonusMode.Instance != null && BonusMode.Instance.IsActive
+                && playerIndex == PLAYER_HUMAN)
+            {
+                BonusMode.Instance.NotifyDropCompleted(formedWord: totalScore > 0);
             }
 
 //             Debug.Log($"[MatchController] CompleteDropBookkeeping: player={playerIndex} " +

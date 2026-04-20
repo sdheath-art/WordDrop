@@ -26,6 +26,11 @@ namespace WordDrop
     {
         private Camera _mainCamera;
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // Phase 0 of Survival→Level migration: placeholder until GameMode enum lands in Phase 2.
+        private bool _debugIsLevelMode;
+#endif
+
         private void Awake()
         {
 //             Debug.Log("[SceneBootstrap] Awake begin");
@@ -71,6 +76,17 @@ namespace WordDrop
                 GameManager.Instance.TransitionTo(GameState.Playing);
             }
         }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        private void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                _debugIsLevelMode = !_debugIsLevelMode;
+                Debug.Log($"[SceneBootstrap] GameMode toggle → {(_debugIsLevelMode ? "Level" : "Survival")} (stub — Phase 2 wires this to actual mode routing)");
+            }
+        }
+#endif
 
         // -----------------------------------------------------------------------
         // Camera
@@ -222,6 +238,9 @@ namespace WordDrop
             new GameObject("DetonationReplay").AddComponent<DetonationReplay>();
             new GameObject("BlitzManager").AddComponent<BlitzManager>();
             new GameObject("SurvivalManager").AddComponent<SurvivalManager>();
+            new GameObject("BonusMode").AddComponent<BonusMode>();
+            new GameObject("ChainMeter").AddComponent<ChainMeter>();
+            new GameObject("BonusHUD").AddComponent<BonusHUD>();
             new GameObject("JamHint").AddComponent<JamHint>();
             new GameObject("RisingRowManager").AddComponent<RisingRowManager>();
             new GameObject("ScreenTransition").AddComponent<ScreenTransition>();
