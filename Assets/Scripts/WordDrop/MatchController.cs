@@ -38,12 +38,12 @@ namespace WordDrop
 
         /// <summary>Effective max turns per player for the current match.</summary>
         public int EffectiveMaxTurns =>
-            SurvivalManager.IsSurvivalMode ? int.MaxValue :
+            SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode ? int.MaxValue :
             DailyDropManager.IsDailyMode   ? DailyDropManager.DAILY_TURNS : MAX_TURNS;
 
-        /// <summary>Effective player count (1 for daily/blitz/survival solo, 2 for classic).</summary>
+        /// <summary>Effective player count (1 for daily/blitz/survival/level solo, 2 for classic).</summary>
         public int EffectivePlayerCount =>
-            SurvivalManager.IsSurvivalMode || DailyDropManager.IsDailyMode ? 1 : NUM_PLAYERS;
+            SurvivalManager.IsSurvivalMode || DailyDropManager.IsDailyMode || GameManager.IsLevelMode ? 1 : NUM_PLAYERS;
 
         // ── Singleton ─────────────────────────────────────────────────────────────
 
@@ -219,8 +219,8 @@ namespace WordDrop
                 }
             }
 
-            // Create hands (no AI hand in solo modes: daily, blitz, or survival)
-            bool soloMode = isDaily || BlitzManager.IsBlitzMode || SurvivalManager.IsSurvivalMode;
+            // Create hands (no AI hand in solo modes: daily, blitz, survival, or level)
+            bool soloMode = isDaily || BlitzManager.IsBlitzMode || SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode;
             _hands[PLAYER_HUMAN] = new PlayerHand(PLAYER_HUMAN);
             if (!soloMode)
             {
@@ -340,10 +340,15 @@ namespace WordDrop
                     HUDManager.Instance.SetBlitzMode(false);
                 HUDManager.Instance.SetDailyMode(isDaily);
 
-                if (SurvivalManager.IsSurvivalMode)
+                if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
                 {
-                    // Survival: clean solo HUD — no turns, no AI, no "YOU" label
-                    HUDManager.Instance.SetTurnCountdownText("SURVIVAL", new Color(0.1f, 0.85f, 0.9f, 1f));
+                    // Survival + Level: clean solo HUD — no turns, no AI, no "YOU" label.
+                    // Phase 2 uses Survival's solo styling as a stand-in; Phase 4 adds the
+                    // proper level header + move counter.
+                    string label = GameManager.IsLevelMode
+                        ? $"LEVEL {LevelController.Instance?.CurrentLevel?.levelId ?? 0}"
+                        : "SURVIVAL";
+                    HUDManager.Instance.SetTurnCountdownText(label, new Color(0.1f, 0.85f, 0.9f, 1f));
                     HUDManager.Instance.ShowSwapCount(_swapsRemaining[PLAYER_HUMAN]);
                     HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[PLAYER_HUMAN]);
                     HUDManager.Instance.HideAIScore();
@@ -362,17 +367,18 @@ namespace WordDrop
             if (BlitzManager.IsBlitzMode && BlitzManager.Instance != null)
                 BlitzManager.Instance.StartTimer();
 
-            // Pick a rival for Classic mode
-            if (!BlitzManager.IsBlitzMode && !isDaily && RivalSystem.Instance != null)
+            // Pick a rival for Classic mode (skip in solo modes including Level)
+            if (!BlitzManager.IsBlitzMode && !isDaily && !GameManager.IsLevelMode && RivalSystem.Instance != null)
             {
                 var rival = RivalSystem.Instance.PickRandomRival();
                 if (HUDManager.Instance != null)
                     HUDManager.Instance.SetRivalName(rival.Name, rival.AccentColor);
             }
 
-            // Rising rows: ON in Classic (turn-based), OFF in Blitz/Daily/Survival
-            // Survival drives its own move-based rising rows via SurvivalManager
-            if (!BlitzManager.IsBlitzMode && !isDaily && !SurvivalManager.IsSurvivalMode)
+            // Rising rows: ON in Classic (turn-based), OFF in Blitz/Daily/Survival/Level.
+            // Survival drives its own move-based rising rows via SurvivalManager.
+            // Level mode gates rising rows per-level via hazards[] in Phase 5 — off by default.
+            if (!BlitzManager.IsBlitzMode && !isDaily && !SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
             {
                 RisingRowManager.Enabled = true;
                 RisingRowManager.TurnInterval = 4;
@@ -510,8 +516,9 @@ namespace WordDrop
 
             AnalyticsManager.Milestone("drop", _currentTurn);
 
-            // 6. Update HUD turn counter (skip in Survival — no turn limit)
-            if (!SurvivalManager.IsSurvivalMode)
+            // 6. Update HUD turn counter (skip in Survival/Level — no turn limit;
+            // Level mode tracks its own moves via LevelController)
+            if (!SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
             {
                 int legacyTotalMax = TotalMaxTurns;
                 int totalRemaining = legacyTotalMax - TotalTurnsUsed;
@@ -612,7 +619,7 @@ namespace WordDrop
             if (totalScore > 0 && ScoreManager.Instance != null)
             {
                 // Match arc bonuses (skip in solo modes — no opponent)
-                bool isSoloMode = BlitzManager.IsBlitzMode || DailyDropManager.IsDailyMode || SurvivalManager.IsSurvivalMode;
+                bool isSoloMode = BlitzManager.IsBlitzMode || DailyDropManager.IsDailyMode || SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode;
                 int turnsLeft = isSoloMode ? 999 : TotalMaxTurns - TotalTurnsUsed;
                 int arcBonus = 0;
                 int finalPush = MatchArcRules.GetFinalPushBonus(turnsLeft);
@@ -695,8 +702,9 @@ namespace WordDrop
 
             AnalyticsManager.Milestone("drop", _currentTurn);
 
-            // 5. Update HUD turn counter (skip in Survival — no turn limit)
-            if (!SurvivalManager.IsSurvivalMode)
+            // 5. Update HUD turn counter (skip in Survival/Level — no turn limit;
+            // Level mode tracks its own moves via LevelController)
+            if (!SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
             {
                 int effTotalMax = TotalMaxTurns;
                 int totalRemaining = effTotalMax - TotalTurnsUsed;
@@ -718,7 +726,8 @@ namespace WordDrop
             {
                 string comboMode = DailyDropManager.IsDailyMode ? "daily"
                     : BlitzManager.IsBlitzMode ? "blitz"
-                    : SurvivalManager.IsSurvivalMode ? "survival" : "classic";
+                    : SurvivalManager.IsSurvivalMode ? "survival"
+                    : GameManager.IsLevelMode ? "level" : "classic";
                 HighScoreManager.SubmitCombo(totalScore, comboMode);
             }
 
@@ -739,7 +748,15 @@ namespace WordDrop
             // funnel score delta into the stage chip-target system.
             // ORDER MATTERS: score delta fires BEFORE move committed so a target
             // cross doesn't count against the current stage's move budget.
-            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+            if (GameManager.IsLevelMode && LevelController.Instance != null
+                && playerIndex == PLAYER_HUMAN)
+            {
+                // Phase 2: Level mode replaces Survival's per-drop bookkeeping.
+                // LevelController.NotifyDrop handles score accumulation + move
+                // decrement + win/lose event firing.
+                LevelController.Instance.NotifyDrop(totalScore);
+            }
+            else if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                 && playerIndex == PLAYER_HUMAN)
             {
                 SurvivalManager.Instance.ConsumeBoostDrop();
@@ -766,7 +783,7 @@ namespace WordDrop
                 return;
 
             // 8. Switch player (skip in solo modes — always human)
-            if (!BlitzManager.IsBlitzMode && !SurvivalManager.IsSurvivalMode)
+            if (!BlitzManager.IsBlitzMode && !SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
                 SwitchPlayer();
         }
 
@@ -1178,8 +1195,10 @@ namespace WordDrop
                 return false;
             }
 
-            // Survival mode: no turn limit, only ends on top-out (handled by SurvivalManager)
-            if (SurvivalManager.IsSurvivalMode)
+            // Survival/Level mode: no turn limit, end-of-match driven externally
+            // (SurvivalManager top-out, or LevelController Complete/Fail events).
+            // This branch still catches the "board full with no moves" safety case.
+            if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
             {
                 // Board full check only
                 if (RulesEngine.Instance != null)

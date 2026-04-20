@@ -40,8 +40,13 @@ namespace WordDrop
         {
             if (HUDManager.Instance == null) return;
 
-            // In blitz mode, BlitzManager manages the timer display
+            // In blitz mode, BlitzManager manages the timer display.
+            // In Survival and Level modes, the label is owned by MatchController's
+            // StartMatch HUD setup ("SURVIVAL" / "LEVEL N") — don't overwrite it
+            // with a "turns left" count because EffectiveMaxTurns is int.MaxValue.
             if (BlitzManager.IsBlitzMode) return;
+            if (SurvivalManager.IsSurvivalMode) return;
+            if (GameManager.IsLevelMode) return;
 
             int playerTurnsLeft;
             if (MatchController.Instance != null)

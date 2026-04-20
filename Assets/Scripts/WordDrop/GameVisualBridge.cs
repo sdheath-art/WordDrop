@@ -128,8 +128,8 @@ namespace WordDrop
 
             if (HUDManager.Instance != null && MatchController.Instance != null)
             {
-                // Survival: don't overwrite the SURVIVAL label with turn count
-                if (!SurvivalManager.IsSurvivalMode)
+                // Survival/Level: don't overwrite the solo-mode label with turn count
+                if (!SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
                 {
                     int totalRemaining = MatchController.Instance.TotalMaxTurns
                                        - MatchController.Instance.TotalTurnsUsed;

@@ -12,6 +12,20 @@ namespace WordDrop
     }
 
     /// <summary>
+    /// Top-level game mode selector. Orthogonal to GameState: mode decides WHAT
+    /// is being played (Level vs Survival), state decides WHERE in the flow.
+    ///
+    /// Survival is the legacy/default mode. Level is the post-pivot discrete-level
+    /// mode introduced in the 2026-04-20 migration (Candy Crush-style).
+    /// Phase 2 only: debug menu flips CurrentMode before TransitionTo(Playing).
+    /// </summary>
+    public enum GameMode
+    {
+        Survival,
+        Level
+    }
+
+    /// <summary>
     /// Central state machine for the Scrabble-drop game.
     /// Shows/hides UI screens on state transitions.
     /// States: Menu → Playing → GameOver → Playing (restart)
@@ -27,6 +41,12 @@ namespace WordDrop
         public static GameManager Instance { get; private set; }
 
         public GameState CurrentState { get; private set; } = GameState.Menu;
+
+        /// <summary>Current game mode. Default Survival for backward compatibility during migration.</summary>
+        public static GameMode CurrentMode { get; set; } = GameMode.Survival;
+
+        /// <summary>Convenience check used by MatchController's solo-mode OR chains.</summary>
+        public static bool IsLevelMode => CurrentMode == GameMode.Level;
 
         private void Awake()
         {

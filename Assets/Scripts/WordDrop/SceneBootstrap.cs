@@ -242,6 +242,7 @@ namespace WordDrop
             new GameObject("DetonationReplay").AddComponent<DetonationReplay>();
             new GameObject("BlitzManager").AddComponent<BlitzManager>();
             new GameObject("SurvivalManager").AddComponent<SurvivalManager>();
+            new GameObject("LevelController").AddComponent<LevelController>();
             new GameObject("BonusMode").AddComponent<BonusMode>();
             new GameObject("ChainMeter").AddComponent<ChainMeter>();
             new GameObject("BonusHUD").AddComponent<BonusHUD>();

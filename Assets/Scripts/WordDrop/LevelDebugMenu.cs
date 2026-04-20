@@ -3,15 +3,15 @@ using UnityEngine;
 namespace WordDrop
 {
     /// <summary>
-    /// Dev-only on-screen menu for exercising Phase 1 persistence + loader.
-    /// L key toggles visibility. Hidden by default.
+    /// Dev-only on-screen menu. L key toggles visibility. Hidden by default.
     /// Debug key convention (letters only — macOS eats F-keys): N = NoAssist
     /// (SurvivalManager), T = state dump (GameVisualBridge), M = GameMode stub
     /// (SceneBootstrap), L = this menu.
     ///
-    /// Phase 1 scope: verify LevelLoader.Load, LevelValidator.Validate,
-    /// CoinWallet, HeartsManager, LevelProgressManager across an app restart.
-    /// Phase 2 will add "Play Test Level" routing once LevelController exists.
+    /// Phase 1: persistence + loader sanity (CoinWallet, HeartsManager, etc.).
+    /// Phase 2: "Play Test Level" button wires the full vertical slice — sets
+    /// GameMode=Level, loads and validates JSON, calls LevelController.StartLevel,
+    /// transitions to Playing. On Complete/Fail, logs and returns to Menu.
     ///
     /// Compiled out of release builds.
     /// </summary>
@@ -34,6 +34,30 @@ namespace WordDrop
             _instance = this;
         }
 
+        private void Start()
+        {
+            // Subscribe once to LevelController events. Safe because LevelController
+            // is created in SceneBootstrap alongside the other managers.
+            if (LevelController.Instance != null)
+            {
+                LevelController.Instance.OnLevelComplete += OnLevelComplete;
+                LevelController.Instance.OnLevelFail     += OnLevelFail;
+            }
+            else
+            {
+                Debug.LogWarning("[LevelDebugMenu] LevelController.Instance null in Start — events not wired.");
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (LevelController.Instance != null)
+            {
+                LevelController.Instance.OnLevelComplete -= OnLevelComplete;
+                LevelController.Instance.OnLevelFail     -= OnLevelFail;
+            }
+        }
+
         private void Update()
         {
             if (Input.GetKeyDown(KeyCode.L))
@@ -54,13 +78,19 @@ namespace WordDrop
             GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(scale, scale, 1f));
 
             const float W = 360f;
-            const float H = 440f;
+            const float H = 520f;
             GUILayout.BeginArea(new Rect(20f, 20f, W, H), GUI.skin.box);
-            GUILayout.Label("<b>Level Debug Menu</b> (Phase 1)", RichLabelStyle());
+            GUILayout.Label("<b>Level Debug Menu</b>", RichLabelStyle());
 
             GUILayout.Space(4f);
-            GUILayout.Label($"Coins: {CoinWallet.Balance}    Hearts: {HeartsManager.Current}/{HeartsManager.MAX_HEARTS}");
+            GUILayout.Label($"Mode: {GameManager.CurrentMode}    Coins: {CoinWallet.Balance}    Hearts: {HeartsManager.Current}/{HeartsManager.MAX_HEARTS}");
             GUILayout.Label($"Highest unlocked: L{LevelProgressManager.GetHighestUnlocked()}");
+
+            if (LevelController.Instance != null && LevelController.Instance.IsActive)
+            {
+                var lc = LevelController.Instance;
+                GUILayout.Label($"<b>Level {lc.CurrentLevel.levelId}</b>  score={lc.CurrentScore}/{lc.CurrentLevel.target}  moves={lc.MovesRemaining}", RichLabelStyle());
+            }
 
             GUILayout.Space(6f);
             if (GUILayout.Button("Grant 1000 coins"))
@@ -115,6 +145,11 @@ namespace WordDrop
                 }
             }
 
+            if (GUILayout.Button($"▶ Play Test Level {_forceLevelId}"))
+            {
+                StartLevelPlay(_forceLevelId);
+            }
+
             GUILayout.Space(8f);
             GUILayout.Label("Status:");
             GUILayout.Label(_lastStatus, GUI.skin.textArea, GUILayout.Height(60f));
@@ -122,6 +157,81 @@ namespace WordDrop
             GUILayout.EndArea();
 
             GUI.matrix = prevMatrix;
+        }
+
+        // ── Play Test Level flow ────────────────────────────────────────────────
+
+        private void StartLevelPlay(int levelId)
+        {
+            LevelData data = LevelLoader.Load(levelId);
+            if (data == null)
+            {
+                _lastStatus = $"Load failed for level {levelId}.";
+                return;
+            }
+
+            var (ok, reason) = LevelValidator.Validate(data);
+            if (!ok)
+            {
+                _lastStatus = $"Level {levelId} INVALID — {reason}";
+                Debug.LogError($"[LevelDebugMenu] {_lastStatus}");
+                return;
+            }
+
+            // Clear competing mode flags so MatchController's mutual-exclusion
+            // check passes and solo-mode checks resolve cleanly via IsLevelMode.
+            SurvivalManager.IsSurvivalMode = false;
+            BlitzManager.IsBlitzMode = false;
+            DailyDropManager.IsDailyMode = false;
+
+            GameManager.CurrentMode = GameMode.Level;
+
+            // Initialize LevelController BEFORE MatchController.StartMatch runs.
+            if (LevelController.Instance == null)
+            {
+                _lastStatus = "LevelController.Instance is null — cannot start.";
+                Debug.LogError($"[LevelDebugMenu] {_lastStatus}");
+                return;
+            }
+
+            LevelController.Instance.StartLevel(data);
+
+            // TransitionTo(Playing) calls MatchController.StartMatch(). The edits
+            // made for Phase 2 route solo-mode plumbing through IsLevelMode and
+            // skip Survival's specific init.
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.TransitionTo(GameState.Playing);
+                _lastStatus = $"▶ Playing level {data.levelId} '{data.displayName}'";
+                Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+            }
+        }
+
+        private void OnLevelComplete(int score, int stars)
+        {
+            _lastStatus = $"✓ COMPLETE — score={score}, {stars}★";
+            Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+
+            // Phase 2 vertical slice: end the match so input stops and we return
+            // to a known state. Phase 4 replaces this with a proper modal.
+            EndLevelRunToGameOver();
+        }
+
+        private void OnLevelFail(int score, int shortfall)
+        {
+            _lastStatus = $"✗ FAIL — score={score}, shortfall={shortfall}";
+            Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+
+            EndLevelRunToGameOver();
+        }
+
+        private void EndLevelRunToGameOver()
+        {
+            if (MatchController.Instance != null)
+                MatchController.Instance.ForceGameOver();
+
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.GameOver);
         }
 
         private static GUIStyle _richLabel;

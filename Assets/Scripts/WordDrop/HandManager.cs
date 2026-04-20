@@ -3940,8 +3940,8 @@ namespace WordDrop
             MatchController.Instance.CompleteDropBookkeeping(playerIdx, totalScore, handSlot,
                 baseScoreAccum, chainBonusAccum, detonationBonusAccum);
 
-            // Survival: re-enable input IMMEDIATELY — no waiting for primed flash or card deal
-            if (SurvivalManager.IsSurvivalMode
+            // Survival/Level: re-enable input IMMEDIATELY — no waiting for primed flash or card deal
+            if ((SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
                 && MatchController.Instance != null && MatchController.Instance.IsMatchActive
                 && !MatchController.Instance.IsGameOver)
             {
@@ -3949,9 +3949,9 @@ namespace WordDrop
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
             }
 
-            // Let the primed flash animation play (non-Survival waits here, Survival already has input back)
-            // In Survival, skip the wait — deal card immediately so player can act faster
-            if (!SurvivalManager.IsSurvivalMode)
+            // Let the primed flash animation play (non-solo-mode waits here).
+            // In Survival/Level, skip the wait — deal card immediately so player can act faster.
+            if (!SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
                 yield return WaitCache.Get(0.4f);
 
             if (HUDManager.Instance != null && ScoreManager.Instance != null)
@@ -4058,8 +4058,10 @@ namespace WordDrop
                 yield break;
             }
 
-            // Survival mode: input was already re-enabled after bookkeeping — just exit
-            if (SurvivalManager.IsSurvivalMode)
+            // Survival/Level mode: input was already re-enabled after bookkeeping — just exit.
+            // Skips the AI-turn check (solo mode, no AI) and avoids the FALLBACK warnings
+            // that fire because _playerTurns[AI] stays at 0 all match.
+            if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
             {
                 yield break;
             }
