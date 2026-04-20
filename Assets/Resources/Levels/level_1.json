@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "levelId": 1,
+    "displayName": "First Chain",
+    "target": 300,
+    "moveBudget": 20,
+    "starThresholds": [300, 500, 800],
+    "allowedMechanics": [],
+    "hazards": [],
+    "startingBoard": [],
+    "bag": null,
+    "seed": 0,
+    "tutorialPrompts": []
+}

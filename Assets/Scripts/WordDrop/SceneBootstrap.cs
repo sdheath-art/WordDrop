@@ -250,6 +250,10 @@ namespace WordDrop
             new GameObject("ScreenTransition").AddComponent<ScreenTransition>();
             new GameObject("LastWordDisplay").AddComponent<LastWordDisplay>();
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            new GameObject("LevelDebugMenu").AddComponent<LevelDebugMenu>();
+#endif
+
             // NOTE: RoundOverUI, RoundManager, WordleEvaluator are NOT created.
             // The Scrabble-drop game does not use round-based flow.
             // RulesEngine handles all word detection.
