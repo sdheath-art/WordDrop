@@ -1659,7 +1659,14 @@ namespace WordDrop
                 for (int i = 0; i < allNew.Count; i++)
                     swapBaseScore += allNew[i].Score;
                 if (swapBaseScore > 0 && ScoreManager.Instance != null)
+                {
                     ScoreManager.Instance.AddScore(swapBaseScore, MatchController.PLAYER_HUMAN);
+                    // Phase 5.1 fix: board-swap scoring bypasses CompleteDropBookkeeping,
+                    // so LevelController.NotifyDrop never fires. Route the score delta through
+                    // NotifyScore (no move consumed) so target-cross completes the level.
+                    if (GameManager.IsLevelMode)
+                        LevelController.Instance?.NotifyScore(swapBaseScore);
+                }
 
                 // If detonation triggered, run full step resolution
                 if (triggeredPrimed)
@@ -1754,7 +1761,12 @@ namespace WordDrop
                     }
 
                     if (swapScore > 0 && ScoreManager.Instance != null)
+                    {
                         ScoreManager.Instance.AddScore(swapScore, MatchController.PLAYER_HUMAN);
+                        // Phase 5.1 fix: same bypass as the base-score path above.
+                        if (GameManager.IsLevelMode)
+                            LevelController.Instance?.NotifyScore(swapScore);
+                    }
 
                     if (MatchController.Instance != null)
                     {
@@ -2120,7 +2132,14 @@ namespace WordDrop
 
                 // Update score
                 if (swapScore > 0 && ScoreManager.Instance != null)
+                {
                     ScoreManager.Instance.AddScore(swapScore, playerIdx);
+                    // Phase 5.1 fix: swap-resolution detonation score bypasses
+                    // CompleteDropBookkeeping. Route through NotifyScore for Level mode
+                    // so target-cross completes the level.
+                    if (GameManager.IsLevelMode && playerIdx == MatchController.PLAYER_HUMAN)
+                        LevelController.Instance?.NotifyScore(swapScore);
+                }
             }
             else
             {

@@ -161,13 +161,15 @@ namespace WordDrop
             // Enforce mutual exclusion — only one mode can be active
             int modeCount = (DailyDropManager.IsDailyMode ? 1 : 0)
                           + (BlitzManager.IsBlitzMode ? 1 : 0)
-                          + (SurvivalManager.IsSurvivalMode ? 1 : 0);
+                          + (SurvivalManager.IsSurvivalMode ? 1 : 0)
+                          + (GameManager.IsLevelMode ? 1 : 0);
             if (modeCount > 1)
             {
                 Debug.LogWarning("[MatchController] Multiple modes active — forcing classic.");
                 DailyDropManager.IsDailyMode = false;
                 BlitzManager.IsBlitzMode = false;
                 SurvivalManager.IsSurvivalMode = false;
+                GameManager.CurrentMode = GameMode.Survival;
             }
 
 //             Debug.Log("[MatchController] StartMatch()");

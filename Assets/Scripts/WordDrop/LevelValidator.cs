@@ -81,8 +81,14 @@ namespace WordDrop
                     if (t.x < 0 || t.x >= GridManager.COLS)
                         return (false, $"startingBoard tile x={t.x} out of range [0, {GridManager.COLS - 1}]");
 
-                    if (t.y < 0 || t.y >= GridManager.MAX_ROWS)
-                        return (false, $"startingBoard tile y={t.y} out of range [0, {GridManager.MAX_ROWS - 1}]");
+                    // Use the *effective* ROWS (5 for non-Survival, per RulesEngine.ROWS)
+                    // rather than MAX_ROWS=9. RulesEngine.SetCell rejects rows >= ROWS and
+                    // GridManager.SyncToRulesState iterates row < ROWS, so a y=5..8 placement
+                    // would validate but silently fail to render. Catching it here prevents
+                    // that silent failure once Phase 10 level authoring ramps up.
+                    int effectiveRows = RulesEngine.ROWS;
+                    if (t.y < 0 || t.y >= effectiveRows)
+                        return (false, $"startingBoard tile y={t.y} out of range [0, {effectiveRows - 1}] (effective ROWS)");
 
                     if (string.IsNullOrEmpty(t.letter) || t.letter.Length != 1)
                         return (false, $"startingBoard tile at ({t.x},{t.y}) has invalid letter '{t.letter}' (must be single character)");

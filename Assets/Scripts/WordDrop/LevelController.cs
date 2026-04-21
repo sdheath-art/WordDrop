@@ -103,27 +103,11 @@ namespace WordDrop
         /// </summary>
         public void NotifyDrop(int scoreDelta)
         {
-            // Observability for the Phase 5 "score crossed target without Complete
-            // firing" anomaly flagged at Phase 4 end. Logs entry state, delta, and
-            // post-state so we can catch any drop that should trigger Complete but
-            // doesn't. Remove after the anomaly is resolved or ruled out.
-            int preScore = CurrentScore, preMoves = MovesRemaining;
-
-            if (!IsActive)
-            {
-                Debug.Log($"[LevelController] NotifyDrop IGNORED (IsActive=false) delta={scoreDelta} completed={_completed} failed={_failed}");
-                return;
-            }
-            if (_completed || _failed)
-            {
-                Debug.Log($"[LevelController] NotifyDrop IGNORED (already ended) delta={scoreDelta} completed={_completed} failed={_failed}");
-                return;
-            }
+            if (!IsActive) return;
+            if (_completed || _failed) return;
 
             CurrentScore += Mathf.Max(0, scoreDelta);
             MovesRemaining = Mathf.Max(0, MovesRemaining - 1);
-
-            Debug.Log($"[LevelController] NotifyDrop delta={scoreDelta} score: {preScore}→{CurrentScore}/{CurrentLevel.target} moves: {preMoves}→{MovesRemaining}");
 
             // Win check FIRST — a drop that simultaneously hits target and
             // exhausts moves must fire Complete, not Fail.
