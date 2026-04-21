@@ -27,6 +27,7 @@ namespace WordDrop
         private static readonly Color TILE_OPEN   = new Color(0.25f, 0.35f, 0.65f, 1f);
         private static readonly Color TILE_DONE   = new Color(0.20f, 0.55f, 0.35f, 1f);
         private static readonly Color TILE_LOCKED = new Color(0.22f, 0.22f, 0.28f, 1f);
+        private static readonly Color TUTORIAL_BADGE_COLOR = new Color(0.30f, 0.80f, 0.95f, 1f);
 
         private void Awake()
         {
@@ -221,6 +222,15 @@ namespace WordDrop
             CreateLabel(tile.transform, "Status",
                 new Vector2(0.32f, 0.10f), new Vector2(0.80f, 0.90f),
                 statusText, 20, playable ? new Color(1f, 0.90f, 0.55f, 1f) : new Color(0.60f, 0.60f, 0.65f, 1f));
+
+            // Tutorial badge on L1-3 — subtle indicator that these are onboarding levels.
+            if (TutorialProgression.IsTutorialLevel(id))
+            {
+                var badge = CreateLabel(tile.transform, "TutorialBadge",
+                    new Vector2(0.82f, 0.55f), new Vector2(0.98f, 0.90f),
+                    "TUTORIAL", 11, TUTORIAL_BADGE_COLOR);
+                badge.alignment = TextAnchor.MiddleRight;
+            }
 
             if (playable)
             {

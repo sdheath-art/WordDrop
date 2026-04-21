@@ -246,6 +246,8 @@ namespace WordDrop
             new GameObject("LevelSelectScreen").AddComponent<LevelSelectScreen>();
             new GameObject("LevelCompletedModal").AddComponent<LevelCompletedModal>();
             new GameObject("OutOfMovesModal").AddComponent<OutOfMovesModal>();
+            new GameObject("LevelTutorialOverlay").AddComponent<LevelTutorialOverlay>();
+            new GameObject("TutorialVisualCues").AddComponent<TutorialVisualCues>();
             new GameObject("BonusMode").AddComponent<BonusMode>();
             new GameObject("ChainMeter").AddComponent<ChainMeter>();
             new GameObject("BonusHUD").AddComponent<BonusHUD>();

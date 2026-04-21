@@ -281,11 +281,60 @@ namespace WordDrop
 
         private void OnPlayClicked()
         {
+            // Phase 6 override: if the tutorial hasn't been completed yet, PLAY launches
+            // the next incomplete tutorial level (L1 for a fresh install, or the resume
+            // point if the player quit mid-tutorial). Post-tutorial, PLAY opens the
+            // Level Select screen. Classic/Blitz/Survival/Daily still reachable via their
+            // dedicated buttons.
+            AnalyticsManager.ButtonTap("play");
+
+            if (!TutorialProgression.IsTutorialComplete())
+            {
+                int resumeId = TutorialProgression.NextIncompleteTutorialLevel();
+                if (resumeId <= TutorialProgression.TUTORIAL_LAST_LEVEL_ID)
+                {
+                    StartLevelFromMenu(resumeId);
+                    return;
+                }
+                // Fall through if already past the last tutorial level.
+            }
+
+            // Tutorial done → open Level Select on top of the main menu.
+            SetVisible(false);
+            if (LevelSelectScreen.Instance != null)
+                LevelSelectScreen.Instance.SetVisible(true);
+            AnalyticsManager.ScreenView("level_select");
+        }
+
+        /// <summary>
+        /// Shared helper: wire mode flags + LevelController + transition for a Level
+        /// launched directly from the main menu (tutorial flow).
+        /// </summary>
+        private void StartLevelFromMenu(int levelId)
+        {
+            LevelData data = LevelLoader.Load(levelId);
+            if (data == null)
+            {
+                Debug.LogError($"[MenuUI] Failed to load level {levelId} from tutorial flow.");
+                return;
+            }
+            var (ok, reason) = LevelValidator.Validate(data);
+            if (!ok)
+            {
+                Debug.LogError($"[MenuUI] Level {levelId} invalid: {reason}");
+                return;
+            }
+
             BlitzManager.IsBlitzMode = false;
             DailyDropManager.IsDailyMode = false;
             SurvivalManager.IsSurvivalMode = false;
-            AnalyticsManager.ButtonTap("play");
-            AnalyticsManager.ScreenView("playing");
+            GameManager.CurrentMode = GameMode.Level;
+
+            if (LevelController.Instance != null)
+                LevelController.Instance.StartLevel(data);
+            LevelProgressManager.IncrementAttempts(levelId);
+
+            AnalyticsManager.ScreenView($"playing_tutorial_{levelId}");
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }

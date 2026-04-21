@@ -1,14 +1,27 @@
 {
     "schemaVersion": 1,
     "levelId": 1,
-    "displayName": "First Chain",
-    "target": 300,
+    "displayName": "First Word",
+    "target": 30,
     "moveBudget": 20,
-    "starThresholds": [300, 500, 800],
+    "starThresholds": [30, 60, 100],
     "allowedMechanics": [],
     "hazards": [],
-    "startingBoard": [],
+    "startingBoard": [
+        {"x": 2, "y": 0, "letter": "T", "variant": "normal"},
+        {"x": 4, "y": 0, "letter": "E", "variant": "normal"},
+        {"x": 5, "y": 0, "letter": "A", "variant": "normal"}
+    ],
     "bag": null,
     "seed": 0,
-    "tutorialPrompts": []
+    "tutorialPrompts": [
+        {"on": "start",      "text": "Drop letters next to each other to spell a word."},
+        {"on": "first_word", "text": "Letters next to each other form words."}
+    ],
+    "visualCues": {
+        "subtleGlowCells": [{"x": 3, "y": 0}],
+        "ghostDemoIdleSeconds": 15,
+        "ghostDemoLetter": "H",
+        "ghostDemoCell": {"x": 3, "y": 0}
+    }
 }

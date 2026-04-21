@@ -26,6 +26,12 @@ namespace WordDrop
             "", "normal", "gold", "stone", "wild"
         };
 
+        // Canonical tutorial prompt triggers. Must match events LevelController fires.
+        private static readonly HashSet<string> AllowedTutorialTriggers = new HashSet<string>
+        {
+            "start", "first_word", "first_detonation", "first_chain"
+        };
+
         public static (bool ok, string reason) Validate(LevelData data)
         {
             if (data == null)
@@ -119,6 +125,48 @@ namespace WordDrop
 
                     if (w.count < 0)
                         return (false, $"bag.letterOverrides letter '{w.letter}' has negative count {w.count}");
+                }
+            }
+
+            if (data.tutorialPrompts != null)
+            {
+                foreach (TutorialPrompt p in data.tutorialPrompts)
+                {
+                    if (p == null)
+                        return (false, "tutorialPrompts contains a null entry");
+                    if (string.IsNullOrEmpty(p.on))
+                        return (false, "tutorialPrompts entry missing 'on' trigger");
+                    if (!AllowedTutorialTriggers.Contains(p.on))
+                        return (false, $"tutorialPrompts entry has unknown trigger '{p.on}' (valid: start, first_word, first_detonation, first_chain)");
+                    if (string.IsNullOrEmpty(p.text))
+                        return (false, $"tutorialPrompts entry for '{p.on}' has empty text");
+                }
+            }
+
+            if (data.visualCues != null)
+            {
+                var cue = data.visualCues;
+                int cols = GridManager.COLS;
+                int rows = RulesEngine.ROWS;
+                if (cue.subtleGlowCells != null)
+                    foreach (var c in cue.subtleGlowCells)
+                        if (c == null || c.x < 0 || c.x >= cols || c.y < 0 || c.y >= rows)
+                            return (false, $"visualCues.subtleGlowCells entry out of grid range ({cue.subtleGlowCells})");
+                if (cue.prominentPulseCells != null)
+                    foreach (var c in cue.prominentPulseCells)
+                        if (c == null || c.x < 0 || c.x >= cols || c.y < 0 || c.y >= rows)
+                            return (false, $"visualCues.prominentPulseCells entry out of grid range");
+                if (cue.ghostDemoIdleSeconds > 0)
+                {
+                    if (cue.ghostDemoCell == null
+                        || cue.ghostDemoCell.x < 0 || cue.ghostDemoCell.x >= cols
+                        || cue.ghostDemoCell.y < 0 || cue.ghostDemoCell.y >= rows)
+                        return (false, "visualCues.ghostDemoCell out of grid range");
+                    if (string.IsNullOrEmpty(cue.ghostDemoLetter) || cue.ghostDemoLetter.Length != 1)
+                        return (false, "visualCues.ghostDemoLetter must be a single A-Z character when ghostDemoIdleSeconds > 0");
+                    char gdc = char.ToUpperInvariant(cue.ghostDemoLetter[0]);
+                    if (gdc < 'A' || gdc > 'Z')
+                        return (false, $"visualCues.ghostDemoLetter '{cue.ghostDemoLetter}' is not A-Z");
                 }
             }
 

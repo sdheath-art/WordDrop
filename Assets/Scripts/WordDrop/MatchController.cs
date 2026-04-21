@@ -775,6 +775,15 @@ namespace WordDrop
                 // LevelController.NotifyDrop handles score accumulation + move
                 // decrement + win/lose event firing.
                 LevelController.Instance.NotifyDrop(totalScore);
+
+                // Phase 6: side-channel for tutorial event triggers. Fires
+                // OnFirstWord / OnFirstDetonation / OnFirstChain at most once
+                // per level so the tutorial overlay can show concept prompts
+                // at the exact moment they first apply.
+                LevelController.Instance.NotifyDropDetails(
+                    totalScore,
+                    chainBonus < 0 ? 0 : chainBonus,
+                    detonationBonus < 0 ? 0 : detonationBonus);
             }
             else if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                 && playerIndex == PLAYER_HUMAN)
@@ -941,7 +950,61 @@ namespace WordDrop
             if (GridManager.Instance != null)
                 GridManager.Instance.SyncToRulesState(rules);
 
+            // Option Y (Phase 6): auto-prime any valid words that happen to be on the
+            // starting board. Lets tutorial levels pre-load primed setups (CAT + TOY
+            // for L3's 2-chain teaching) without touching RulesEngine. Uses the same
+            // ScanEntireBoardPublic / PrimedRegistry.AddPrimedWord / RegisterScoredKey
+            // path that OpeningSeed.TryPrimeOneWord already exercises.
+            PrimeStartingBoardWords(rules);
+
+            // Apply per-level visual cues AFTER tiles exist + are primed. Was called
+            // from LevelController.StartLevel originally but that runs before the board
+            // visuals are built — cues would find null tiles or stale tiles from the
+            // previous level.
+            if (TutorialVisualCues.Instance != null)
+                TutorialVisualCues.Instance.Apply(lc.CurrentLevel);
+
             Debug.Log($"[MatchController] Applied Level {lc.CurrentLevel.levelId} startingBoard ({board.Length} tiles).");
+        }
+
+        /// <summary>
+        /// Scans the freshly-placed starting board for valid words and primes each one.
+        /// Enables tutorial levels to ship with pre-primed layouts that deliver chain
+        /// teaching moments reliably (e.g., L3's CAT + TOY shared-T chain setup).
+        /// RulesEngine is NOT modified — this reuses existing public APIs.
+        /// </summary>
+        private void PrimeStartingBoardWords(RulesEngine rules)
+        {
+            if (rules == null || rules.PrimedRegistry == null) return;
+
+            var words = rules.ScanEntireBoardPublic();
+            if (words == null || words.Count == 0) return;
+
+            // Generous fuse — tutorial levels shouldn't time out the primed setup.
+            const int fuse = 999;
+            int primed = 0;
+            for (int i = 0; i < words.Count; i++)
+            {
+                var w = words[i];
+                int score = RulesEngine.CalculateWordScore(w.Word);
+                rules.PrimedRegistry.AddPrimedWord(
+                    w.Word, w.Cells,
+                    /*ownerPlayer*/ -1,
+                    /*primedOnTurn*/ 0,
+                    /*expiresOnTurn*/ fuse,
+                    /*score*/ score);
+                // Mark as already scored so the normal drop-scan doesn't re-detect it.
+                rules.RegisterScoredKey(w.Word + "|" + w.CellKey);
+                primed++;
+            }
+
+            // Sync the visual glow to the freshly-populated primed registry. Without
+            // this, the PrimedWordRegistry holds the data but no tile ever calls
+            // SetPrimedGlow — so tiles look normal despite being primed.
+            if (primed > 0)
+                rules.RefreshAllPrimedWordTiles(rules.GlobalTurn);
+
+            Debug.Log($"[MatchController] Auto-primed {primed} word(s) on starting board.");
         }
 
         /// <summary>

@@ -22,9 +22,14 @@ namespace WordDrop
 
         private Canvas _canvas;
         private GameObject _panel;
+        private Text _titleText;
+        private Text _scoreLabelText;
         private Text _scoreValueText;
         private Text _bestValueText;
         private Image[] _starIcons = new Image[3];
+        private GameObject _btnMenu;
+        private GameObject _btnReplay;
+        private GameObject _btnNext;
         private LevelData _levelData;
         private int _starsEarned;
 
@@ -92,12 +97,12 @@ namespace WordDrop
             pImg.color = CARD_BG;
 
             // Title
-            var title = CreateLabel(_panel.transform, "Title",
+            _titleText = CreateLabel(_panel.transform, "Title",
                 new Vector2(0.02f, 0.80f), new Vector2(0.98f, 0.95f),
                 "LEVEL COMPLETE!", 38, TITLE);
-            title.fontStyle = FontStyle.Bold;
-            title.horizontalOverflow = HorizontalWrapMode.Overflow;
-            title.verticalOverflow = VerticalWrapMode.Overflow;
+            _titleText.fontStyle = FontStyle.Bold;
+            _titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _titleText.verticalOverflow = VerticalWrapMode.Overflow;
 
             // Star row
             float starY0 = 0.58f;
@@ -120,7 +125,7 @@ namespace WordDrop
             }
 
             // Score labels
-            CreateLabel(_panel.transform, "ScoreLabel",
+            _scoreLabelText = CreateLabel(_panel.transform, "ScoreLabel",
                 new Vector2(0.10f, 0.44f), new Vector2(0.90f, 0.52f),
                 "Score", 22, new Color(0.75f, 0.72f, 0.82f, 1f));
 
@@ -136,21 +141,42 @@ namespace WordDrop
             // Buttons row — Menu / Replay / Next
             float btnY0 = 0.08f;
             float btnY1 = 0.22f;
-            MenuUI.CreateButton(_panel.transform, "BtnMenu",
+            _btnMenu = CreateButton(_panel.transform, "BtnMenu",
                 new Vector2(0.06f, btnY0), new Vector2(0.32f, btnY1),
                 "MENU", new Color(0.35f, 0.35f, 0.45f, 1f), Color.white, 22,
                 OnMenuClicked);
-            MenuUI.CreateButton(_panel.transform, "BtnReplay",
+            _btnReplay = CreateButton(_panel.transform, "BtnReplay",
                 new Vector2(0.37f, btnY0), new Vector2(0.63f, btnY1),
                 "REPLAY", new Color(0.25f, 0.55f, 0.85f, 1f), Color.white, 22,
                 OnReplayClicked);
-            MenuUI.CreateButton(_panel.transform, "BtnNext",
+            _btnNext = CreateButton(_panel.transform, "BtnNext",
                 new Vector2(0.68f, btnY0), new Vector2(0.94f, btnY1),
                 "NEXT ▶", new Color(0.25f, 0.75f, 0.40f, 1f), Color.white, 22,
                 OnNextClicked);
         }
 
+        /// <summary>
+        /// MenuUI.CreateButton returns void; this wrapper captures the created
+        /// GameObject so we can show/hide buttons per variant.
+        /// </summary>
+        private static GameObject CreateButton(Transform parent, string name,
+            Vector2 anchorMin, Vector2 anchorMax, string label,
+            Color bgColor, Color textColor, int fontSize,
+            UnityEngine.Events.UnityAction onClick)
+        {
+            int before = parent.childCount;
+            MenuUI.CreateButton(parent, name, anchorMin, anchorMax,
+                label, bgColor, textColor, fontSize, onClick);
+            if (parent.childCount > before)
+                return parent.GetChild(parent.childCount - 1).gameObject;
+            // Fallback: find by name
+            var t = parent.Find(name);
+            return t != null ? t.gameObject : null;
+        }
+
         // ── Event handling ──────────────────────────────────────────────────────
+
+        private bool _tutorialCompleteVariant;
 
         private void HandleLevelComplete(int score, int stars)
         {
@@ -168,10 +194,11 @@ namespace WordDrop
                 LevelProgressManager.UnlockThrough(_levelData.levelId + 1);
             }
 
-            _scoreValueText.text = score.ToString();
-            int newBest = _levelData != null
-                ? LevelProgressManager.GetBestScore(_levelData.levelId) : score;
-            _bestValueText.text = score > prevBest ? $"New best!  ({newBest})" : $"Best: {newBest}";
+            // Phase 6: the first time L3 completes, swap to Tutorial Complete variant.
+            _tutorialCompleteVariant = _levelData != null
+                && TutorialProgression.OnLevelCompleted(_levelData.levelId);
+
+            ApplyVariant(score, prevBest);
 
             for (int i = 0; i < _starIcons.Length; i++)
             {
@@ -181,6 +208,45 @@ namespace WordDrop
 
             SetVisible(true);
             StartCoroutine(AnimateStars(stars));
+        }
+
+        private void ApplyVariant(int score, int prevBest)
+        {
+            if (_tutorialCompleteVariant)
+            {
+                if (_titleText != null) _titleText.text = "TUTORIAL COMPLETE!";
+                if (_scoreLabelText != null) _scoreLabelText.text = "Reward";
+                _scoreValueText.text = $"+{TutorialProgression.TUTORIAL_COMPLETE_COIN_REWARD} coins";
+                if (_bestValueText != null)
+                    _bestValueText.text = "You've learned the basics. Keep playing to earn stars!";
+                if (_btnReplay != null) _btnReplay.SetActive(false);
+                if (_btnNext != null)
+                {
+                    _btnNext.SetActive(true);
+                    // Repurpose the existing Next button as the lone "PLAY" button.
+                    var label = _btnNext.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                    if (label != null) label.text = "PLAY";
+                }
+                if (_btnMenu != null) _btnMenu.SetActive(false);
+                return;
+            }
+
+            // Standard variant — restore default UI.
+            if (_titleText != null) _titleText.text = "LEVEL COMPLETE!";
+            if (_scoreLabelText != null) _scoreLabelText.text = "Score";
+            _scoreValueText.text = score.ToString();
+            int newBest = _levelData != null
+                ? LevelProgressManager.GetBestScore(_levelData.levelId) : score;
+            if (_bestValueText != null)
+                _bestValueText.text = score > prevBest ? $"New best!  ({newBest})" : $"Best: {newBest}";
+            if (_btnReplay != null) _btnReplay.SetActive(true);
+            if (_btnMenu != null) _btnMenu.SetActive(true);
+            if (_btnNext != null)
+            {
+                _btnNext.SetActive(true);
+                var label = _btnNext.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (label != null) label.text = "NEXT ▶";
+            }
         }
 
         private IEnumerator AnimateStars(int stars)
@@ -207,6 +273,20 @@ namespace WordDrop
 
         private void OnNextClicked()
         {
+            // Tutorial-complete variant — NEXT button is repurposed as PLAY → Level Select.
+            if (_tutorialCompleteVariant)
+            {
+                SetVisible(false);
+                if (LevelController.Instance != null)
+                    LevelController.Instance.AbortLevel();
+                GameManager.CurrentMode = GameMode.Survival;
+                if (GameManager.Instance != null)
+                    GameManager.Instance.TransitionTo(GameState.Menu);
+                if (LevelSelectScreen.Instance != null)
+                    LevelSelectScreen.Instance.SetVisible(true);
+                return;
+            }
+
             if (_levelData == null) { OnMenuClicked(); return; }
             int nextId = _levelData.levelId + 1;
             LevelData nextData = LevelLoader.Load(nextId);

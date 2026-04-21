@@ -118,7 +118,8 @@ namespace WordDrop
                 LevelProgressManager.ResetAll();
                 CoinWallet.ResetAll();
                 HeartsManager.ResetAll();
-                _lastStatus = "All progress, coins, and hearts reset.";
+                TutorialProgression.ResetTutorialState();
+                _lastStatus = "All progress, coins, hearts, and tutorial state reset.";
             }
 
             GUILayout.Space(6f);

@@ -1,14 +1,24 @@
 {
     "schemaVersion": 1,
     "levelId": 2,
-    "displayName": "Second Wind",
-    "target": 400,
-    "moveBudget": 20,
-    "starThresholds": [400, 650, 950],
+    "displayName": "Chain Them",
+    "target": 80,
+    "moveBudget": 15,
+    "starThresholds": [80, 160, 280],
     "allowedMechanics": [],
     "hazards": [],
-    "startingBoard": [],
+    "startingBoard": [
+        {"x": 2, "y": 0, "letter": "A", "variant": "normal"},
+        {"x": 3, "y": 0, "letter": "T", "variant": "normal"}
+    ],
     "bag": null,
     "seed": 0,
-    "tutorialPrompts": []
+    "tutorialPrompts": [
+        {"on": "start",            "text": "Drop letters next to each other — the word will glow."},
+        {"on": "first_word",       "text": "Glowing tiles are primed. Touch them with another word to detonate."},
+        {"on": "first_detonation", "text": "Detonation! Primed words score big when triggered."}
+    ],
+    "visualCues": {
+        "ampedPrimingPulse": true
+    }
 }

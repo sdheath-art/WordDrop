@@ -45,6 +45,19 @@ namespace WordDrop
         /// <summary>Fired exactly once when MovesRemaining hits 0 before target met. Args: score, shortfall.</summary>
         public event Action<int, int> OnLevelFail;
 
+        // ── Tutorial event triggers (Phase 6) ───────────────────────────────────
+        //
+        // Each of these fires at most once per level. LevelTutorialOverlay
+        // subscribes and shows the matching TutorialPrompt from LevelData.
+
+        public event Action OnFirstWord;
+        public event Action OnFirstDetonation;
+        public event Action OnFirstChain;
+
+        private bool _firstWordFired;
+        private bool _firstDetonationFired;
+        private bool _firstChainFired;
+
         // ── Lifecycle ───────────────────────────────────────────────────────────
 
         private void Awake()
@@ -79,6 +92,9 @@ namespace WordDrop
             IsInputLocked = false;
             _completed = false;
             _failed = false;
+            _firstWordFired = false;
+            _firstDetonationFired = false;
+            _firstChainFired = false;
 
             // Dismiss any leftover modal from a prior run — StartLevel is the single
             // point of entry for every level start (Level Select, REPLAY, NEXT, RETRY).
@@ -86,6 +102,14 @@ namespace WordDrop
                 LevelCompletedModal.Instance.SetVisible(false);
             if (OutOfMovesModal.Instance != null)
                 OutOfMovesModal.Instance.SetVisible(false);
+
+            // Push the level's tutorial prompt set (if any) to the overlay.
+            if (LevelTutorialOverlay.Instance != null)
+                LevelTutorialOverlay.Instance.OnLevelStarted(data);
+
+            // Visual cues are applied by MatchController.ApplyLevelStartingBoard
+            // AFTER tiles are placed + auto-primed. Calling from here would target
+            // null or stale tiles.
 
             Debug.Log($"[LevelController] StartLevel id={data.levelId} " +
                       $"name='{data.displayName}' target={data.target} moves={data.moveBudget}");
@@ -133,11 +157,38 @@ namespace WordDrop
                 FireComplete();
         }
 
+        /// <summary>
+        /// Side-channel for the tutorial event triggers. Called from MatchController
+        /// after each drop with the drop's full scoring breakdown. Fires at-most-once
+        /// events based on what happened.
+        /// </summary>
+        public void NotifyDropDetails(int scoreDelta, int chainBonus, int detonationBonus)
+        {
+            if (!IsActive) return;
+
+            if (!_firstWordFired && scoreDelta > 0)
+            {
+                _firstWordFired = true;
+                OnFirstWord?.Invoke();
+            }
+            if (!_firstDetonationFired && detonationBonus > 0)
+            {
+                _firstDetonationFired = true;
+                OnFirstDetonation?.Invoke();
+            }
+            if (!_firstChainFired && chainBonus > 0)
+            {
+                _firstChainFired = true;
+                OnFirstChain?.Invoke();
+            }
+        }
+
         /// <summary>Ends the current level without firing Complete/Fail. Used on abort/menu-return.</summary>
         public void AbortLevel()
         {
             IsActive = false;
             IsInputLocked = false;
+            if (TutorialVisualCues.Instance != null) TutorialVisualCues.Instance.ClearAll();
         }
 
         /// <summary>
@@ -161,6 +212,7 @@ namespace WordDrop
             IsActive = false;
             IsInputLocked = true;
             LockHandInput();
+            if (TutorialVisualCues.Instance != null) TutorialVisualCues.Instance.ClearAll();
 
             int stars = ComputeStars(CurrentScore, CurrentLevel.starThresholds);
             int movesUsed = CurrentLevel.moveBudget - MovesRemaining;
@@ -184,6 +236,7 @@ namespace WordDrop
             IsActive = false;
             IsInputLocked = true;
             LockHandInput();
+            if (TutorialVisualCues.Instance != null) TutorialVisualCues.Instance.ClearAll();
 
             int shortfall = Mathf.Max(0, CurrentLevel.target - CurrentScore);
             int movesUsed = CurrentLevel.moveBudget - MovesRemaining;
