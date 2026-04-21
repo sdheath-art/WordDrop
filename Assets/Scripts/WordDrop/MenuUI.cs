@@ -388,6 +388,20 @@ namespace WordDrop
                 return;
             }
 
+            // Life gate BEFORE save-streak. If the player is out of hearts they
+            // can't actually play the daily, so offering to save the streak is
+            // cruel — they'd save it but then watch it break tomorrow anyway.
+            // Resolve hearts first; the save-streak prompt will surface on the
+            // next tap once hearts are available.
+            if (HeartsManager.Current <= 0)
+            {
+                AnalyticsManager.ButtonTap("daily_no_hearts");
+                SetVisible(false);
+                if (HeartWaitModal.Instance != null)
+                    HeartWaitModal.Instance.SetVisible(true, HeartWaitModal.ReturnContext.DailyFlow);
+                return;
+            }
+
             // Save-streak opportunity: the player's on a streak but missed
             // yesterday. Offer the rewarded ad before letting them start a new
             // daily (which would reset the streak to 1).
