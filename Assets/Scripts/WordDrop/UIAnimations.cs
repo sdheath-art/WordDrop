@@ -40,8 +40,8 @@ namespace WordDrop
         public enum Overshoot
         {
             Light,   // amount 1.08 — subtle pop-in
-            Medium,  // amount 1.15 — modal appearance (default)
-            Heavy,   // amount 1.30 — star pop, spectacle moments
+            Medium,  // amount 1.25 — modal appearance (default, bumped from 1.15 for punchier feel)
+            Heavy,   // amount 1.40 — star pop, spectacle moments
         }
 
         private static float OvershootAmount(Overshoot level)
@@ -49,8 +49,8 @@ namespace WordDrop
             switch (level)
             {
                 case Overshoot.Light:  return 1.08f;
-                case Overshoot.Heavy:  return 1.30f;
-                default:               return 1.15f;
+                case Overshoot.Heavy:  return 1.40f;
+                default:               return 1.25f;
             }
         }
 
@@ -167,7 +167,9 @@ namespace WordDrop
                 // Candy-Crush-style dismiss pulse) which reads as punch rather
                 // than snap, and avoids the end-of-curve sprint InCubic causes.
                 seq.Join(target.DOScale(0f, DurFast).SetEase(Ease.InBack, 1.2f));
-                if (cg != null) seq.Join(cg.DOFade(0f, DurFast));
+                // Explicit ease on the alpha fade so it matches the scale feel
+                // instead of inheriting DOTween's default OutQuad.
+                if (cg != null) seq.Join(cg.DOFade(0f, DurFast).SetEase(Ease.InCubic));
             }
             if (onComplete != null) seq.OnComplete(() => onComplete());
             return seq;
