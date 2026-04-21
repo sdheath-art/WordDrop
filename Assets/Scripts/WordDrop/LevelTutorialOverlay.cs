@@ -2,7 +2,6 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
-using DG.Tweening;
 
 namespace WordDrop
 {
@@ -32,7 +31,7 @@ namespace WordDrop
         // Pending prompts keyed by their `on` trigger; one prompt per event.
         private readonly Dictionary<string, string> _promptsByTrigger = new Dictionary<string, string>();
 
-        private Tween _fadeTween;
+        private DG.Tweening.Tween _fadeTween;
         private Coroutine _autoHideCoroutine;
 
         // Auto-fade tuning. 4s visible + 0.5s fade matches mobile puzzle patterns
@@ -212,15 +211,14 @@ namespace WordDrop
             {
                 _canvas.gameObject.SetActive(true);
                 float dur = fadeDurationOverride > 0f ? fadeDurationOverride : 0.25f;
-                _fadeTween = DOTween.To(() => _group.alpha, v => _group.alpha = v, 1f, dur)
-                    .SetEase(Ease.OutQuad);
+                _fadeTween = UIAnimations.FadeIn(_group, duration: dur);
             }
             else
             {
                 float dur = fadeDurationOverride > 0f ? fadeDurationOverride : 0.2f;
-                _fadeTween = DOTween.To(() => _group.alpha, v => _group.alpha = v, 0f, dur)
-                    .SetEase(Ease.InQuad)
-                    .OnComplete(() => { if (_canvas != null) _canvas.gameObject.SetActive(false); });
+                _fadeTween = UIAnimations.FadeOut(_group,
+                    onComplete: () => { if (_canvas != null) _canvas.gameObject.SetActive(false); },
+                    duration: dur);
             }
         }
 

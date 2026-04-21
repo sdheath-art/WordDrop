@@ -1,7 +1,6 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
-using DG.Tweening;
 
 namespace WordDrop
 {
@@ -251,21 +250,26 @@ namespace WordDrop
 
         private IEnumerator AnimateStars(int stars)
         {
+            // Route the star pop through UIAnimations — scale/stagger/easing comes
+            // from the style-guide token set there (StarPopIn = 0→1.3→1.0, Heavy
+            // overshoot, DurStagger=0.2s between stars).
             yield return new WaitForSeconds(0.15f);
+
+            // Light the earned stars FIRST (color), then animate scale.
+            for (int i = 0; i < stars && i < _starIcons.Length; i++)
+                if (_starIcons[i] != null) _starIcons[i].color = STAR_LIT;
+
+            var transforms = new Transform[_starIcons.Length];
+            for (int i = 0; i < _starIcons.Length; i++)
+                transforms[i] = _starIcons[i] != null ? _starIcons[i].transform : null;
+
+            UIAnimations.StarPopIn(transforms, stars);
+
+            // Audio still staggered in the caller so we stay in sync with the pop cadence.
             for (int i = 0; i < stars && i < _starIcons.Length; i++)
             {
-                int idx = i; // capture per-iteration for OnComplete closure
-                _starIcons[idx].color = STAR_LIT;
-                _starIcons[idx].transform.DOKill();
-                _starIcons[idx].transform.localScale = Vector3.one * 0.6f;
-                _starIcons[idx].transform.DOScale(1.15f, 0.18f).SetEase(Ease.OutBack)
-                    .OnComplete(() =>
-                    {
-                        if (_starIcons[idx] != null)
-                            _starIcons[idx].transform.DOScale(1f, 0.10f);
-                    });
-                GameAudio.Instance?.PlayScoreImpact(8 + idx * 4);
-                yield return new WaitForSeconds(0.22f);
+                GameAudio.Instance?.PlayScoreImpact(8 + i * 4);
+                yield return new WaitForSeconds(UIAnimations.DurStagger);
             }
         }
 

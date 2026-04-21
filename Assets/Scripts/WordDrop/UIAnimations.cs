@@ -1,0 +1,412 @@
+using System;
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+using DG.Tweening;
+
+namespace WordDrop
+{
+    /// <summary>
+    /// Canonical UI animations for WordDrop — every modal, button, score count-up,
+    /// star burst, and shake routes through the 12 methods here rather than calling
+    /// DOTween directly.
+    ///
+    /// Rules:
+    ///   • All methods return the underlying Tween/Sequence so callers can chain, kill, or await.
+    ///   • Every method exposes an optional <c>onComplete</c> callback for sequencing.
+    ///   • Durations + easings come from the style-guide token table (never inlined).
+    ///   • ReducedMotion accessibility: overshoot/bounce/shake animations degrade to plain
+    ///     fades so players who enable the iOS/Android flag aren't blasted with motion.
+    ///
+    /// Mirrors <c>project_wordrop_ui_style_guide.md</c>. When adding a new animation,
+    /// update both the style guide and this class.
+    /// </summary>
+    public static class UIAnimations
+    {
+        // ═══════════════════════════════════════════════════════════════════════
+        // DURATION TOKENS (seconds)
+        // ═══════════════════════════════════════════════════════════════════════
+
+        public const float DurInstant  = 0.08f;
+        public const float DurFast     = 0.15f;
+        public const float DurMedium   = 0.25f;
+        public const float DurSlow     = 0.40f;
+        public const float DurStagger  = 0.20f;
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // OVERSHOOT LEVELS — maps to Ease.OutBack amount
+        // ═══════════════════════════════════════════════════════════════════════
+
+        public enum Overshoot
+        {
+            Light,   // amount 1.08 — subtle pop-in
+            Medium,  // amount 1.15 — modal appearance (default)
+            Heavy,   // amount 1.30 — star pop, spectacle moments
+        }
+
+        private static float OvershootAmount(Overshoot level)
+        {
+            switch (level)
+            {
+                case Overshoot.Light:  return 1.08f;
+                case Overshoot.Heavy:  return 1.30f;
+                default:               return 1.15f;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // REDUCED MOTION ACCESSIBILITY FLAG
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// When true, overshoot/bounce/shake animations collapse to plain fades.
+        /// Settings UI / iOS accessibility bridge can flip this. Defaults to OS query
+        /// on first access (polled once per app session).
+        /// </summary>
+        public static bool ReducedMotion
+        {
+            get
+            {
+                if (!_reducedMotionPolled)
+                {
+                    _reducedMotionPolled = true;
+                    _reducedMotion = QueryOsReducedMotion();
+                }
+                return _reducedMotion;
+            }
+            set { _reducedMotion = value; _reducedMotionPolled = true; }
+        }
+        private static bool _reducedMotion;
+        private static bool _reducedMotionPolled;
+
+        private static bool QueryOsReducedMotion()
+        {
+#if UNITY_IOS && !UNITY_EDITOR
+            // iOS bridge lives in a later native plugin. Default false for Phase 6.5.
+            return false;
+#else
+            return false;
+#endif
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 1. PopIn — scale 0 → overshoot → 1.0
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Pops a transform from scale 0 to 1.0 with an overshoot bounce.
+        /// Use for modal appearance, panel reveals, celebratory elements.
+        /// Reduced-motion: falls back to FadeIn of the transform's CanvasGroup (if any).
+        /// </summary>
+        /// <param name="target">Transform to animate (scale is driven).</param>
+        /// <param name="level">Overshoot intensity token.</param>
+        /// <param name="onComplete">Optional callback fired when the tween completes.</param>
+        /// <returns>The running Tweener (or null if ReducedMotion took the fallback path without a CanvasGroup).</returns>
+        public static Tweener PopIn(Transform target, Overshoot level = Overshoot.Medium, Action onComplete = null)
+        {
+            if (target == null) { onComplete?.Invoke(); return null; }
+
+            if (ReducedMotion)
+            {
+                target.localScale = Vector3.one;
+                var cg = target.GetComponent<CanvasGroup>();
+                if (cg != null) return FadeIn(cg, onComplete);
+                onComplete?.Invoke();
+                return null;
+            }
+
+            target.localScale = Vector3.zero;
+            Tweener t = target.DOScale(1f, DurMedium)
+                .SetEase(Ease.OutBack, OvershootAmount(level));
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 2. PopOut — scale 1.0 → 0 with optional fade
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Dismisses a transform by scaling to 0 and (if a CanvasGroup is present) fading alpha.
+        /// Use for modal dismiss. Reduced-motion: skips scale, uses fade-only when possible.
+        /// </summary>
+        /// <param name="target">Transform to animate.</param>
+        /// <param name="onComplete">Optional callback fired after dismiss.</param>
+        /// <returns>The running Sequence.</returns>
+        public static Sequence PopOut(Transform target, Action onComplete = null)
+        {
+            if (target == null) { onComplete?.Invoke(); return null; }
+
+            Sequence seq = DOTween.Sequence();
+            var cg = target.GetComponent<CanvasGroup>();
+
+            if (ReducedMotion)
+            {
+                if (cg != null) seq.Join(cg.DOFade(0f, DurFast));
+                else            seq.Join(target.DOScale(0f, DurFast));
+            }
+            else
+            {
+                seq.Join(target.DOScale(0f, DurFast).SetEase(Ease.InCubic));
+                if (cg != null) seq.Join(cg.DOFade(0f, DurFast));
+            }
+            if (onComplete != null) seq.OnComplete(() => onComplete());
+            return seq;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 3. ButtonPress — scale 1.0 → 0.95 → 1.05 → 1.0
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Satisfying button tap feedback — press-down, overshoot on release, settle.
+        /// Every interactive button should route through this.
+        /// Reduced-motion: degrades to a quick fade-in-place (no scale).
+        /// </summary>
+        public static Sequence ButtonPress(Transform target, Action onComplete = null)
+        {
+            if (target == null) { onComplete?.Invoke(); return null; }
+
+            Sequence seq = DOTween.Sequence();
+            if (ReducedMotion)
+            {
+                // Tiny delay so the player sees something responded.
+                seq.AppendInterval(DurInstant);
+            }
+            else
+            {
+                seq.Append(target.DOScale(0.95f, DurInstant).SetEase(Ease.OutCubic));
+                seq.Append(target.DOScale(1.05f, DurInstant).SetEase(Ease.OutCubic));
+                seq.Append(target.DOScale(1.00f, DurFast  ).SetEase(Ease.OutCubic));
+            }
+            if (onComplete != null) seq.OnComplete(() => onComplete());
+            return seq;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 4. FadeIn — alpha 0 → 1
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Fades a CanvasGroup to alpha 1. Tweens from the group's *current* alpha,
+        /// so a partial-fade-in continues smoothly if called mid-fade (e.g., rapid
+        /// prompt swaps in the tutorial overlay). Callers that want an explicit
+        /// alpha=0 start should set <c>group.alpha = 0f;</c> beforehand.
+        /// </summary>
+        public static Tweener FadeIn(CanvasGroup group, Action onComplete = null, float duration = -1f)
+        {
+            if (group == null) { onComplete?.Invoke(); return null; }
+            float d = duration > 0f ? duration : 0.20f; // linear per style guide
+            Tweener t = group.DOFade(1f, d).SetEase(Ease.Linear);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 5. FadeOut — alpha 1 → 0
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>Fades a CanvasGroup from opaque to transparent.</summary>
+        public static Tweener FadeOut(CanvasGroup group, Action onComplete = null, float duration = -1f)
+        {
+            if (group == null) { onComplete?.Invoke(); return null; }
+            float d = duration > 0f ? duration : 0.20f;
+            Tweener t = group.DOFade(0f, d).SetEase(Ease.Linear);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 6. SlideInFromBottom — anchored y +100 → 0
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Slides a RectTransform in from below its resting position.
+        /// Use for toasts, bottom-sheet dialogs. Reduced-motion: plain fade-in.
+        /// </summary>
+        public static Tweener SlideInFromBottom(RectTransform rt, float offsetY = 100f, Action onComplete = null)
+        {
+            if (rt == null) { onComplete?.Invoke(); return null; }
+            Vector2 rest = rt.anchoredPosition;
+            if (ReducedMotion)
+            {
+                rt.anchoredPosition = rest;
+                var cg = rt.GetComponent<CanvasGroup>();
+                if (cg != null) return FadeIn(cg, onComplete);
+                onComplete?.Invoke();
+                return null;
+            }
+            rt.anchoredPosition = rest + new Vector2(0, -offsetY);
+            Tweener t = rt.DOAnchorPosY(rest.y, 0.30f).SetEase(Ease.OutCubic);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 7. SlideOutToBottom — anchored y 0 → +offset
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>Slides a RectTransform downward off its resting position.</summary>
+        public static Tweener SlideOutToBottom(RectTransform rt, float offsetY = 100f, Action onComplete = null)
+        {
+            if (rt == null) { onComplete?.Invoke(); return null; }
+            float restY = rt.anchoredPosition.y;
+            if (ReducedMotion)
+            {
+                var cg = rt.GetComponent<CanvasGroup>();
+                if (cg != null) return FadeOut(cg, onComplete);
+                onComplete?.Invoke();
+                return null;
+            }
+            Tweener t = rt.DOAnchorPosY(restY - offsetY, 0.20f).SetEase(Ease.InCubic);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 8. StarPopIn — staggered scale 0 → 1.3 → 1.0 across multiple stars
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Pops each of the first <paramref name="starsLit"/> star transforms in sequence
+        /// with a <c>DurStagger</c> gap between them. Remaining stars are left at scale 1
+        /// (caller is expected to set them dim beforehand).
+        /// </summary>
+        /// <param name="starTransforms">Array of star transforms (order matters).</param>
+        /// <param name="starsLit">How many stars to animate, 0..length.</param>
+        /// <param name="onAllComplete">Fires after the last star has settled.</param>
+        public static Sequence StarPopIn(Transform[] starTransforms, int starsLit, Action onAllComplete = null)
+        {
+            Sequence seq = DOTween.Sequence();
+            if (starTransforms == null || starsLit <= 0)
+            {
+                if (onAllComplete != null) seq.OnComplete(() => onAllComplete());
+                return seq;
+            }
+
+            // Pre-zero the stars that will animate.
+            for (int i = 0; i < starsLit && i < starTransforms.Length; i++)
+            {
+                if (starTransforms[i] != null)
+                    starTransforms[i].localScale = Vector3.zero;
+            }
+
+            if (ReducedMotion)
+            {
+                // Skip overshoot — just fade stars in one by one.
+                for (int i = 0; i < starsLit && i < starTransforms.Length; i++)
+                {
+                    var tf = starTransforms[i];
+                    if (tf == null) continue;
+                    seq.AppendInterval(DurStagger);
+                    seq.AppendCallback(() => tf.localScale = Vector3.one);
+                }
+                if (onAllComplete != null) seq.OnComplete(() => onAllComplete());
+                return seq;
+            }
+
+            for (int i = 0; i < starsLit && i < starTransforms.Length; i++)
+            {
+                int idx = i; // closure capture
+                seq.AppendInterval(i == 0 ? 0f : DurStagger);
+                seq.AppendCallback(() =>
+                {
+                    Transform tf = starTransforms[idx];
+                    if (tf == null) return;
+                    tf.DOScale(1.3f, DurFast).SetEase(Ease.OutBack, OvershootAmount(Overshoot.Heavy))
+                        .OnComplete(() =>
+                        {
+                            if (tf != null) tf.DOScale(1.0f, DurFast).SetEase(Ease.OutCubic);
+                        });
+                });
+            }
+            if (onAllComplete != null) seq.OnComplete(() => onAllComplete());
+            return seq;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 9. NumberIncrement — text value interpolates start → end
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Animates a score/coin/points readout from <paramref name="from"/> to
+        /// <paramref name="to"/> over ~0.5s with an OutCubic ramp. Writes to the
+        /// TextMeshProUGUI component on every frame.
+        /// Reduced-motion: snaps to the final value with no interpolation.
+        /// </summary>
+        public static Tweener NumberIncrement(TextMeshProUGUI target, int from, int to, Action onComplete = null, float duration = 0.5f)
+        {
+            if (target == null) { onComplete?.Invoke(); return null; }
+            if (ReducedMotion)
+            {
+                target.text = to.ToString();
+                onComplete?.Invoke();
+                return null;
+            }
+            int current = from;
+            target.text = current.ToString();
+            Tweener t = DOTween.To(() => current, v =>
+            {
+                current = v;
+                if (target != null) target.text = current.ToString();
+            }, to, duration).SetEase(Ease.OutCubic);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 10. ShakeSuccess — ±8px, 3 oscillations, ~0.4s
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Small satisfying horizontal shake on a transform — used for positive feedback
+        /// (word scored, tile landed). Reduced-motion: skipped entirely.
+        /// </summary>
+        public static Tweener ShakeSuccess(Transform target, Action onComplete = null)
+        {
+            if (target == null || ReducedMotion) { onComplete?.Invoke(); return null; }
+            Tweener t = target.DOShakePosition(DurSlow, strength: new Vector3(8f, 0f, 0f), vibrato: 3, randomness: 0f, snapping: false, fadeOut: true);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 11. ShakeError — ±15px, 5 oscillations, ~0.5s
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Stronger negative-feedback shake — out of moves, invalid action, error.
+        /// Reduced-motion: skipped entirely.
+        /// </summary>
+        public static Tweener ShakeError(Transform target, Action onComplete = null)
+        {
+            if (target == null || ReducedMotion) { onComplete?.Invoke(); return null; }
+            Tweener t = target.DOShakePosition(0.5f, strength: new Vector3(15f, 0f, 0f), vibrato: 5, randomness: 0f, snapping: false, fadeOut: true);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // 12. ConfettiBurst — particle pop, 1.5s envelope
+        // ═══════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Plays a confetti-style particle burst at a world-space position. Phase 6.5
+        /// stub — routes to GameParticles.Instance if available, otherwise no-ops.
+        /// Use on Level Completed celebration moments only.
+        /// </summary>
+        /// <param name="worldPosition">Where the burst originates.</param>
+        /// <param name="onComplete">Fires ~1.5s after the burst is spawned.</param>
+        public static void ConfettiBurst(Vector3 worldPosition, Action onComplete = null)
+        {
+            // Use existing sparkle/shimmer particle as confetti stand-in until art drops in.
+            if (GameParticles.Instance != null)
+                GameParticles.Instance.PlayShimmer(worldPosition, 12);
+
+            if (onComplete != null)
+            {
+                DOVirtual.DelayedCall(1.5f, () => onComplete());
+            }
+        }
+    }
+}
