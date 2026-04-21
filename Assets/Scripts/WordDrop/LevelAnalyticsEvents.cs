@@ -13,5 +13,8 @@ namespace WordDrop
         public const string LEVEL_COMPLETE = "level_complete";
         public const string LEVEL_FAIL     = "level_fail";
         public const string LEVEL_RETRY    = "level_retry";
+        public const string COINS_EARNED   = "coins_earned";
+        public const string COINS_SPENT    = "coins_spent";
+        public const string BOOSTER_USED   = "booster_used";
     }
 }

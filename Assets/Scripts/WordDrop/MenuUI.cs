@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -15,6 +16,8 @@ namespace WordDrop
         private GameObject _panel;
         private Canvas     _canvas;
         private Text       _bestScoreText;
+        private Text       _currenciesText;
+        private Coroutine  _currenciesCoroutine;
 
         private void Awake()
         {
@@ -75,6 +78,18 @@ namespace WordDrop
                 fontSize: cfg != null ? cfg.menuBestScoreFontSize : 22,
                 color: cfg != null ? cfg.menuBestScoreColor : new Color(0.96f, 0.76f, 0.29f, 1f));
             RefreshBestScore();
+
+            // Hearts + coins readout — top-right corner HUD, refreshes while the
+            // menu is visible so the regen timer stays honest without a HUD canvas.
+            _currenciesText = CreateLabel(_panel.transform, "CurrenciesText",
+                anchorMin: new Vector2(0.55f, 0.93f),
+                anchorMax: new Vector2(0.97f, 0.99f),
+                text: "",
+                fontSize: 20,
+                color: UILayout.Gold);
+            _currenciesText.alignment = TextAnchor.MiddleRight;
+            _currenciesText.fontStyle = FontStyle.Bold;
+            RefreshCurrencies();
 
             // ── CLASSIC 1v1 section ──────────────────────────────────────────
 
@@ -522,7 +537,34 @@ namespace WordDrop
                 RefreshBestScore();
                 RefreshBlitzBestScore();
                 RefreshDailyInfo();
+                RefreshCurrencies();
+                if (_currenciesCoroutine == null && gameObject.activeInHierarchy)
+                    _currenciesCoroutine = StartCoroutine(CurrenciesTick());
             }
+            else if (_currenciesCoroutine != null)
+            {
+                StopCoroutine(_currenciesCoroutine);
+                _currenciesCoroutine = null;
+            }
+        }
+
+        private IEnumerator CurrenciesTick()
+        {
+            var wait = new WaitForSecondsRealtime(1f);
+            while (_panel != null && _panel.activeInHierarchy)
+            {
+                RefreshCurrencies();
+                yield return wait;
+            }
+            _currenciesCoroutine = null;
+        }
+
+        private void RefreshCurrencies()
+        {
+            if (_currenciesText == null) return;
+            int hearts = HeartsManager.Current;
+            int coins = CoinWallet.Balance;
+            _currenciesText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   🪙 {coins}";
         }
 
         private void RefreshBestScore()

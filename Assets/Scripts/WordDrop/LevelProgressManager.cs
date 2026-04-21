@@ -11,12 +11,13 @@ namespace WordDrop
     /// </summary>
     public static class LevelProgressManager
     {
-        private const string STARS_KEY_PREFIX       = "wd_level_";
-        private const string STARS_KEY_SUFFIX       = "_stars";
-        private const string BEST_SCORE_SUFFIX      = "_best_score";
-        private const string ATTEMPTS_SUFFIX        = "_attempts";
-        private const string COMPLETED_SUFFIX       = "_completed";
-        private const string HIGHEST_UNLOCKED_KEY   = "wd_levels_highest_unlocked";
+        private const string STARS_KEY_PREFIX        = "wd_level_";
+        private const string STARS_KEY_SUFFIX        = "_stars";
+        private const string BEST_SCORE_SUFFIX       = "_best_score";
+        private const string ATTEMPTS_SUFFIX         = "_attempts";
+        private const string COMPLETED_SUFFIX        = "_completed";
+        private const string THREE_STAR_BONUS_SUFFIX = "_3star_bonus_awarded";
+        private const string HIGHEST_UNLOCKED_KEY    = "wd_levels_highest_unlocked";
 
         // ── Stars ───────────────────────────────────────────────────────────────
 
@@ -80,6 +81,22 @@ namespace WordDrop
             PlayerPrefs.Save();
         }
 
+        // ── First-time 3-star bonus (one-shot per level) ────────────────────────
+
+        /// <summary>
+        /// Returns true and persists the flag the FIRST time a level earns 3 stars.
+        /// Callers use this to award the 10-coin first-time-3-star bonus exactly once
+        /// (subsequent 3-star replays don't re-award).
+        /// </summary>
+        public static bool ClaimFirstTimeThreeStarBonus(int levelId)
+        {
+            string key = ThreeStarBonusKey(levelId);
+            if (PlayerPrefs.GetInt(key, 0) != 0) return false;
+            PlayerPrefs.SetInt(key, 1);
+            PlayerPrefs.Save();
+            return true;
+        }
+
         // ── Unlock chain ────────────────────────────────────────────────────────
 
         public static int GetHighestUnlocked()
@@ -108,6 +125,7 @@ namespace WordDrop
                 PlayerPrefs.DeleteKey(BestScoreKey(i));
                 PlayerPrefs.DeleteKey(AttemptsKey(i));
                 PlayerPrefs.DeleteKey(CompletedKey(i));
+                PlayerPrefs.DeleteKey(ThreeStarBonusKey(i));
             }
             PlayerPrefs.DeleteKey(HIGHEST_UNLOCKED_KEY);
             PlayerPrefs.Save();
@@ -116,9 +134,10 @@ namespace WordDrop
 
         // ── Key builders ────────────────────────────────────────────────────────
 
-        private static string StarsKey(int levelId)      => STARS_KEY_PREFIX + levelId + STARS_KEY_SUFFIX;
-        private static string BestScoreKey(int levelId)  => STARS_KEY_PREFIX + levelId + BEST_SCORE_SUFFIX;
-        private static string AttemptsKey(int levelId)   => STARS_KEY_PREFIX + levelId + ATTEMPTS_SUFFIX;
-        private static string CompletedKey(int levelId)  => STARS_KEY_PREFIX + levelId + COMPLETED_SUFFIX;
+        private static string StarsKey(int levelId)           => STARS_KEY_PREFIX + levelId + STARS_KEY_SUFFIX;
+        private static string BestScoreKey(int levelId)       => STARS_KEY_PREFIX + levelId + BEST_SCORE_SUFFIX;
+        private static string AttemptsKey(int levelId)        => STARS_KEY_PREFIX + levelId + ATTEMPTS_SUFFIX;
+        private static string CompletedKey(int levelId)       => STARS_KEY_PREFIX + levelId + COMPLETED_SUFFIX;
+        private static string ThreeStarBonusKey(int levelId)  => STARS_KEY_PREFIX + levelId + THREE_STAR_BONUS_SUFFIX;
     }
 }

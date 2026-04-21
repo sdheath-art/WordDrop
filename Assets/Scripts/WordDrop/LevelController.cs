@@ -37,6 +37,21 @@ namespace WordDrop
         private bool _completed;
         private bool _failed;
 
+        /// <summary>
+        /// Monotonic id for the current run. Incremented on every StartLevel so
+        /// in-flight coroutines (rewarded-ad stubs, tween callbacks) can verify
+        /// their grant is still targeting the same attempt before mutating state.
+        /// </summary>
+        public int RunToken { get; private set; }
+
+        /// <summary>
+        /// True when the most recent fail was caused by move-budget exhaustion
+        /// (a +5-moves booster can legitimately continue the same attempt).
+        /// False when the fail was ForceFail'd externally — e.g. board-full or
+        /// rising-row overflow — where adding moves alone wouldn't unstick play.
+        /// </summary>
+        public bool LastFailIsRecoverable { get; private set; }
+
         // ── Events ──────────────────────────────────────────────────────────────
 
         /// <summary>Fired exactly once when CurrentScore >= CurrentLevel.target. Args: score, stars (0..3).</summary>
@@ -92,6 +107,8 @@ namespace WordDrop
             IsInputLocked = false;
             _completed = false;
             _failed = false;
+            LastFailIsRecoverable = false;
+            RunToken++;
             _firstWordFired = false;
             _firstDetonationFired = false;
             _firstChainFired = false;
@@ -143,7 +160,7 @@ namespace WordDrop
 
             if (MovesRemaining <= 0)
             {
-                FireFail();
+                FireFail(recoverable: true);
             }
         }
 
@@ -183,11 +200,47 @@ namespace WordDrop
             }
         }
 
+        /// <summary>
+        /// Booster entry point: adds moves after an Out-of-Moves fail so the player can
+        /// continue the same attempt. Strict preconditions — ignores calls when the
+        /// level isn't in a recoverable failed state, or when the caller's runToken
+        /// doesn't match the current run (rewarded-ad coroutines can outlive an abort
+        /// or retry). Returns true iff the grant actually applied.
+        /// </summary>
+        public bool GrantExtraMoves(int amount, int runToken)
+        {
+            if (amount <= 0) return false;
+            if (runToken != RunToken)
+            {
+                Debug.Log($"[LevelController] GrantExtraMoves rejected: stale runToken {runToken} vs {RunToken}");
+                return false;
+            }
+            if (!_failed)
+            {
+                Debug.Log("[LevelController] GrantExtraMoves rejected: level not in failed state.");
+                return false;
+            }
+            if (_completed) return false;
+            if (!LastFailIsRecoverable)
+            {
+                Debug.Log("[LevelController] GrantExtraMoves rejected: last fail was non-recoverable (board full / rising-row overflow).");
+                return false;
+            }
+            _failed = false;
+            IsActive = true;
+            IsInputLocked = false;
+            MovesRemaining += amount;
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
+            Debug.Log($"[LevelController] GrantExtraMoves +{amount} (now {MovesRemaining})");
+            return true;
+        }
+
         /// <summary>Ends the current level without firing Complete/Fail. Used on abort/menu-return.</summary>
         public void AbortLevel()
         {
             IsActive = false;
             IsInputLocked = false;
+            RunToken++; // invalidate any in-flight booster coroutines targeting this run
             if (TutorialVisualCues.Instance != null) TutorialVisualCues.Instance.ClearAll();
         }
 
@@ -195,12 +248,14 @@ namespace WordDrop
         /// External trigger for a forced fail — used when gameplay paths outside the
         /// normal move-budget flow cause the level to end (e.g., MatchController's
         /// board-full safety net when rising rows overflow the grid in Level mode).
-        /// Idempotent: if the level already ended, does nothing.
+        /// Idempotent: if the level already ended, does nothing. Marks the fail as
+        /// non-recoverable so +5-moves booster won't pretend to fix an unwinnable
+        /// board.
         /// </summary>
         public void ForceFail()
         {
             if (!IsActive || _completed || _failed) return;
-            FireFail();
+            FireFail(recoverable: false);
         }
 
         // ── Internal ────────────────────────────────────────────────────────────
@@ -229,10 +284,11 @@ namespace WordDrop
             OnLevelComplete?.Invoke(CurrentScore, stars);
         }
 
-        private void FireFail()
+        private void FireFail(bool recoverable)
         {
             if (_failed) return;
             _failed = true;
+            LastFailIsRecoverable = recoverable;
             IsActive = false;
             IsInputLocked = true;
             LockHandInput();

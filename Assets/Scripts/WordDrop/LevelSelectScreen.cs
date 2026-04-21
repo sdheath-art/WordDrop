@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -20,6 +21,8 @@ namespace WordDrop
 
         private Canvas _canvas;
         private GameObject _content;
+        private Text _headerStatusText;
+        private Coroutine _statusCoroutine;
         private readonly List<int> _availableLevels = new List<int>();
 
         private static readonly Color PANEL_BG    = new Color(0.10f, 0.08f, 0.18f, 1f);
@@ -109,6 +112,15 @@ namespace WordDrop
                 new Vector2(0.02f, 0.15f), new Vector2(0.14f, 0.85f),
                 "← BACK", new Color(0.35f, 0.35f, 0.45f, 1f), Color.white, 16,
                 OnBackClicked);
+
+            // Header status line — hearts + coins. Right-aligned, refreshes on
+            // SetVisible and once per second while the screen is open so the
+            // regen timer stays honest without an always-on Update loop.
+            _headerStatusText = CreateLabel(header.transform, "HeaderStatus",
+                new Vector2(0.65f, 0f), new Vector2(0.98f, 1f),
+                "", 20, UILayout.Gold);
+            _headerStatusText.alignment = TextAnchor.MiddleRight;
+            _headerStatusText.fontStyle = FontStyle.Bold;
 
             // ScrollRect for the level tiles
             GameObject scrollGO = new GameObject("Scroll");
@@ -270,7 +282,12 @@ namespace WordDrop
 
             if (!HeartsManager.Consume())
             {
-                Debug.Log("[LevelSelectScreen] No hearts available — Phase 7 will show a purchase prompt.");
+                // Phase 7: surface the life-gate instead of silently dropping the tap.
+                SetVisible(false);
+                if (HeartWaitModal.Instance != null)
+                    HeartWaitModal.Instance.SetVisible(true);
+                else
+                    Debug.LogWarning("[LevelSelectScreen] HeartWaitModal missing — level tap dropped.");
                 return;
             }
 
@@ -302,6 +319,44 @@ namespace WordDrop
             if (_canvas == null) return;
             if (visible) BuildLevelTiles(); // refresh progress on each open
             _canvas.gameObject.SetActive(visible);
+
+            // Hearts regen over wall-clock time, so the header status needs to
+            // tick while the player sits here. Only runs while the screen is up.
+            if (visible)
+            {
+                RefreshHeaderStatus();
+                if (_statusCoroutine == null && gameObject.activeInHierarchy)
+                    _statusCoroutine = StartCoroutine(HeaderStatusTick());
+
+                // One-shot Starter Pack pitch after tutorial complete. The modal
+                // self-gates on PlayerPrefs so repeat SetVisible calls are safe.
+                if (StarterPackModal.Instance != null)
+                    StarterPackModal.Instance.TryAutoShow();
+            }
+            else if (_statusCoroutine != null)
+            {
+                StopCoroutine(_statusCoroutine);
+                _statusCoroutine = null;
+            }
+        }
+
+        private IEnumerator HeaderStatusTick()
+        {
+            var wait = new WaitForSecondsRealtime(1f);
+            while (_canvas != null && _canvas.gameObject.activeSelf)
+            {
+                RefreshHeaderStatus();
+                yield return wait;
+            }
+            _statusCoroutine = null;
+        }
+
+        private void RefreshHeaderStatus()
+        {
+            if (_headerStatusText == null) return;
+            int hearts = HeartsManager.Current;
+            int coins = CoinWallet.Balance;
+            _headerStatusText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   🪙 {coins}";
         }
 
         private static Text CreateLabel(Transform parent, string name,

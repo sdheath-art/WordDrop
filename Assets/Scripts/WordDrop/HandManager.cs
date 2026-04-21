@@ -4104,12 +4104,28 @@ namespace WordDrop
                         {
                             overflowed = o;
                         }));
-                        // Rising row overflow in Level mode = instant fail.
-                        // Route through LevelController so the OutOfMovesModal shows
-                        // (instead of the Classic GameOverUI path used by Classic mode).
-                        if (overflowed && LevelController.Instance != null
+                        // Two Level-mode fail paths from a rising-row tick:
+                        //   (a) overflow=true — shift aborted because the top row was
+                        //       already fully filled pre-shift.
+                        //   (b) shift succeeded but now no column can accept a drop —
+                        //       every column's stack reaches the top (stone tiles make
+                        //       this easy to hit because they anchor mid-column).
+                        //       Without this, the player's next drop attempt is silently
+                        //       rejected by DropLetter and the game just freezes.
+                        bool fail = overflowed;
+                        if (!fail && RulesEngine.Instance != null)
+                        {
+                            bool anyOpen = false;
+                            for (int c = 0; c < GridManager.COLS; c++)
+                            {
+                                if (RulesEngine.Instance.IsColumnAvailable(c)) { anyOpen = true; break; }
+                            }
+                            fail = !anyOpen;
+                        }
+                        if (fail && LevelController.Instance != null
                             && LevelController.Instance.IsActive)
                         {
+                            Debug.Log($"[Level/RisingRow] fail triggered — overflow={overflowed} boardJammed={!overflowed}");
                             LevelController.Instance.ForceFail();
                         }
                     }
@@ -4217,6 +4233,18 @@ namespace WordDrop
 
                     if (overflowed)
                     {
+                        // Level mode: rising-row overflow ends the attempt via
+                        // LevelController.ForceFail → OutOfMovesModal. Classic
+                        // "Last Word" and the 1v1 GameOver flow don't apply here.
+                        if (GameManager.IsLevelMode && LevelController.Instance != null
+                            && LevelController.Instance.IsActive)
+                        {
+                            Debug.Log("[HandManager] Rising row overflow in Level mode → LevelController.ForceFail.");
+                            LevelController.Instance.ForceFail();
+                            if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+                            yield break;
+                        }
+
                         if (MatchController.Instance != null && !MatchController.Instance.IsLastWord)
                         {
 //                             Debug.Log("[HandManager] Rising row overflow → triggering LAST WORD phase!");

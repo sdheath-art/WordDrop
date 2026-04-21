@@ -1,3 +1,5 @@
+using System.Collections;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -6,14 +8,14 @@ namespace WordDrop
     /// <summary>
     /// Modal shown when LevelController fires OnLevelFail (moves exhausted, target missed).
     ///
-    /// Displays: "Out of Moves" banner, score vs target, shortfall, and
-    /// +5 Moves (stub — Phase 7 wires cost) / Retry (spends a heart) / Menu buttons.
+    /// Displays: "Out of Moves" banner, score vs target, shortfall, hearts line,
+    /// coin balance, and +5 MOVES / RETRY / MENU buttons. +5 MOVES spends
+    /// BOOSTER_COIN_COST coins when the wallet can cover it, otherwise falls back
+    /// to a rewarded-ad stub (REWARDED_AD_STUB_SECONDS sleep). On either path it
+    /// calls LevelController.GrantExtraMoves(5) to resume the same attempt.
     ///
     /// Canvas sortingOrder = 150 (same as LevelCompletedModal). Only one modal can
     /// show at a time — LevelController's single-fire guards ensure this.
-    ///
-    /// Phase 4 scope: functional UX. Phase 7 wires the +5 Moves booster cost
-    /// and heart-refill flow. Phase 11 can polish animation.
     /// </summary>
     public class OutOfMovesModal : MonoBehaviour
     {
@@ -24,7 +26,29 @@ namespace WordDrop
         private Text _targetValueText;
         private Text _shortfallText;
         private Text _heartsText;
+        private Text _coinBalanceText;
+        private GameObject _btnBooster;
+        private TextMeshProUGUI _btnBoosterLabel;
         private LevelData _levelData;
+        private bool _boosterBusy;
+        private Coroutine _adCoroutine;
+
+        /// <summary>
+        /// Captured at fail-modal show time. The booster coroutine verifies this
+        /// against the current LevelController.RunToken before granting, so a
+        /// MENU/RETRY tap during the 3s rewarded-ad stub can't leak moves into a
+        /// different attempt.
+        /// </summary>
+        private int _pendingRunToken;
+
+        /// <summary>Whether the current fail is eligible for a +5-moves recovery.</summary>
+        private bool _boosterAvailable;
+
+        /// <summary>+5 Moves price when paying with coins.</summary>
+        public const int BOOSTER_COIN_COST = 10;
+
+        /// <summary>Simulated rewarded-ad duration used when coins are insufficient.</summary>
+        private const float REWARDED_AD_STUB_SECONDS = 3f;
 
         private static readonly Color PANEL_BG = new Color(0.10f, 0.08f, 0.20f, 0.95f);
         private static readonly Color CARD_BG  = new Color(0.20f, 0.14f, 0.18f, 1f);
@@ -118,6 +142,10 @@ namespace WordDrop
                 new Vector2(0.08f, 0.30f), new Vector2(0.92f, 0.36f),
                 "", 16, new Color(0.90f, 0.85f, 0.80f, 1f));
 
+            _coinBalanceText = CreateLabel(card.transform, "CoinBalance",
+                new Vector2(0.08f, 0.24f), new Vector2(0.92f, 0.30f),
+                "", 16, UILayout.Gold);
+
             // Buttons
             float btnY0 = 0.08f;
             float btnY1 = 0.22f;
@@ -125,10 +153,18 @@ namespace WordDrop
                 new Vector2(0.06f, btnY0), new Vector2(0.32f, btnY1),
                 "MENU", new Color(0.35f, 0.35f, 0.45f, 1f), Color.white, 22,
                 OnMenuClicked);
+
+            int childBefore = card.transform.childCount;
             MenuUI.CreateButton(card.transform, "BtnBooster",
                 new Vector2(0.37f, btnY0), new Vector2(0.63f, btnY1),
                 "+5 MOVES", new Color(0.55f, 0.45f, 0.80f, 1f), Color.white, 20,
                 OnBoosterClicked);
+            if (card.transform.childCount > childBefore)
+            {
+                _btnBooster = card.transform.GetChild(card.transform.childCount - 1).gameObject;
+                _btnBoosterLabel = _btnBooster.GetComponentInChildren<TextMeshProUGUI>();
+            }
+
             MenuUI.CreateButton(card.transform, "BtnRetry",
                 new Vector2(0.68f, btnY0), new Vector2(0.94f, btnY1),
                 "RETRY", new Color(0.85f, 0.45f, 0.35f, 1f), Color.white, 22,
@@ -145,13 +181,50 @@ namespace WordDrop
             if (_levelData != null)
                 LevelProgressManager.IncrementAttempts(_levelData.levelId);
 
+            _boosterBusy = false;
+            _pendingRunToken = LevelController.Instance != null
+                ? LevelController.Instance.RunToken : 0;
+            // Non-recoverable fails (board-full, rising-row overflow) — adding
+            // moves alone wouldn't unstick the grid, so hide the booster entirely
+            // and tell the player to just RETRY.
+            _boosterAvailable = LevelController.Instance != null
+                && LevelController.Instance.LastFailIsRecoverable;
+
             _scoreValueText.text = score.ToString();
             if (_targetValueText != null && _levelData != null)
                 _targetValueText.text = _levelData.target.ToString();
-            _shortfallText.text = $"You needed {shortfall} more to clear the target.";
+            _shortfallText.text = _boosterAvailable
+                ? $"You needed {shortfall} more to clear the target."
+                : "Board is jammed — tap RETRY to start fresh.";
             _heartsText.text = $"Hearts: {HeartsManager.Current}/{HeartsManager.MAX_HEARTS} — Retry spends 1.";
+            if (_btnBooster != null) _btnBooster.SetActive(_boosterAvailable);
+            RefreshBoosterLabel();
 
             SetVisible(true);
+        }
+
+        /// <summary>
+        /// Keeps the booster button label + helper line in sync with the coin balance.
+        /// The button label stays short ("+5 MOVES" / "WATCHING AD…") so it fits the
+        /// cramped three-button row; the cost path ("Spends 10 coins" vs. "Watch an ad")
+        /// is spelled out in the gold helper line below.
+        /// </summary>
+        private void RefreshBoosterLabel()
+        {
+            int balance = CoinWallet.Balance;
+            if (_btnBoosterLabel != null)
+                _btnBoosterLabel.text = _boosterBusy ? "WATCHING AD…" : "+5 MOVES";
+            if (_coinBalanceText != null)
+            {
+                if (!_boosterAvailable)
+                    _coinBalanceText.text = $"Coins: {balance}";
+                else if (_boosterBusy)
+                    _coinBalanceText.text = "…rewarding +5 moves…";
+                else if (balance >= BOOSTER_COIN_COST)
+                    _coinBalanceText.text = $"Coins: {balance}  →  spends {BOOSTER_COIN_COST}";
+                else
+                    _coinBalanceText.text = $"Coins: {balance}  →  watch a short ad";
+            }
         }
 
         // ── Button actions ──────────────────────────────────────────────────────
@@ -184,9 +257,70 @@ namespace WordDrop
 
         private void OnBoosterClicked()
         {
-            // Phase 7 wires: cost 10 coins OR rewarded ad. Phase 4 stub just logs.
-            Debug.Log("[OutOfMovesModal] +5 MOVES stub — wired in Phase 7 (cost 10 coins or rewarded ad).");
-            _heartsText.text = "+5 Moves unlocks in Phase 7.";
+            if (_boosterBusy) return;
+            if (!_boosterAvailable) return;
+            if (_levelData == null) return;
+
+            // Coin path first — if the wallet covers it, spend and grant immediately.
+            if (CoinWallet.Spend(BOOSTER_COIN_COST))
+            {
+                if (!TryGrantBoosterMoves(source: "coins"))
+                {
+                    // Refund if the run is no longer valid (shouldn't happen on the
+                    // synchronous path, but preserves invariants).
+                    CoinWallet.Add(BOOSTER_COIN_COST);
+                    return;
+                }
+                AnalyticsManager.Log(LevelAnalyticsEvents.COINS_SPENT,
+                    "level_id", _levelData.levelId,
+                    "amount", BOOSTER_COIN_COST,
+                    "sink", "booster_extra_moves");
+                return;
+            }
+
+            // Rewarded-ad fallback — 3s stub stands in for a real SDK integration.
+            // TODO(Phase 11): replace with AdMob/Unity Ads rewarded-ad SDK.
+            _adCoroutine = StartCoroutine(RewardedAdStubCoroutine(_pendingRunToken));
+        }
+
+        private IEnumerator RewardedAdStubCoroutine(int runToken)
+        {
+            _boosterBusy = true;
+            RefreshBoosterLabel();
+            yield return new WaitForSecondsRealtime(REWARDED_AD_STUB_SECONDS);
+            _boosterBusy = false;
+            _adCoroutine = null;
+
+            // Snapshot token check — SetVisible(false) cancels the coroutine, but
+            // guard here too in case anyone else stops and restarts the modal
+            // while the stub is sleeping.
+            if (LevelController.Instance == null || LevelController.Instance.RunToken != runToken)
+            {
+                Debug.Log("[OutOfMovesModal] Ad-stub callback ignored — run changed during wait.");
+                yield break;
+            }
+            TryGrantBoosterMoves(source: "rewarded_ad");
+        }
+
+        /// <summary>
+        /// Routes the grant through LevelController with the captured run-token.
+        /// Returns false if LevelController rejects (stale token, non-recoverable
+        /// fail, already completed). Callers must back out any payment on false.
+        /// </summary>
+        private bool TryGrantBoosterMoves(string source)
+        {
+            if (_levelData == null) return false;
+            if (LevelController.Instance == null) return false;
+            bool granted = LevelController.Instance.GrantExtraMoves(5, _pendingRunToken);
+            if (!granted) return false;
+
+            AnalyticsManager.Log(LevelAnalyticsEvents.BOOSTER_USED,
+                "level_id", _levelData.levelId,
+                "booster", "extra_moves_5",
+                "source", source);
+
+            SetVisible(false);
+            return true;
         }
 
         private void OnMenuClicked()
@@ -206,6 +340,14 @@ namespace WordDrop
         public void SetVisible(bool visible)
         {
             if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            if (!visible)
+            {
+                // Hiding invalidates any in-flight ad-stub. The modal's _pendingRunToken
+                // snapshot is the belt; stopping the coroutine is the suspenders. Leaving
+                // it running means a 3s-delayed grant could land on an unrelated retry.
+                if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
+                _boosterBusy = false;
+            }
         }
 
         private static Text CreateLabel(Transform parent, string name,

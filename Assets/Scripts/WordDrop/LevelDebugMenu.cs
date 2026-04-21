@@ -119,7 +119,18 @@ namespace WordDrop
                 CoinWallet.ResetAll();
                 HeartsManager.ResetAll();
                 TutorialProgression.ResetTutorialState();
-                _lastStatus = "All progress, coins, hearts, and tutorial state reset.";
+                StarterPackModal.ResetState();
+                PlayerPrefs.DeleteKey("wd_hearts_last_ad_grant_ticks");
+                PlayerPrefs.Save();
+                _lastStatus = "All progress, coins, hearts, tutorial, starter-pack, and ad-cooldown reset.";
+            }
+
+            if (GUILayout.Button("Show Starter Pack"))
+            {
+                StarterPackModal.ResetState();
+                if (StarterPackModal.Instance != null)
+                    StarterPackModal.Instance.SetVisible(true);
+                _lastStatus = "Starter Pack shown (persistence flags cleared).";
             }
 
             GUILayout.Space(6f);

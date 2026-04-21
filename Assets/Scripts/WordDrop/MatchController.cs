@@ -303,6 +303,15 @@ namespace WordDrop
                 GridManager.Instance.RebuildFromRulesEngine(RulesEngine.Instance);
             }
 
+            // Level mode: ApplyLevelStartingBoard already primed any valid words
+            // in the starting board and called RefreshAllPrimedWordTiles — but the
+            // ClearAllCells + RebuildFromRulesEngine pair above just destroyed
+            // every tile GameObject the glow was painted on. Re-apply so pre-primed
+            // setups (e.g. ROCKS on L103) actually render pink at level start
+            // instead of popping in only after the first drop's re-scan.
+            if (GameManager.IsLevelMode && RulesEngine.Instance != null)
+                RulesEngine.Instance.RefreshAllPrimedWordTiles(RulesEngine.Instance.GlobalTurn);
+
             // No pre-primed opening words — player creates all primes
             /* disabled
             if (RulesEngine.Instance != null && GridManager.Instance != null &&

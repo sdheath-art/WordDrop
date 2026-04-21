@@ -79,6 +79,23 @@ namespace WordDrop
             PlayerPrefs.Save();
         }
 
+        /// <summary>
+        /// Adds exactly one heart (capped at MAX_HEARTS). If the grant reaches MAX
+        /// the regen anchor is cleared; otherwise the existing anchor is preserved
+        /// so in-progress regen isn't reset. Used by the rewarded-ad +1 path.
+        /// </summary>
+        public static void GrantOne()
+        {
+            SyncRegen();
+            int current = PlayerPrefs.GetInt(COUNT_KEY, MAX_HEARTS);
+            if (current >= MAX_HEARTS) return;
+            int next = current + 1;
+            PlayerPrefs.SetInt(COUNT_KEY, next);
+            if (next >= MAX_HEARTS)
+                PlayerPrefs.DeleteKey(LAST_REGEN_KEY);
+            PlayerPrefs.Save();
+        }
+
         public static void ResetAll()
         {
             PlayerPrefs.DeleteKey(COUNT_KEY);

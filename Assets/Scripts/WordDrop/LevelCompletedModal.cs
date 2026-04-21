@@ -1,4 +1,6 @@
 using System.Collections;
+using DG.Tweening;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -25,6 +27,9 @@ namespace WordDrop
         private Text _scoreLabelText;
         private Text _scoreValueText;
         private Text _bestValueText;
+        private TextMeshProUGUI _coinRewardText;
+        private int _coinRewardPending;
+        private Tween _coinTween;
         private Image[] _starIcons = new Image[3];
         private GameObject _btnMenu;
         private GameObject _btnReplay;
@@ -137,6 +142,23 @@ namespace WordDrop
                 new Vector2(0.10f, 0.30f), new Vector2(0.90f, 0.36f),
                 "", 18, new Color(0.70f, 0.67f, 0.80f, 1f));
 
+            // Coin reward readout (TMP — needed for NumberIncrement count-up).
+            // Sits between best-score and the button row.
+            GameObject coinGO = new GameObject("CoinReward", typeof(RectTransform));
+            coinGO.transform.SetParent(_panel.transform, false);
+            RectTransform cRT = (RectTransform)coinGO.transform;
+            cRT.anchorMin = new Vector2(0.10f, 0.23f);
+            cRT.anchorMax = new Vector2(0.90f, 0.30f);
+            cRT.offsetMin = Vector2.zero;
+            cRT.offsetMax = Vector2.zero;
+            _coinRewardText = coinGO.AddComponent<TextMeshProUGUI>();
+            _coinRewardText.text = "";
+            _coinRewardText.fontSize = 26;
+            _coinRewardText.color = UILayout.Gold;
+            _coinRewardText.alignment = TextAlignmentOptions.Center;
+            _coinRewardText.fontStyle = FontStyles.Bold;
+            _coinRewardText.enableWordWrapping = false;
+
             // Buttons row — Menu / Replay / Next
             float btnY0 = 0.08f;
             float btnY1 = 0.22f;
@@ -197,6 +219,28 @@ namespace WordDrop
             _tutorialCompleteVariant = _levelData != null
                 && TutorialProgression.OnLevelCompleted(_levelData.levelId);
 
+            // Phase 7: standard-variant coin reward = 1 per star, + 10 one-shot bonus
+            // the first time a level earns 3 stars. Tutorial-complete variant already
+            // grants +100 via TutorialProgression.OnLevelCompleted — skip the standard
+            // award to avoid double-paying on L3's first clear.
+            _coinRewardPending = 0;
+            if (!_tutorialCompleteVariant && _levelData != null && stars > 0)
+            {
+                bool firstThreeStar = stars >= 3
+                    && LevelProgressManager.ClaimFirstTimeThreeStarBonus(_levelData.levelId);
+                int reward = stars + (firstThreeStar ? 10 : 0);
+                if (reward > 0)
+                {
+                    CoinWallet.Add(reward);
+                    _coinRewardPending = reward;
+                    AnalyticsManager.Log(LevelAnalyticsEvents.COINS_EARNED,
+                        "level_id", _levelData.levelId,
+                        "stars", stars,
+                        "amount", reward,
+                        "first_three_star", firstThreeStar ? 1 : 0);
+                }
+            }
+
             ApplyVariant(score, prevBest);
 
             for (int i = 0; i < _starIcons.Length; i++)
@@ -218,6 +262,11 @@ namespace WordDrop
                 _scoreValueText.text = $"+{TutorialProgression.TUTORIAL_COMPLETE_COIN_REWARD} coins";
                 if (_bestValueText != null)
                     _bestValueText.text = "You've learned the basics. Keep playing to earn stars!";
+                if (_coinRewardText != null)
+                {
+                    _coinRewardText.gameObject.SetActive(false);
+                    _coinRewardText.text = "";
+                }
                 if (_btnReplay != null) _btnReplay.SetActive(false);
                 if (_btnNext != null)
                 {
@@ -238,6 +287,16 @@ namespace WordDrop
                 ? LevelProgressManager.GetBestScore(_levelData.levelId) : score;
             if (_bestValueText != null)
                 _bestValueText.text = score > prevBest ? $"New best!  ({newBest})" : $"Best: {newBest}";
+
+            // Coin reward — shown only when something was awarded. AnimateStars drives
+            // the count-up so the stars land first, then the coin tally rolls.
+            if (_coinRewardText != null)
+            {
+                bool hasReward = _coinRewardPending > 0;
+                _coinRewardText.gameObject.SetActive(hasReward);
+                _coinRewardText.text = hasReward ? "+0 coins" : "";
+            }
+
             if (_btnReplay != null) _btnReplay.SetActive(true);
             if (_btnMenu != null) _btnMenu.SetActive(true);
             if (_btnNext != null)
@@ -271,6 +330,47 @@ namespace WordDrop
                 GameAudio.Instance?.PlayScoreImpact(8 + i * 4);
                 yield return new WaitForSeconds(UIAnimations.DurStagger);
             }
+
+            // Coin count-up lands after the last star so it reads as a reward for them.
+            if (_coinRewardPending > 0 && _coinRewardText != null && !_tutorialCompleteVariant)
+            {
+                int reward = _coinRewardPending;
+                RunCoinCountUp(reward, 0.6f);
+                GameAudio.Instance?.PlayScoreImpact(20);
+            }
+        }
+
+        /// <summary>
+        /// Formatted coin count-up — preserves the "+N coins" framing on every frame.
+        /// NumberIncrement from UIAnimations overwrites target.text with the raw int,
+        /// which would drop the prefix/suffix mid-tween.
+        /// </summary>
+        private void RunCoinCountUp(int reward, float duration)
+        {
+            if (_coinRewardText == null) return;
+            // Always kill any prior tween — fast REPLAY/NEXT transitions can stack
+            // a new count-up on top of an in-flight one targeting the same label.
+            _coinTween?.Kill();
+            _coinTween = null;
+
+            if (UIAnimations.ReducedMotion)
+            {
+                _coinRewardText.text = $"+{reward} coins";
+                return;
+            }
+            int current = 0;
+            _coinRewardText.text = "+0 coins";
+            _coinTween = DOTween.To(() => current, v =>
+            {
+                current = v;
+                if (_coinRewardText != null) _coinRewardText.text = $"+{current} coins";
+            }, reward, duration)
+                .SetEase(Ease.OutCubic)
+                .OnComplete(() =>
+                {
+                    if (_coinRewardText != null) _coinRewardText.text = $"+{reward} coins";
+                    _coinTween = null;
+                });
         }
 
         // ── Button actions ──────────────────────────────────────────────────────
@@ -351,6 +451,11 @@ namespace WordDrop
         public void SetVisible(bool visible)
         {
             if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            if (!visible)
+            {
+                _coinTween?.Kill();
+                _coinTween = null;
+            }
         }
 
         private static Text CreateLabel(Transform parent, string name,
