@@ -520,12 +520,12 @@ namespace WordDrop
             if (played)
             {
                 int todayScore = DailyDropManager.GetTodayBest();
-                string streakStr = streak > 0 ? $"  🔥 {streak}" : "";
+                string streakStr = streak > 0 ? $"  ★ {streak}" : "";
                 _dailyInfoText.text = $"Score: {todayScore}{streakStr}";
             }
             else if (streak > 0)
             {
-                _dailyInfoText.text = $"🔥 Streak: {streak} day{(streak == 1 ? "" : "s")}";
+                _dailyInfoText.text = $"★ Streak: {streak} day{(streak == 1 ? "" : "s")}";
             }
             else
             {
@@ -634,7 +634,7 @@ namespace WordDrop
             if (_currenciesText == null) return;
             int hearts = HeartsManager.Current;
             int coins = CoinWallet.Balance;
-            _currenciesText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   🪙 {coins}";
+            _currenciesText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   ● {coins}";
         }
 
         private void RefreshBestScore()

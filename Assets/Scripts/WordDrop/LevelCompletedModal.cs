@@ -319,7 +319,7 @@ namespace WordDrop
                 if (_bestValueText != null)
                 {
                     string streakLine = _dailyStreak > 0
-                        ? $"🔥 {_dailyStreak}-day streak"
+                        ? $"★ {_dailyStreak}-day streak"
                         : "";
                     string milestoneLine = _dailyMilestoneBonus > 0
                         ? $"   ·   +{_dailyMilestoneBonus} milestone bonus!"

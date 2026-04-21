@@ -180,7 +180,7 @@ namespace WordDrop
             // Bundle contents list
             CreateLabel(card.transform, "Line1",
                 new Vector2(0.08f, 0.58f), new Vector2(0.92f, 0.70f),
-                $"🪙  {BUNDLE_COINS} coins", 28, BODY_TEXT);
+                $"●  {BUNDLE_COINS} coins", 28, BODY_TEXT);
             CreateLabel(card.transform, "Line2",
                 new Vector2(0.08f, 0.46f), new Vector2(0.92f, 0.58f),
                 $"♥  Full {BundleHearts} hearts", 28, BODY_TEXT);

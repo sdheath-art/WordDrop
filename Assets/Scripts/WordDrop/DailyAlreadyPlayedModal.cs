@@ -91,7 +91,7 @@ namespace WordDrop
             if (_scoreText != null) _scoreText.text = $"Today's score: {score}";
             if (_streakText != null)
                 _streakText.text = streak > 0
-                    ? $"🔥 {streak} day{(streak == 1 ? "" : "s")} streak"
+                    ? $"★ {streak} day{(streak == 1 ? "" : "s")} streak"
                     : "";
             if (_countdownText != null)
             {

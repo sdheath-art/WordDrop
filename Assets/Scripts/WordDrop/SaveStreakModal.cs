@@ -87,7 +87,7 @@ namespace WordDrop
         {
             int streak = PlayerPrefs.GetInt("daily_streak", 0);
             if (_streakText != null)
-                _streakText.text = $"Your 🔥 {streak}-day streak is about to reset.";
+                _streakText.text = $"Your ★ {streak}-day streak is about to reset.";
             if (_watchLabel != null)
                 _watchLabel.text = _adBusy ? "WATCHING…" : "WATCH AD";
         }

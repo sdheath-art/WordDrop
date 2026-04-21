@@ -359,7 +359,7 @@ namespace WordDrop
             if (_headerStatusText == null) return;
             int hearts = HeartsManager.Current;
             int coins = CoinWallet.Balance;
-            _headerStatusText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   🪙 {coins}";
+            _headerStatusText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   ● {coins}";
         }
 
         private static Text CreateLabel(Transform parent, string name,
