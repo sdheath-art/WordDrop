@@ -106,6 +106,12 @@ namespace WordDrop
         {
             if (target == null) { onComplete?.Invoke(); return null; }
 
+            // Kill any prior scale tween on this transform before starting a new
+            // one. Without this, rapid show/hide/show sequences stack tweens —
+            // both try to drive localScale every frame, producing the jitter
+            // Spencer called "losing frames". DOTween convention: kill before new.
+            target.DOKill(false);
+
             if (ReducedMotion)
             {
                 target.localScale = Vector3.one;
@@ -137,6 +143,11 @@ namespace WordDrop
         {
             if (target == null) { onComplete?.Invoke(); return null; }
 
+            // Kill any prior tween on this transform (commonly a PopIn still
+            // settling when the user taps fast) so the dismiss owns the scale
+            // channel cleanly instead of fighting the prior tween each frame.
+            target.DOKill(false);
+
             Sequence seq = DOTween.Sequence();
             var cg = target.GetComponent<CanvasGroup>();
 
@@ -147,7 +158,10 @@ namespace WordDrop
             }
             else
             {
-                seq.Join(target.DOScale(0f, DurFast).SetEase(Ease.InCubic));
+                // InBack gives a tiny anticipation bump before the collapse (a
+                // Candy-Crush-style dismiss pulse) which reads as punch rather
+                // than snap, and avoids the end-of-curve sprint InCubic causes.
+                seq.Join(target.DOScale(0f, DurFast).SetEase(Ease.InBack, 1.2f));
                 if (cg != null) seq.Join(cg.DOFade(0f, DurFast));
             }
             if (onComplete != null) seq.OnComplete(() => onComplete());
