@@ -64,8 +64,11 @@ namespace WordDrop
         private void Update()
         {
             // Safety net: if match is over OR all turns used, force GameOver
-            // Skip the turn-count check during sudden death — MatchController owns that decision
-            if (CurrentState == GameState.Playing && MatchController.Instance != null)
+            // Skip the turn-count check during sudden death — MatchController owns that decision.
+            // Skip entirely for Level mode — LevelController + modals own the end flow and
+            // stacking Classic GameOverUI on top is a visual regression.
+            if (CurrentState == GameState.Playing && MatchController.Instance != null
+                && !IsLevelMode)
             {
                 bool matchOver = MatchController.Instance.IsGameOver;
                 bool isSuddenDeath = MatchController.Instance.IsSuddenDeath;
@@ -125,6 +128,11 @@ namespace WordDrop
 //             Debug.Log($"[GameManager] OnMatchEnded received: winner={evt.WinnerPlayerIndex} " +
                       // $"P={evt.PlayerScore} AI={evt.AIScore} turns={evt.TotalTurnsEach} each");
 
+            // Level mode owns its own end-of-match flow via LevelController events
+            // + the LevelCompletedModal / OutOfMovesModal. Skip the Classic GameOverUI
+            // transition, otherwise both would show stacked.
+            if (IsLevelMode) return;
+
             TransitionTo(GameState.GameOver);
         }
 
@@ -181,8 +189,9 @@ namespace WordDrop
 
         private void HideAllScreens()
         {
-            if (MenuUI.Instance     != null) MenuUI.Instance.SetVisible(false);
-            if (GameOverUI.Instance != null) GameOverUI.Instance.SetVisible(false);
+            if (MenuUI.Instance         != null) MenuUI.Instance.SetVisible(false);
+            if (GameOverUI.Instance     != null) GameOverUI.Instance.SetVisible(false);
+            if (LevelSelectScreen.Instance != null) LevelSelectScreen.Instance.SetVisible(false);
         }
 
         private void OnStateEntered(GameState state, bool deferHand = false)

@@ -51,7 +51,10 @@ namespace WordDrop
 
         private void Update()
         {
-            // Hint button disabled — gets in the way of gameplay
+            // Hint button disabled — gets in the way of gameplay.
+            // Phase 5 note: if re-enabled, add the mechanic gate here:
+            //   if (!LevelController.IsMechanicAllowed("jam_hint")) { HideButton(); return; }
+            //   (Survival check below is the old scope; Level mode needs the gate.)
             HideButton(); return;
             // if (!SurvivalManager.IsSurvivalMode) { HideButton(); return; }
             if (GameManager.Instance == null || GameManager.Instance.CurrentState != GameState.Playing) return;

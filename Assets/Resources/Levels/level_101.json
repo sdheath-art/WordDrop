@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "levelId": 101,
+    "displayName": "Test · Core Only",
+    "target": 200,
+    "moveBudget": 20,
+    "starThresholds": [200, 350, 550],
+    "allowedMechanics": [],
+    "hazards": [],
+    "startingBoard": [],
+    "bag": null,
+    "seed": 0,
+    "tutorialPrompts": []
+}

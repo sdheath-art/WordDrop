@@ -26,6 +26,10 @@ namespace WordDrop
 
         public static char GetHelperLetter()
         {
+            // Phase 5 mechanic gate. Outside a Level always runs; inside a Level
+            // only if "drought_assist" is allowlisted.
+            if (!LevelController.IsMechanicAllowed("drought_assist")) return '\0';
+
             if (RulesEngine.Instance == null) return '\0';
 
             List<char> helpers = CollectHelperLetters();
@@ -37,6 +41,7 @@ namespace WordDrop
 
         public static bool HasOpportunities()
         {
+            if (!LevelController.IsMechanicAllowed("drought_assist")) return false;
             if (RulesEngine.Instance == null) return false;
             return CollectHelperLetters().Count > 0;
         }

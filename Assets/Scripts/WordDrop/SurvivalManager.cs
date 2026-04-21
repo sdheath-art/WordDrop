@@ -959,6 +959,11 @@ namespace WordDrop
             });
             _totalAutoDrops++;
 
+            // Phase 5 defense-in-depth: this auto-drop path is Survival-only, but if
+            // anything ever triggers it in Level mode, honor allowedMechanics.
+            if (isGold && !LevelController.IsMechanicAllowed("gold")) isGold = false;
+            if (isWildRefill && !LevelController.IsMechanicAllowed("wild")) isWildRefill = false;
+
             if (isGold)
                 rules.SetBonusCell(col, targetRow, true);
 

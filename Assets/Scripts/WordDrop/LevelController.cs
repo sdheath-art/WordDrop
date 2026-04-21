@@ -80,6 +80,13 @@ namespace WordDrop
             _completed = false;
             _failed = false;
 
+            // Dismiss any leftover modal from a prior run — StartLevel is the single
+            // point of entry for every level start (Level Select, REPLAY, NEXT, RETRY).
+            if (LevelCompletedModal.Instance != null)
+                LevelCompletedModal.Instance.SetVisible(false);
+            if (OutOfMovesModal.Instance != null)
+                OutOfMovesModal.Instance.SetVisible(false);
+
             Debug.Log($"[LevelController] StartLevel id={data.levelId} " +
                       $"name='{data.displayName}' target={data.target} moves={data.moveBudget}");
 
@@ -149,6 +156,18 @@ namespace WordDrop
             IsInputLocked = false;
         }
 
+        /// <summary>
+        /// External trigger for a forced fail — used when gameplay paths outside the
+        /// normal move-budget flow cause the level to end (e.g., MatchController's
+        /// board-full safety net when rising rows overflow the grid in Level mode).
+        /// Idempotent: if the level already ended, does nothing.
+        /// </summary>
+        public void ForceFail()
+        {
+            if (!IsActive || _completed || _failed) return;
+            FireFail();
+        }
+
         // ── Internal ────────────────────────────────────────────────────────────
 
         private void FireComplete()
@@ -207,6 +226,45 @@ namespace WordDrop
         {
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(false);
+        }
+
+        // ── Per-level mechanic/hazard gating (Phase 5) ──────────────────────────
+
+        /// <summary>
+        /// Gates per-level mechanic availability. Callers use
+        ///   if (!LevelController.IsMechanicAllowed("gold")) return;
+        /// at the choke point for each mechanic (Arm/Trigger/Inject).
+        ///
+        /// Fail-safe default: when NOT in a Level (Survival/Classic/Daily/Blitz),
+        /// returns true so existing mode behavior is untouched. When IN a Level,
+        /// returns true only if the mechanic name appears in allowedMechanics.
+        ///
+        /// Canonical mechanic strings live in LevelValidator.AllowedMechanics.
+        /// </summary>
+        public static bool IsMechanicAllowed(string mechanic)
+        {
+            var inst = Instance;
+            if (inst == null || !inst.IsActive) return true;
+            var list = inst.CurrentLevel?.allowedMechanics;
+            if (list == null) return false;
+            for (int i = 0; i < list.Length; i++)
+                if (list[i] == mechanic) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Gates per-level hazard availability (e.g., "rising_rows"). Same
+        /// default-true-outside-Level behavior as IsMechanicAllowed.
+        /// </summary>
+        public static bool IsHazardActive(string hazard)
+        {
+            var inst = Instance;
+            if (inst == null || !inst.IsActive) return true;
+            var list = inst.CurrentLevel?.hazards;
+            if (list == null) return false;
+            for (int i = 0; i < list.Length; i++)
+                if (list[i] == hazard) return true;
+            return false;
         }
 
         /// <summary>

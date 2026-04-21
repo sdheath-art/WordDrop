@@ -259,13 +259,17 @@ namespace WordDrop
             // Runs even under NoAssistMode — it's a starting position, not dynamic
             // assistance. Analogous to Balatro's initial deck: fixed setup, not help.
             //
-            // Phase 4: Level mode opts out. Legacy seeds include patterns like "Triangle"
-            // that place tiles at row 1 with no support at row 0, producing a
-            // floating-tile visual that doesn't match the Level-mode expectation of
-            // a clean empty board. Phase 5 will read LevelData.startingBoard here
-            // and apply per-level placements instead.
-            if (!GameManager.IsLevelMode)
+            // Level mode: ignore OpeningSeed; apply LevelData.startingBoard if present.
+            // Phase 5 wires the startingBoard read-through; Phase 10 authors real
+            // per-level boards. Empty/null → empty board.
+            if (GameManager.IsLevelMode)
+            {
+                ApplyLevelStartingBoard();
+            }
+            else
+            {
                 OpeningSeed.ApplyRandomSeed(RulesEngine.Instance);
+            }
 
             // First-word guarantee: ensure the player can make a word on their first drop.
             // If no valid play exists with current hand + board, re-roll hand up to 5 times.
@@ -382,10 +386,17 @@ namespace WordDrop
                     HUDManager.Instance.SetRivalName(rival.Name, rival.AccentColor);
             }
 
-            // Rising rows: ON in Classic (turn-based), OFF in Blitz/Daily/Survival/Level.
-            // Survival drives its own move-based rising rows via SurvivalManager.
-            // Level mode gates rising rows per-level via hazards[] in Phase 5 — off by default.
-            if (!BlitzManager.IsBlitzMode && !isDaily && !SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
+            // Rising rows:
+            //   Level mode → per-level hazards[] ("rising_rows" enables)
+            //   Classic    → ON by default (turn-based, 4 turns/cycle)
+            //   Survival   → SurvivalManager runs its own move-based rising path
+            //   Blitz/Daily → OFF
+            if (GameManager.IsLevelMode)
+            {
+                RisingRowManager.Enabled = LevelController.IsHazardActive("rising_rows");
+                RisingRowManager.TurnInterval = 4;
+            }
+            else if (!BlitzManager.IsBlitzMode && !isDaily && !SurvivalManager.IsSurvivalMode)
             {
                 RisingRowManager.Enabled = true;
                 RisingRowManager.TurnInterval = 4;
@@ -879,6 +890,59 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Applies LevelData.startingBoard placements into RulesEngine at level start.
+        /// Called from StartMatch in Level mode (replaces OpeningSeed).
+        ///
+        /// Variant handling:
+        ///   "gold"   → SetBonusCell(col, row, true)
+        ///   "wild"   → IsWild=true on cell data
+        ///   "stone"  → IsStone=true on cell data
+        ///   "normal" / null / "" → plain letter tile
+        ///
+        /// After placing all tiles, calls GridManager.SyncToRulesState so visuals
+        /// match the data model. Validator has already checked positions in-bounds
+        /// and letters A-Z, so this method trusts the input.
+        /// </summary>
+        private void ApplyLevelStartingBoard()
+        {
+            var lc = LevelController.Instance;
+            if (lc == null || lc.CurrentLevel == null) return;
+            var rules = RulesEngine.Instance;
+            if (rules == null) return;
+
+            var board = lc.CurrentLevel.startingBoard;
+            if (board == null || board.Length == 0) return;
+
+            for (int i = 0; i < board.Length; i++)
+            {
+                var pt = board[i];
+                if (pt == null || string.IsNullOrEmpty(pt.letter)) continue;
+
+                char letter = char.ToUpperInvariant(pt.letter[0]);
+                string variant = pt.variant ?? "";
+
+                rules.SetCell(pt.x, pt.y, new RulesCellData
+                {
+                    Letter = letter,
+                    Col = pt.x,
+                    Row = pt.y,
+                    PlayerIndex = -1,
+                    IsWild = (variant == "wild"),
+                    IsStone = (variant == "stone"),
+                });
+
+                if (variant == "gold")
+                    rules.SetBonusCell(pt.x, pt.y, true);
+            }
+
+            // Visual sync so the freshly-placed tiles render immediately.
+            if (GridManager.Instance != null)
+                GridManager.Instance.SyncToRulesState(rules);
+
+            Debug.Log($"[MatchController] Applied Level {lc.CurrentLevel.levelId} startingBoard ({board.Length} tiles).");
+        }
+
+        /// <summary>
         /// Checks if any hand letter dropped in any column would create a valid word.
         /// Used for first-word guarantee at match start.
         /// </summary>
@@ -1205,6 +1269,29 @@ namespace WordDrop
             // Survival/Level mode: no turn limit, end-of-match driven externally
             // (SurvivalManager top-out, or LevelController Complete/Fail events).
             // This branch still catches the "board full with no moves" safety case.
+            // For Level mode, route through LevelController.ForceFail so the
+            // OutOfMovesModal shows instead of Classic GameOverUI.
+            if (GameManager.IsLevelMode && LevelController.Instance != null
+                && LevelController.Instance.IsActive)
+            {
+                if (RulesEngine.Instance != null)
+                {
+                    bool anyOpen = false;
+                    for (int c = 0; c < GridManager.COLS; c++)
+                    {
+                        if (RulesEngine.Instance.IsColumnAvailable(c)) { anyOpen = true; break; }
+                    }
+                    if (!anyOpen)
+                    {
+                        LevelController.Instance.ForceFail();
+                        // Don't call EndMatch — LevelController + OutOfMovesModal own the
+                        // end flow. Mark gameover so no more drops process.
+                        _isGameOver = true;
+                        return true;
+                    }
+                }
+                return false;
+            }
             if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
             {
                 // Board full check only

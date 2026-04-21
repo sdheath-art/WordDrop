@@ -1,0 +1,18 @@
+{
+    "schemaVersion": 1,
+    "levelId": 102,
+    "displayName": "Test · Gold Only",
+    "target": 300,
+    "moveBudget": 20,
+    "starThresholds": [300, 500, 800],
+    "allowedMechanics": ["gold"],
+    "hazards": [],
+    "startingBoard": [
+        {"x": 1, "y": 0, "letter": "C", "variant": "gold"},
+        {"x": 2, "y": 0, "letter": "A", "variant": "normal"},
+        {"x": 3, "y": 0, "letter": "T", "variant": "normal"}
+    ],
+    "bag": null,
+    "seed": 0,
+    "tutorialPrompts": []
+}

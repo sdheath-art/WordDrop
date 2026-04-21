@@ -63,6 +63,10 @@ namespace WordDrop
         /// <summary>Called by ChainMeter when capacity is reached. Next drop enters bonus.</summary>
         public void Arm()
         {
+            // Phase 5 mechanic gate. Outside a Level (Survival/Classic) always allows.
+            // Inside a Level, only fires if "bonus_mode" is in allowedMechanics.
+            if (!LevelController.IsMechanicAllowed("bonus_mode")) return;
+
             if (Armed || IsActive) return;
             Armed = true;
             Debug.Log("[BonusMode] ARMED — next drop enters bonus.");

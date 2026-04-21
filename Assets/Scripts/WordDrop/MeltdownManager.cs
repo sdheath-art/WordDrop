@@ -186,6 +186,11 @@ namespace WordDrop
         /// </summary>
         public Coroutine TryMeltdownIntro(int chainDepth, int triggerCount, int detonationBonus, bool isLastTurn)
         {
+            // Phase 5 mechanic gate. Callers (HandManager x2, GameVisualBridge x1) all
+            // funnel through here, so one gate covers the feature. TryTriggerMeltdown
+            // (legacy) gated separately below since it has its own flow.
+            if (!LevelController.IsMechanicAllowed("meltdown")) return null;
+
             if (_isPlaying) return null;
 
             string title = GetMeltdownTitle(chainDepth, triggerCount, detonationBonus, isLastTurn);
@@ -210,9 +215,12 @@ namespace WordDrop
         /// <summary>
         /// Legacy single-call API — plays full sequence (intro + hold + outro).
         /// Use TryMeltdownIntro/TryMeltdownOutro for the split flow instead.
+        /// Gate applied here too for completeness.
         /// </summary>
         public Coroutine TryTriggerMeltdown(int chainDepth, int triggerCount, int detonationBonus, bool isLastTurn)
         {
+            if (!LevelController.IsMechanicAllowed("meltdown")) return null;
+
             if (_isPlaying) return null;
 
             string title = GetMeltdownTitle(chainDepth, triggerCount, detonationBonus, isLastTurn);

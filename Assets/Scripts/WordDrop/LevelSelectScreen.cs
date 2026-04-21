@@ -39,21 +39,25 @@ namespace WordDrop
         }
 
         /// <summary>
-        /// Finds all level_{N}.json in Resources/Levels by probing incrementally
-        /// (1..N). Stops at the first gap. Cheap: only runs once at Awake.
+        /// Finds every level_{N}.json under Resources/Levels via LoadAll so that
+        /// gaps (e.g., dev test levels at 101-103 with nothing between 3 and 100)
+        /// don't terminate the scan. Runs once at Awake.
         /// </summary>
         private void ScanAvailableLevels()
         {
             _availableLevels.Clear();
-            int id = 1;
-            while (id < 1000)
+            var assets = Resources.LoadAll<TextAsset>("Levels");
+            const string prefix = "level_";
+            foreach (var asset in assets)
             {
-                TextAsset asset = Resources.Load<TextAsset>($"Levels/level_{id}");
-                if (asset == null) break;
-                _availableLevels.Add(id);
-                id++;
+                if (asset == null || string.IsNullOrEmpty(asset.name)) continue;
+                if (!asset.name.StartsWith(prefix)) continue;
+                if (int.TryParse(asset.name.Substring(prefix.Length), out int id) && id > 0)
+                    _availableLevels.Add(id);
             }
-            Debug.Log($"[LevelSelectScreen] Scanned {_availableLevels.Count} level JSONs.");
+            _availableLevels.Sort();
+            Debug.Log($"[LevelSelectScreen] Scanned {_availableLevels.Count} level JSONs: "
+                + string.Join(",", _availableLevels));
         }
 
         // ── UI construction ─────────────────────────────────────────────────────
@@ -166,7 +170,9 @@ namespace WordDrop
                 Destroy(child.gameObject);
 
             int highestUnlocked = LevelProgressManager.GetHighestUnlocked();
-            int displayMax = Mathf.Max(20, _availableLevels.Count + 1);
+            int highestExisting = _availableLevels.Count > 0
+                ? _availableLevels[_availableLevels.Count - 1] : 0;
+            int displayMax = Mathf.Max(20, highestExisting);
 
             for (int id = 1; id <= displayMax; id++)
             {

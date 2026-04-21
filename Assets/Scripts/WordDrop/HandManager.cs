@@ -2429,6 +2429,10 @@ namespace WordDrop
         /// </summary>
         private void TryInjectWildReward(Vector3 popupWorldPos)
         {
+            // Phase 5 mechanic gate. Single choke point for wild Phase C injection.
+            // Callers at 3840, 3884 flow through here, so one gate covers all paths.
+            if (!LevelController.IsMechanicAllowed("wild")) return;
+
             if (_wildInjectedThisResolution) return;
             if (MatchController.Instance == null) return;
             PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
@@ -4058,11 +4062,39 @@ namespace WordDrop
                 yield break;
             }
 
-            // Survival/Level mode: input was already re-enabled after bookkeeping — just exit.
-            // Skips the AI-turn check (solo mode, no AI) and avoids the FALLBACK warnings
-            // that fire because _playerTurns[AI] stays at 0 all match.
-            if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
+            // Survival/Level mode: input was already re-enabled after bookkeeping.
+            // Skip the AI-turn check (solo mode) and the FALLBACK warnings (AI turns stuck at 0).
+            //
+            // Level mode still needs to trigger the turn-based RisingRowManager when the
+            // level has "rising_rows" as a hazard — Survival skips this path because it
+            // drives its own move-based rising rows via SurvivalManager internally.
+            if (SurvivalManager.IsSurvivalMode)
             {
+                yield break;
+            }
+            if (GameManager.IsLevelMode)
+            {
+                if (RisingRowManager.Instance != null && RisingRowManager.Enabled
+                    && MatchController.Instance != null && MatchController.Instance.IsMatchActive)
+                {
+                    int globalTurn = RulesEngine.Instance != null ? RulesEngine.Instance.GlobalTurn : 0;
+                    if (RisingRowManager.Instance.ShouldRiseThisTurn(globalTurn))
+                    {
+                        bool overflowed = false;
+                        yield return StartCoroutine(RisingRowManager.Instance.RiseRow((o) =>
+                        {
+                            overflowed = o;
+                        }));
+                        // Rising row overflow in Level mode = instant fail.
+                        // Route through LevelController so the OutOfMovesModal shows
+                        // (instead of the Classic GameOverUI path used by Classic mode).
+                        if (overflowed && LevelController.Instance != null
+                            && LevelController.Instance.IsActive)
+                        {
+                            LevelController.Instance.ForceFail();
+                        }
+                    }
+                }
                 yield break;
             }
 
