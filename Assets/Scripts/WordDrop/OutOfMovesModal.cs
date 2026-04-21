@@ -22,6 +22,7 @@ namespace WordDrop
         public static OutOfMovesModal Instance { get; private set; }
 
         private Canvas _canvas;
+        private GameObject _card;
         private Text _scoreValueText;
         private Text _targetValueText;
         private Text _shortfallText;
@@ -98,15 +99,16 @@ namespace WordDrop
             oImg.color = PANEL_BG;
             oImg.raycastTarget = true;
 
-            GameObject card = new GameObject("Card");
-            card.transform.SetParent(canvasGO.transform, false);
-            RectTransform cRT = card.AddComponent<RectTransform>();
+            _card = new GameObject("Card");
+            _card.transform.SetParent(canvasGO.transform, false);
+            RectTransform cRT = _card.AddComponent<RectTransform>();
             cRT.anchorMin = new Vector2(0.08f, 0.24f);
             cRT.anchorMax = new Vector2(0.92f, 0.76f);
             cRT.offsetMin = Vector2.zero;
             cRT.offsetMax = Vector2.zero;
-            Image cImg = card.AddComponent<Image>();
+            Image cImg = _card.AddComponent<Image>();
             cImg.color = CARD_BG;
+            GameObject card = _card;
 
             var title = CreateLabel(card.transform, "Title",
                 new Vector2(0.05f, 0.80f), new Vector2(0.95f, 0.95f),
@@ -239,10 +241,14 @@ namespace WordDrop
                 return;
             }
 
+            // Daily retry stays in daily mode so the next completion still fires
+            // DailyDropManager.MarkPlayedToday. Only flip the flag off for non-daily
+            // retries.
+            bool wasDaily = DailyDropManager.IsDailyMode;
             SetVisible(false);
             SurvivalManager.IsSurvivalMode = false;
             BlitzManager.IsBlitzMode = false;
-            DailyDropManager.IsDailyMode = false;
+            DailyDropManager.IsDailyMode = wasDaily;
             GameManager.CurrentMode = GameMode.Level;
 
             LevelController.Instance.StartLevel(_levelData);
@@ -328,10 +334,16 @@ namespace WordDrop
             SetVisible(false);
             if (LevelController.Instance != null)
                 LevelController.Instance.AbortLevel();
+
+            // Daily attempts return to the main menu, not Level Select — daily is
+            // a main-menu feature and the player can't pick another level from
+            // inside a daily attempt. Standard level attempts return to Level Select.
+            bool daily = DailyDropManager.IsDailyMode;
+            DailyDropManager.IsDailyMode = false;
             GameManager.CurrentMode = GameMode.Survival;
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Menu);
-            if (LevelSelectScreen.Instance != null)
+            if (!daily && LevelSelectScreen.Instance != null)
                 LevelSelectScreen.Instance.SetVisible(true);
         }
 
@@ -340,7 +352,11 @@ namespace WordDrop
         public void SetVisible(bool visible)
         {
             if (_canvas != null) _canvas.gameObject.SetActive(visible);
-            if (!visible)
+            if (visible)
+            {
+                if (_card != null) UIAnimations.PopIn(_card.transform);
+            }
+            else
             {
                 // Hiding invalidates any in-flight ad-stub. The modal's _pendingRunToken
                 // snapshot is the belt; stopping the coroutine is the suspenders. Leaving

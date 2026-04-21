@@ -378,15 +378,79 @@ namespace WordDrop
 
         private void OnDailyClicked()
         {
+            // Already played today → show the "Come back tomorrow" modal instead
+            // of the silent no-op the pre-Phase-8 flow used.
             if (DailyDropManager.HasPlayedToday())
             {
-//                 Debug.Log("[MenuUI] Daily already completed today.");
+                AnalyticsManager.ButtonTap("daily_already_played");
+                if (DailyAlreadyPlayedModal.Instance != null)
+                    DailyAlreadyPlayedModal.Instance.SetVisible(true);
                 return;
             }
+
+            // Save-streak opportunity: the player's on a streak but missed
+            // yesterday. Offer the rewarded ad before letting them start a new
+            // daily (which would reset the streak to 1).
+            if (DailyDropManager.CanSaveStreak() && SaveStreakModal.Instance != null)
+            {
+                AnalyticsManager.ButtonTap("daily_save_streak_prompt");
+                SaveStreakModal.Instance.SetVisible(true);
+                return;
+            }
+
+            BeginDailyLevel();
+        }
+
+        /// <summary>
+        /// Loads today's daily level and routes through LevelController (Phase 8).
+        /// Exposed as a separate method so SaveStreakModal can continue into the
+        /// level after restoring the streak, and DailyAlreadyPlayedModal can
+        /// re-trigger for debug replay via the menu's RESET DAILY button.
+        /// </summary>
+        public void BeginDailyLevel()
+        {
+            int levelId = DailyDropManager.GetDailyLevelId();
+            LevelData data = LevelLoader.Load(levelId);
+            if (data == null)
+            {
+                Debug.LogError($"[MenuUI] Daily level {levelId} failed to load — aborting.");
+                return;
+            }
+            var (ok, reason) = LevelValidator.Validate(data);
+            if (!ok)
+            {
+                Debug.LogError($"[MenuUI] Daily level {levelId} invalid: {reason}");
+                return;
+            }
+
+            // Life gate still applies: the daily attempt spends a heart like any
+            // other level attempt. HeartWaitModal handles the 0-heart case and
+            // returns to MainMenu (not LevelSelect) when dismissed from here —
+            // daily is a main-menu feature, not a level-map feature.
+            if (!HeartsManager.Consume())
+            {
+                SetVisible(false);
+                if (HeartWaitModal.Instance != null)
+                    HeartWaitModal.Instance.SetVisible(true, HeartWaitModal.ReturnContext.DailyFlow);
+                return;
+            }
+
+            SurvivalManager.IsSurvivalMode = false;
             BlitzManager.IsBlitzMode = false;
             DailyDropManager.IsDailyMode = true;
-            AnalyticsManager.ButtonTap("daily_drop");
+            GameManager.CurrentMode = GameMode.Level;
+
+            LevelController.Instance.StartLevel(data);
+            LevelProgressManager.IncrementAttempts(levelId);
+
+            AnalyticsManager.ButtonTap("daily_start");
             AnalyticsManager.ScreenView("playing_daily");
+            AnalyticsManager.Log("daily_start",
+                "level_id", levelId,
+                "puzzle_number", DailyDropManager.GetPuzzleNumber(),
+                "streak_before", DailyDropManager.GetStreak());
+
+            SetVisible(false);
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
@@ -396,7 +460,7 @@ namespace WordDrop
         {
             var cfg = UIConfig.Instance;
             bool played = DailyDropManager.HasPlayedToday();
-            string label = played ? "COMPLETED" : "DAILY DROP";
+            string label = played ? "COMPLETED" : "TODAY'S PUZZLE";
             Color bgColor = played
                 ? (cfg != null ? cfg.menuDailyCompletedColor : new Color(0.35f, 0.45f, 0.55f, 0.7f))
                 : (cfg != null ? cfg.menuDailyBgColor : new Color(0.20f, 0.45f, 0.80f, 1f));
@@ -448,30 +512,34 @@ namespace WordDrop
 
             bool played = DailyDropManager.HasPlayedToday();
             int streak = DailyDropManager.GetStreak();
+            // Phase 8: streak prefix always visible when there's a live streak.
+            // Flame glyph matches common daily-app conventions (Duolingo, NYT).
 
             if (played)
             {
                 int todayScore = DailyDropManager.GetTodayBest();
-                string streakStr = streak > 1 ? $" | Streak: {streak}" : "";
+                string streakStr = streak > 0 ? $"  🔥 {streak}" : "";
                 _dailyInfoText.text = $"Score: {todayScore}{streakStr}";
             }
             else if (streak > 0)
             {
-                _dailyInfoText.text = $"Streak: {streak} days";
+                _dailyInfoText.text = $"🔥 Streak: {streak} day{(streak == 1 ? "" : "s")}";
             }
             else
             {
-                _dailyInfoText.text = "";
+                _dailyInfoText.text = "Play today's puzzle";
             }
 
             // Update button appearance
             if (_dailyButton != null)
             {
                 Button btn = _dailyButton.GetComponent<Button>();
-                if (btn != null) btn.interactable = !played;
+                // Always interactable — taps on a completed day open the
+                // "Come back tomorrow" modal instead of silently dropping.
+                if (btn != null) btn.interactable = true;
 
                 Text label = _dailyButton.GetComponentInChildren<Text>();
-                if (label != null) label.text = played ? "COMPLETED" : "DAILY DROP";
+                if (label != null) label.text = played ? "COMPLETED" : "TODAY'S PUZZLE";
 
                 Image img = _dailyButton.GetComponent<Image>();
                 if (img != null)

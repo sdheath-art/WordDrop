@@ -158,9 +158,13 @@ namespace WordDrop
         /// </summary>
         public void StartMatch()
         {
-            // Enforce mutual exclusion — only one mode can be active
-            int modeCount = (DailyDropManager.IsDailyMode ? 1 : 0)
-                          + (BlitzManager.IsBlitzMode ? 1 : 0)
+            // Enforce mutual exclusion — only one top-level mode active.
+            // Post-Phase-8: IsDailyMode is a FLAVOR on top of Level mode (daily
+            // levels route through LevelController like any other level), so
+            // Daily coexisting with Level is valid and must not be cleared.
+            // The three top-level modes that CAN'T coexist are Blitz, Survival,
+            // and Level. Classic is the "none of the above" fallthrough.
+            int modeCount = (BlitzManager.IsBlitzMode ? 1 : 0)
                           + (SurvivalManager.IsSurvivalMode ? 1 : 0)
                           + (GameManager.IsLevelMode ? 1 : 0);
             if (modeCount > 1)
@@ -171,6 +175,10 @@ namespace WordDrop
                 SurvivalManager.IsSurvivalMode = false;
                 GameManager.CurrentMode = GameMode.Survival;
             }
+            // Daily without Level mode is the legacy Classic-daily path that
+            // predates Phase 8. The menu no longer reaches it, but guard the
+            // legacy combo too so Daily-in-Classic still works if anything
+            // still fires it (e.g. debug menus).
 
 //             Debug.Log("[MatchController] StartMatch()");
 

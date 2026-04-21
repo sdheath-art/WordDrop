@@ -33,6 +33,7 @@ namespace WordDrop
         private const string KEY_PURCHASED = "wd_starter_pack_purchased";
 
         private Canvas _canvas;
+        private GameObject _card;
 
         private static readonly Color PANEL_BG  = new Color(0.06f, 0.05f, 0.12f, 0.90f);
         private static readonly Color CARD_BG   = new Color(0.14f, 0.10f, 0.30f, 1f);
@@ -53,6 +54,8 @@ namespace WordDrop
         public void SetVisible(bool visible)
         {
             if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            if (visible && _card != null)
+                UIAnimations.PopIn(_card.transform);
         }
 
         /// <summary>
@@ -114,15 +117,16 @@ namespace WordDrop
             var spec = UILayout.ModalStarterPack;
             float halfW = spec.WidthFraction * 0.5f;
             float halfH = spec.MaxHeightFraction * 0.5f;
-            GameObject card = new GameObject("Card");
-            card.transform.SetParent(canvasGO.transform, false);
-            RectTransform cRT = card.AddComponent<RectTransform>();
+            _card = new GameObject("Card");
+            _card.transform.SetParent(canvasGO.transform, false);
+            RectTransform cRT = _card.AddComponent<RectTransform>();
             cRT.anchorMin = new Vector2(0.5f - halfW, 0.5f - halfH);
             cRT.anchorMax = new Vector2(0.5f + halfW, 0.5f + halfH);
             cRT.offsetMin = Vector2.zero;
             cRT.offsetMax = Vector2.zero;
-            Image cImg = card.AddComponent<Image>();
+            Image cImg = _card.AddComponent<Image>();
             cImg.color = CARD_BG;
+            GameObject card = _card;
             // TODO(Phase 11): swap for a sprite with the spec's CornerRadius baked in,
             // or use a RoundedCornerImage shader — UGUI Image doesn't do radii natively.
 

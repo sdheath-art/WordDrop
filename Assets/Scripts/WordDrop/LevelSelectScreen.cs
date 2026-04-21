@@ -283,9 +283,10 @@ namespace WordDrop
             if (!HeartsManager.Consume())
             {
                 // Phase 7: surface the life-gate instead of silently dropping the tap.
+                // LevelSelect is the source, so CLOSE returns here (Phase 8 return-context routing).
                 SetVisible(false);
                 if (HeartWaitModal.Instance != null)
-                    HeartWaitModal.Instance.SetVisible(true);
+                    HeartWaitModal.Instance.SetVisible(true, HeartWaitModal.ReturnContext.LevelSelect);
                 else
                     Debug.LogWarning("[LevelSelectScreen] HeartWaitModal missing — level tap dropped.");
                 return;

@@ -198,6 +198,9 @@ namespace WordDrop
         // ── Event handling ──────────────────────────────────────────────────────
 
         private bool _tutorialCompleteVariant;
+        private bool _dailyVariant;
+        private int _dailyStreak;
+        private int _dailyMilestoneBonus;
 
         private void HandleLevelComplete(int score, int stars)
         {
@@ -219,6 +222,27 @@ namespace WordDrop
             _tutorialCompleteVariant = _levelData != null
                 && TutorialProgression.OnLevelCompleted(_levelData.levelId);
 
+            // Phase 8: daily-variant detection. MarkPlayedToday updates the streak
+            // and per-day best score. ClaimMilestoneBonusIfDue returns coin bonus
+            // on the first time the player hits 3/7/14/30-day streaks.
+            _dailyVariant = DailyDropManager.IsDailyMode;
+            _dailyStreak = 0;
+            _dailyMilestoneBonus = 0;
+            if (_dailyVariant)
+            {
+                DailyDropManager.MarkPlayedToday(score);
+                _dailyStreak = DailyDropManager.GetStreak();
+                _dailyMilestoneBonus = DailyDropManager.ClaimMilestoneBonusIfDue(_dailyStreak);
+                if (_dailyMilestoneBonus > 0)
+                {
+                    CoinWallet.Add(_dailyMilestoneBonus);
+                    AnalyticsManager.Log(LevelAnalyticsEvents.COINS_EARNED,
+                        "source", "daily_milestone",
+                        "streak", _dailyStreak,
+                        "amount", _dailyMilestoneBonus);
+                }
+            }
+
             // Phase 7: standard-variant coin reward = 1 per star, + 10 one-shot bonus
             // the first time a level earns 3 stars. Tutorial-complete variant already
             // grants +100 via TutorialProgression.OnLevelCompleted — skip the standard
@@ -232,7 +256,7 @@ namespace WordDrop
                 if (reward > 0)
                 {
                     CoinWallet.Add(reward);
-                    _coinRewardPending = reward;
+                    _coinRewardPending = reward + _dailyMilestoneBonus;
                     AnalyticsManager.Log(LevelAnalyticsEvents.COINS_EARNED,
                         "level_id", _levelData.levelId,
                         "stars", stars,
@@ -240,6 +264,10 @@ namespace WordDrop
                         "first_three_star", firstThreeStar ? 1 : 0);
                 }
             }
+            // Daily with no-star reward still shows the milestone bonus in the
+            // coin count-up, so players see their reward.
+            if (_dailyVariant && _coinRewardPending == 0 && _dailyMilestoneBonus > 0)
+                _coinRewardPending = _dailyMilestoneBonus;
 
             ApplyVariant(score, prevBest);
 
@@ -279,6 +307,40 @@ namespace WordDrop
                 return;
             }
 
+            if (_dailyVariant)
+            {
+                int puzzleNum = DailyDropManager.GetPuzzleNumber();
+                if (_titleText != null) _titleText.text = $"DAILY #{puzzleNum}";
+                if (_scoreLabelText != null) _scoreLabelText.text = "Score";
+                _scoreValueText.text = score.ToString();
+                if (_bestValueText != null)
+                {
+                    string streakLine = _dailyStreak > 0
+                        ? $"🔥 {_dailyStreak}-day streak"
+                        : "";
+                    string milestoneLine = _dailyMilestoneBonus > 0
+                        ? $"   ·   +{_dailyMilestoneBonus} milestone bonus!"
+                        : "";
+                    _bestValueText.text = streakLine + milestoneLine;
+                }
+                if (_coinRewardText != null)
+                {
+                    bool hasReward = _coinRewardPending > 0;
+                    _coinRewardText.gameObject.SetActive(hasReward);
+                    _coinRewardText.text = hasReward ? "+0 coins" : "";
+                }
+                // Daily is one-per-day — REPLAY and NEXT don't apply. Single HOME button.
+                if (_btnReplay != null) _btnReplay.SetActive(false);
+                if (_btnNext != null) _btnNext.SetActive(false);
+                if (_btnMenu != null)
+                {
+                    _btnMenu.SetActive(true);
+                    var label = _btnMenu.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                    if (label != null) label.text = "HOME";
+                }
+                return;
+            }
+
             // Standard variant — restore default UI.
             if (_titleText != null) _titleText.text = "LEVEL COMPLETE!";
             if (_scoreLabelText != null) _scoreLabelText.text = "Score";
@@ -298,7 +360,12 @@ namespace WordDrop
             }
 
             if (_btnReplay != null) _btnReplay.SetActive(true);
-            if (_btnMenu != null) _btnMenu.SetActive(true);
+            if (_btnMenu != null)
+            {
+                _btnMenu.SetActive(true);
+                var menuLabel = _btnMenu.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                if (menuLabel != null) menuLabel.text = "MENU";
+            }
             if (_btnNext != null)
             {
                 _btnNext.SetActive(true);
@@ -421,10 +488,16 @@ namespace WordDrop
             SetVisible(false);
             if (LevelController.Instance != null)
                 LevelController.Instance.AbortLevel();
+
+            // Daily variant: clear the IsDailyMode flag and land on the main menu
+            // (not Level Select — daily is a main-menu feature). Standard variant
+            // returns to Level Select so the player can pick their next level.
+            bool daily = _dailyVariant;
+            DailyDropManager.IsDailyMode = false;
             GameManager.CurrentMode = GameMode.Survival;
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Menu);
-            if (LevelSelectScreen.Instance != null)
+            if (!daily && LevelSelectScreen.Instance != null)
                 LevelSelectScreen.Instance.SetVisible(true);
         }
 
@@ -451,7 +524,14 @@ namespace WordDrop
         public void SetVisible(bool visible)
         {
             if (_canvas != null) _canvas.gameObject.SetActive(visible);
-            if (!visible)
+            if (visible)
+            {
+                // Pop the card in AFTER the canvas is active so the tween is
+                // visible. PopIn resets scale to 0 internally before the bounce
+                // so this is safe to call on a canvas that was previously shown.
+                if (_panel != null) UIAnimations.PopIn(_panel.transform);
+            }
+            else
             {
                 _coinTween?.Kill();
                 _coinTween = null;

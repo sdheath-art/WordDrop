@@ -8,10 +8,12 @@ namespace WordDrop
     /// Same seed for all players on the same calendar day.
     ///
     /// PlayerPrefs keys:
-    ///   "daily_last_played"      — date string (YYYYMMDD) of last play
-    ///   "daily_streak"           — consecutive days played
-    ///   "daily_best_YYYYMMDD"    — best score for that specific day
-    ///   "daily_launch_date"      — first-ever daily play date (for puzzle numbering)
+    ///   "daily_last_played"            — date string (YYYYMMDD) of last play
+    ///   "daily_streak"                 — consecutive days played
+    ///   "daily_best_YYYYMMDD"          — best score for that specific day
+    ///   "daily_launch_date"            — first-ever daily play date (for puzzle numbering)
+    ///   "daily_milestone_claimed_{N}"  — one-shot claim flag per milestone streak value (3/7/14/30)
+    ///   "daily_save_streak_last_ticks" — UTC ticks of last save-streak ad use (1×/week cap)
     /// </summary>
     public static class DailyDropManager
     {
@@ -22,6 +24,23 @@ namespace WordDrop
 
         /// <summary>Turn limit for Daily Drop (shorter than classic).</summary>
         public const int DAILY_TURNS = 6;
+
+        // ── Phase 8 config ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Streak milestones that award bonus coins the first time they're reached.
+        /// Keep array sorted ascending — ClaimMilestoneBonusIfDue walks descending.
+        /// </summary>
+        public static readonly int[] STREAK_MILESTONES = { 3, 7, 14, 30 };
+
+        /// <summary>Coin reward per milestone, index-aligned with STREAK_MILESTONES.</summary>
+        public static readonly int[] MILESTONE_REWARDS = { 25, 75, 200, 500 };
+
+        /// <summary>Pool of level IDs to rotate through for daily puzzles until Phase 10 ships real daily content.</summary>
+        private static readonly int[] DAILY_LEVEL_POOL = { 1, 2, 3 };
+
+        /// <summary>Save-streak rewarded ad is capped to once per rolling 7 days.</summary>
+        private const double SAVE_STREAK_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
 
         // ── Date helpers ────────────────────────────────────────────────────────
 
@@ -38,12 +57,29 @@ namespace WordDrop
         // ── Seed ────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Returns a deterministic seed based on today's date.
-        /// Same value for every player on the same calendar day.
+        /// Returns a deterministic seed based on today's UTC date. Same value for
+        /// every player on the same UTC calendar day (shared global puzzle).
+        /// Phase 8 spec: DateTime.UtcNow.ToString("yyyy-MM-dd").GetHashCode().
         /// </summary>
         public static int GetDailySeed()
         {
-            return TodayInt();
+            return DateTime.UtcNow.ToString("yyyy-MM-dd").GetHashCode();
+        }
+
+        // ── Daily → level mapping (Phase 8) ────────────────────────────────────
+
+        /// <summary>
+        /// Picks which Level JSON to use for today's daily puzzle. Deterministic
+        /// per-day via the seed so every player gets the same level. Rotates
+        /// through DAILY_LEVEL_POOL — Phase 10 replaces the pool with real daily
+        /// level content.
+        /// </summary>
+        public static int GetDailyLevelId()
+        {
+            if (DAILY_LEVEL_POOL == null || DAILY_LEVEL_POOL.Length == 0) return 1;
+            // Use unsigned modulo so negative hash codes don't map out of range.
+            uint seed = (uint)GetDailySeed();
+            return DAILY_LEVEL_POOL[seed % (uint)DAILY_LEVEL_POOL.Length];
         }
 
         // ── Puzzle number ───────────────────────────────────────────────────────
@@ -181,6 +217,98 @@ namespace WordDrop
                    $"\n\nwordrop.game";
         }
 
+        // ── Streak milestones (Phase 8) ────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the coin reward for reaching <paramref name="streak"/> the first
+        /// time, or 0 if the milestone has already been claimed (or isn't a milestone
+        /// value). Persists a one-shot flag per milestone so subsequent streak passes
+        /// through the same threshold don't re-pay.
+        /// </summary>
+        public static int ClaimMilestoneBonusIfDue(int streak)
+        {
+            if (streak <= 0) return 0;
+            for (int i = STREAK_MILESTONES.Length - 1; i >= 0; i--)
+            {
+                int threshold = STREAK_MILESTONES[i];
+                if (streak < threshold) continue;
+                string key = $"daily_milestone_claimed_{threshold}";
+                if (PlayerPrefs.GetInt(key, 0) != 0) return 0;
+                PlayerPrefs.SetInt(key, 1);
+                PlayerPrefs.Save();
+                return MILESTONE_REWARDS[i];
+            }
+            return 0;
+        }
+
+        /// <summary>Returns true if <paramref name="streak"/> matches a milestone threshold.</summary>
+        public static bool IsMilestoneStreak(int streak)
+        {
+            if (streak <= 0) return false;
+            for (int i = 0; i < STREAK_MILESTONES.Length; i++)
+                if (STREAK_MILESTONES[i] == streak) return true;
+            return false;
+        }
+
+        // ── Save streak (Phase 8) ──────────────────────────────────────────────
+
+        /// <summary>
+        /// True when a save-streak rewarded ad is eligible: current streak > 0,
+        /// the player missed yesterday (so the streak WILL reset on next play),
+        /// and the 7-day cooldown has elapsed since the last save-streak use.
+        /// </summary>
+        public static bool CanSaveStreak()
+        {
+            int storedStreak = PlayerPrefs.GetInt("daily_streak", 0);
+            if (storedStreak <= 0) return false;
+
+            string lastPlayed = PlayerPrefs.GetString("daily_last_played", "");
+            if (string.IsNullOrEmpty(lastPlayed)) return false;
+            string today = TodayString();
+            if (lastPlayed == today) return false;      // already played today — nothing to save
+            if (IsYesterday(lastPlayed)) return false;  // still consecutive — no save needed
+
+            // Cooldown check (rolling 7 days).
+            string lastSaveStr = PlayerPrefs.GetString("daily_save_streak_last_ticks", "");
+            if (!string.IsNullOrEmpty(lastSaveStr) && long.TryParse(lastSaveStr, out long lastTicks))
+            {
+                DateTime lastUse = new DateTime(lastTicks, DateTimeKind.Utc);
+                if ((DateTime.UtcNow - lastUse).TotalSeconds < SAVE_STREAK_COOLDOWN_SECONDS)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Restores the streak by back-dating last-played to yesterday, so the
+        /// next MarkPlayedToday increments rather than resetting. Stamps the
+        /// cooldown. No-op if CanSaveStreak is false.
+        /// </summary>
+        public static bool RestoreStreakWithAd()
+        {
+            if (!CanSaveStreak()) return false;
+            string yesterday = DateTime.UtcNow.Date.AddDays(-1).ToString("yyyyMMdd");
+            PlayerPrefs.SetString("daily_last_played", yesterday);
+            PlayerPrefs.SetString("daily_save_streak_last_ticks", DateTime.UtcNow.Ticks.ToString());
+            PlayerPrefs.Save();
+            return true;
+        }
+
+        /// <summary>
+        /// Remaining cooldown (TimeSpan.Zero if ready). Used by UI to show
+        /// "Save-Streak available in Nd" when the cap is active.
+        /// </summary>
+        public static TimeSpan TimeUntilSaveStreakReady()
+        {
+            string s = PlayerPrefs.GetString("daily_save_streak_last_ticks", "");
+            if (string.IsNullOrEmpty(s) || !long.TryParse(s, out long ticks))
+                return TimeSpan.Zero;
+            DateTime last = new DateTime(ticks, DateTimeKind.Utc);
+            TimeSpan elapsed = DateTime.UtcNow - last;
+            TimeSpan cooldown = TimeSpan.FromSeconds(SAVE_STREAK_COOLDOWN_SECONDS);
+            return elapsed >= cooldown ? TimeSpan.Zero : cooldown - elapsed;
+        }
+
         // ── Debug ───────────────────────────────────────────────────────────────
 
         /// <summary>Resets daily state so it can be replayed today. Debug only.</summary>
@@ -189,8 +317,30 @@ namespace WordDrop
             PlayerPrefs.DeleteKey("daily_last_played");
             PlayerPrefs.DeleteKey("daily_streak");
             PlayerPrefs.DeleteKey($"daily_best_{TodayString()}");
+            for (int i = 0; i < STREAK_MILESTONES.Length; i++)
+                PlayerPrefs.DeleteKey($"daily_milestone_claimed_{STREAK_MILESTONES[i]}");
+            PlayerPrefs.DeleteKey("daily_save_streak_last_ticks");
             PlayerPrefs.Save();
-//             Debug.Log("[DailyDropManager] Daily reset — can replay today's puzzle.");
+        }
+
+        /// <summary>
+        /// Debug: back-date lastPlayed by <paramref name="days"/> so the next play
+        /// either continues the streak (days=1, counts as yesterday), resets it
+        /// (days>=2, counts as missed), or simulates a specific missed-day offset.
+        /// </summary>
+        public static void DebugBackdateLastPlayed(int days)
+        {
+            if (days <= 0) return;
+            string target = DateTime.UtcNow.Date.AddDays(-days).ToString("yyyyMMdd");
+            PlayerPrefs.SetString("daily_last_played", target);
+            PlayerPrefs.Save();
+        }
+
+        /// <summary>Debug: inject a streak value without playing. Used to test milestone claiming.</summary>
+        public static void DebugSetStreak(int streak)
+        {
+            PlayerPrefs.SetInt("daily_streak", Mathf.Max(0, streak));
+            PlayerPrefs.Save();
         }
 
         // ── Internal helpers ────────────────────────────────────────────────────
@@ -217,9 +367,11 @@ namespace WordDrop
             PlayerPrefs.DeleteKey("daily_last_played");
             PlayerPrefs.DeleteKey("daily_streak");
             PlayerPrefs.DeleteKey("daily_launch_date");
+            PlayerPrefs.DeleteKey("daily_save_streak_last_ticks");
+            for (int i = 0; i < STREAK_MILESTONES.Length; i++)
+                PlayerPrefs.DeleteKey($"daily_milestone_claimed_{STREAK_MILESTONES[i]}");
             HighScoreManager.Submit(0, "daily"); // won't save (0 never beats)
             PlayerPrefs.Save();
-//             Debug.Log("[DailyDropManager] All daily data reset.");
         }
     }
 }

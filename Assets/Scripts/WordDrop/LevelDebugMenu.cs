@@ -20,6 +20,7 @@ namespace WordDrop
     {
         private bool _visible = false;
         private int _forceLevelId = 1;
+        private int _forceStreak = 1;
         private string _lastStatus = "(no action yet)";
 
         private static LevelDebugMenu _instance;
@@ -78,7 +79,7 @@ namespace WordDrop
             GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(scale, scale, 1f));
 
             const float W = 360f;
-            const float H = 520f;
+            const float H = 720f;
             GUILayout.BeginArea(new Rect(20f, 20f, W, H), GUI.skin.box);
             GUILayout.Label("<b>Level Debug Menu</b>", RichLabelStyle());
 
@@ -120,9 +121,10 @@ namespace WordDrop
                 HeartsManager.ResetAll();
                 TutorialProgression.ResetTutorialState();
                 StarterPackModal.ResetState();
+                DailyDropManager.ResetAll();
                 PlayerPrefs.DeleteKey("wd_hearts_last_ad_grant_ticks");
                 PlayerPrefs.Save();
-                _lastStatus = "All progress, coins, hearts, tutorial, starter-pack, and ad-cooldown reset.";
+                _lastStatus = "All progress, coins, hearts, tutorial, starter-pack, daily, and ad-cooldown reset.";
             }
 
             if (GUILayout.Button("Show Starter Pack"))
@@ -132,6 +134,41 @@ namespace WordDrop
                     StarterPackModal.Instance.SetVisible(true);
                 _lastStatus = "Starter Pack shown (persistence flags cleared).";
             }
+
+            // ── Daily debug (Phase 8) ──
+            GUILayout.Space(4f);
+            GUILayout.Label($"<b>Daily</b>  streak={DailyDropManager.GetStreak()} playedToday={DailyDropManager.HasPlayedToday()} canSaveStreak={DailyDropManager.CanSaveStreak()} lvl→{DailyDropManager.GetDailyLevelId()}", RichLabelStyle());
+
+            if (GUILayout.Button("Reset daily (replay today)"))
+            {
+                DailyDropManager.ResetDaily();
+                _lastStatus = "Daily state reset — can replay today's puzzle.";
+            }
+
+            if (GUILayout.Button("Simulate: played yesterday (streak continues)"))
+            {
+                DailyDropManager.DebugBackdateLastPlayed(1);
+                _lastStatus = "Backdated last-played to yesterday — next play increments streak.";
+            }
+
+            if (GUILayout.Button("Simulate: missed 2 days (triggers save-streak)"))
+            {
+                DailyDropManager.DebugBackdateLastPlayed(2);
+                int currentStreak = PlayerPrefs.GetInt("daily_streak", 0);
+                if (currentStreak == 0) DailyDropManager.DebugSetStreak(5);
+                _lastStatus = "Backdated 2 days + forced streak=5 if empty. CanSaveStreak should now be true.";
+            }
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Set streak", GUILayout.Width(80f));
+            string streakText = GUILayout.TextField(_forceStreak.ToString(), GUILayout.Width(60f));
+            if (int.TryParse(streakText, out int streakParsed)) _forceStreak = Mathf.Max(0, streakParsed);
+            if (GUILayout.Button("Apply", GUILayout.Width(80f)))
+            {
+                DailyDropManager.DebugSetStreak(_forceStreak);
+                _lastStatus = $"Streak forced to {_forceStreak}.";
+            }
+            GUILayout.EndHorizontal();
 
             GUILayout.Space(6f);
             GUILayout.BeginHorizontal();

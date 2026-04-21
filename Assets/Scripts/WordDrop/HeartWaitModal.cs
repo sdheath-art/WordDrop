@@ -21,6 +21,16 @@ namespace WordDrop
     {
         public static HeartWaitModal Instance { get; private set; }
 
+        /// <summary>
+        /// Where CLOSE should send the player after dismissing. Default is
+        /// LevelSelect (pre-Phase-8 behavior). Daily-flow entry from the main
+        /// menu must NOT land the player on LevelSelect — daily is a main-menu
+        /// feature.
+        /// </summary>
+        public enum ReturnContext { LevelSelect, MainMenu, DailyFlow }
+
+        private ReturnContext _returnContext = ReturnContext.LevelSelect;
+
         /// <summary>Cost of the "refill to full hearts" shortcut.</summary>
         public const int REFILL_COIN_COST = 50;
 
@@ -28,6 +38,7 @@ namespace WordDrop
         private const float REWARDED_AD_STUB_SECONDS = 3f;
 
         private Canvas _canvas;
+        private GameObject _card;
         private Text _heartsText;
         private Text _countdownText;
         private Text _coinsText;
@@ -83,15 +94,16 @@ namespace WordDrop
             oImg.color = PANEL_BG;
             oImg.raycastTarget = true;
 
-            GameObject card = new GameObject("Card");
-            card.transform.SetParent(canvasGO.transform, false);
-            RectTransform cRT = card.AddComponent<RectTransform>();
+            _card = new GameObject("Card");
+            _card.transform.SetParent(canvasGO.transform, false);
+            RectTransform cRT = _card.AddComponent<RectTransform>();
             cRT.anchorMin = new Vector2(0.10f, 0.28f);
             cRT.anchorMax = new Vector2(0.90f, 0.72f);
             cRT.offsetMin = Vector2.zero;
             cRT.offsetMax = Vector2.zero;
-            Image cImg = card.AddComponent<Image>();
+            Image cImg = _card.AddComponent<Image>();
             cImg.color = CARD_BG;
+            GameObject card = _card;
 
             var title = CreateLabel(card.transform, "Title",
                 new Vector2(0.05f, 0.80f), new Vector2(0.95f, 0.95f),
@@ -146,13 +158,29 @@ namespace WordDrop
 
         // ── Visibility ──────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Default-context entry. Preserves the pre-Phase-8 callers (LevelSelect)
+        /// that didn't specify a return context.
+        /// </summary>
         public void SetVisible(bool visible)
         {
+            SetVisible(visible, _returnContext);
+        }
+
+        /// <summary>
+        /// Context-aware entry. Caller specifies where CLOSE should return the
+        /// player. Phase 8 added MainMenu/DailyFlow routes so the daily 0-heart
+        /// detour returns to the main menu instead of Level Select.
+        /// </summary>
+        public void SetVisible(bool visible, ReturnContext returnTo)
+        {
+            if (visible) _returnContext = returnTo;
             if (_canvas != null) _canvas.gameObject.SetActive(visible);
             if (visible)
             {
                 _adBusy = false;
                 RefreshStatus();
+                if (_card != null) UIAnimations.PopIn(_card.transform);
                 if (_tickCoroutine == null && gameObject.activeInHierarchy)
                     _tickCoroutine = StartCoroutine(TickCountdown());
             }
@@ -279,9 +307,23 @@ namespace WordDrop
 
         private void OnCloseClicked()
         {
+            var context = _returnContext;
             SetVisible(false);
-            if (LevelSelectScreen.Instance != null)
-                LevelSelectScreen.Instance.SetVisible(true);
+            switch (context)
+            {
+                case ReturnContext.MainMenu:
+                case ReturnContext.DailyFlow:
+                    // MainMenu + DailyFlow both land on MenuUI today. DailyFlow is
+                    // carved out so Phase 10's dedicated daily screen (if added)
+                    // can route differently without breaking MainMenu callers.
+                    if (MenuUI.Instance != null) MenuUI.Instance.SetVisible(true);
+                    break;
+                case ReturnContext.LevelSelect:
+                default:
+                    if (LevelSelectScreen.Instance != null)
+                        LevelSelectScreen.Instance.SetVisible(true);
+                    break;
+            }
         }
 
         // ── UI plumbing ─────────────────────────────────────────────────────────

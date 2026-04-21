@@ -248,6 +248,8 @@ namespace WordDrop
             new GameObject("OutOfMovesModal").AddComponent<OutOfMovesModal>();
             new GameObject("HeartWaitModal").AddComponent<HeartWaitModal>();
             new GameObject("StarterPackModal").AddComponent<StarterPackModal>();
+            new GameObject("DailyAlreadyPlayedModal").AddComponent<DailyAlreadyPlayedModal>();
+            new GameObject("SaveStreakModal").AddComponent<SaveStreakModal>();
             new GameObject("LevelTutorialOverlay").AddComponent<LevelTutorialOverlay>();
             new GameObject("TutorialVisualCues").AddComponent<TutorialVisualCues>();
             new GameObject("BonusMode").AddComponent<BonusMode>();
