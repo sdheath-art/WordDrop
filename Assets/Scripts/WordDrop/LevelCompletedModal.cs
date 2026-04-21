@@ -31,6 +31,7 @@ namespace WordDrop
         private TextMeshProUGUI _coinRewardText;
         private int _coinRewardPending;
         private Tween _coinTween;
+        private Coroutine _starsCoroutine;
         private Image[] _starIcons = new Image[3];
         private GameObject _btnMenu;
         private GameObject _btnReplay;
@@ -279,7 +280,8 @@ namespace WordDrop
             }
 
             SetVisible(true);
-            StartCoroutine(AnimateStars(stars));
+            if (_starsCoroutine != null) StopCoroutine(_starsCoroutine);
+            _starsCoroutine = StartCoroutine(AnimateStars(stars));
         }
 
         private void ApplyVariant(int score, int prevBest)
@@ -559,6 +561,12 @@ namespace WordDrop
 
             _coinTween?.Kill();
             _coinTween = null;
+            // Stop the star pop-in coroutine if it's still running — otherwise
+            // StarPopIn tweens on child star transforms keep ticking while the
+            // parent PopOut scales the panel, producing the "losing frames"
+            // multiplicative-scale jitter. Children + parent shouldn't tween
+            // scale simultaneously.
+            if (_starsCoroutine != null) { StopCoroutine(_starsCoroutine); _starsCoroutine = null; }
             if (!_canvas.gameObject.activeSelf) { onHidden?.Invoke(); return; }
 
             // Disable input immediately so the player can't double-tap a button

@@ -143,10 +143,15 @@ namespace WordDrop
         {
             if (target == null) { onComplete?.Invoke(); return null; }
 
-            // Kill any prior tween on this transform (commonly a PopIn still
-            // settling when the user taps fast) so the dismiss owns the scale
-            // channel cleanly instead of fighting the prior tween each frame.
-            target.DOKill(false);
+            // Kill every tween on the subtree — the parent's dismiss must be
+            // the ONLY thing writing scale on this hierarchy during the 0.15s
+            // PopOut. Otherwise child tweens from the "show" phase (star pop-ins,
+            // button press bounces, coin count-ups still ticking) fight the
+            // parent scale and produce multiplicative-scale jitter that reads as
+            // frame loss. Belt+suspenders over the per-transform DOKill.
+            var descendants = target.GetComponentsInChildren<Transform>(includeInactive: true);
+            for (int i = 0; i < descendants.Length; i++)
+                descendants[i].DOKill(false);
 
             Sequence seq = DOTween.Sequence();
             var cg = target.GetComponent<CanvasGroup>();
