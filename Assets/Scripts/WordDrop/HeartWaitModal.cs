@@ -174,24 +174,49 @@ namespace WordDrop
         /// </summary>
         public void SetVisible(bool visible, ReturnContext returnTo)
         {
+            SetVisible(visible, returnTo, null);
+        }
+
+        /// <summary>Animated show/hide with optional onHidden callback.</summary>
+        public void SetVisible(bool visible, ReturnContext returnTo, System.Action onHidden)
+        {
             if (visible) _returnContext = returnTo;
-            if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            if (_canvas == null) { onHidden?.Invoke(); return; }
+
             if (visible)
             {
+                _canvas.gameObject.SetActive(true);
+                var raycaster = _canvas.GetComponent<GraphicRaycaster>();
+                if (raycaster != null) raycaster.enabled = true;
                 _adBusy = false;
                 RefreshStatus();
                 if (_card != null) UIAnimations.PopIn(_card.transform);
                 if (_tickCoroutine == null && gameObject.activeInHierarchy)
                     _tickCoroutine = StartCoroutine(TickCountdown());
+                return;
             }
-            else
+
+            if (_tickCoroutine != null) { StopCoroutine(_tickCoroutine); _tickCoroutine = null; }
+            // Cancel any pending ad-stub so closing + reopening the modal can't
+            // queue a second +1♥ grant from a still-running coroutine.
+            if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
+            _adBusy = false;
+
+            if (!_canvas.gameObject.activeSelf) { onHidden?.Invoke(); return; }
+
+            var rc = _canvas.GetComponent<GraphicRaycaster>();
+            if (rc != null) rc.enabled = false;
+            if (_card == null)
             {
-                if (_tickCoroutine != null) { StopCoroutine(_tickCoroutine); _tickCoroutine = null; }
-                // Cancel any pending ad-stub so closing + reopening the modal can't
-                // queue a second +1♥ grant from a still-running coroutine.
-                if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
-                _adBusy = false;
+                _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+                return;
             }
+            UIAnimations.PopOut(_card.transform, onComplete: () =>
+            {
+                if (_canvas != null) _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+            });
         }
 
         private IEnumerator TickCountdown()
@@ -308,22 +333,24 @@ namespace WordDrop
         private void OnCloseClicked()
         {
             var context = _returnContext;
-            SetVisible(false);
-            switch (context)
+            SetVisible(false, context, onHidden: () =>
             {
-                case ReturnContext.MainMenu:
-                case ReturnContext.DailyFlow:
-                    // MainMenu + DailyFlow both land on MenuUI today. DailyFlow is
-                    // carved out so Phase 10's dedicated daily screen (if added)
-                    // can route differently without breaking MainMenu callers.
-                    if (MenuUI.Instance != null) MenuUI.Instance.SetVisible(true);
-                    break;
-                case ReturnContext.LevelSelect:
-                default:
-                    if (LevelSelectScreen.Instance != null)
-                        LevelSelectScreen.Instance.SetVisible(true);
-                    break;
-            }
+                switch (context)
+                {
+                    case ReturnContext.MainMenu:
+                    case ReturnContext.DailyFlow:
+                        // MainMenu + DailyFlow both land on MenuUI today. DailyFlow is
+                        // carved out so Phase 10's dedicated daily screen (if added)
+                        // can route differently without breaking MainMenu callers.
+                        if (MenuUI.Instance != null) MenuUI.Instance.SetVisible(true);
+                        break;
+                    case ReturnContext.LevelSelect:
+                    default:
+                        if (LevelSelectScreen.Instance != null)
+                            LevelSelectScreen.Instance.SetVisible(true);
+                        break;
+                }
+            });
         }
 
         // ── UI plumbing ─────────────────────────────────────────────────────────

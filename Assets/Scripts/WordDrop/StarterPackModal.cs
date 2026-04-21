@@ -53,9 +53,34 @@ namespace WordDrop
 
         public void SetVisible(bool visible)
         {
-            if (_canvas != null) _canvas.gameObject.SetActive(visible);
-            if (visible && _card != null)
-                UIAnimations.PopIn(_card.transform);
+            SetVisible(visible, null);
+        }
+
+        public void SetVisible(bool visible, System.Action onHidden)
+        {
+            if (_canvas == null) { onHidden?.Invoke(); return; }
+            if (visible)
+            {
+                _canvas.gameObject.SetActive(true);
+                var raycaster = _canvas.GetComponent<GraphicRaycaster>();
+                if (raycaster != null) raycaster.enabled = true;
+                if (_card != null) UIAnimations.PopIn(_card.transform);
+                return;
+            }
+            if (!_canvas.gameObject.activeSelf) { onHidden?.Invoke(); return; }
+            var rc = _canvas.GetComponent<GraphicRaycaster>();
+            if (rc != null) rc.enabled = false;
+            if (_card == null)
+            {
+                _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+                return;
+            }
+            UIAnimations.PopOut(_card.transform, onComplete: () =>
+            {
+                if (_canvas != null) _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+            });
         }
 
         /// <summary>
@@ -196,7 +221,7 @@ namespace WordDrop
             GrantBundle();
             PlayerPrefs.SetInt(KEY_PURCHASED, 1);
             PlayerPrefs.Save();
-            SetVisible(false);
+            SetVisible(false, null);
 #else
             // Production build: never grant paid content without a real receipt.
             // Until IAP ships, the button is a visual pitch only — surface that
@@ -208,7 +233,7 @@ namespace WordDrop
         private void OnNoThanksClicked()
         {
             // KEY_SEEN was already set by TryAutoShow so this auto-dismisses forever.
-            SetVisible(false);
+            SetVisible(false, null);
         }
 
         private void GrantBundle()

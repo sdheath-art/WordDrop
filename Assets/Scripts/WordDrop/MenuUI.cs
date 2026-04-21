@@ -483,6 +483,8 @@ namespace WordDrop
             cb.pressedColor     = Color.Lerp(bgColor, Color.black, 0.25f);
             cb.normalColor      = bgColor;
             btn.colors          = cb;
+            Transform dailyBtnTransform = btnGO.transform;
+            btn.onClick.AddListener(() => UIAnimations.ButtonPress(dailyBtnTransform));
             btn.onClick.AddListener(OnDailyClicked);
             btn.interactable = !played;
 
@@ -710,6 +712,10 @@ namespace WordDrop
             cb.pressedColor     = Color.Lerp(bgColor, Color.black, 0.25f);
             cb.normalColor      = bgColor;
             btn.colors          = cb;
+            // Tactile press feedback — every button built through this helper
+            // gets the scale-down/bounce-back on tap. Phase 6.5 canon animation.
+            Transform btnTransform = btnGO.transform;
+            btn.onClick.AddListener(() => UIAnimations.ButtonPress(btnTransform));
             btn.onClick.AddListener(() => GameAudio.Instance?.PlayButtonClick());
             btn.onClick.AddListener(onClick);
 

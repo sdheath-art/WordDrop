@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using TMPro;
 using UnityEngine;
@@ -243,17 +244,23 @@ namespace WordDrop
 
             // Daily retry stays in daily mode so the next completion still fires
             // DailyDropManager.MarkPlayedToday. Only flip the flag off for non-daily
-            // retries.
+            // retries. Capture before dismiss so the 0.15s-later onHidden callback
+            // sees the correct value.
             bool wasDaily = DailyDropManager.IsDailyMode;
-            SetVisible(false);
+            var data = _levelData;
+            SetVisible(false, onHidden: () => DoRetry(data, wasDaily));
+        }
+
+        private void DoRetry(LevelData data, bool wasDaily)
+        {
             SurvivalManager.IsSurvivalMode = false;
             BlitzManager.IsBlitzMode = false;
             DailyDropManager.IsDailyMode = wasDaily;
             GameManager.CurrentMode = GameMode.Level;
 
-            LevelController.Instance.StartLevel(_levelData);
+            LevelController.Instance.StartLevel(data);
             AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_RETRY,
-                "level_id", _levelData.levelId);
+                "level_id", data.levelId);
 
             // TransitionTo(Playing) handles Playing→Playing as a restart and
             // re-enables HandManager input inside OnStateEntered.
@@ -331,19 +338,25 @@ namespace WordDrop
 
         private void OnMenuClicked()
         {
-            SetVisible(false);
+            // Capture daily state now — onHidden runs 0.15s later and
+            // IsDailyMode will have been cleared by then.
+            bool daily = DailyDropManager.IsDailyMode;
+            SetVisible(false, onHidden: () => NavigateToMenu(daily));
+        }
+
+        private void NavigateToMenu(bool wasDaily)
+        {
             if (LevelController.Instance != null)
                 LevelController.Instance.AbortLevel();
 
             // Daily attempts return to the main menu, not Level Select — daily is
             // a main-menu feature and the player can't pick another level from
             // inside a daily attempt. Standard level attempts return to Level Select.
-            bool daily = DailyDropManager.IsDailyMode;
             DailyDropManager.IsDailyMode = false;
             GameManager.CurrentMode = GameMode.Survival;
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Menu);
-            if (!daily && LevelSelectScreen.Instance != null)
+            if (!wasDaily && LevelSelectScreen.Instance != null)
                 LevelSelectScreen.Instance.SetVisible(true);
         }
 
@@ -351,19 +364,48 @@ namespace WordDrop
 
         public void SetVisible(bool visible)
         {
-            if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            SetVisible(visible, null);
+        }
+
+        /// <summary>
+        /// Animated show/hide. Hide path: disables input, runs PopOut, then
+        /// SetActive(false) + fires <paramref name="onHidden"/>. Callers pass
+        /// navigation there so the next transition happens AFTER the card has
+        /// visibly left.
+        /// </summary>
+        public void SetVisible(bool visible, Action onHidden)
+        {
+            if (_canvas == null) { onHidden?.Invoke(); return; }
             if (visible)
             {
+                _canvas.gameObject.SetActive(true);
+                var raycaster = _canvas.GetComponent<GraphicRaycaster>();
+                if (raycaster != null) raycaster.enabled = true;
                 if (_card != null) UIAnimations.PopIn(_card.transform);
+                return;
             }
-            else
+
+            // Hiding invalidates any in-flight ad-stub. The modal's _pendingRunToken
+            // snapshot is the belt; stopping the coroutine is the suspenders. Leaving
+            // it running means a 3s-delayed grant could land on an unrelated retry.
+            if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
+            _boosterBusy = false;
+
+            if (!_canvas.gameObject.activeSelf) { onHidden?.Invoke(); return; }
+
+            var rc = _canvas.GetComponent<GraphicRaycaster>();
+            if (rc != null) rc.enabled = false;
+            if (_card == null)
             {
-                // Hiding invalidates any in-flight ad-stub. The modal's _pendingRunToken
-                // snapshot is the belt; stopping the coroutine is the suspenders. Leaving
-                // it running means a 3s-delayed grant could land on an unrelated retry.
-                if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
-                _boosterBusy = false;
+                _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+                return;
             }
+            UIAnimations.PopOut(_card.transform, onComplete: () =>
+            {
+                if (_canvas != null) _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+            });
         }
 
         private static Text CreateLabel(Transform parent, string name,

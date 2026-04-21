@@ -47,20 +47,40 @@ namespace WordDrop
 
         public void SetVisible(bool visible)
         {
-            if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            SetVisible(visible, null);
+        }
+
+        public void SetVisible(bool visible, System.Action onHidden)
+        {
+            if (_canvas == null) { onHidden?.Invoke(); return; }
             if (visible)
             {
+                _canvas.gameObject.SetActive(true);
+                var raycaster = _canvas.GetComponent<GraphicRaycaster>();
+                if (raycaster != null) raycaster.enabled = true;
                 _adBusy = false;
                 RefreshStatus();
                 if (_card != null) UIAnimations.PopIn(_card.transform);
+                return;
             }
-            else
+            // Cancel any pending ad-stub so re-opening doesn't queue a second
+            // RestoreStreakWithAd grant. Same pattern as HeartWaitModal.
+            if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
+            _adBusy = false;
+            if (!_canvas.gameObject.activeSelf) { onHidden?.Invoke(); return; }
+            var rc = _canvas.GetComponent<GraphicRaycaster>();
+            if (rc != null) rc.enabled = false;
+            if (_card == null)
             {
-                // Cancel any pending ad-stub so re-opening doesn't queue a second
-                // RestoreStreakWithAd grant. Same pattern as HeartWaitModal.
-                if (_adCoroutine != null) { StopCoroutine(_adCoroutine); _adCoroutine = null; }
-                _adBusy = false;
+                _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+                return;
             }
+            UIAnimations.PopOut(_card.transform, onComplete: () =>
+            {
+                if (_canvas != null) _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+            });
         }
 
         private void RefreshStatus()
@@ -172,18 +192,22 @@ namespace WordDrop
                     "source", "rewarded_ad");
             }
 
-            SetVisible(false);
-            if (MenuUI.Instance != null)
-                MenuUI.Instance.BeginDailyLevel();
+            SetVisible(false, onHidden: () =>
+            {
+                if (MenuUI.Instance != null)
+                    MenuUI.Instance.BeginDailyLevel();
+            });
         }
 
         private void OnSkipClicked()
         {
-            SetVisible(false);
             // Player declined — proceed with a fresh streak (MarkPlayedToday
             // will reset it to 1 when they finish the puzzle).
-            if (MenuUI.Instance != null)
-                MenuUI.Instance.BeginDailyLevel();
+            SetVisible(false, onHidden: () =>
+            {
+                if (MenuUI.Instance != null)
+                    MenuUI.Instance.BeginDailyLevel();
+            });
         }
 
         private static Text CreateLabel(Transform parent, string name,

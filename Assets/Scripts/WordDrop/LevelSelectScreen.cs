@@ -253,6 +253,8 @@ namespace WordDrop
                 cb.normalColor = tileColor;
                 btn.colors = cb;
                 int capturedId = id;
+                Transform tileTransform = tile.transform;
+                btn.onClick.AddListener(() => UIAnimations.ButtonPress(tileTransform));
                 btn.onClick.AddListener(() => OnLevelTileClicked(capturedId));
             }
         }

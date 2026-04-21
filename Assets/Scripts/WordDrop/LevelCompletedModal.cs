@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using DG.Tweening;
 using TMPro;
@@ -447,14 +448,7 @@ namespace WordDrop
             // Tutorial-complete variant — NEXT button is repurposed as PLAY → Level Select.
             if (_tutorialCompleteVariant)
             {
-                SetVisible(false);
-                if (LevelController.Instance != null)
-                    LevelController.Instance.AbortLevel();
-                GameManager.CurrentMode = GameMode.Survival;
-                if (GameManager.Instance != null)
-                    GameManager.Instance.TransitionTo(GameState.Menu);
-                if (LevelSelectScreen.Instance != null)
-                    LevelSelectScreen.Instance.SetVisible(true);
+                SetVisible(false, onHidden: NavigateToLevelSelect);
                 return;
             }
 
@@ -474,36 +468,53 @@ namespace WordDrop
                 OnMenuClicked();
                 return;
             }
-            StartNewLevel(nextData);
+            SetVisible(false, onHidden: () => StartNewLevel(nextData));
         }
 
         private void OnReplayClicked()
         {
             if (_levelData == null) { OnMenuClicked(); return; }
-            StartNewLevel(_levelData);
+            var data = _levelData;
+            SetVisible(false, onHidden: () => StartNewLevel(data));
         }
 
         private void OnMenuClicked()
         {
-            SetVisible(false);
+            // Capture the daily flag now — _dailyVariant is reset when the next
+            // StartNewLevel fires, but the onHidden callback runs 0.15s later.
+            bool daily = _dailyVariant;
+            SetVisible(false, onHidden: () => NavigateToMenu(daily));
+        }
+
+        private void NavigateToMenu(bool wasDailyVariant)
+        {
             if (LevelController.Instance != null)
                 LevelController.Instance.AbortLevel();
 
             // Daily variant: clear the IsDailyMode flag and land on the main menu
             // (not Level Select — daily is a main-menu feature). Standard variant
             // returns to Level Select so the player can pick their next level.
-            bool daily = _dailyVariant;
             DailyDropManager.IsDailyMode = false;
             GameManager.CurrentMode = GameMode.Survival;
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Menu);
-            if (!daily && LevelSelectScreen.Instance != null)
+            if (!wasDailyVariant && LevelSelectScreen.Instance != null)
+                LevelSelectScreen.Instance.SetVisible(true);
+        }
+
+        private void NavigateToLevelSelect()
+        {
+            if (LevelController.Instance != null)
+                LevelController.Instance.AbortLevel();
+            GameManager.CurrentMode = GameMode.Survival;
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.Menu);
+            if (LevelSelectScreen.Instance != null)
                 LevelSelectScreen.Instance.SetVisible(true);
         }
 
         private void StartNewLevel(LevelData data)
         {
-            SetVisible(false);
             SurvivalManager.IsSurvivalMode = false;
             BlitzManager.IsBlitzMode = false;
             DailyDropManager.IsDailyMode = false;
@@ -523,19 +534,49 @@ namespace WordDrop
 
         public void SetVisible(bool visible)
         {
-            if (_canvas != null) _canvas.gameObject.SetActive(visible);
+            SetVisible(visible, null);
+        }
+
+        /// <summary>
+        /// Animated show/hide. When hiding, runs PopOut on the card before
+        /// deactivating the canvas; <paramref name="onHidden"/> fires after the
+        /// PopOut completes. Callers pass navigation logic there so the next
+        /// screen/transition runs only after the modal has visibly left — the
+        /// "premium feel" full tap-press-popout-transition arc.
+        /// </summary>
+        public void SetVisible(bool visible, Action onHidden)
+        {
+            if (_canvas == null) { onHidden?.Invoke(); return; }
+
             if (visible)
             {
-                // Pop the card in AFTER the canvas is active so the tween is
-                // visible. PopIn resets scale to 0 internally before the bounce
-                // so this is safe to call on a canvas that was previously shown.
+                _canvas.gameObject.SetActive(true);
+                var raycaster = _canvas.GetComponent<GraphicRaycaster>();
+                if (raycaster != null) raycaster.enabled = true;
                 if (_panel != null) UIAnimations.PopIn(_panel.transform);
+                return;
             }
-            else
+
+            _coinTween?.Kill();
+            _coinTween = null;
+            if (!_canvas.gameObject.activeSelf) { onHidden?.Invoke(); return; }
+
+            // Disable input immediately so the player can't double-tap a button
+            // while the dismiss tween plays. Canvas stays active 0.15s so the
+            // PopOut is visible, then deactivates + runs onHidden (navigation).
+            var rc = _canvas.GetComponent<GraphicRaycaster>();
+            if (rc != null) rc.enabled = false;
+            if (_panel == null)
             {
-                _coinTween?.Kill();
-                _coinTween = null;
+                _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+                return;
             }
+            UIAnimations.PopOut(_panel.transform, onComplete: () =>
+            {
+                if (_canvas != null) _canvas.gameObject.SetActive(false);
+                onHidden?.Invoke();
+            });
         }
 
         private static Text CreateLabel(Transform parent, string name,
