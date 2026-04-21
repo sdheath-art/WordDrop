@@ -242,6 +242,11 @@ namespace WordDrop
             IsInputLocked = false;
             RunToken++; // invalidate any in-flight booster coroutines targeting this run
             if (TutorialVisualCues.Instance != null) TutorialVisualCues.Instance.ClearAll();
+            // Abort doesn't fire OnLevelComplete/Fail, so LevelTutorialOverlay's
+            // fade-out subscription wouldn't trigger. Force the overlay off here
+            // so tutorial prompts can't leak onto the next screen.
+            if (LevelTutorialOverlay.Instance != null)
+                LevelTutorialOverlay.Instance.ForceHide();
         }
 
         /// <summary>

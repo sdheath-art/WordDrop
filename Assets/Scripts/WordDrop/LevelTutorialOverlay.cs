@@ -130,6 +130,25 @@ namespace WordDrop
             SetVisible(false);
         }
 
+        /// <summary>
+        /// Immediate, un-animated hide. Use when an external path needs to
+        /// guarantee the overlay is gone (e.g., MenuUI.SetVisible, AbortLevel)
+        /// regardless of whether a fade happens to be mid-tween. Fallback for
+        /// the case where HandleLevelEnded's event-driven fade either didn't
+        /// fire or was interrupted — without this the "Drop letters…" prompt
+        /// can leak onto the main menu / Survival because its canvas is still
+        /// active from the prior daily.
+        /// </summary>
+        public void ForceHide()
+        {
+            if (_autoHideCoroutine != null) { StopCoroutine(_autoHideCoroutine); _autoHideCoroutine = null; }
+            _fadeTween?.Kill();
+            _fadeTween = null;
+            _promptsByTrigger.Clear();
+            if (_group != null) _group.alpha = 0f;
+            if (_canvas != null) _canvas.gameObject.SetActive(false);
+        }
+
         // ── UI ──────────────────────────────────────────────────────────────────
 
         private void BuildUI()

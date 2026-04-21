@@ -618,6 +618,13 @@ namespace WordDrop
             if (_panel != null) _panel.SetActive(visible);
             if (visible)
             {
+                // Defensive: the tutorial overlay's canvas sortingOrder (120) is
+                // above the menu (100), and a prior daily/level's prompt can
+                // stick around if OnLevelComplete's fade got interrupted. Main
+                // menu should NEVER have a tutorial prompt hovering — force-hide.
+                if (LevelTutorialOverlay.Instance != null)
+                    LevelTutorialOverlay.Instance.ForceHide();
+
                 RefreshBestScore();
                 RefreshBlitzBestScore();
                 RefreshDailyInfo();
