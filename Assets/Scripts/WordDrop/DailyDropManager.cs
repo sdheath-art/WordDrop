@@ -336,10 +336,22 @@ namespace WordDrop
             PlayerPrefs.Save();
         }
 
-        /// <summary>Debug: inject a streak value without playing. Used to test milestone claiming.</summary>
+        /// <summary>
+        /// Debug: inject a streak value AND back-date last-played to yesterday so
+        /// the next MarkPlayedToday legitimately increments (setStreak=29 + play
+        /// → streak=30, milestone triggers). Without the back-date, MarkPlayedToday
+        /// sees lastPlayed as blank/stale and resets the streak to 1.
+        /// </summary>
         public static void DebugSetStreak(int streak)
         {
-            PlayerPrefs.SetInt("daily_streak", Mathf.Max(0, streak));
+            int clamped = Mathf.Max(0, streak);
+            PlayerPrefs.SetInt("daily_streak", clamped);
+            if (clamped > 0)
+            {
+                // Mark "played yesterday" so today's play continues the streak.
+                string yesterday = DateTime.UtcNow.Date.AddDays(-1).ToString("yyyyMMdd");
+                PlayerPrefs.SetString("daily_last_played", yesterday);
+            }
             PlayerPrefs.Save();
         }
 
