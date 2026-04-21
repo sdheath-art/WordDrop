@@ -154,9 +154,14 @@ namespace WordDrop
             if (GUILayout.Button("Simulate: missed 2 days (triggers save-streak)"))
             {
                 DailyDropManager.DebugBackdateLastPlayed(2);
-                int currentStreak = PlayerPrefs.GetInt("daily_streak", 0);
-                if (currentStreak == 0) DailyDropManager.DebugSetStreak(5);
-                _lastStatus = "Backdated 2 days + forced streak=5 if empty. CanSaveStreak should now be true.";
+                // Always set a non-trivial streak so the modal shows a realistic
+                // test case — a 1-day streak would show the modal but wouldn't
+                // feel like the save-streak pressure players actually experience.
+                // Clears the save-streak cooldown too so the button is repeatable.
+                DailyDropManager.DebugSetStreak(5);
+                PlayerPrefs.DeleteKey("daily_save_streak_last_ticks");
+                PlayerPrefs.Save();
+                _lastStatus = "Backdated 2 days, forced streak=5, cleared save-streak cooldown. Tap TODAY'S PUZZLE to see the modal.";
             }
 
             GUILayout.BeginHorizontal();
