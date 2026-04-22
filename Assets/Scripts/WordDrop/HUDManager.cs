@@ -41,6 +41,16 @@ namespace WordDrop
         private TextMeshProUGUI _swapCounterText;
         private TextMeshProUGUI _rewriteCounterText;
 
+        // ── Level-mode HUD (Phase 9.8) ───────────────────────────────────────────
+        // Level mode shows a target readout under the player score ("/50" muted
+        // divider) and a MOVES counter in the right slot where the AI score used
+        // to live. Solo-mode's HideAIScore() keeps the AI widgets inactive so
+        // these overlay cleanly. Activated via HandleLevelStarted; deactivated
+        // on null-data (abort / non-Level boot).
+        private TextMeshProUGUI _levelTargetText;
+        private TextMeshProUGUI _levelMovesLabelText;
+        private TextMeshProUGUI _levelMovesNumText;
+
         // ── Word-found overlay ────────────────────────────────────────────────────
 
         private GameObject _wordFoundOverlay;
@@ -142,6 +152,36 @@ namespace WordDrop
                 _swapCounterText.gameObject.SetActive(showSwap);
             if (_rewriteCounterText != null)
                 _rewriteCounterText.gameObject.SetActive(showEdit);
+
+            // Level-mode readouts — target under score, MOVES on the right.
+            // Null-data (AbortLevel / non-Level boot) hides them again.
+            bool showLevelHud = (data != null);
+            if (_levelTargetText != null)
+                _levelTargetText.gameObject.SetActive(showLevelHud);
+            if (_levelMovesLabelText != null)
+                _levelMovesLabelText.gameObject.SetActive(showLevelHud);
+            if (_levelMovesNumText != null)
+                _levelMovesNumText.gameObject.SetActive(showLevelHud);
+
+            if (showLevelHud)
+            {
+                SetLevelTarget(data.target);
+                SetLevelMoves(data.moveBudget);
+            }
+        }
+
+        /// <summary>Sets the "/{target}" divider shown under the player score in Level mode.</summary>
+        public void SetLevelTarget(int target)
+        {
+            if (_levelTargetText == null) return;
+            _levelTargetText.text = $"/ {target}";
+        }
+
+        /// <summary>Sets the MOVES number in the right HUD slot in Level mode.</summary>
+        public void SetLevelMoves(int moves)
+        {
+            if (_levelMovesNumText == null) return;
+            _levelMovesNumText.text = moves.ToString();
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -275,6 +315,51 @@ namespace WordDrop
                 color:     AI_COLOR,
                 align:     TextAnchor.MiddleRight);
             if (heavyFont != null) _aiScoreNum.font = heavyFont;
+
+            // ── Level-mode readouts (Phase 9.8) ──────────────────────────────────
+            // TARGET — small muted label UNDER the player score ("/ 50"). Lives
+            // under the player score anchor so it reads as "score / target".
+            _levelTargetText = MakeLabel(barGO.transform, "LevelTargetText",
+                anchorMin: new Vector2(0.22f, 0.05f),
+                anchorMax: new Vector2(0.34f, 0.55f),
+                pivot:     new Vector2(0f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "",
+                size:      14,
+                style:     FontStyle.Bold,
+                color:     new Color(PLAYER_COLOR.r, PLAYER_COLOR.g, PLAYER_COLOR.b, 0.55f),
+                align:     TextAnchor.MiddleLeft);
+
+            // MOVES label — matches AI label slot (small, bold, muted).
+            _levelMovesLabelText = MakeLabel(barGO.transform, "LevelMovesLabel",
+                anchorMin: new Vector2(0.75f, 0.60f),
+                anchorMax: new Vector2(0.92f, 0.95f),
+                pivot:     new Vector2(1f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "MOVES",
+                size:      12,
+                style:     FontStyle.Bold,
+                color:     new Color(TURN_COLOR.r, TURN_COLOR.g, TURN_COLOR.b, 0.65f),
+                align:     TextAnchor.MiddleRight);
+
+            // MOVES number — matches AI number slot (big, bold).
+            _levelMovesNumText = MakeLabel(barGO.transform, "LevelMovesNum",
+                anchorMin: new Vector2(0.72f, 0.05f),
+                anchorMax: new Vector2(0.92f, 0.65f),
+                pivot:     new Vector2(1f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "0",
+                size:      30,
+                style:     FontStyle.Bold,
+                color:     TURN_COLOR,
+                align:     TextAnchor.MiddleRight);
+            if (heavyFont != null) _levelMovesNumText.font = heavyFont;
+
+            // All three start hidden — HandleLevelStarted activates them on
+            // Level-mode entry; non-Level modes keep them inactive.
+            if (_levelTargetText != null) _levelTargetText.gameObject.SetActive(false);
+            if (_levelMovesLabelText != null) _levelMovesLabelText.gameObject.SetActive(false);
+            if (_levelMovesNumText != null) _levelMovesNumText.gameObject.SetActive(false);
 
             // ── Swaps + Rewrites — compact, under center ─────────────────────────
             Color swapCol = new Color(0.78f, 0.78f, 0.85f, 0.8f);

@@ -349,7 +349,16 @@ namespace WordDrop
                 // prior daily/level's prompt can stick around if OnLevelComplete's
                 // fade got interrupted. Main menu should never have a tutorial
                 // prompt hovering — force-hide on every show.
-                if (LevelTutorialOverlay.Instance != null)
+                //
+                // EXCEPTION: during an active ScreenTransition, SetVisible(true)
+                // fires mid-slide while a brand-new level's persistent "start"
+                // prompt was just shown by LevelController.StartLevel. Force-
+                // hiding here kills the prompt before the transition completes.
+                // The original "prompt leak to menu" guard only needs to apply
+                // on genuine menu-returns — post-transition — not mid-flight.
+                bool midTransition = ScreenTransition.Instance != null
+                                  && ScreenTransition.Instance.IsTransitioning;
+                if (!midTransition && LevelTutorialOverlay.Instance != null)
                     LevelTutorialOverlay.Instance.ForceHide();
 
                 RefreshDailyInfo();

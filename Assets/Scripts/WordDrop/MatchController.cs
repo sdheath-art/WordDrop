@@ -332,6 +332,20 @@ namespace WordDrop
             if (GameManager.IsLevelMode && RulesEngine.Instance != null)
                 RulesEngine.Instance.RefreshAllPrimedWordTiles(RulesEngine.Instance.GlobalTurn);
 
+            // Apply per-level tutorial visual cues (subtle glow / prominent pulse /
+            // ghost demo / amped priming) NOW — after the rebuild has created the
+            // final tile GameObjects. Applying earlier (inside ApplyLevelStartingBoard)
+            // tweened tiles that ClearAllCells subsequently destroyed, and the
+            // SpriteRenderer-color tweens leaked into pool-recycled tiles at other
+            // positions. Cues must target the tiles the player actually sees.
+            if (GameManager.IsLevelMode
+                && LevelController.Instance != null
+                && LevelController.Instance.CurrentLevel != null
+                && TutorialVisualCues.Instance != null)
+            {
+                TutorialVisualCues.Instance.Apply(LevelController.Instance.CurrentLevel);
+            }
+
             // No pre-primed opening words — player creates all primes
             /* disabled
             if (RulesEngine.Instance != null && GridManager.Instance != null &&
@@ -986,12 +1000,13 @@ namespace WordDrop
             // path that OpeningSeed.TryPrimeOneWord already exercises.
             PrimeStartingBoardWords(rules);
 
-            // Apply per-level visual cues AFTER tiles exist + are primed. Was called
-            // from LevelController.StartLevel originally but that runs before the board
-            // visuals are built — cues would find null tiles or stale tiles from the
-            // previous level.
-            if (TutorialVisualCues.Instance != null)
-                TutorialVisualCues.Instance.Apply(lc.CurrentLevel);
+            // NOTE: TutorialVisualCues.Apply is NOT called here. Moved to StartMatch
+            // post-rebuild (after ClearAllCells + RebuildFromRulesEngine) so the pulse
+            // tweens target the final, rendered tile GameObjects — not the throwaway
+            // ones that SyncToRulesState creates here and get destroyed moments later.
+            // Phase 9.8 bug: tweens on SpriteRenderer.color outlived Tile.ResetForPool
+            // (which only kills transform tweens), leaking gold color onto recycled
+            // tiles at different positions.
 
             Debug.Log($"[MatchController] Applied Level {lc.CurrentLevel.levelId} startingBoard ({board.Length} tiles).");
         }

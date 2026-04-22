@@ -162,6 +162,13 @@ namespace WordDrop
             CurrentScore += Mathf.Max(0, scoreDelta);
             MovesRemaining = Mathf.Max(0, MovesRemaining - 1);
 
+            // Push live HUD update for Level mode — MOVES decrements, score
+            // already updates via MatchController → SetPlayerScore. FireComplete /
+            // FireFail below may hide the HUD via the modal takeover but the
+            // readout stays honest up to the final frame.
+            if (HUDManager.Instance != null)
+                HUDManager.Instance.SetLevelMoves(MovesRemaining);
+
             // Win check FIRST — a drop that simultaneously hits target and
             // exhausts moves must fire Complete, not Fail.
             if (CurrentScore >= CurrentLevel.target)
@@ -258,6 +265,7 @@ namespace WordDrop
             IsInputLocked = false;
             MovesRemaining += amount;
             if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
+            if (HUDManager.Instance != null) HUDManager.Instance.SetLevelMoves(MovesRemaining);
             Debug.Log($"[LevelController] GrantExtraMoves +{amount} (now {MovesRemaining})");
             return true;
         }
