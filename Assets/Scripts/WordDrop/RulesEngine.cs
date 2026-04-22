@@ -3566,7 +3566,15 @@ namespace WordDrop
                     {
                         PrimedWordRegistry.PrimedWord pw = overlapping[p];
 
-                        if (_stepJustPrimed.Contains(pw.Id)) continue;
+                        // Phase 9.7: Level-mode cascade rule change. At chainDepth 0
+                        // (initial drop/rewrite) the just-primed filter stays — the
+                        // trigger word itself shouldn't self-detonate. At chainDepth >= 1
+                        // (gravity-formed words during a cascade) skip the filter so
+                        // new words can trigger prior-step primes and self-overlap to
+                        // propagate the chain. Survival unchanged: its cascades already
+                        // emerge via dense boards + rising rows.
+                        bool skipJustPrimedFilter = GameManager.IsLevelMode && _stepChainDepth > 0;
+                        if (!skipJustPrimedFilter && _stepJustPrimed.Contains(pw.Id)) continue;
                         if (triggeredIds.Contains(pw.Id)) continue;
 
                         triggeredIds.Add(pw.Id);
