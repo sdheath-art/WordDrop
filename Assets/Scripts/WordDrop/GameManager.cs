@@ -204,6 +204,17 @@ namespace WordDrop
                     AnalyticsManager.ScreenView("main_menu");
                     // Menu appear SFX removed — whoosh from ScreenTransition is enough
 
+                    // Abort any in-flight Level before resetting mode flags — this
+                    // clears level state (IsActive, IsInputLocked, RunToken) AND
+                    // force-hides the tutorial overlay so prompts can't leak onto
+                    // the main menu. Modal MENU buttons (LevelCompletedModal /
+                    // OutOfMovesModal) already call AbortLevel directly, but the
+                    // in-game HUD ≡ menu button didn't — this is the single
+                    // choke point that covers every Playing→Menu path regardless
+                    // of entry point. Idempotent (AbortLevel checks IsActive).
+                    if (LevelController.Instance != null)
+                        LevelController.Instance.AbortLevel();
+
                     // Reset all mode flags when returning to menu
                     BlitzManager.Reset();
                     SurvivalManager.Reset();
