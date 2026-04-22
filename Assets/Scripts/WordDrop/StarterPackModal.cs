@@ -46,7 +46,9 @@ namespace WordDrop
             Instance = this;
 
             BuildUI();
-            SetVisible(false);
+            // Initial hide must bypass PopOut — canvas is active on creation so
+            // animated SetVisible(false) flashes the modal on cold boot.
+            if (_canvas != null) _canvas.gameObject.SetActive(false);
         }
 
         // ── Show/hide ───────────────────────────────────────────────────────────

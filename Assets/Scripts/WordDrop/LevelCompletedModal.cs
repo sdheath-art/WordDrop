@@ -51,7 +51,11 @@ namespace WordDrop
             Instance = this;
 
             BuildUI();
-            SetVisible(false);
+            // Initial hide must bypass the PopOut animation — the canvas is
+            // active on fresh creation, so the animated SetVisible(false) would
+            // flash the modal for 0.15s on every cold boot. Animation is only
+            // for dismissals of a genuinely-visible modal.
+            if (_canvas != null) _canvas.gameObject.SetActive(false);
 
             if (LevelController.Instance != null)
                 LevelController.Instance.OnLevelComplete += HandleLevelComplete;
