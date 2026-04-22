@@ -3983,6 +3983,33 @@ namespace WordDrop
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
             }
 
+            // Invalid-drop feedback (Level-mode universal). Drop formed no word
+            // AND didn't prime a new one → subtle horizontal shake on the tile
+            // plus a soft wood-tick SFX. Non-punitive: tile stays on the board
+            // (WordDrop's tile-persistence mechanic), no move refund. Reads as
+            // "noted, but nothing scored" so players don't stare at a silent
+            // board thinking the game bugged out. Matches Candy Crush / Royal
+            // Match invalid-tap convention. Gated on HasPermanentGlow so drops
+            // that legitimately PRIMED a word (valid setup play, scoreDelta=0
+            // until detonation) don't trigger the shake.
+            if (GameManager.IsLevelMode
+                && totalScore == 0
+                && droppedTile != null
+                && droppedTile.transform != null
+                && !droppedTile.HasPermanentGlow)
+            {
+                var gridRef = _grid != null ? _grid : GridManager.Instance;
+                float shakeMag = (gridRef != null ? gridRef.CellSize : 1f) * 0.12f;
+                droppedTile.transform.DOShakePosition(
+                    duration: 0.18f,
+                    strength: new Vector3(shakeMag, 0f, 0f),
+                    vibrato: 4,
+                    randomness: 0f,
+                    snapping: false,
+                    fadeOut: true);
+                GameAudio.Instance?.PlayLightTick();
+            }
+
             // Let the primed flash animation play (non-solo-mode waits here).
             // In Survival/Level, skip the wait — deal card immediately so player can act faster.
             if (!SurvivalManager.IsSurvivalMode && !GameManager.IsLevelMode)
