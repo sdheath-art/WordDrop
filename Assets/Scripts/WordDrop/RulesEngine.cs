@@ -3808,9 +3808,12 @@ namespace WordDrop
 
             _stepTotalScore += detonationBonus;
 
-            // Survival: also clear the trigger word tiles (the new word that caused the detonation)
-            // This makes detonations clear more space — critical for board survival
-            if (SurvivalManager.IsSurvivalMode)
+            // Phase 9.7: trigger-word tiles clear in Survival AND Level mode.
+            // Survival uses this to free more cells per detonation (board-survival mechanic).
+            // Level mode uses it so the player's drop-formed trigger word doesn't occupy
+            // cells that gravity needs to fill with falling letters forming cascade words.
+            // The big-moment row/column splash below stays Survival-only via its own gate.
+            if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
             {
                 var alreadyExploded = new HashSet<Vector2Int>(allExplodedCells);
                 if (_stepTriggerWords != null)
@@ -3861,7 +3864,10 @@ namespace WordDrop
                 // continuation. Gated to match BigBurstFlash: chain depth ≥ 2 OR
                 // longest primed word ≥ 6 OR 2+ primed cluster.
                 // ═══════════════════════════════════════════════════════════════
-                bool splashGate = !_splashFiredThisResolution
+                // Phase 9.7: big-moment splash stays Survival-only even though the
+                // outer trigger-word-clear block now runs in Level mode too.
+                bool splashGate = SurvivalManager.IsSurvivalMode
+                    && !_splashFiredThisResolution
                     && ((_stepChainDepth >= 2)
                         || (longestPrimedWord >= 6)
                         || (_stepPendingTriggers != null && _stepPendingTriggers.Count >= 2));
