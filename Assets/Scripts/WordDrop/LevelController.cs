@@ -60,6 +60,13 @@ namespace WordDrop
         /// <summary>Fired exactly once when MovesRemaining hits 0 before target met. Args: score, shortfall.</summary>
         public event Action<int, int> OnLevelFail;
 
+        /// <summary>
+        /// Fires at the end of StartLevel with the data just loaded. Used by HUD
+        /// consumers (e.g. BonusHUD chain-meter bar) to respect per-level hudFlags.
+        /// Also fires with null on AbortLevel so consumers can reset to default.
+        /// </summary>
+        public event Action<LevelData> OnLevelStarted;
+
         // ── Tutorial event triggers (Phase 6) ───────────────────────────────────
         //
         // Each of these fires at most once per level. LevelTutorialOverlay
@@ -135,6 +142,8 @@ namespace WordDrop
                 "level_id", data.levelId,
                 "target", data.target,
                 "move_budget", data.moveBudget);
+
+            OnLevelStarted?.Invoke(data);
         }
 
         /// <summary>
@@ -247,6 +256,9 @@ namespace WordDrop
             // so tutorial prompts can't leak onto the next screen.
             if (LevelTutorialOverlay.Instance != null)
                 LevelTutorialOverlay.Instance.ForceHide();
+
+            // Null signals "no active level" — HUD consumers reset to default visibility.
+            OnLevelStarted?.Invoke(null);
         }
 
         /// <summary>

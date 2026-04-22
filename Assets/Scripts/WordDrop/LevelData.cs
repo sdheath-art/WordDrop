@@ -62,6 +62,28 @@ namespace WordDrop
         /// Null = no visual cues (most levels). Phase 6 uses this for onboarding.
         /// </summary>
         public VisualCues visualCues;
+
+        /// <summary>
+        /// Per-level HUD visibility gates. Hides UI elements on levels before
+        /// their mechanic is introduced (e.g. Chain Meter shown from L26+ with
+        /// Bonus Mode intro). Missing / all-false on a LevelData means "hide
+        /// optional HUD" — score/target/moves/hearts are always visible.
+        /// </summary>
+        public HudFlags hudFlags;
+    }
+
+    /// <summary>
+    /// HUD element visibility per level. All default false — each level
+    /// explicitly opts in. Score, target, and move counter are always on
+    /// (not gated here). See project_wordrop_level_authoring_doctrine.md
+    /// for the canonical level→flag table.
+    /// </summary>
+    [Serializable]
+    public class HudFlags
+    {
+        public bool showSwapCharges;
+        public bool showEditCharges;
+        public bool showChainMeter;
     }
 
     /// <summary>

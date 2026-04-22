@@ -6,8 +6,13 @@ using TMPro;
 namespace WordDrop
 {
     /// <summary>
-    /// Main menu screen. Built and hidden in Awake() — before SceneBootstrap.Start()
-    /// transitions directly to Playing, so no menu flash occurs.
+    /// Production main menu — player-facing only. Keeps just logo, hearts,
+    /// coins, streak, PLAY, TODAY'S PUZZLE. Every debug / dev / testing
+    /// control lives in LevelDebugMenu (press L, dev-build-only) — see
+    /// project_wordrop_migration_plan.md Phase 9 3-category rule.
+    ///
+    /// Built and hidden in Awake() — SceneBootstrap.Start() transitions
+    /// directly to Playing so no menu flash occurs on fresh launch.
     /// </summary>
     public class MenuUI : MonoBehaviour
     {
@@ -15,8 +20,9 @@ namespace WordDrop
 
         private GameObject _panel;
         private Canvas     _canvas;
-        private Text       _bestScoreText;
         private Text       _currenciesText;
+        private Text       _dailyInfoText;
+        private GameObject _dailyButton;
         private Coroutine  _currenciesCoroutine;
 
         private void Awake()
@@ -24,16 +30,13 @@ namespace WordDrop
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
 
-            // Build UI in Awake and hide immediately.
-            // SceneBootstrap.Start() transitions to Playing without showing the menu.
             BuildUI();
             SetVisible(false);
-//             Debug.Log("[MenuUI] Awake — panel built and hidden");
         }
 
         private void BuildUI()
         {
-            var cfg = UIConfig.Instance; // null-safe: we check per-field below
+            var cfg = UIConfig.Instance;
 
             GameObject canvasGO = new GameObject("MenuCanvas");
             canvasGO.transform.SetParent(transform, false);
@@ -52,35 +55,23 @@ namespace WordDrop
             _panel = CreatePanel(canvasGO.transform, "MenuPanel",
                 cfg != null ? cfg.menuPanelBgColor : new Color(0.08f, 0.08f, 0.10f, 0.98f));
 
-            // Title
+            // Title — big WordDrop logo, upper portion of the screen.
             GameObject titleGO = new GameObject("TitleText");
             titleGO.transform.SetParent(_panel.transform, false);
-
             RectTransform titleRT = titleGO.AddComponent<RectTransform>();
-            titleRT.anchorMin = cfg != null ? cfg.menuTitleAnchorMin : new Vector2(0.05f, 0.88f);
-            titleRT.anchorMax = cfg != null ? cfg.menuTitleAnchorMax : new Vector2(0.95f, 0.98f);
+            titleRT.anchorMin = new Vector2(0.05f, 0.70f);
+            titleRT.anchorMax = new Vector2(0.95f, 0.85f);
             titleRT.offsetMin = Vector2.zero;
             titleRT.offsetMax = Vector2.zero;
-
             Text titleText      = titleGO.AddComponent<Text>();
             titleText.font      = GetFont();
             titleText.text      = "WordDrop";
-            titleText.fontSize  = cfg != null ? cfg.menuTitleFontSize : 64;
+            titleText.fontSize  = cfg != null ? cfg.menuTitleFontSize : 72;
             titleText.fontStyle = FontStyle.Bold;
             titleText.color     = cfg != null ? cfg.menuTitleColor : new Color(0.96f, 0.84f, 0.25f, 1f);
             titleText.alignment = TextAnchor.MiddleCenter;
 
-            // Personal best score
-            _bestScoreText = CreateLabel(_panel.transform, "BestScoreText",
-                anchorMin: cfg != null ? cfg.menuBestScoreAnchorMin : new Vector2(0.05f, 0.83f),
-                anchorMax: cfg != null ? cfg.menuBestScoreAnchorMax : new Vector2(0.95f, 0.88f),
-                text: "",
-                fontSize: cfg != null ? cfg.menuBestScoreFontSize : 22,
-                color: cfg != null ? cfg.menuBestScoreColor : new Color(0.96f, 0.76f, 0.29f, 1f));
-            RefreshBestScore();
-
-            // Hearts + coins readout — top-right corner HUD, refreshes while the
-            // menu is visible so the regen timer stays honest without a HUD canvas.
+            // Hearts + coins — top-right corner, refreshes each second while visible.
             _currenciesText = CreateLabel(_panel.transform, "CurrenciesText",
                 anchorMin: new Vector2(0.55f, 0.93f),
                 anchorMax: new Vector2(0.97f, 0.99f),
@@ -91,216 +82,37 @@ namespace WordDrop
             _currenciesText.fontStyle = FontStyle.Bold;
             RefreshCurrencies();
 
-            // ── CLASSIC 1v1 section ──────────────────────────────────────────
-
-            // Difficulty selector
-            _difficultyText = CreateLabel(_panel.transform, "DifficultyLabel",
-                anchorMin: cfg != null ? cfg.menuDiffLabelAnchorMin : new Vector2(0.05f, 0.74f),
-                anchorMax: cfg != null ? cfg.menuDiffLabelAnchorMax : new Vector2(0.95f, 0.82f),
-                text: "Difficulty: Easy",
-                fontSize: cfg != null ? cfg.menuDiffLabelFontSize : 22,
-                color: cfg != null ? cfg.menuDiffLabelColor : new Color(0.75f, 0.75f, 0.80f, 1f));
-
-            float diffY0 = cfg != null ? cfg.menuDiffButtonY0 : 0.67f;
-            float diffY1 = cfg != null ? cfg.menuDiffButtonY1 : 0.74f;
-            int diffFS   = cfg != null ? cfg.menuDiffButtonFontSize : 18;
-
-            CreateButton(_panel.transform, "DiffEasy",
-                anchorMin: new Vector2(0.05f, diffY0),
-                anchorMax: new Vector2(0.33f, diffY1),
-                label: "EASY", bgColor: cfg != null ? cfg.menuDiffEasyColor : new Color(0.25f, 0.65f, 0.35f, 1f),
-                textColor: Color.white, fontSize: diffFS,
-                onClick: () => SetDifficulty(0, "Easy"));
-
-            CreateButton(_panel.transform, "DiffMedium",
-                anchorMin: new Vector2(0.34f, diffY0),
-                anchorMax: new Vector2(0.66f, diffY1),
-                label: "MEDIUM", bgColor: cfg != null ? cfg.menuDiffMediumColor : new Color(0.80f, 0.65f, 0.15f, 1f),
-                textColor: Color.white, fontSize: diffFS,
-                onClick: () => SetDifficulty(1, "Medium"));
-
-            CreateButton(_panel.transform, "DiffHard",
-                anchorMin: new Vector2(0.67f, diffY0),
-                anchorMax: new Vector2(0.95f, diffY1),
-                label: "HARD", bgColor: cfg != null ? cfg.menuDiffHardColor : new Color(0.80f, 0.25f, 0.20f, 1f),
-                textColor: Color.white, fontSize: diffFS,
-                onClick: () => SetDifficulty(2, "Hard"));
-
-            // AI profile selector
-            _profileText = CreateLabel(_panel.transform, "ProfileLabel",
-                anchorMin: cfg != null ? cfg.menuProfileLabelAnchorMin : new Vector2(0.05f, 0.59f),
-                anchorMax: cfg != null ? cfg.menuProfileLabelAnchorMax : new Vector2(0.95f, 0.66f),
-                text: "AI Style: Scorer",
-                fontSize: cfg != null ? cfg.menuProfileLabelFontSize : 20,
-                color: cfg != null ? cfg.menuDiffLabelColor : new Color(0.75f, 0.75f, 0.80f, 1f));
-
-            float profBtnY0 = cfg != null ? cfg.menuProfileButtonY0 : 0.52f;
-            float profBtnY1 = cfg != null ? cfg.menuProfileButtonY1 : 0.59f;
-            int profFS      = cfg != null ? cfg.menuProfileButtonFontSize : 16;
-
-            CreateButton(_panel.transform, "ProfScorer",
-                anchorMin: new Vector2(0.05f, profBtnY0),
-                anchorMax: new Vector2(0.33f, profBtnY1),
-                label: "SCORER", bgColor: cfg != null ? cfg.menuProfileScorerColor : new Color(0.30f, 0.55f, 0.75f, 1f),
-                textColor: Color.white, fontSize: profFS,
-                onClick: () => SetProfile(AIAgent.AIProfile.Scorer));
-            CreateButton(_panel.transform, "ProfBlocker",
-                anchorMin: new Vector2(0.34f, profBtnY0),
-                anchorMax: new Vector2(0.66f, profBtnY1),
-                label: "BLOCKER", bgColor: cfg != null ? cfg.menuProfileBlockerColor : new Color(0.60f, 0.35f, 0.60f, 1f),
-                textColor: Color.white, fontSize: profFS,
-                onClick: () => SetProfile(AIAgent.AIProfile.Blocker));
-            CreateButton(_panel.transform, "ProfHunter",
-                anchorMin: new Vector2(0.67f, profBtnY0),
-                anchorMax: new Vector2(0.95f, profBtnY1),
-                label: "HUNTER", bgColor: cfg != null ? cfg.menuProfileHunterColor : new Color(0.75f, 0.30f, 0.25f, 1f),
-                textColor: Color.white, fontSize: profFS,
-                onClick: () => SetProfile(AIAgent.AIProfile.TriggerHunter));
-
-            // PLAY button (Classic 1v1)
+            // PLAY — primary CTA. Routes to Tutorial L1 if incomplete, else Level Select.
             CreateButton(_panel.transform, "PlayButton",
-                anchorMin: cfg != null ? cfg.menuPlayAnchorMin : new Vector2(0.10f, 0.42f),
-                anchorMax: cfg != null ? cfg.menuPlayAnchorMax : new Vector2(0.90f, 0.52f),
+                anchorMin: new Vector2(0.18f, 0.44f),
+                anchorMax: new Vector2(0.82f, 0.58f),
                 label:     "PLAY",
                 bgColor:   cfg != null ? cfg.menuPlayBgColor : new Color(0.20f, 0.72f, 0.35f, 1f),
                 textColor: Color.white,
-                fontSize:  cfg != null ? cfg.menuPlayFontSize : 40,
+                fontSize:  cfg != null ? cfg.menuPlayFontSize : 48,
                 onClick:   OnPlayClicked);
 
-            // ── Solo modes ───────────────────────────────────────────────────
-
-            // DAILY DROP button
+            // TODAY'S PUZZLE — secondary CTA. Hearts gate + save-streak + already-played
+            // modals all handled inside OnDailyClicked.
             _dailyButton = CreateDailyButton(_panel.transform, "DailyButton",
-                anchorMin: cfg != null ? cfg.menuDailyAnchorMin : new Vector2(0.05f, 0.28f),
-                anchorMax: cfg != null ? cfg.menuDailyAnchorMax : new Vector2(0.48f, 0.38f));
+                anchorMin: new Vector2(0.18f, 0.28f),
+                anchorMax: new Vector2(0.82f, 0.40f));
 
-            // Daily info label (streak / completed)
+            // Streak / daily-info line directly under the daily CTA.
             _dailyInfoText = CreateLabel(_panel.transform, "DailyInfoText",
-                anchorMin: new Vector2(0.05f, 0.24f),
-                anchorMax: new Vector2(0.48f, 0.28f),
+                anchorMin: new Vector2(0.18f, 0.22f),
+                anchorMax: new Vector2(0.82f, 0.28f),
                 text: "",
-                fontSize: cfg != null ? cfg.menuDailyInfoFontSize : 14,
+                fontSize: cfg != null ? cfg.menuDailyInfoFontSize : 16,
                 color: cfg != null ? cfg.menuDailyInfoColor : new Color(0.60f, 0.75f, 0.90f, 1f));
             RefreshDailyInfo();
-
-            // BLITZ button
-            CreateButton(_panel.transform, "BlitzButton",
-                anchorMin: cfg != null ? cfg.menuBlitzAnchorMin : new Vector2(0.52f, 0.28f),
-                anchorMax: cfg != null ? cfg.menuBlitzAnchorMax : new Vector2(0.95f, 0.38f),
-                label:     "BLITZ 90s",
-                bgColor:   cfg != null ? cfg.menuBlitzBgColor : new Color(0.85f, 0.30f, 0.15f, 1f),
-                textColor: Color.white,
-                fontSize:  cfg != null ? cfg.menuBlitzFontSize : 24,
-                onClick:   OnBlitzClicked);
-
-            // Blitz best score
-            _blitzBestScoreText = CreateLabel(_panel.transform, "BlitzBestScoreText",
-                anchorMin: new Vector2(0.52f, 0.24f),
-                anchorMax: new Vector2(0.95f, 0.28f),
-                text: "",
-                fontSize: cfg != null ? cfg.menuBlitzBestScoreFontSize : 14,
-                color: cfg != null ? cfg.menuBlitzBestScoreColor : new Color(0.85f, 0.50f, 0.25f, 1f));
-            RefreshBlitzBestScore();
-
-            // SURVIVAL button
-            CreateButton(_panel.transform, "SurvivalButton",
-                anchorMin: new Vector2(0.05f, 0.16f),
-                anchorMax: new Vector2(0.95f, 0.24f),
-                label:     "SURVIVAL",
-                bgColor:   new Color(0.10f, 0.70f, 0.75f, 1f),  // cyan
-                textColor: Color.white,
-                fontSize:  24,
-                onClick:   OnSurvivalClicked);
-
-            // ── Debug buttons ────────────────────────────────────────────────
-
-            Color dbgBg  = cfg != null ? cfg.menuDebugBgColor : new Color(0.3f, 0.3f, 0.4f, 0.5f);
-            Color dbgTxt = cfg != null ? cfg.menuDebugTextColor : new Color(0.7f, 0.7f, 0.8f, 0.7f);
-            int dbgFS    = cfg != null ? cfg.menuDebugFontSize : 13;
-
-            CreateButton(_panel.transform, "ResetTutorialBtn",
-                anchorMin: new Vector2(0.05f, 0.02f),
-                anchorMax: new Vector2(0.35f, 0.07f),
-                label:     "RESET ALL",
-                bgColor:   dbgBg,
-                textColor: dbgTxt,
-                fontSize:  dbgFS,
-                onClick:   OnResetAllClicked);
-
-            CreateButton(_panel.transform, "ResetDailyBtn",
-                anchorMin: new Vector2(0.36f, 0.02f),
-                anchorMax: new Vector2(0.65f, 0.07f),
-                label:     "RESET DAILY",
-                bgColor:   dbgBg,
-                textColor: dbgTxt,
-                fontSize:  dbgFS,
-                onClick:   OnResetDailyClicked);
-
-            // Rising Rows toggle
-            _risingRowsText = CreateLabel(_panel.transform, "RisingRowsLabel",
-                anchorMin: new Vector2(0.05f, 0.08f),
-                anchorMax: new Vector2(0.95f, 0.12f),
-                text: GetRisingRowsLabel(),
-                fontSize: dbgFS,
-                color: dbgTxt);
-
-            CreateButton(_panel.transform, "RisingRowsBtn",
-                anchorMin: new Vector2(0.66f, 0.02f),
-                anchorMax: new Vector2(0.95f, 0.07f),
-                label:     "RISING ROWS",
-                bgColor:   dbgBg,
-                textColor: dbgTxt,
-                fontSize:  dbgFS,
-                onClick:   OnRisingRowsToggle);
-
-            // SFX toggle
-            _sfxText = CreateLabel(_panel.transform, "SFXLabel",
-                anchorMin: new Vector2(0.35f, 0.02f),
-                anchorMax: new Vector2(0.65f, 0.06f),
-                text: GetSFXLabel(),
-                color: dbgTxt, fontSize: dbgFS);
-
-            CreateButton(_panel.transform, "SFXBtn",
-                anchorMin: new Vector2(0.35f, 0.02f),
-                anchorMax: new Vector2(0.64f, 0.07f),
-                label:     "SFX",
-                bgColor:   dbgBg,
-                textColor: dbgTxt,
-                fontSize:  dbgFS,
-                onClick:   OnSFXToggle);
-        }
-
-        private Text _difficultyText;
-        private Text _profileText;
-        private Text _blitzBestScoreText;
-        private GameObject _dailyButton;
-        private Text _risingRowsText;
-        private Text _dailyInfoText;
-        private Text _sfxText;
-
-        private void SetProfile(AIAgent.AIProfile profile)
-        {
-            AIAgent.CurrentProfile = profile;
-            if (_profileText != null)
-                _profileText.text = $"AI Style: {profile}";
-//             Debug.Log($"[MenuUI] AI profile set to {profile}");
-        }
-
-        private void SetDifficulty(int level, string name)
-        {
-            AIAgent.Difficulty = level;
-            if (_difficultyText != null)
-                _difficultyText.text = $"Difficulty: {name}";
-//             Debug.Log($"[MenuUI] Difficulty set to {name} ({level})");
         }
 
         private void OnPlayClicked()
         {
-            // Phase 6 override: if the tutorial hasn't been completed yet, PLAY launches
-            // the next incomplete tutorial level (L1 for a fresh install, or the resume
-            // point if the player quit mid-tutorial). Post-tutorial, PLAY opens the
-            // Level Select screen. Classic/Blitz/Survival/Daily still reachable via their
-            // dedicated buttons.
+            // First-launch: tutorial not complete → auto-launch next incomplete
+            // tutorial level. Post-tutorial → open Level Select. Debug Force-Level
+            // remains the override path for testing arbitrary levels.
             AnalyticsManager.ButtonTap("play");
 
             if (!TutorialProgression.IsTutorialComplete())
@@ -311,10 +123,8 @@ namespace WordDrop
                     StartLevelFromMenu(resumeId);
                     return;
                 }
-                // Fall through if already past the last tutorial level.
             }
 
-            // Tutorial done → open Level Select on top of the main menu.
             SetVisible(false);
             if (LevelSelectScreen.Instance != null)
                 LevelSelectScreen.Instance.SetVisible(true);
@@ -354,32 +164,9 @@ namespace WordDrop
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
 
-        private void OnBlitzClicked()
-        {
-            DailyDropManager.IsDailyMode = false;
-            BlitzManager.IsBlitzMode = true;
-            SurvivalManager.IsSurvivalMode = false;
-            AnalyticsManager.ButtonTap("blitz");
-            AnalyticsManager.ScreenView("playing_blitz");
-            if (GameManager.Instance != null)
-                GameManager.Instance.TransitionTo(GameState.Playing);
-        }
-
-        private void OnSurvivalClicked()
-        {
-            DailyDropManager.IsDailyMode = false;
-            BlitzManager.IsBlitzMode = false;
-            SurvivalManager.IsSurvivalMode = true;
-            AnalyticsManager.ButtonTap("survival");
-            AnalyticsManager.ScreenView("playing_survival");
-            if (GameManager.Instance != null)
-                GameManager.Instance.TransitionTo(GameState.Playing);
-        }
-
         private void OnDailyClicked()
         {
-            // Already played today → show the "Come back tomorrow" modal instead
-            // of the silent no-op the pre-Phase-8 flow used.
+            // Already played today → show the "Come back tomorrow" modal.
             if (DailyDropManager.HasPlayedToday())
             {
                 AnalyticsManager.ButtonTap("daily_already_played");
@@ -388,11 +175,9 @@ namespace WordDrop
                 return;
             }
 
-            // Life gate BEFORE save-streak. If the player is out of hearts they
-            // can't actually play the daily, so offering to save the streak is
-            // cruel — they'd save it but then watch it break tomorrow anyway.
-            // Resolve hearts first; the save-streak prompt will surface on the
-            // next tap once hearts are available.
+            // Life gate BEFORE save-streak. Out of hearts = daily unplayable today
+            // regardless, so don't pitch save-streak only to have them save + break
+            // tomorrow. Resolve hearts first; save-streak surfaces on next tap.
             if (HeartsManager.Current <= 0)
             {
                 AnalyticsManager.ButtonTap("daily_no_hearts");
@@ -402,9 +187,6 @@ namespace WordDrop
                 return;
             }
 
-            // Save-streak opportunity: the player's on a streak but missed
-            // yesterday. Offer the rewarded ad before letting them start a new
-            // daily (which would reset the streak to 1).
             if (DailyDropManager.CanSaveStreak() && SaveStreakModal.Instance != null)
             {
                 AnalyticsManager.ButtonTap("daily_save_streak_prompt");
@@ -417,9 +199,8 @@ namespace WordDrop
 
         /// <summary>
         /// Loads today's daily level and routes through LevelController (Phase 8).
-        /// Exposed as a separate method so SaveStreakModal can continue into the
-        /// level after restoring the streak, and DailyAlreadyPlayedModal can
-        /// re-trigger for debug replay via the menu's RESET DAILY button.
+        /// Exposed separately so SaveStreakModal can continue into the level after
+        /// restoring the streak, and the debug menu's RESET DAILY can re-trigger.
         /// </summary>
         public void BeginDailyLevel()
         {
@@ -437,10 +218,6 @@ namespace WordDrop
                 return;
             }
 
-            // Life gate still applies: the daily attempt spends a heart like any
-            // other level attempt. HeartWaitModal handles the 0-heart case and
-            // returns to MainMenu (not LevelSelect) when dismissed from here —
-            // daily is a main-menu feature, not a level-map feature.
             if (!HeartsManager.Consume())
             {
                 SetVisible(false);
@@ -528,8 +305,6 @@ namespace WordDrop
 
             bool played = DailyDropManager.HasPlayedToday();
             int streak = DailyDropManager.GetStreak();
-            // Phase 8: streak prefix always visible when there's a live streak.
-            // Flame glyph matches common daily-app conventions (Duolingo, NYT).
 
             if (played)
             {
@@ -546,12 +321,9 @@ namespace WordDrop
                 _dailyInfoText.text = "Play today's puzzle";
             }
 
-            // Update button appearance
             if (_dailyButton != null)
             {
                 Button btn = _dailyButton.GetComponent<Button>();
-                // Always interactable — taps on a completed day open the
-                // "Come back tomorrow" modal instead of silently dropping.
                 if (btn != null) btn.interactable = true;
 
                 Text label = _dailyButton.GetComponentInChildren<Text>();
@@ -568,65 +340,18 @@ namespace WordDrop
             }
         }
 
-        private void OnRisingRowsToggle()
-        {
-            RisingRowManager.Enabled = !RisingRowManager.Enabled;
-            if (_risingRowsText != null)
-                _risingRowsText.text = GetRisingRowsLabel();
-//             Debug.Log($"[MenuUI] Rising Rows toggled: {(RisingRowManager.Enabled ? "ON" : "OFF")}");
-        }
-
-        private string GetRisingRowsLabel()
-        {
-            return $"Rising Rows: {(RisingRowManager.Enabled ? "ON" : "OFF")} (every {RisingRowManager.TurnInterval} turns)";
-        }
-
-        private void OnSFXToggle()
-        {
-            if (GameAudio.Instance == null) return;
-            GameAudio.Instance.Muted = !GameAudio.Instance.Muted;
-            if (_sfxText != null)
-                _sfxText.text = GetSFXLabel();
-//             Debug.Log($"[MenuUI] SFX toggled: {(GameAudio.Instance.Muted ? "OFF" : "ON")}");
-        }
-
-        private string GetSFXLabel()
-        {
-            bool muted = GameAudio.Instance != null && GameAudio.Instance.Muted;
-            return $"SFX: {(muted ? "OFF" : "ON")}";
-        }
-
-        private void OnResetAllClicked()
-        {
-            TutorialManager.ResetTutorial();
-            DailyDropManager.ResetDaily();
-            RefreshBestScore();
-            RefreshBlitzBestScore();
-            RefreshDailyInfo();
-//             Debug.Log("[MenuUI] Full reset — tutorial, daily, scores all cleared.");
-        }
-
-        private void OnResetDailyClicked()
-        {
-            DailyDropManager.ResetDaily();
-            RefreshDailyInfo();
-//             Debug.Log("[MenuUI] Daily reset — can replay today.");
-        }
-
         public void SetVisible(bool visible)
         {
             if (_panel != null) _panel.SetActive(visible);
             if (visible)
             {
-                // Defensive: the tutorial overlay's canvas sortingOrder (120) is
-                // above the menu (100), and a prior daily/level's prompt can
-                // stick around if OnLevelComplete's fade got interrupted. Main
-                // menu should NEVER have a tutorial prompt hovering — force-hide.
+                // The tutorial overlay lives on a higher sortingOrder canvas. A
+                // prior daily/level's prompt can stick around if OnLevelComplete's
+                // fade got interrupted. Main menu should never have a tutorial
+                // prompt hovering — force-hide on every show.
                 if (LevelTutorialOverlay.Instance != null)
                     LevelTutorialOverlay.Instance.ForceHide();
 
-                RefreshBestScore();
-                RefreshBlitzBestScore();
                 RefreshDailyInfo();
                 RefreshCurrencies();
                 if (_currenciesCoroutine == null && gameObject.activeInHierarchy)
@@ -656,20 +381,6 @@ namespace WordDrop
             int hearts = HeartsManager.Current;
             int coins = CoinWallet.Balance;
             _currenciesText.text = $"♥ {hearts}/{HeartsManager.MAX_HEARTS}   ● {coins}";
-        }
-
-        private void RefreshBestScore()
-        {
-            if (_bestScoreText == null) return;
-            int best = HighScoreManager.GetBest("classic");
-            _bestScoreText.text = best > 0 ? $"Best: {best}" : "";
-        }
-
-        private void RefreshBlitzBestScore()
-        {
-            if (_blitzBestScoreText == null) return;
-            int best = HighScoreManager.GetBest("blitz");
-            _blitzBestScoreText.text = best > 0 ? $"Blitz Best: {best}" : "";
         }
 
         private static GameObject CreatePanel(Transform parent, string name, Color color)
@@ -733,8 +444,6 @@ namespace WordDrop
             cb.pressedColor     = Color.Lerp(bgColor, Color.black, 0.25f);
             cb.normalColor      = bgColor;
             btn.colors          = cb;
-            // Tactile press feedback — every button built through this helper
-            // gets the scale-down/bounce-back on tap. Phase 6.5 canon animation.
             Transform btnTransform = btnGO.transform;
             btn.onClick.AddListener(() => UIAnimations.ButtonPress(btnTransform));
             btn.onClick.AddListener(() => GameAudio.Instance?.PlayButtonClick());
@@ -760,7 +469,6 @@ namespace WordDrop
             t.enableWordWrapping = false;
             t.overflowMode = TextOverflowModes.Overflow;
 
-            // Button-tier outline
             t.outlineWidth = 0.1f;
             t.outlineColor = (Color32)Color.Lerp(textColor, Color.black, 0.5f);
         }

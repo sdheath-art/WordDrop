@@ -135,6 +135,27 @@ namespace WordDrop
                 _lastStatus = "Starter Pack shown (persistence flags cleared).";
             }
 
+            // ── Toggles (moved from MenuUI in Phase 9) ──
+            GUILayout.Space(4f);
+            GUILayout.BeginHorizontal();
+            bool risingOn = RisingRowManager.Enabled;
+            if (GUILayout.Button($"Rising Rows: {(risingOn ? "ON" : "OFF")}"))
+            {
+                RisingRowManager.Enabled = !RisingRowManager.Enabled;
+                _lastStatus = $"Rising Rows global flag → {(RisingRowManager.Enabled ? "ON" : "OFF")} " +
+                              "(overridden per-level by hazards[] in Level mode).";
+            }
+            bool muted = GameAudio.Instance != null && GameAudio.Instance.Muted;
+            if (GUILayout.Button($"SFX: {(muted ? "OFF" : "ON")}"))
+            {
+                if (GameAudio.Instance != null)
+                {
+                    GameAudio.Instance.Muted = !GameAudio.Instance.Muted;
+                    _lastStatus = $"SFX → {(GameAudio.Instance.Muted ? "muted" : "on")}.";
+                }
+            }
+            GUILayout.EndHorizontal();
+
             // ── Daily debug (Phase 8) ──
             GUILayout.Space(4f);
             GUILayout.Label($"<b>Daily</b>  streak={DailyDropManager.GetStreak()} playedToday={DailyDropManager.HasPlayedToday()} canSaveStreak={DailyDropManager.CanSaveStreak()} lvl→{DailyDropManager.GetDailyLevelId()}", RichLabelStyle());

@@ -70,6 +70,11 @@ namespace WordDrop
                 BonusMode.Instance.OnBonusExit      -= HandleBonusExit;
                 BonusMode.Instance.OnBonusExit      += HandleBonusExit;
             }
+            if (LevelController.Instance != null)
+            {
+                LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
+                LevelController.Instance.OnLevelStarted += HandleLevelStarted;
+            }
         }
 
         private void Unsubscribe()
@@ -83,6 +88,24 @@ namespace WordDrop
                 BonusMode.Instance.OnBonusWordScored -= HandleBonusWordScored;
                 BonusMode.Instance.OnBonusExit       -= HandleBonusExit;
             }
+            if (LevelController.Instance != null)
+                LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
+        }
+
+        // Chain meter is hidden on Level-mode levels that don't opt in to it
+        // via hudFlags.showChainMeter (design commit: visible from L26+ only
+        // so Bonus Mode can be introduced as a single conceptual unit). Any
+        // non-Level mode (Classic/Daily/Blitz/debug) keeps the meter visible.
+        private void HandleLevelStarted(LevelData data)
+        {
+            bool showMeter;
+            if (data == null)
+                showMeter = true; // aborted / returned to menu — back to default
+            else
+                showMeter = data.hudFlags != null && data.hudFlags.showChainMeter;
+
+            if (_meterBg != null)
+                _meterBg.gameObject.SetActive(showMeter);
         }
 
         // ── UI build ──────────────────────────────────────────────────────────────
