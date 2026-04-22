@@ -3,7 +3,7 @@
     "levelId": 201,
     "displayName": "Test: Adjacency Negative",
     "target": 10,
-    "moveBudget": 3,
+    "moveBudget": 5,
     "starThresholds": [10, 20, 30],
     "allowedMechanics": [],
     "hazards": [],
