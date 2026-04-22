@@ -31,6 +31,13 @@ namespace WordDrop
         private Coroutine _ghostDemoCoroutine;
         private GameObject _ghostGO;
 
+        // Dedicated reference to the drop-arrow GameObject so the first_word
+        // handler can target it specifically. Other cues (subtle pulse,
+        // prominent pulse, ghost demo) have different teaching-beat lifecycles
+        // and retire only at level end via ClearAll — this one retires when
+        // the player has formed their first word (its teaching purpose met).
+        private GameObject _dropArrowGO;
+
         // Subtle pulse (cyan/teal) = UI/interact vocabulary. Visually distinct
         // from the warm/pink primed-word vocabulary so tutorial cues don't blur
         // with gameplay state. Blend saturated (0.85) so the tint actually reads
@@ -48,9 +55,29 @@ namespace WordDrop
             Instance = this;
         }
 
+        private void Start()
+        {
+            // Subscribe after SceneBootstrap has created LevelController (Awake
+            // ordering isn't guaranteed; Start runs after all Awakes complete).
+            if (LevelController.Instance != null)
+            {
+                LevelController.Instance.OnFirstWord -= HandleFirstWord;
+                LevelController.Instance.OnFirstWord += HandleFirstWord;
+            }
+        }
+
         private void OnDestroy()
         {
+            if (LevelController.Instance != null)
+                LevelController.Instance.OnFirstWord -= HandleFirstWord;
             ClearAll();
+        }
+
+        // Retire the drop arrow once its teaching purpose is met — player has
+        // formed their first word. Other cues stay until level end.
+        private void HandleFirstWord()
+        {
+            FadeOutDropArrow();
         }
 
         // ── Public entry point ──────────────────────────────────────────────────
@@ -103,9 +130,40 @@ namespace WordDrop
             for (int i = 0; i < _activeGOs.Count; i++)
                 if (_activeGOs[i] != null) Destroy(_activeGOs[i]);
             _activeGOs.Clear();
+            _dropArrowGO = null;
 
             if (_ghostDemoCoroutine != null) { StopCoroutine(_ghostDemoCoroutine); _ghostDemoCoroutine = null; }
             if (_ghostGO != null) { Destroy(_ghostGO); _ghostGO = null; }
+        }
+
+        // ── Arrow retirement on first_word ──────────────────────────────────────
+        // Fade the drop arrow out when the player has formed their first word.
+        // 0.3s alpha fade → destroy GameObject → null the reference. Matches the
+        // "reactive prompt" vocabulary (first_word tutorial prompt also retires
+        // here — arrow and prompt exit together). Other cues stay until level end.
+        private void FadeOutDropArrow()
+        {
+            if (_dropArrowGO == null) return;
+            GameObject arrowGO = _dropArrowGO;
+            _dropArrowGO = null;
+
+            var sr = arrowGO.GetComponent<SpriteRenderer>();
+            if (sr == null)
+            {
+                Destroy(arrowGO);
+                return;
+            }
+
+            // Kill in-flight arrow tweens (alpha breathe + y-bob) so the fade
+            // animates cleanly without yoyo-ing back to full opacity.
+            arrowGO.transform.DOKill();
+            DOTween.Kill(sr);
+
+            Color start = sr.color;
+            Color end = new Color(start.r, start.g, start.b, 0f);
+            DOTween.To(() => sr.color, v => sr.color = v, end, 0.3f)
+                .SetEase(Ease.InCubic)
+                .OnComplete(() => { if (arrowGO != null) Destroy(arrowGO); });
         }
 
         // ── Pulse implementation ────────────────────────────────────────────────
@@ -168,6 +226,7 @@ namespace WordDrop
             float cs = grid.CellSize;
             arrowGO.transform.localScale = new Vector3(cs * 0.55f, cs * 0.55f, 1f);
             _activeGOs.Add(arrowGO);
+            _dropArrowGO = arrowGO;
 
             // Alpha breathe: 1.0 ↔ 0.45 over 0.6s half-cycle → 1.2s full period.
             Tween alphaTween = DOTween.To(
