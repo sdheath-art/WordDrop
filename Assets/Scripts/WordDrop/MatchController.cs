@@ -1111,9 +1111,19 @@ namespace WordDrop
 
         /// <summary>
         /// Column-scoped variant of HasValidFirstMove. Returns true iff any
-        /// letter in the hand forms ≥1 word when dropped at the given column.
-        /// Used by the Level-mode arrow-column first-word guarantee in
-        /// StartMatch — ensures the tutorial arrow hint is always actionable.
+        /// COMMON letter in the hand forms ≥1 word when dropped at the given
+        /// column. Used by the Level-mode arrow-column first-word guarantee
+        /// in StartMatch — ensures the tutorial arrow hint is always actionable
+        /// via a letter a fresh-eyes tester is likely to recognize.
+        ///
+        /// Exclusion: X / Z / Q / J don't satisfy the guarantee by themselves.
+        /// Their words (AXE, ZAX, QIS, JAY, etc.) technically prime correctly,
+        /// but asking a tutorial player to discover a rare-letter word is a
+        /// worse teaching beat than a common-letter one. X/Z/Q/J remain in the
+        /// bag and score normally if drawn during play — they just don't count
+        /// as "the guaranteed first drop letter." Keeps the reroll predicate
+        /// aligned with the implicit spec intent ("at least one letter a
+        /// beginner will recognize forms a word at the arrow column").
         /// </summary>
         private bool HasValidDropAtColumn(PlayerHand hand, RulesEngine rules, int col)
         {
@@ -1123,6 +1133,8 @@ namespace WordDrop
             {
                 char letter = hand.GetSlot(slot);
                 if (letter == '\0') continue;
+                if (letter == 'X' || letter == 'Z' || letter == 'Q' || letter == 'J')
+                    continue;
                 var matches = rules.SimulateDrop(col, letter, PLAYER_HUMAN);
                 if (matches != null && matches.Count > 0) return true;
             }
