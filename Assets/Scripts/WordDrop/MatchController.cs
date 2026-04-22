@@ -211,6 +211,18 @@ namespace WordDrop
                 _bag = new TileBag();
             }
 
+            // Level mode: per-level LevelData.rewriteCharges is authoritative.
+            // Tutorial L1–L3 have rewriteCharges=0 (tool not taught yet), L4+
+            // opts in via the schema. Runs BEFORE the Survival block so that
+            // Level mode (IsLevelMode true, IsSurvivalMode false) gets its own
+            // charge count and Survival's hardcoded 3 doesn't leak through.
+            if (GameManager.IsLevelMode
+                && LevelController.Instance != null
+                && LevelController.Instance.CurrentLevel != null)
+            {
+                _rewritesRemaining[PLAYER_HUMAN] = LevelController.Instance.CurrentLevel.rewriteCharges;
+            }
+
             // Survival mode: Rewrite is a core verb — 3 charges, max 3
             _survivalWordsMeter = 0;
             if (SurvivalManager.IsSurvivalMode)
@@ -1072,6 +1084,13 @@ namespace WordDrop
 //                 Debug.Log($"[MatchController] Used rewrite charge for P{playerIndex}. Remaining: {_rewritesRemaining[playerIndex]}");
                 if (HUDManager.Instance != null)
                     HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[playerIndex]);
+
+                // Tutorial side-channel: fires OnFirstRewrite the first time a
+                // Level-mode player commits a rewrite. L4 uses this to surface
+                // the "now drop a letter…" reactive prompt. No-op outside Level
+                // mode (LevelController guards on IsActive).
+                if (playerIndex == PLAYER_HUMAN)
+                    LevelController.Instance?.NotifyRewrite();
             }
         }
 

@@ -29,7 +29,7 @@ namespace WordDrop
         // Canonical tutorial prompt triggers. Must match events LevelController fires.
         private static readonly HashSet<string> AllowedTutorialTriggers = new HashSet<string>
         {
-            "start", "first_word", "first_detonation", "first_chain"
+            "start", "first_word", "first_detonation", "first_chain", "first_rewrite"
         };
 
         public static (bool ok, string reason) Validate(LevelData data)
@@ -137,7 +137,7 @@ namespace WordDrop
                     if (string.IsNullOrEmpty(p.on))
                         return (false, "tutorialPrompts entry missing 'on' trigger");
                     if (!AllowedTutorialTriggers.Contains(p.on))
-                        return (false, $"tutorialPrompts entry has unknown trigger '{p.on}' (valid: start, first_word, first_detonation, first_chain)");
+                        return (false, $"tutorialPrompts entry has unknown trigger '{p.on}' (valid: start, first_word, first_detonation, first_chain, first_rewrite)");
                     if (string.IsNullOrEmpty(p.text))
                         return (false, $"tutorialPrompts entry for '{p.on}' has empty text");
                 }

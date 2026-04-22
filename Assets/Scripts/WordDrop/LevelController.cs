@@ -75,10 +75,12 @@ namespace WordDrop
         public event Action OnFirstWord;
         public event Action OnFirstDetonation;
         public event Action OnFirstChain;
+        public event Action OnFirstRewrite;
 
         private bool _firstWordFired;
         private bool _firstDetonationFired;
         private bool _firstChainFired;
+        private bool _firstRewriteFired;
 
         // ── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -119,6 +121,7 @@ namespace WordDrop
             _firstWordFired = false;
             _firstDetonationFired = false;
             _firstChainFired = false;
+            _firstRewriteFired = false;
 
             // Dismiss any leftover modal from a prior run — StartLevel is the single
             // point of entry for every level start (Level Select, REPLAY, NEXT, RETRY).
@@ -207,6 +210,21 @@ namespace WordDrop
                 _firstChainFired = true;
                 OnFirstChain?.Invoke();
             }
+        }
+
+        /// <summary>
+        /// Side-channel for the rewrite tutorial trigger. Called from
+        /// MatchController.UseRewriteCharge after a charge is successfully
+        /// consumed — fires OnFirstRewrite at most once per level. L4 (rewrite
+        /// tutorial) uses this to surface the "now drop a letter…" reactive
+        /// prompt right after the rewrite commits.
+        /// </summary>
+        public void NotifyRewrite()
+        {
+            if (!IsActive) return;
+            if (_firstRewriteFired) return;
+            _firstRewriteFired = true;
+            OnFirstRewrite?.Invoke();
         }
 
         /// <summary>

@@ -15,6 +15,7 @@ namespace WordDrop
     ///   "first_word"        → OnFirstWord (first scoring drop this level)
     ///   "first_detonation"  → OnFirstDetonation (first primed-word detonation)
     ///   "first_chain"       → OnFirstChain (first chain-bonus drop)
+    ///   "first_rewrite"     → OnFirstRewrite (first committed rewrite — L4 intro)
     ///
     /// Prompts stay on screen until the next one displaces them, or until the
     /// level ends. Empty tutorialPrompts ⇒ overlay stays hidden (most levels).
@@ -60,6 +61,7 @@ namespace WordDrop
                 LevelController.Instance.OnFirstWord       += HandleFirstWord;
                 LevelController.Instance.OnFirstDetonation += HandleFirstDetonation;
                 LevelController.Instance.OnFirstChain      += HandleFirstChain;
+                LevelController.Instance.OnFirstRewrite    += HandleFirstRewrite;
                 LevelController.Instance.OnLevelComplete   += HandleLevelEnded;
                 LevelController.Instance.OnLevelFail       += HandleLevelEnded;
             }
@@ -72,6 +74,7 @@ namespace WordDrop
                 LevelController.Instance.OnFirstWord       -= HandleFirstWord;
                 LevelController.Instance.OnFirstDetonation -= HandleFirstDetonation;
                 LevelController.Instance.OnFirstChain      -= HandleFirstChain;
+                LevelController.Instance.OnFirstRewrite    -= HandleFirstRewrite;
                 LevelController.Instance.OnLevelComplete   -= HandleLevelEnded;
                 LevelController.Instance.OnLevelFail       -= HandleLevelEnded;
             }
@@ -120,6 +123,11 @@ namespace WordDrop
         private void HandleFirstChain()
         {
             if (_promptsByTrigger.TryGetValue("first_chain", out string t)) ShowPrompt(t, persist: false);
+        }
+
+        private void HandleFirstRewrite()
+        {
+            if (_promptsByTrigger.TryGetValue("first_rewrite", out string t)) ShowPrompt(t, persist: false);
         }
 
         private void HandleLevelEnded(int score, int starsOrShortfall)

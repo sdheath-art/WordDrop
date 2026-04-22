@@ -1,0 +1,30 @@
+{
+    "schemaVersion": 1,
+    "levelId": 4,
+    "displayName": "Rewrite",
+    "target": 50,
+    "moveBudget": 20,
+    "starThresholds": [50, 90, 150],
+    "allowedMechanics": [],
+    "hazards": [],
+    "startingBoard": [
+        {"x": 1, "y": 0, "letter": "C", "variant": "normal"},
+        {"x": 2, "y": 0, "letter": "A", "variant": "normal"},
+        {"x": 3, "y": 0, "letter": "Z", "variant": "normal"}
+    ],
+    "bag": null,
+    "seed": 0,
+    "rewriteCharges": 3,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": true,
+        "showChainMeter": false
+    },
+    "visualCues": {
+        "prominentPulseCells": [{"x": 3, "y": 0}]
+    },
+    "tutorialPrompts": [
+        {"on": "start",         "text": "Hold the pulsing tile to change it."},
+        {"on": "first_rewrite", "text": "Now drop a letter to set off the fuse."}
+    ]
+}

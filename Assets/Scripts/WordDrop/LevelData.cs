@@ -70,6 +70,14 @@ namespace WordDrop
         /// optional HUD" — score/target/moves/hearts are always visible.
         /// </summary>
         public HudFlags hudFlags;
+
+        /// <summary>
+        /// Number of rewrite (edit) charges granted for this level. Default 0 —
+        /// the player tool is NOT exposed until a level explicitly opts in.
+        /// L4 (tutorial intro) sets this to 3. Non-Level modes (Survival /
+        /// Daily / Blitz) use their own charge sources and ignore this field.
+        /// </summary>
+        public int rewriteCharges;
     }
 
     /// <summary>
