@@ -134,19 +134,17 @@ namespace WordDrop
         // counters visible as the safe default.
         private void HandleLevelStarted(LevelData data)
         {
-            bool showSwap;
-            bool showEdit;
-            if (data == null)
-            {
-                showSwap = true;
-                showEdit = true;
-            }
-            else
-            {
-                var flags = data.hudFlags;
-                showSwap = flags != null && flags.showSwapCharges;
-                showEdit = flags != null && flags.showEditCharges;
-            }
+            // Swap / edit counters only activate when a level explicitly opts
+            // in via hudFlags. null-data (AbortLevel on menu return) keeps
+            // them hidden — otherwise the Playing→Menu slide briefly flashes
+            // SWAP x2 / EDIT x0 over the menu. Survival mode (kill-switched
+            // in production) will need a separate show hook in Phase 9.5.
+            bool showSwap = data != null
+                         && data.hudFlags != null
+                         && data.hudFlags.showSwapCharges;
+            bool showEdit = data != null
+                         && data.hudFlags != null
+                         && data.hudFlags.showEditCharges;
 
             if (_swapCounterText != null)
                 _swapCounterText.gameObject.SetActive(showSwap);
