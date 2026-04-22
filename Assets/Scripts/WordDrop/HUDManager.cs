@@ -390,6 +390,14 @@ namespace WordDrop
                 color:     swapCol,
                 align:     TextAnchor.MiddleCenter);
 
+            // Default-inactive: only levels that explicitly set
+            // hudFlags.showSwapCharges / showEditCharges activate these via
+            // HandleLevelStarted. Prevents scene-transition race windows
+            // where the default-visible state was briefly rendered during
+            // the first frames of a level load.
+            if (_swapCounterText != null) _swapCounterText.gameObject.SetActive(false);
+            if (_rewriteCounterText != null) _rewriteCounterText.gameObject.SetActive(false);
+
             // ── Menu button — small, far right edge ──────────────────────────────
             BuildMenuButton(barGO.transform);
 

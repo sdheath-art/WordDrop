@@ -92,17 +92,18 @@ namespace WordDrop
                 LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
         }
 
-        // Chain meter is hidden on Level-mode levels that don't opt in to it
-        // via hudFlags.showChainMeter (design commit: visible from L26+ only
-        // so Bonus Mode can be introduced as a single conceptual unit). Any
-        // non-Level mode (Classic/Daily/Blitz/debug) keeps the meter visible.
+        // Chain meter is hidden on Level-mode levels that don't opt in via
+        // hudFlags.showChainMeter (design commit: visible from L26+ only so
+        // Bonus Mode is introduced as a single conceptual unit). Abort/menu
+        // paths (data == null) also stay hidden — the menu should never see
+        // the meter flash during the slide transition. Survival/Classic are
+        // kill-switched in production; if resurrected, they'll need a
+        // separate show hook.
         private void HandleLevelStarted(LevelData data)
         {
-            bool showMeter;
-            if (data == null)
-                showMeter = true; // aborted / returned to menu — back to default
-            else
-                showMeter = data.hudFlags != null && data.hudFlags.showChainMeter;
+            bool showMeter = data != null
+                          && data.hudFlags != null
+                          && data.hudFlags.showChainMeter;
 
             if (_meterBg != null)
                 _meterBg.gameObject.SetActive(showMeter);
@@ -143,6 +144,13 @@ namespace WordDrop
             bgRT.pivot     = new Vector2(0.5f, 0.5f);
             bgRT.sizeDelta = new Vector2(0f, 22f);
             bgRT.anchoredPosition = Vector2.zero;
+
+            // Default-inactive: only levels that explicitly set
+            // hudFlags.showChainMeter activate the meter bar via
+            // HandleLevelStarted. Prevents the meter rendering during
+            // scene transitions (slide from menu) before the level's
+            // OnLevelStarted event has fired.
+            bgGO.SetActive(false);
 
             GameObject fillGO = new GameObject("MeterFill");
             fillGO.transform.SetParent(bgGO.transform, false);
