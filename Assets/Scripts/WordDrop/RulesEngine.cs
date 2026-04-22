@@ -22,10 +22,22 @@ namespace WordDrop
 
         // Board dimensions — COLS is fixed, ROWS is mode-dependent.
         // GridManager mirrors ROWS via RulesEngine.ROWS; keep in sync.
-        // Classic/Blitz/Daily = 5 rows, Survival = 9 rows.
-        public const int COLS     = 6;
-        public const int MAX_ROWS = 9;
-        public static int ROWS => SurvivalManager.IsSurvivalMode ? 8 : 5;
+        // Classic/Blitz = 5 rows (legacy). Survival = 8 rows. Level = 8 rows
+        // (Path B upgrade 2026-04-22: raised from 5 to match Survival's proven
+        // cascade grid — cascades require vertical room above detonation
+        // clusters for gravity-fed secondary triggers).
+        //
+        // LEVEL_ROWS is a compile-time constant so LevelValidator can reference
+        // it directly without depending on the mode-dependent ROWS property.
+        // The validator runs BEFORE GameMode.CurrentMode is set to Level
+        // (LevelDebugMenu/MenuUI/LevelCompletedModal all Validate → then set
+        // mode → then TransitionTo(Playing)), so at validation time the
+        // dynamic ROWS property would still return 5. Using LEVEL_ROWS keeps
+        // the validator consistent with Level's actual runtime row count.
+        public const int COLS       = 6;
+        public const int MAX_ROWS   = 9;
+        public const int LEVEL_ROWS = 8;
+        public static int ROWS => (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode) ? LEVEL_ROWS : 5;
 
         /// <summary>
         /// Kill switch for adjacency-based detonation triggering.

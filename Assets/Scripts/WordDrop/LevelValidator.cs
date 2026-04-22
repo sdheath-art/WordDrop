@@ -87,12 +87,14 @@ namespace WordDrop
                     if (t.x < 0 || t.x >= GridManager.COLS)
                         return (false, $"startingBoard tile x={t.x} out of range [0, {GridManager.COLS - 1}]");
 
-                    // Use the *effective* ROWS (5 for non-Survival, per RulesEngine.ROWS)
-                    // rather than MAX_ROWS=9. RulesEngine.SetCell rejects rows >= ROWS and
-                    // GridManager.SyncToRulesState iterates row < ROWS, so a y=5..8 placement
-                    // would validate but silently fail to render. Catching it here prevents
-                    // that silent failure once Phase 10 level authoring ramps up.
-                    int effectiveRows = RulesEngine.ROWS;
+                    // Use RulesEngine.LEVEL_ROWS (8 post-Path-B) — the constant
+                    // row count for Level mode specifically. Validator runs BEFORE
+                    // GameMode.CurrentMode is set to Level (all callers: Validate
+                    // → set mode → TransitionTo), so the dynamic RulesEngine.ROWS
+                    // property would still return 5 at this point. LEVEL_ROWS is
+                    // a compile-time constant that always reflects Level's runtime
+                    // row count regardless of when validation fires.
+                    int effectiveRows = RulesEngine.LEVEL_ROWS;
                     if (t.y < 0 || t.y >= effectiveRows)
                         return (false, $"startingBoard tile y={t.y} out of range [0, {effectiveRows - 1}] (effective ROWS)");
 
@@ -147,7 +149,7 @@ namespace WordDrop
             {
                 var cue = data.visualCues;
                 int cols = GridManager.COLS;
-                int rows = RulesEngine.ROWS;
+                int rows = RulesEngine.LEVEL_ROWS;
                 if (cue.subtleGlowCells != null)
                     foreach (var c in cue.subtleGlowCells)
                         if (c == null || c.x < 0 || c.x >= cols || c.y < 0 || c.y >= rows)
