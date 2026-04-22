@@ -316,6 +316,44 @@ namespace WordDrop
                 EmitHandRefilled(PLAYER_HUMAN);
             }
 
+            // Level mode arrow-column first-word guarantee: if the level declares
+            // a dropArrowCol, the opening hand MUST contain at least one letter
+            // that forms a word when dropped at that column. Otherwise the player
+            // follows the arrow, drops a useless letter, and hits a dead end —
+            // the tutorial fails to deliver on its UX contract. Reroll up to 5
+            // times (bad-hand rate compounds down to <1% with a reasonable word
+            // pool at the arrow column).
+            if (GameManager.IsLevelMode
+                && LevelController.Instance != null
+                && LevelController.Instance.CurrentLevel != null
+                && LevelController.Instance.CurrentLevel.visualCues != null
+                && LevelController.Instance.CurrentLevel.visualCues.dropArrowCol >= 0
+                && RulesEngine.Instance != null)
+            {
+                int arrowCol = LevelController.Instance.CurrentLevel.visualCues.dropArrowCol;
+                bool matched = false;
+                for (int reroll = 0; reroll < 5; reroll++)
+                {
+                    if (HasValidDropAtColumn(_hands[PLAYER_HUMAN], RulesEngine.Instance, arrowCol))
+                    {
+                        matched = true;
+                        if (reroll > 0)
+                            Debug.Log($"[MatchController] Level arrow-col guarantee: found valid drop after {reroll} reroll(s)");
+                        break;
+                    }
+                    _hands[PLAYER_HUMAN].FillAll(_bag);
+                }
+                if (!matched)
+                {
+                    // Accept the hand — level design assumption is that the arrow
+                    // column has ≥5 playable letters, so 5 rerolls failing means
+                    // the word pool is too narrow. Warn so authoring can retune.
+                    Debug.LogWarning($"[MatchController] Level arrow-col guarantee: 5 rerolls failed to find a valid drop at col {arrowCol}. " +
+                                     $"Level {LevelController.Instance.CurrentLevel.levelId} word pool may be too narrow.");
+                }
+                EmitHandRefilled(PLAYER_HUMAN);
+            }
+
             // Sync visual board (shows seeded letters)
             if (GridManager.Instance != null)
             {
@@ -1067,6 +1105,26 @@ namespace WordDrop
                     var matches = rules.SimulateDrop(col, letter, PLAYER_HUMAN);
                     if (matches != null && matches.Count > 0) return true;
                 }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Column-scoped variant of HasValidFirstMove. Returns true iff any
+        /// letter in the hand forms ≥1 word when dropped at the given column.
+        /// Used by the Level-mode arrow-column first-word guarantee in
+        /// StartMatch — ensures the tutorial arrow hint is always actionable.
+        /// </summary>
+        private bool HasValidDropAtColumn(PlayerHand hand, RulesEngine rules, int col)
+        {
+            if (hand == null || rules == null) return false;
+            if (col < 0 || col >= RulesEngine.COLS) return false;
+            for (int slot = 0; slot < PlayerHand.HAND_SIZE; slot++)
+            {
+                char letter = hand.GetSlot(slot);
+                if (letter == '\0') continue;
+                var matches = rules.SimulateDrop(col, letter, PLAYER_HUMAN);
+                if (matches != null && matches.Count > 0) return true;
             }
             return false;
         }
