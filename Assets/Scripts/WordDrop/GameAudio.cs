@@ -524,7 +524,7 @@ namespace WordDrop
         public void PlayScoreImpact(int points)
         {
             if (points >= 25)
-                Play(_scoreMassive, 1f);
+                Play(_scoreBig, 1f);        // was _scoreMassive — reusing score_big at full volume for now
             else if (points >= 16)
                 Play(_scoreBig, 0.85f);
             else if (points >= 8)
