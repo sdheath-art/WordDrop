@@ -29,7 +29,7 @@
         {"x": 4, "y": 0, "letter": "V", "variant": "normal"},
         {"x": 5, "y": 0, "letter": "B", "variant": "normal"}
     ],
-    "bag": null,
+    "bag": {"letterOverrides": [{"letter": "S", "count": 40}]},
     "seed": 0,
     "visualCues": {
         "dropArrowCol": 3
