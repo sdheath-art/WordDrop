@@ -3999,15 +3999,15 @@ namespace WordDrop
                 && !droppedTile.HasPermanentGlow)
             {
                 var gridRef = _grid != null ? _grid : GridManager.Instance;
-                float shakeMag = (gridRef != null ? gridRef.CellSize : 1f) * 0.12f;
+                float shakeMag = (gridRef != null ? gridRef.CellSize : 1f) * 0.20f;
                 droppedTile.transform.DOShakePosition(
-                    duration: 0.18f,
+                    duration: 0.28f,
                     strength: new Vector3(shakeMag, 0f, 0f),
-                    vibrato: 4,
+                    vibrato: 6,
                     randomness: 0f,
                     snapping: false,
                     fadeOut: true);
-                GameAudio.Instance?.PlayLightTick();
+                GameAudio.Instance?.PlayInvalidDrop();
             }
 
             // Let the primed flash animation play (non-solo-mode waits here).

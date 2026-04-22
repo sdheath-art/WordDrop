@@ -472,6 +472,18 @@ namespace WordDrop
             Play(_lightTick != null ? _lightTick : _uiClickAlt, 0.25f);
         }
 
+        /// <summary>
+        /// Soft wood-tick at higher volume than PlayLightTick — signals "drop
+        /// didn't score" on invalid Level-mode drops. Non-punitive but audible
+        /// enough to register as distinct feedback (vs. the silent 0.25 tick
+        /// used for internal state cycles). Tune volume here if feel needs
+        /// adjustment.
+        /// </summary>
+        public void PlayInvalidDrop()
+        {
+            Play(_lightTick != null ? _lightTick : _uiClickAlt, 0.55f);
+        }
+
         public void PlayReorderTick()
         {
             Play(_reorderTick != null ? _reorderTick : _uiClickAlt, 0.3f);
