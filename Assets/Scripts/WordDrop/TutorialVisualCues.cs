@@ -27,11 +27,20 @@ namespace WordDrop
         public static bool AmpedPrimingPulse { get; private set; }
 
         private readonly List<Tween> _activeTweens = new List<Tween>();
+        private readonly List<GameObject> _activeGOs = new List<GameObject>();
         private Coroutine _ghostDemoCoroutine;
         private GameObject _ghostGO;
 
-        private static readonly Color SUBTLE_GLOW_COLOR    = new Color(1.00f, 0.92f, 0.45f, 1f);
+        // Subtle pulse (cyan/teal) = UI/interact vocabulary. Visually distinct
+        // from the warm/pink primed-word vocabulary so tutorial cues don't blur
+        // with gameplay state. Blend saturated (0.85) so the tint actually reads
+        // on a white tile — 0.55 was imperceptible per L1 playtest.
+        private static readonly Color SUBTLE_GLOW_COLOR     = new Color(0.25f, 0.85f, 1.00f, 1f);
         private static readonly Color PROMINENT_PULSE_COLOR = new Color(1.00f, 0.78f, 0.20f, 1f);
+
+        // Drop-arrow color matches the cyan UI/interact vocabulary + LEVEL title
+        // accent. Keeps tutorial cues in one visual family regardless of cue type.
+        private static readonly Color ARROW_COLOR = new Color(0.25f, 0.85f, 1.00f, 1f);
 
         private void Awake()
         {
@@ -58,13 +67,19 @@ namespace WordDrop
 
             AmpedPrimingPulse = cues.ampedPrimingPulse;
 
+            // Subtle pulse uses saturated 0.85 blend so cyan is clearly visible;
+            // prominent stays at the legacy 0.55 so L3's CAT+POT emphasis doesn't
+            // over-saturate onto the primed pink.
             if (cues.subtleGlowCells != null)
                 foreach (var c in cues.subtleGlowCells)
-                    AddBreathingPulse(c, amplitude: 1.05f, colorTint: SUBTLE_GLOW_COLOR, period: 1.4f);
+                    AddBreathingPulse(c, amplitude: 1.09f, colorTint: SUBTLE_GLOW_COLOR, period: 1.4f, colorBlend: 0.85f);
 
             if (cues.prominentPulseCells != null)
                 foreach (var c in cues.prominentPulseCells)
-                    AddBreathingPulse(c, amplitude: 1.12f, colorTint: PROMINENT_PULSE_COLOR, period: 0.9f);
+                    AddBreathingPulse(c, amplitude: 1.12f, colorTint: PROMINENT_PULSE_COLOR, period: 0.9f, colorBlend: 0.55f);
+
+            if (cues.dropArrowCol >= 0)
+                AddDropArrow(cues.dropArrowCol);
 
             if (cues.ghostDemoIdleSeconds > 0
                 && cues.ghostDemoCell != null
@@ -77,7 +92,7 @@ namespace WordDrop
             }
         }
 
-        /// <summary>Clears pulses, ghosts, amp flag. Called on level end and on Apply() for a new level.</summary>
+        /// <summary>Clears pulses, ghosts, arrows, amp flag. Called on level end and on Apply() for a new level.</summary>
         public void ClearAll()
         {
             AmpedPrimingPulse = false;
@@ -85,13 +100,17 @@ namespace WordDrop
                 _activeTweens[i]?.Kill();
             _activeTweens.Clear();
 
+            for (int i = 0; i < _activeGOs.Count; i++)
+                if (_activeGOs[i] != null) Destroy(_activeGOs[i]);
+            _activeGOs.Clear();
+
             if (_ghostDemoCoroutine != null) { StopCoroutine(_ghostDemoCoroutine); _ghostDemoCoroutine = null; }
             if (_ghostGO != null) { Destroy(_ghostGO); _ghostGO = null; }
         }
 
         // ── Pulse implementation ────────────────────────────────────────────────
 
-        private void AddBreathingPulse(CellCoord cell, float amplitude, Color colorTint, float period)
+        private void AddBreathingPulse(CellCoord cell, float amplitude, Color colorTint, float period, float colorBlend = 0.55f)
         {
             if (cell == null) return;
             var grid = GridManager.Instance;
@@ -117,12 +136,87 @@ namespace WordDrop
                 Tween colorTween = DOTween.To(
                     () => sr.color,
                     v => sr.color = v,
-                    Color.Lerp(baseColor, colorTint, 0.55f),
+                    Color.Lerp(baseColor, colorTint, colorBlend),
                     period)
                     .SetEase(Ease.InOutSine)
                     .SetLoops(-1, LoopType.Yoyo);
                 _activeTweens.Add(colorTween);
             }
+        }
+
+        // ── Drop arrow ──────────────────────────────────────────────────────────
+        // Column-targeted cue for "drop a letter here" tutorials (L1, L2, and
+        // later mechanic intros that want column-drop guidance). Sits above the
+        // board via GridManager.GetColumnSpawnPosition — the same anchor existing
+        // tile-drop animations use, so there's no collision with grid cells or
+        // primed glows at the top row.
+
+        private void AddDropArrow(int col)
+        {
+            var grid = GridManager.Instance;
+            if (grid == null) return;
+            if (col < 0 || col >= GridManager.COLS) return;
+
+            Vector3 anchorPos = grid.GetColumnSpawnPosition(col);
+
+            GameObject arrowGO = new GameObject("TutorialDropArrow");
+            var sr = arrowGO.AddComponent<SpriteRenderer>();
+            sr.sprite = CreateDownArrowSprite();
+            sr.color = ARROW_COLOR;
+            sr.sortingOrder = 7;
+            arrowGO.transform.position = anchorPos;
+            float cs = grid.CellSize;
+            arrowGO.transform.localScale = new Vector3(cs * 0.55f, cs * 0.55f, 1f);
+            _activeGOs.Add(arrowGO);
+
+            // Alpha breathe: 1.0 ↔ 0.45 over 0.6s half-cycle → 1.2s full period.
+            Tween alphaTween = DOTween.To(
+                () => sr.color,
+                v => sr.color = v,
+                new Color(ARROW_COLOR.r, ARROW_COLOR.g, ARROW_COLOR.b, 0.45f),
+                0.6f)
+                .SetEase(Ease.InOutSine)
+                .SetLoops(-1, LoopType.Yoyo);
+            _activeTweens.Add(alphaTween);
+
+            // Gentle y-bob (±15% of cellSize, ~0.8s half-cycle) for "come here" motion.
+            float bobAmount = cs * 0.15f;
+            Tween bobTween = arrowGO.transform.DOMoveY(anchorPos.y - bobAmount, 0.8f)
+                .SetEase(Ease.InOutSine)
+                .SetLoops(-1, LoopType.Yoyo);
+            _activeTweens.Add(bobTween);
+        }
+
+        private static Sprite _downArrowSprite;
+        private static Sprite CreateDownArrowSprite()
+        {
+            if (_downArrowSprite != null) return _downArrowSprite;
+
+            const int size = 64;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            Color32 clear = new Color32(0, 0, 0, 0);
+            Color32 white = new Color32(255, 255, 255, 255);
+            Color32[] px = new Color32[size * size];
+            for (int i = 0; i < px.Length; i++) px[i] = clear;
+
+            // Filled downward-pointing triangle. Apex at y=0 (bottom of texture),
+            // base at y=size-1 (top). Unity sprite Y grows upward, so with default
+            // rotation the apex reads as "down" in world space.
+            for (int y = 0; y < size; y++)
+            {
+                float t = (float)y / (size - 1); // 0 at apex, 1 at base
+                int halfWidth = Mathf.RoundToInt((size / 2f) * t);
+                int centerX = size / 2;
+                int xMin = Mathf.Max(0, centerX - halfWidth);
+                int xMax = Mathf.Min(size - 1, centerX + halfWidth);
+                for (int x = xMin; x <= xMax; x++)
+                    px[y * size + x] = white;
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false);
+            tex.filterMode = FilterMode.Bilinear;
+            _downArrowSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f));
+            return _downArrowSprite;
         }
 
         // ── Ghost demo ──────────────────────────────────────────────────────────

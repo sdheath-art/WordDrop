@@ -163,6 +163,15 @@ namespace WordDrop
 
         /// <summary>Cells to pulse prominently (louder than subtle) for spectacle setup (L3).</summary>
         public CellCoord[] prominentPulseCells;
+
+        /// <summary>
+        /// Column (0..COLS-1) above which a pulsing down-arrow renders to signal
+        /// "drop a letter here" — the drop-targeting vocabulary used by L1/L2
+        /// tutorial cues (distinct from the tile-state pulse vocabulary above).
+        /// Default -1 = no arrow. JsonUtility preserves the initializer when the
+        /// field is absent from JSON.
+        /// </summary>
+        public int dropArrowCol = -1;
     }
 
     [Serializable]

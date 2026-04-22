@@ -42,10 +42,10 @@
         "showChainMeter": false
     },
     "visualCues": {
-        "subtleGlowCells": [{"x": 2, "y": 2}]
+        "dropArrowCol": 2
     },
     "tutorialPrompts": [
-        {"on": "start",      "text": "Drop a letter above the glowing tile."},
+        {"on": "start",      "text": "Drop a letter under the arrow to make your first word."},
         {"on": "first_word", "text": "That's a word!"}
     ]
 }

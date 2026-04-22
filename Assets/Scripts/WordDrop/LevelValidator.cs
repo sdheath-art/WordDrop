@@ -168,6 +168,11 @@ namespace WordDrop
                     if (gdc < 'A' || gdc > 'Z')
                         return (false, $"visualCues.ghostDemoLetter '{cue.ghostDemoLetter}' is not A-Z");
                 }
+
+                // Drop-arrow column: -1 = no arrow (default), otherwise must be a valid column.
+                if (cue.dropArrowCol != -1
+                    && (cue.dropArrowCol < 0 || cue.dropArrowCol >= cols))
+                    return (false, $"visualCues.dropArrowCol must be -1 or in [0, {cols - 1}] (got {cue.dropArrowCol})");
             }
 
             return (true, null);
