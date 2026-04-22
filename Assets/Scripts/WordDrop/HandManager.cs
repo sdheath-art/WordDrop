@@ -557,8 +557,14 @@ namespace WordDrop
 
             UpdateSelectedCardShadow();
 
-            // Block ALL input when not interactable or during processing (rising rows, chain resolution)
+            // Block ALL input when not interactable or during processing (rising rows, chain resolution).
+            // Also block when LevelController has locked input (Level Complete / Out of Moves modal
+            // is up) — otherwise the FullTurnSequence re-enable at the end of the drop resolution
+            // coroutine can unlock input AFTER FireComplete/FireFail fired, letting SHUFFLE/drag
+            // still work while a terminal modal is on screen.
+            bool levelLocked = LevelController.Instance != null && LevelController.Instance.IsInputLocked;
             if (!IsInteractable ||
+                levelLocked ||
                 (MatchController.Instance != null && MatchController.Instance.IsProcessing))
             {
                 if (DropPreview.Instance != null)
@@ -3963,12 +3969,17 @@ namespace WordDrop
             MatchController.Instance.CompleteDropBookkeeping(playerIdx, totalScore, handSlot,
                 baseScoreAccum, chainBonusAccum, detonationBonusAccum);
 
-            // Survival/Level: re-enable input IMMEDIATELY — no waiting for primed flash or card deal
+            // Survival/Level: re-enable input IMMEDIATELY — no waiting for primed flash or card deal.
+            // But skip the re-enable when LevelController has locked input (the winning drop that
+            // just resolved called FireComplete mid-coroutine; modal is up, hand must stay inert).
+            // EndProcessing still fires so MatchController isn't stuck in a processing state.
             if ((SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
                 && MatchController.Instance != null && MatchController.Instance.IsMatchActive
                 && !MatchController.Instance.IsGameOver)
             {
-                IsInteractable = true;
+                bool levelTerminal = LevelController.Instance != null && LevelController.Instance.IsInputLocked;
+                if (!levelTerminal)
+                    IsInteractable = true;
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
             }
 
