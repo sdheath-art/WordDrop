@@ -8,48 +8,39 @@
     "allowedMechanics": [],
     "hazards": [],
     "allowFail": true,
-    "rewriteCharges": 3,
+    "rewriteCharges": 0,
     "swapCharges": 0,
     "hudFlags": {
         "showSwapCharges": false,
-        "showEditCharges": true,
+        "showEditCharges": false,
         "showChainMeter": false
     },
     "startingBoard": [
         {"x": 0, "y": 0, "letter": "M", "variant": "normal"},
         {"x": 1, "y": 0, "letter": "Q", "variant": "normal"},
         {"x": 2, "y": 0, "letter": "P", "variant": "normal"},
-        {"x": 3, "y": 0, "letter": "S", "variant": "normal"},
-        {"x": 4, "y": 0, "letter": "W", "variant": "normal"},
-        {"x": 5, "y": 0, "letter": "V", "variant": "normal"},
+        {"x": 3, "y": 0, "letter": "N", "variant": "normal"},
+        {"x": 4, "y": 0, "letter": "V", "variant": "normal"},
+        {"x": 5, "y": 0, "letter": "U", "variant": "normal"},
 
-        {"x": 0, "y": 1, "letter": "B", "variant": "normal"},
+        {"x": 0, "y": 1, "letter": "C", "variant": "normal"},
         {"x": 1, "y": 1, "letter": "A", "variant": "normal"},
-        {"x": 2, "y": 1, "letter": "R", "variant": "normal"},
-        {"x": 3, "y": 1, "letter": "X", "variant": "normal"},
-        {"x": 4, "y": 1, "letter": "K", "variant": "normal"},
-        {"x": 5, "y": 1, "letter": "Y", "variant": "normal"},
+        {"x": 2, "y": 1, "letter": "T", "variant": "normal"},
 
-        {"x": 0, "y": 2, "letter": "Q", "variant": "normal"},
-        {"x": 1, "y": 2, "letter": "P", "variant": "normal"},
-        {"x": 2, "y": 2, "letter": "L", "variant": "normal"},
-        {"x": 3, "y": 2, "letter": "E", "variant": "normal"},
-        {"x": 4, "y": 2, "letter": "Z", "variant": "normal"},
-        {"x": 5, "y": 2, "letter": "Y", "variant": "normal"},
+        {"x": 0, "y": 3, "letter": "A", "variant": "normal"},
+        {"x": 1, "y": 3, "letter": "N", "variant": "normal"},
+        {"x": 2, "y": 3, "letter": "D", "variant": "normal"},
 
-        {"x": 0, "y": 3, "letter": "K", "variant": "normal"},
-        {"x": 1, "y": 3, "letter": "M", "variant": "normal"},
-        {"x": 2, "y": 3, "letter": "N", "variant": "normal"},
-        {"x": 3, "y": 3, "letter": "O", "variant": "normal"},
-        {"x": 4, "y": 3, "letter": "Q", "variant": "normal"},
-        {"x": 5, "y": 3, "letter": "W", "variant": "normal"}
+        {"x": 0, "y": 5, "letter": "R", "variant": "normal"},
+        {"x": 1, "y": 5, "letter": "U", "variant": "normal"},
+        {"x": 2, "y": 5, "letter": "N", "variant": "normal"}
     ],
     "bag": null,
     "seed": 0,
     "visualCues": {
-        "prominentPulseCells": [{"x": 3, "y": 1}]
+        "dropArrowCol": 3
     },
     "tutorialPrompts": [
-        {"on": "start", "text": "Long-press the pulsing X. Rewrite to S. Watch for TWO detonations (BAR, then SKY). If no S in hand, exit and replay."}
+        {"on": "start", "text": "Drop under the arrow. Watch CAT, AND, and RUN cascade."}
     ]
 }
