@@ -608,6 +608,12 @@ namespace WordDrop
 
         private void OnGUI()
         {
+            // Level mode owns its own HUD surface; the SurvivalManager debug
+            // indicator (top-left red banner / hint line) belongs only to
+            // non-Level modes. Keeps Level-mode playtests visually clean,
+            // especially during fresh-eyes tutorial playtests.
+            if (GameManager.IsLevelMode) return;
+
             if (_noAssistStyle == null)
             {
                 _noAssistStyle = new GUIStyle(GUI.skin.label)

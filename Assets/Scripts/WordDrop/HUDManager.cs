@@ -91,6 +91,59 @@ namespace WordDrop
 //             Debug.Log("[HUDManager] Awake — HUD built");
         }
 
+        private void OnEnable()
+        {
+            if (LevelController.Instance != null)
+            {
+                LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
+                LevelController.Instance.OnLevelStarted += HandleLevelStarted;
+            }
+        }
+
+        private void Start()
+        {
+            // LevelController may not exist during Awake (SceneBootstrap ordering).
+            // Re-subscribe in Start as a safety net — identical pattern to BonusHUD.
+            if (LevelController.Instance != null)
+            {
+                LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
+                LevelController.Instance.OnLevelStarted += HandleLevelStarted;
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (LevelController.Instance != null)
+                LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
+        }
+
+        // Per-level HUD element gating: SWAP / EDIT charge counters hide on
+        // Level-mode levels that don't opt in via hudFlags (design commit:
+        // editCharges visible from L4+, swapCharges visible from L5+). Any
+        // non-Level mode (data == null — Survival / Daily / debug) keeps both
+        // counters visible as the safe default.
+        private void HandleLevelStarted(LevelData data)
+        {
+            bool showSwap;
+            bool showEdit;
+            if (data == null)
+            {
+                showSwap = true;
+                showEdit = true;
+            }
+            else
+            {
+                var flags = data.hudFlags;
+                showSwap = flags != null && flags.showSwapCharges;
+                showEdit = flags != null && flags.showEditCharges;
+            }
+
+            if (_swapCounterText != null)
+                _swapCounterText.gameObject.SetActive(showSwap);
+            if (_rewriteCounterText != null)
+                _rewriteCounterText.gameObject.SetActive(showEdit);
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // BUILD
         // ═══════════════════════════════════════════════════════════════════════════
