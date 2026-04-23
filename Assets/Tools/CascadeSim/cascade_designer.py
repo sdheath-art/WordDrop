@@ -396,6 +396,7 @@ def run_template_a(
     dict_words: frozenset[str],
     candidate_cap: int | None = 2000,
     min_robustness: int = 1,
+    max_robustness: int | None = None,
     start_level_id: int = 910,
     per_preprime_cap: int | None = 20,
     per_trigger_cap: int | None = 20,
@@ -447,6 +448,11 @@ def run_template_a(
                 failed_reasons.get("below min_robustness", 0) + 1
             )
             continue
+        if max_robustness is not None and result["robustness"] > max_robustness:
+            failed_reasons["above max_robustness"] = (
+                failed_reasons.get("above max_robustness", 0) + 1
+            )
+            continue
         # Calibrate star thresholds using the canonical score.
         stars = calibrate_stars(result["canonicalScore"])
         level["starThresholds"] = stars
@@ -490,6 +496,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="Seed for the shuffle used during pair enumeration")
     ap.add_argument("--min-robustness", type=int, default=1,
                     help="Minimum # of 3-layer actions to keep a candidate")
+    ap.add_argument("--max-robustness", type=int, default=None,
+                    help="Maximum # of 3-layer actions to keep a candidate "
+                         "(default: unbounded). Set to 1 for 'puzzle' levels "
+                         "where only one path works.")
+    ap.add_argument("--difficulty", choices=["tutorial", "standard", "puzzle"],
+                    default=None,
+                    help="Preset for (min,max) robustness. "
+                         "tutorial = 20+ (very-robust, forgiving for L1-10). "
+                         "standard = default (any robustness >= min). "
+                         "puzzle = exactly 1 path (strict, marquee levels).")
     ap.add_argument("--output-dir", type=Path, default=None,
                     help="Write each passing level JSON into this directory")
     ap.add_argument("--start-id", type=int, default=910,
@@ -503,6 +519,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Only Template A is implemented. Got '{args.template}'.", file=sys.stderr)
         return 2
 
+    # Difficulty preset overrides min/max robustness.
+    min_robust = args.min_robustness
+    max_robust = args.max_robustness
+    if args.difficulty == "tutorial":
+        min_robust = 20
+        max_robust = None
+    elif args.difficulty == "puzzle":
+        min_robust = 1
+        max_robust = 1
+    # "standard" leaves user-provided values alone.
+
     passing, attempts, failed_reasons = run_template_a(
         dict_words,
         candidate_cap=args.cap,
@@ -511,7 +538,8 @@ def main(argv: list[str] | None = None) -> int:
         per_layer2_cap=args.per_l2_cap,
         per_layer3_cap=args.per_l3_cap,
         shuffle_seed=args.shuffle_seed,
-        min_robustness=args.min_robustness,
+        min_robustness=min_robust,
+        max_robustness=max_robust,
         start_level_id=args.start_id,
     )
 

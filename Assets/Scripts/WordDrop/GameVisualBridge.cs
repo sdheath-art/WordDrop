@@ -529,15 +529,17 @@ namespace WordDrop
 
                                 if (detonationComing)
                                 {
-                                    // Initial detonation: full 0.15s pause so primed sound
-                                    // and glow register before the explosion.
-                                    // Phase 9.10 cascade: shorten to a quick flash (0.12s)
-                                    // so the pink primed-glow lights up briefly on the
-                                    // gravity-formed word, then it explodes "instantly"
-                                    // — tiles still get a visible primed beat, not zero.
-                                    float primeFlash = (GameManager.IsLevelMode && hasExplodedThisDrop)
-                                        ? 0.12f
-                                        : 0.15f;
+                                    // Layer 1 (player's own trigger): 0.15s is enough —
+                                    // the player already saw the tile form their word.
+                                    // Layer 2+ (gravity-formed cascade word): hold 0.40s
+                                    // so the pink primed glow + pulse is visible before
+                                    // the cell detonates. Phase 10.5g+ telegraph — the
+                                    // cascade used to feel "random" at 0.12s because the
+                                    // primed state was barely visible. Now each cascade
+                                    // word lights up, pulses, THEN explodes so the player
+                                    // can track which word formed and see it prime.
+                                    // Applied to Survival too for consistency.
+                                    float primeFlash = hasExplodedThisDrop ? 0.40f : 0.15f;
                                     yield return WaitCache.Get(primeFlash);
                                 }
                                 else
