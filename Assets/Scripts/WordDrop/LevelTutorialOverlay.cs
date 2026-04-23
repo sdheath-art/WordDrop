@@ -177,9 +177,9 @@ namespace WordDrop
             GameObject panel = new GameObject("Panel", typeof(RectTransform));
             panel.transform.SetParent(canvasGO.transform, false);
             RectTransform pRT = (RectTransform)panel.transform;
-            // Top strip above the board area
-            pRT.anchorMin = new Vector2(0.05f, 0.68f);
-            pRT.anchorMax = new Vector2(0.95f, 0.78f);
+            // Top strip above the board area (below score bar, above grid top)
+            pRT.anchorMin = new Vector2(0.05f, 0.80f);
+            pRT.anchorMax = new Vector2(0.95f, 0.90f);
             pRT.offsetMin = Vector2.zero;
             pRT.offsetMax = Vector2.zero;
 
