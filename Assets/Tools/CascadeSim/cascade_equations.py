@@ -656,17 +656,220 @@ class EqCluster3v3v4h(Equation):
         return board
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Equation 4: Inverted — 3h preprime + 4v trigger + 3v layer2 (2-layer)
+#
+# Scope note: PM's catalog lists eq_3h_4v_4v_3v_inverted as a 3-layer
+# equation, but a 4-letter vertical L2 + 3-letter vertical L3 is very hard
+# to stage — vertical L2 consumes a whole column, and after it detonates
+# there are no letters ABOVE to fall into a new column for L3 (col tops
+# are already cleared by Layer 1). Shipping the 2-layer variant first
+# so PM can confirm the "horizontal preprime at top + vertical cascade"
+# shape is what they wanted; 3-layer extension is a follow-up.
+# ─────────────────────────────────────────────────────────────────────────────
+class EqInverted3h4v3v(Equation):
+    id = "eq_3h_4v_3v_inverted"
+    description = (
+        "Horizontal 3-letter preprime at the top row + 4-letter vertical "
+        "trigger extending DOWN through the preprime's leftmost cell + "
+        "3-letter vertical Layer 2 forming in a separate column after "
+        "gravity. 6 rocks between the trigger column and the L2 column "
+        "chain-clear during Layer 1. Cascade axis is vertical — visually "
+        "distinct from L210's horizontal bottom-cascade shape."
+    )
+    layer_count = 2
+
+    def iter_layouts(self) -> Iterator[Layout]:
+        # anchor: preprime leftmost col ∈ {0, 1, 2} (trigger extends down
+        #   at this col; stones occupy (anchor+1, anchor+2); L2 lives at
+        #   anchor+3).
+        # preprime_row ∈ {5, 6, 7} — how high on the grid the preprime
+        #   sits. Trigger extends 3 rows down from preprime_row, so
+        #   trigger bottom is preprime_row - 3 (must be ≥ 0, so
+        #   preprime_row ≥ 3 — our range satisfies).
+        for anchor in [0, 1, 2]:
+            for preprime_row in [5, 6, 7]:
+                yield self._build_layout(anchor, preprime_row)
+
+    def _build_layout(self, anchor: int, preprime_row: int) -> Layout:
+        trigger_col = anchor
+        trigger_bottom = preprime_row - 3
+        stone_cols = [anchor + 1, anchor + 2]
+        l2_col = anchor + 3
+
+        # Safety cell — far from trigger column to avoid horizontal
+        # collision with the preprime word at preprime_row.
+        if anchor <= 1:
+            safety_col = COLS - 1
+        else:
+            safety_col = 0
+
+        pos = {
+            "preprime_0": (anchor, preprime_row),
+            "preprime_1": (anchor + 1, preprime_row),
+            "preprime_2": (anchor + 2, preprime_row),
+            "trigger_1":  (trigger_col, preprime_row - 1),
+            "trigger_2":  (trigger_col, preprime_row - 2),
+            # "safety" role cell IS IN the trigger word (post-edit holds
+            # trigger[3]); pre-edit it holds the safety filler letter.
+            "safety":     (trigger_col, trigger_bottom),
+            # "trigger_3" role cell is FAR AWAY; pre-edit holds trigger[3],
+            # post-edit holds the safety filler.
+            "trigger_3":  (safety_col, preprime_row),
+            # L2 letters at col l2_col, rows 4, 2, 0 (with gaps). After
+            # gravity they compact to rows 2, 1, 0 forming the vertical
+            # 3-letter word reading top-down.
+            "layer2_0":   (l2_col, 4),
+            "layer2_1":   (l2_col, 2),
+            "layer2_2":   (l2_col, 0),
+        }
+        stones: list[tuple[int, int]] = []
+        for sc in stone_cols:
+            for sr in range(trigger_bottom, preprime_row):
+                stones.append((sc, sr))
+
+        canonical = {
+            "type": "edit",
+            "cell_a": list(pos["safety"]),
+            "cell_b": list(pos["trigger_3"]),
+        }
+        name = f"col{anchor}_pprow{preprime_row}"
+        return Layout(
+            name=name, positions=pos, stones=stones,
+            canonical_action=canonical, mirror=False,
+            preprime_col=anchor,
+        )
+
+    def iter_candidates(
+        self,
+        dict_words: frozenset[str],
+        layout: Layout,
+        rng: random.Random,
+        pp_pool: list[str] | None = None,
+        tr_pool_by_first: dict[str, list[str]] | None = None,
+        l2_pool: list[str] | None = None,
+        cap: int | None = None,
+        **_kwargs,
+    ) -> Iterator[Candidate]:
+        """Shuffled (preprime, trigger) pair walk.
+        Constraints:
+          - trigger[0] == preprime[0] (trigger extends DOWN from preprime's
+            leftmost cell; they share (anchor, preprime_row))
+          - preprime is horizontal; trigger is vertical 4-letter
+          - layer2 is 3-letter vertical (forms at col l2_col after gravity)
+          - no accidental primes at load (checked via substring filters)
+        """
+        three = sorted(w for w in dict_words if len(w) == 3)
+        four = sorted(w for w in dict_words if len(w) == 4)
+        pp_list = list(pp_pool if pp_pool is not None else three)
+        l2_list = list(l2_pool if l2_pool is not None else three)
+
+        if tr_pool_by_first is None:
+            tr_pool_by_first = {}
+            for t in four:
+                if t in dict_words and len(t) == 4:
+                    tr_pool_by_first.setdefault(t[0], []).append(t)
+
+        # Pairs: trigger[0] == preprime[0].
+        pairs: list[tuple[str, str]] = []
+        for pp in pp_list:
+            if pp not in dict_words or len(pp) != 3:
+                continue
+            for tr in tr_pool_by_first.get(pp[0], []):
+                pairs.append((pp, tr))
+        rng.shuffle(pairs)
+
+        yielded = 0
+        for (preprime, trigger) in pairs:
+            # Row preprime_row: preprime + gap + trigger_3 letter. The
+            # preprime is the only word we want to prime. No substring
+            # collision to worry about since the safety cell is separated
+            # by at least one gap from the preprime.
+            # Col trigger_col: preprime[0], trigger[1], trigger[2], safety
+            # (pre-edit). Substrings to reject:
+            #   trigger[:3]  — 3-letter top-3 of trigger column
+            #   trigger[1:3] + safety  — 3-letter bottom-3 of trigger col
+            if is_valid_word(trigger[:3], dict_words):
+                continue
+            # Pick safety letter.
+            safety = None
+            for s in ["R", "L", "C", "F", "M", "G", "H", "B", "P", "T"]:
+                if is_valid_word(trigger[1:3] + s, dict_words):
+                    continue
+                if is_valid_word(trigger[:3] + s, dict_words):
+                    continue
+                safety = s
+                break
+            if safety is None:
+                continue
+
+            l2_local = l2_list[:]
+            rng.shuffle(l2_local)
+            for layer2 in l2_local:
+                if layer2 not in dict_words or len(layer2) != 3:
+                    continue
+                # Col l2_col at load: layer2[0] @ row 4, layer2[1] @ row 2,
+                # layer2[2] @ row 0 (with gaps at rows 1, 3). Vertical
+                # scan at load from any of those rows hits empty cells →
+                # length 1. No accidental load-time word. But we do need
+                # the post-gravity word to be exactly `layer2`:
+                # top-down from row 2 after gravity: layer2[0], [1], [2].
+                # That's the assignment we encoded, so no extra check.
+                letters = {
+                    "preprime_0": preprime[0], "preprime_1": preprime[1],
+                    "preprime_2": preprime[2],
+                    "trigger_1": trigger[1], "trigger_2": trigger[2],
+                    "safety":    safety,
+                    "trigger_3": trigger[3],
+                    "layer2_0": layer2[0], "layer2_1": layer2[1],
+                    "layer2_2": layer2[2],
+                }
+                trace = [
+                    {"clusterSize": 1, "chainDepthAtScore": 0,
+                     "triggerWord": trigger, "primedWord": preprime},
+                    {"clusterSize": 1, "chainDepthAtScore": 2,
+                     "triggerWord": layer2},
+                ]
+                cand = Candidate(
+                    equation_id=self.id,
+                    layout_name=layout.name,
+                    words={"preprime": preprime, "trigger": trigger,
+                           "layer2": layer2},
+                    letters=letters,
+                    expected_trace=trace,
+                )
+                yield cand
+                yielded += 1
+                if cap is not None and yielded >= cap:
+                    return
+                break  # one yield per (preprime, trigger)
+
+    def build_board(self, layout: Layout, cand: Candidate) -> list[dict]:
+        board: list[dict] = []
+        for role, letter in cand.letters.items():
+            col, row = layout.positions[role]
+            board.append({"x": col, "y": row, "letter": letter.upper(),
+                          "variant": "normal"})
+        for (c, r) in layout.stones:
+            board.append({"x": c, "y": r, "letter": "X", "variant": "stone"})
+        return board
+
+
 # ── Registry ────────────────────────────────────────────────────────────────
 EQUATIONS: dict[str, Equation] = {
-    "eq_3v_4h_4h_3h_linear": EqLinear3v4h4h3h(),
-    "eq_3v_4h_3h_short":     EqShort3v4h3h(),
-    "eq_3v_3v_4h_cluster":   EqCluster3v3v4h(),
+    "eq_3v_4h_4h_3h_linear":  EqLinear3v4h4h3h(),
+    "eq_3v_4h_3h_short":      EqShort3v4h3h(),
+    "eq_3v_3v_4h_cluster":    EqCluster3v3v4h(),
+    "eq_3h_4v_3v_inverted":   EqInverted3h4v3v(),
 }
 
 
 IMPLEMENTED_IDS = list(EQUATIONS.keys())
 
 # Deferred — PM catalog items not yet implemented:
-#   eq_4v_5h_4h_3h_long, eq_3v_4h_4h_3h_3h_deep, eq_3h_4v_4v_3v_inverted,
+#   eq_4v_5h_4h_3h_long, eq_3v_4h_4h_3h_3h_deep,
 #   eq_drop_3v_4h_4h_3h, eq_selfoverlap_4h_3h, eq_convergent_3v_3v_4h,
 #   eq_cross_axis_3v_4h_4v_3h.
+# eq_3h_4v_4v_3v_inverted (3-layer variant of inverted) deferred —
+# vertical 4v L2 + 3v L3 is structurally very hard; shipping the
+# 2-layer variant (eq_3h_4v_3v_inverted) first.
