@@ -1,0 +1,68 @@
+{
+    "schemaVersion": 1,
+    "levelId": 301,
+    "displayName": "L301 \u00b7 First Word",
+    "target": 30,
+    "moveBudget": 5,
+    "starThresholds": [
+        30,
+        43,
+        54
+    ],
+    "allowedMechanics": [],
+    "hazards": [],
+    "allowFail": true,
+    "rewriteCharges": 0,
+    "swapCharges": 0,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": false,
+        "showChainMeter": false
+    },
+    "startingBoard": [
+        {
+            "x": 0,
+            "y": 2,
+            "letter": "C",
+            "variant": "normal"
+        },
+        {
+            "x": 0,
+            "y": 1,
+            "letter": "A",
+            "variant": "normal"
+        },
+        {
+            "x": 0,
+            "y": 0,
+            "letter": "T",
+            "variant": "normal"
+        }
+    ],
+    "bag": {
+        "letterOverrides": [
+            {
+                "letter": "S",
+                "count": 40
+            }
+        ]
+    },
+    "seed": 0,
+    "visualCues": {
+        "dropArrowCol": 0
+    },
+    "tutorialPrompts": [
+        {
+            "on": "start",
+            "text": "Drop the S into the arrowed column"
+        }
+    ],
+    "designer": {
+        "source": "hand-designed by PM",
+        "canonicalAction": {
+            "type": "drop",
+            "col": 0,
+            "letter": "S"
+        }
+    }
+}
