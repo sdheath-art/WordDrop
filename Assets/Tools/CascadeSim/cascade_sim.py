@@ -145,7 +145,13 @@ class CascadeSim:
 
     # ── Setup ────────────────────────────────────────────────────────────────
     def load_level(self, level_path: Path) -> dict:
-        data = json.loads(level_path.read_text())
+        data = json.loads(Path(level_path).read_text())
+        self.load_level_data(data)
+        return data
+
+    def load_level_data(self, data: dict) -> None:
+        """Populate board + prime starting board. Same as load_level but
+        accepts a parsed dict so the designer can iterate without temp files."""
         for t in (data.get("startingBoard") or []):
             x, y = t["x"], t["y"]
             letter = (t.get("letter") or "").upper()
@@ -159,7 +165,6 @@ class CascadeSim:
                 is_stone=(variant == "stone"),
             )
         self._prime_starting_board()
-        return data
 
     def _prime_starting_board(self) -> None:
         # MatchController.cs:1058-1088 — scan whole board, prime every valid
@@ -738,6 +743,71 @@ def _run_single(level_path: Path, dict_words: frozenset[str], action: dict) -> d
         return {"error": str(e), "layers": []}
     sim.resolve()
     return sim.to_report()
+
+
+def run_sim_on_data(level_data: dict, dict_words: frozenset[str], action: dict) -> dict:
+    sim = CascadeSim(dict_words)
+    sim.load_level_data(level_data)
+    try:
+        sim.apply_action(action)
+    except ValueError as e:
+        return {"error": str(e), "layers": []}
+    sim.resolve()
+    return sim.to_report()
+
+
+def explore_actions_on_data(
+    level_data: dict,
+    dict_words: frozenset[str],
+    hand_letters: list[str] | None = None,
+    min_layers: int = 1,
+) -> dict:
+    """In-memory variant of explore_actions for use by cascade_designer."""
+    if hand_letters is None:
+        hand_letters = [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+    results: list[dict] = []
+    total_enumerated = 0
+    total_errored = 0
+    zero_layer = 0
+    for action in _enumerate_actions(level_data, hand_letters):
+        total_enumerated += 1
+        rep = run_sim_on_data(level_data, dict_words, action)
+        if "error" in rep:
+            total_errored += 1
+            continue
+        layers = rep.get("layers", [])
+        if len(layers) == 0:
+            zero_layer += 1
+        if len(layers) < min_layers:
+            continue
+        words: list[str] = []
+        for L in layers:
+            pw = L.get("primedWordsTriggered") or []
+            tw = L.get("triggerWords") or []
+            if pw:
+                seen = set()
+                for w in pw:
+                    if w not in seen:
+                        seen.add(w)
+                        words.append(w)
+            else:
+                words.extend(tw)
+        results.append(
+            {
+                "action": action,
+                "layers": len(layers),
+                "words": words,
+                "score": rep.get("totalScore", 0),
+                "finalChainDepth": rep.get("finalChainDepth", 0),
+            }
+        )
+    results.sort(key=lambda r: (-r["layers"], -r["score"]))
+    return {
+        "totalEnumerated": total_enumerated,
+        "totalErrored": total_errored,
+        "zeroLayerCount": zero_layer,
+        "results": results,
+    }
 
 
 def _enumerate_actions(level_data: dict, hand_letters: list[str]):
