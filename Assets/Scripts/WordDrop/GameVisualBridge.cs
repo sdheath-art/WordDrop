@@ -529,13 +529,16 @@ namespace WordDrop
 
                                 if (detonationComing)
                                 {
-                                    // Brief pause so primed sound registers before detonation.
-                                    // Phase 9.10: skip this pause for gravity-formed cascade
-                                    // words in Level mode (word primes and detonates in the
-                                    // same beat — no prime-glow pause mid-cascade).
-                                    bool skipPrimeDelay = GameManager.IsLevelMode && hasExplodedThisDrop;
-                                    if (!skipPrimeDelay)
-                                        yield return WaitCache.Get(0.15f);
+                                    // Initial detonation: full 0.15s pause so primed sound
+                                    // and glow register before the explosion.
+                                    // Phase 9.10 cascade: shorten to a quick flash (0.12s)
+                                    // so the pink primed-glow lights up briefly on the
+                                    // gravity-formed word, then it explodes "instantly"
+                                    // — tiles still get a visible primed beat, not zero.
+                                    float primeFlash = (GameManager.IsLevelMode && hasExplodedThisDrop)
+                                        ? 0.12f
+                                        : 0.15f;
+                                    yield return WaitCache.Get(primeFlash);
                                 }
                                 else
                                 {
