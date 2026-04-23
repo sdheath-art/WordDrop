@@ -34,7 +34,7 @@
         {"x": 3, "y": 4, "letter": "X", "variant": "stone"},
         {"x": 4, "y": 4, "letter": "X", "variant": "stone"},
 
-        {"x": 1, "y": 3, "letter": "R", "variant": "normal"},
+        {"x": 1, "y": 3, "letter": "D", "variant": "normal"},
         {"x": 2, "y": 3, "letter": "E", "variant": "normal"},
         {"x": 3, "y": 3, "letter": "X", "variant": "stone"},
         {"x": 4, "y": 3, "letter": "X", "variant": "stone"},
