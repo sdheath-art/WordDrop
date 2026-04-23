@@ -1223,6 +1223,198 @@ class EqSelfOverlap4h3h(Equation):
         return board
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Equation 7: Convergent — two preprimes, one detonates at Layer 1 via
+# the player's trigger overlap, the SECOND is chain-triggered at Layer 2
+# by a gravity-formed word whose rightmost cell lands on the second
+# preprime's bottom letter (which gravity has compacted to row 0).
+#
+# Distinct from cluster (both preprimes at Layer 1) and from linear
+# (single preprime, pure gravity-formed L2 self-trigger). Here Layer 2's
+# L2 word WORKS AS A FUSE that reaches into the second preprime.
+# ─────────────────────────────────────────────────────────────────────────────
+class EqConvergent3v3v4h(Equation):
+    id = "eq_convergent_3v_3v_4h"
+    description = (
+        "Two separate 3-letter vertical preprimes. Player's 4-letter "
+        "horizontal trigger overlaps preprime_A only. Stones chain-"
+        "clear; gravity compacts preprime_B down to the grid floor + "
+        "drops two filler letters into row 0 next to it. The resulting "
+        "row-0 3-letter word shares its last cell with preprime_B's "
+        "new bottom — chain-triggering preprime_B at Layer 2."
+    )
+    layer_count = 2
+
+    def iter_layouts(self) -> Iterator[Layout]:
+        # preprime_A col = anchor, preprime_B col = anchor+4. Rightmost
+        # cell (preprime_B) must fit in COLS=6, so anchor+4 ≤ 5 → anchor ≤ 1.
+        # row_offset slides preprime_A upward; preprime_B's starting row
+        # also shifts up by row_offset but gravity still compacts it to
+        # rows 0-2. Layout iteration: 2 × 3 = 6 variants.
+        for anchor in [0, 1]:
+            for row_offset in [0, 1, 2]:
+                yield self._build_layout(anchor, row_offset)
+
+    def _build_layout(self, anchor: int, row_offset: int) -> Layout:
+        def lift(row: int) -> int:
+            return row + row_offset
+
+        trigger_row = lift(3)
+        stone_row = trigger_row - 1
+
+        pos = {
+            # preprime_A vertical at col anchor
+            "pp_a_0": (anchor, lift(5)),
+            "pp_a_1": (anchor, lift(4)),
+            "pp_a_2": (anchor, lift(3)),
+            # trigger row: preprime_A[2] (overlap) + mid letters + safety
+            "trigger_1": (anchor + 1, trigger_row),
+            "trigger_2": (anchor + 2, trigger_row),
+            "safety":    (anchor + 3, trigger_row),   # post-edit = trigger[3]
+            "trigger_3": (anchor, 0),                  # pre-edit holds trigger[3]
+            # Filler letters that fall to row 0 cols anchor+2, anchor+3.
+            "layer2_0": (anchor + 2, lift(5)),
+            "layer2_1": (anchor + 3, lift(5)),
+            # preprime_B vertical at col anchor+4. Rows shift with row_offset;
+            # gravity compacts to rows 0-2 after Layer 1 regardless.
+            "pp_b_0": (anchor + 4, lift(2)),
+            "pp_b_1": (anchor + 4, lift(1)),
+            "pp_b_2": (anchor + 4, lift(0)),
+        }
+        # 3 stones at stone_row cols anchor+1..anchor+3 — adjacent to
+        # trigger cells, all chain-clear in wave 1. Preprime_B's top
+        # letter at (anchor+4, stone_row) is a letter not a stone, so
+        # chain stops before reaching preprime_B.
+        stones = [(anchor + 1 + i, stone_row) for i in range(3)]
+
+        canonical = {
+            "type": "edit",
+            "cell_a": list(pos["safety"]),
+            "cell_b": list(pos["trigger_3"]),
+        }
+        name = f"col{anchor}_row{row_offset}"
+        return Layout(
+            name=name, positions=pos, stones=stones,
+            canonical_action=canonical, mirror=False,
+            preprime_col=anchor,
+        )
+
+    def iter_candidates(
+        self,
+        dict_words: frozenset[str],
+        layout: Layout,
+        rng: random.Random,
+        pp_pool: list[str] | None = None,
+        tr_pool_by_first: dict[str, list[str]] | None = None,
+        l2_pool_by_last: dict[str, list[str]] | None = None,
+        cap: int | None = None,
+        **_kwargs,
+    ) -> Iterator[Candidate]:
+        """Shuffled (preprime_A, preprime_B, trigger) triple walk. For
+        each triple, pick a layer2 word whose LAST letter equals
+        preprime_B's last letter (so the row-0 3-letter word shares its
+        rightmost cell with preprime_B's compacted bottom cell).
+        """
+        three = sorted(w for w in dict_words if len(w) == 3)
+        four = sorted(w for w in dict_words if len(w) == 4)
+        pp_list = list(pp_pool if pp_pool is not None else three)
+
+        if tr_pool_by_first is None:
+            tr_pool_by_first = {}
+            for t in four:
+                if t in dict_words and len(t) == 4:
+                    tr_pool_by_first.setdefault(t[0], []).append(t)
+
+        if l2_pool_by_last is None:
+            l2_pool_by_last = {}
+            for w in three:
+                if w in dict_words and len(w) == 3:
+                    l2_pool_by_last.setdefault(w[2], []).append(w)
+
+        # Build (pp_a, pp_b, trigger) triples.
+        triples: list[tuple[str, str, str]] = []
+        for pp_a in pp_list:
+            if pp_a not in dict_words or len(pp_a) != 3:
+                continue
+            for pp_b in pp_list:
+                if pp_b == pp_a or pp_b not in dict_words or len(pp_b) != 3:
+                    continue
+                for trigger in tr_pool_by_first.get(pp_a[2], []):
+                    triples.append((pp_a, pp_b, trigger))
+        rng.shuffle(triples)
+
+        yielded = 0
+        for (pp_a, pp_b, trigger) in triples:
+            if is_valid_word(trigger[:3], dict_words):
+                continue  # row 3 load-time accidental prime
+            # Pick safety letter.
+            safety = None
+            for s in ["R", "L", "C", "F", "M", "G", "H", "B", "P", "T"]:
+                if is_valid_word(trigger[:3] + s, dict_words):
+                    continue
+                if is_valid_word(trigger[1:3] + s, dict_words):
+                    continue
+                safety = s
+                break
+            if safety is None:
+                continue
+
+            # Layer 2 word must end in pp_b[2] (shared cell with compacted
+            # preprime_B bottom at (anchor+4, 0)).
+            l2_candidates = list(l2_pool_by_last.get(pp_b[2], []))
+            rng.shuffle(l2_candidates)
+            for layer2 in l2_candidates:
+                if layer2 not in dict_words or len(layer2) != 3:
+                    continue
+                if layer2 == pp_b:
+                    # L2 identical to pp_b produces weird registry dup —
+                    # skip so the "two distinct primeds at Layer 2" story
+                    # stays clean.
+                    continue
+                letters = {
+                    "pp_a_0": pp_a[0], "pp_a_1": pp_a[1], "pp_a_2": pp_a[2],
+                    "trigger_1": trigger[1], "trigger_2": trigger[2],
+                    "safety": safety, "trigger_3": trigger[3],
+                    "layer2_0": layer2[0], "layer2_1": layer2[1],
+                    "pp_b_0": pp_b[0], "pp_b_1": pp_b[1], "pp_b_2": pp_b[2],
+                }
+                trace = [
+                    {"clusterSize": 1, "chainDepthAtScore": 0,
+                     "triggerWord": trigger, "primedWord": pp_a},
+                    # Layer 2 cluster = 2 because gravity re-detects
+                    # preprime_B at its new cells (original scored_key
+                    # purged during gravity). Validation just checks
+                    # pp_b appears in primedWordsTriggered and L2 in
+                    # triggerWords; cluster size and L2's self-trigger
+                    # are engine artefacts we don't need to assert on.
+                    {"chainDepthAtScore": 2,
+                     "triggerWord": layer2, "primedWord": pp_b},
+                ]
+                cand = Candidate(
+                    equation_id=self.id,
+                    layout_name=layout.name,
+                    words={"pp_a": pp_a, "pp_b": pp_b,
+                           "trigger": trigger, "layer2": layer2},
+                    letters=letters,
+                    expected_trace=trace,
+                )
+                yield cand
+                yielded += 1
+                if cap is not None and yielded >= cap:
+                    return
+                break  # one candidate per triple
+
+    def build_board(self, layout: Layout, cand: Candidate) -> list[dict]:
+        board: list[dict] = []
+        for role, letter in cand.letters.items():
+            col, row = layout.positions[role]
+            board.append({"x": col, "y": row, "letter": letter.upper(),
+                          "variant": "normal"})
+        for (c, r) in layout.stones:
+            board.append({"x": c, "y": r, "letter": "X", "variant": "stone"})
+        return board
+
+
 # ── Registry ────────────────────────────────────────────────────────────────
 EQUATIONS: dict[str, Equation] = {
     "eq_3v_4h_4h_3h_linear":  EqLinear3v4h4h3h(),
@@ -1231,6 +1423,7 @@ EQUATIONS: dict[str, Equation] = {
     "eq_3h_4v_3v_inverted":   EqInverted3h4v3v(),
     "eq_drop_3v_4h_4h_3h":    EqDrop3v4h4h3h(),
     "eq_selfoverlap_4h_3h":   EqSelfOverlap4h3h(),
+    "eq_convergent_3v_3v_4h": EqConvergent3v3v4h(),
 }
 
 
