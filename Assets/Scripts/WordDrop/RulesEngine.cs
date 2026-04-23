@@ -4017,34 +4017,63 @@ namespace WordDrop
             // (7-letter row clear at line ~3619 reads it).
             _currentPhase = ResolutionPhase.Exploding;
 
-            // Stone splash: destroy stone tiles adjacent to any exploded cell
-            // Collect into separate list first — can't modify allExplodedCells during iteration
+            // Stone splash: destroy stone tiles adjacent to any exploded cell.
+            // Phase 9.9 (Level mode only): chain-propagate so a newly-cleared stone
+            // becomes a splash source for the next pass. Enables stone-column
+            // cascade catalysts where a single detonation rips through a stone
+            // run, opening the column for gravity-fed follow-ups. Survival path
+            // stays single-pass — its stones are sparse (max 2 per row) and the
+            // existing tuning depends on the one-hop limit.
             int stoneClearCount = 0;
             var stoneCleared = new List<Vector2Int>();
             var checkedStones = new HashSet<Vector2Int>();
-            int explodedCount = allExplodedCells.Count; // snapshot count — only check original cells
-            for (int ec = 0; ec < explodedCount; ec++)
+
+            // Seed the first pass from cells already in allExplodedCells
+            var currentSources = new List<Vector2Int>(allExplodedCells.Count);
+            for (int i = 0; i < allExplodedCells.Count; i++)
+                currentSources.Add(allExplodedCells[i]);
+
+            bool stoneChainPropagate = GameManager.IsLevelMode;
+            const int STONE_CHAIN_SAFETY_CAP = 50;
+            int stoneChainIterations = 0;
+            int[] sdx = { 1, -1, 0, 0 };
+            int[] sdy = { 0, 0, 1, -1 };
+
+            while (currentSources.Count > 0 && stoneChainIterations < STONE_CHAIN_SAFETY_CAP)
             {
-                var cell = allExplodedCells[ec];
-                int[] sdx = { 1, -1, 0, 0 };
-                int[] sdy = { 0, 0, 1, -1 };
-                for (int d = 0; d < 4; d++)
+                stoneChainIterations++;
+                var nextSources = new List<Vector2Int>();
+
+                for (int ec = 0; ec < currentSources.Count; ec++)
                 {
-                    int sx = cell.x + sdx[d];
-                    int sy = cell.y + sdy[d];
-                    if (!InBounds(sx, sy)) continue;
-                    var stonePos = new Vector2Int(sx, sy);
-                    if (checkedStones.Contains(stonePos)) continue;
-                    checkedStones.Add(stonePos);
-                    var adj = _board[sx, sy];
-                    if (adj != null && adj.IsStone)
+                    var cell = currentSources[ec];
+                    for (int d = 0; d < 4; d++)
                     {
-                        _board[sx, sy] = null;
-                        stoneCleared.Add(stonePos);
-                        stoneClearCount++;
+                        int sx = cell.x + sdx[d];
+                        int sy = cell.y + sdy[d];
+                        if (!InBounds(sx, sy)) continue;
+                        var stonePos = new Vector2Int(sx, sy);
+                        if (checkedStones.Contains(stonePos)) continue;
+                        checkedStones.Add(stonePos);
+                        var adj = _board[sx, sy];
+                        if (adj != null && adj.IsStone)
+                        {
+                            _board[sx, sy] = null;
+                            stoneCleared.Add(stonePos);
+                            stoneClearCount++;
+                            nextSources.Add(stonePos);
+                        }
                     }
                 }
+
+                // Survival: one pass only. Level mode: chain until no new stones clear.
+                if (!stoneChainPropagate) break;
+                currentSources = nextSources;
             }
+
+            if (stoneChainIterations >= STONE_CHAIN_SAFETY_CAP)
+                Debug.LogWarning($"[RulesEngine] Stone chain-clear hit safety cap ({STONE_CHAIN_SAFETY_CAP}) — terminating chain.");
+
             // Now safe to add stone positions to the exploded list
             allExplodedCells.AddRange(stoneCleared);
             // if (stoneClearCount > 0)

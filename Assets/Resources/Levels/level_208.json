@@ -1,0 +1,43 @@
+{
+    "schemaVersion": 1,
+    "levelId": 208,
+    "displayName": "Stone Chain",
+    "target": 50,
+    "moveBudget": 5,
+    "starThresholds": [50, 150, 300],
+    "allowedMechanics": ["stone"],
+    "hazards": [],
+    "allowFail": true,
+    "rewriteCharges": 3,
+    "swapCharges": 0,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": true,
+        "showChainMeter": false
+    },
+    "startingBoard": [
+        {"x": 0, "y": 0, "letter": "C", "variant": "normal"},
+        {"x": 1, "y": 0, "letter": "A", "variant": "normal"},
+        {"x": 2, "y": 0, "letter": "T", "variant": "normal"},
+        {"x": 3, "y": 0, "letter": "X", "variant": "normal"},
+        {"x": 4, "y": 0, "letter": "X", "variant": "stone"},
+        {"x": 5, "y": 0, "letter": "T", "variant": "normal"},
+
+        {"x": 4, "y": 1, "letter": "X", "variant": "stone"},
+        {"x": 4, "y": 2, "letter": "X", "variant": "stone"},
+        {"x": 4, "y": 3, "letter": "X", "variant": "stone"},
+        {"x": 4, "y": 4, "letter": "X", "variant": "stone"},
+
+        {"x": 3, "y": 6, "letter": "R", "variant": "normal"},
+        {"x": 4, "y": 6, "letter": "A", "variant": "normal"},
+        {"x": 4, "y": 7, "letter": "E", "variant": "normal"}
+    ],
+    "bag": {"letterOverrides": [{"letter": "S", "count": 40}]},
+    "seed": 0,
+    "visualCues": {
+        "prominentPulseCells": [{"x": 3, "y": 0}]
+    },
+    "tutorialPrompts": [
+        {"on": "start", "text": "Long-press the pulsing X. Rewrite to S. Watch the stone chain and what falls after."}
+    ]
+}
