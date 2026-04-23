@@ -88,8 +88,14 @@ def render_layer(i: int, layer: dict) -> list[str]:
 
 
 def guess_canonical_action(level_data: dict) -> dict | None:
-    """Heuristic for Template A layouts. Returns the canonical edit
-    (1,1)↔(4,3) only if both cells contain letter tiles."""
+    """Prefer the designer-metadata canonical action if present (written
+    by cascade_designer for generated levels). Fall back to the
+    historical Template A heuristic (edit (1,1)↔(4,3)) for hand-authored
+    levels that don't carry designer metadata."""
+    designer = level_data.get("designer") or {}
+    action = designer.get("canonicalAction")
+    if action:
+        return action
     by_pos: dict[tuple[int, int], dict] = {
         (t["x"], t["y"]): t for t in level_data.get("startingBoard") or []
     }
