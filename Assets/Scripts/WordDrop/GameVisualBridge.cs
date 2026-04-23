@@ -725,7 +725,15 @@ namespace WordDrop
                                         if (groupTiles.Count > 0)
                                         {
                                             yield return WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count);
-                                            yield return WaitCache.Get(0.12f); // beat between words
+                                            // Phase 9.10: widen the per-word beat for Level mode so
+                                            // cluster detonations at the same step (e.g. L208's AND
+                                            // and PIN both primed + triggered in one DoExplode pass)
+                                            // read as distinct sequential events instead of blurring
+                                            // into a simultaneous flash. Survival keeps the tight
+                                            // 0.12s beat since its clusters are from rapid rising-row
+                                            // cascades where the tighter rhythm is desired.
+                                            float perWordBeat = GameManager.IsLevelMode ? 0.35f : 0.12f;
+                                            yield return WaitCache.Get(perWordBeat);
                                         }
                                     }
 
