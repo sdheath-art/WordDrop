@@ -107,42 +107,48 @@ def build_level_json(
     """Wrap the equation's board output in the level-JSON shell used by
     the Unity runtime."""
     board = equation.build_board(layout, cand)
-    # Build a readable display name from the words.
     word_list = list(cand.words.values())
     display = f"{equation.id.split('_', 1)[0]} · {'→'.join(word_list)}  [{layout.name}]"
+    canonical = equation.canonical_for(layout, cand)
+    bag = equation.get_bag(cand)
+    # Drop actions need rewriteCharges=0 + drop available (default drop is
+    # always available); edit actions need rewriteCharges=1. The equation
+    # signals its action type via the canonical dict.
+    is_drop = canonical.get("type") == "drop"
     return {
         "schemaVersion": 1,
         "levelId": level_id,
         "displayName": display,
-        "target": 300,                       # recalibrated post-evaluation
+        "target": 300,
         "moveBudget": 5,
-        "starThresholds": [300, 600, 1000],  # recalibrated post-evaluation
+        "starThresholds": [300, 600, 1000],
         "allowedMechanics": [],
         "hazards": [],
         "allowFail": True,
-        "rewriteCharges": 1,
+        "rewriteCharges": 0 if is_drop else 1,
         "swapCharges": 0,
         "hudFlags": {
             "showSwapCharges": False,
-            "showEditCharges": True,
+            "showEditCharges": not is_drop,
             "showChainMeter": False,
         },
         "startingBoard": board,
-        "bag": None,
+        "bag": bag,
         "seed": 0,
         "visualCues": {},
         "tutorialPrompts": [
-            {"on": "start", "text": f"Edit to form {cand.words.get('trigger', '')} "
-                                    f"and watch the cascade."},
+            {"on": "start",
+             "text": (f"Drop your hand letter at column {canonical.get('col')} "
+                      f"to form {cand.words.get('trigger', '')} and watch the cascade."
+                      if is_drop else
+                      f"Edit to form {cand.words.get('trigger', '')} "
+                      f"and watch the cascade.")},
         ],
-        # Designer metadata (preserved in the JSON so solution_viewer can
-        # show which equation/layout this level came from and drive the
-        # canonical-action probe without hard-coded coords).
         "designer": {
             "equationId": equation.id,
             "layoutName": layout.name,
             "words": cand.words,
-            "canonicalAction": layout.canonical_action,
+            "canonicalAction": canonical,
         },
     }
 
@@ -173,7 +179,8 @@ def evaluate_candidate(
                 "robustness": 0}
 
     # 2. Canonical action — must produce the expected trace.
-    report = run_sim_on_data(level_data, dict_words, layout.canonical_action)
+    action = equation.canonical_for(layout, cand)
+    report = run_sim_on_data(level_data, dict_words, action)
     if "error" in report:
         return {"pass": False,
                 "reason": f"action error: {report['error']}",

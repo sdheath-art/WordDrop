@@ -66,7 +66,11 @@ class Equation:
       - iter_candidates(dict_words, layout, ...): yields (letter_map, expected_trace)
         tuples for each letter combination valid on this layout
       - build_board(layout, letter_map): returns list of {x,y,letter,variant}
-      - canonical_action(layout): returns the action dict
+      - canonical_for(layout, cand): returns the action dict (defaults to
+        layout.canonical_action; override when the action needs per-candidate
+        letter info, e.g. drop actions need trigger[3] in the letter field)
+      - get_bag(cand): returns an optional bag override dict for the level
+        JSON (drop equations force trigger[3] into the hand draw)
     """
     id: str = "BASE"
     description: str = ""
@@ -85,6 +89,18 @@ class Equation:
 
     def build_board(self, layout: Layout, cand: Candidate) -> list[dict]:
         raise NotImplementedError
+
+    def canonical_for(self, layout: Layout, cand: Candidate) -> dict:
+        """Return the canonical action for this candidate on this layout.
+        Default: use the layout's static canonical_action. Equations that
+        need per-candidate letter info (e.g. drops) override this."""
+        return layout.canonical_action
+
+    def get_bag(self, cand: Candidate) -> dict | None:
+        """Return a bag override for the level JSON, or None to use
+        the default bag. Used by drop-style equations to force the
+        first hand draw to be trigger[3]."""
+        return None
 
     def validate_trace(self, cand: Candidate, sim_layers: list[dict]) -> tuple[bool, str]:
         """Default: check layer count and cluster sizes match. Subclasses
@@ -855,12 +871,205 @@ class EqInverted3h4v3v(Equation):
         return board
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Equation 5: Drop — same cascade math as linear but the player's action is
+# a DROP from hand into the rightmost trigger column (col anchor+3), not
+# an edit. Visual difference from linear:
+#   - No pre-edit filler at the "safety" cell (it's EMPTY at load).
+#   - No pre-edit letter at the "trigger_3" cell (it's EMPTY at load).
+#   - Level bag is forced to supply trigger[3] as the first hand draw.
+#   - UI shows drop target instead of edit charges.
+#
+# At play time: stones at col (anchor+3) rows 0-2 form a stack; the
+# player's hand letter (trigger[3]) drops onto that stack and lands at
+# the trigger row, completing the trigger word.
+# ─────────────────────────────────────────────────────────────────────────────
+class EqDrop3v4h4h3h(EqLinear3v4h4h3h):
+    id = "eq_drop_3v_4h_4h_3h"
+    description = (
+        "Same 3-layer cascade math as the linear equation, but the "
+        "player's action is a DROP from hand into the rightmost trigger "
+        "column. The target cell is empty at load; stones below form a "
+        "landing stack. Bag override forces first hand draw to be the "
+        "trigger's completing letter."
+    )
+    layer_count = 3
+
+    def iter_layouts(self) -> Iterator[Layout]:
+        # Same anchor range as linear; row_offset must keep the drop
+        # column's stones above row 0 (they already do at row_offset ∈
+        # {0, 1, 2}) and keep the trigger row ≤ LEVEL_ROWS-3 so the
+        # drop target cell is reachable from above.
+        for anchor in [0, 1]:
+            for row_offset in [0, 1, 2]:
+                yield self._build_layout(anchor, row_offset)
+
+    def _build_layout(self, anchor: int, row_offset: int) -> Layout:
+        def shift(col: int) -> int:
+            return col + (anchor - 1)
+
+        def lift(row: int) -> int:
+            return row + row_offset
+
+        # Position map intentionally omits "safety" and "trigger_3" roles
+        # from the linear equation — those cells are EMPTY at load. The
+        # player's drop fills the former safety position.
+        pos: dict[str, tuple[int, int]] = {
+            "preprime_0": (shift(1), lift(5)),
+            "preprime_1": (shift(1), lift(4)),
+            "preprime_2": (shift(1), lift(3)),
+            "trigger_1":  (shift(2), lift(3)),
+            "trigger_2":  (shift(3), lift(3)),
+            "decorative": (shift(2), lift(4)),
+            "layer2_0":   (shift(2), lift(0)),
+            "layer2_1":   (shift(3), lift(4)),
+            "layer2_2":   (shift(4), lift(4)),
+            "layer2_3":   (shift(5), lift(0)),
+            "layer3_0":   (shift(1), lift(0)),
+            "layer3_1":   (shift(2), lift(1)),
+            "layer3_2":   (shift(3), lift(5)),
+        }
+        stones_ref = [
+            (1, 2), (2, 2), (3, 2), (4, 2),
+            (3, 1), (4, 1),
+            (3, 0), (4, 0),
+        ]
+        stones = [(shift(c), lift(r)) for (c, r) in stones_ref]
+        # For row_offset > 0, the lifted stone stack in the drop column
+        # (col shift(4)) leaves the rows below empty — a drop would fall
+        # past the stones and land at y=0 instead of the trigger row.
+        # Plug those lower rows with extra stones so the landing target
+        # is always lift(3). Extras chain-clear with the rest in Phase 9.9.
+        for extra_row in range(row_offset):
+            stones.append((shift(4), extra_row))
+
+        # Canonical action template — trigger[3] letter is filled by
+        # canonical_for() once we have a candidate.
+        canonical_template = {
+            "type": "drop",
+            "col": shift(4),
+            "letter": None,
+        }
+        name = f"col{anchor}_row{row_offset}"
+        return Layout(
+            name=name, positions=pos, stones=stones,
+            canonical_action=canonical_template, mirror=False,
+            preprime_col=shift(1),
+        )
+
+    def canonical_for(self, layout: Layout, cand: Candidate) -> dict:
+        trigger = cand.words["trigger"]
+        return {
+            "type": "drop",
+            "col": layout.canonical_action["col"],
+            "letter": trigger[3],
+        }
+
+    def get_bag(self, cand: Candidate) -> dict | None:
+        return {"letterOverrides": [{"letter": cand.words["trigger"][3],
+                                      "count": 40}]}
+
+    def iter_candidates(
+        self,
+        dict_words: frozenset[str],
+        layout: Layout,
+        rng: random.Random,
+        pp_pool: list[str] | None = None,
+        tr_pool_by_first: dict[str, list[str]] | None = None,
+        l2_pool: list[str] | None = None,
+        l3_pool: list[str] | None = None,
+        cap: int | None = None,
+    ) -> Iterator[Candidate]:
+        """Same pair-walk as linear, but:
+          - No safety letter to pick (target cell is empty pre-drop).
+          - No "trigger_3" pre-edit cell constraint (also empty pre-drop).
+          - Row 3 load-time check: trigger[:3] must not be dict-valid
+            (preprime[2], trigger[1], trigger[2] with empty col 4).
+          - Col 3 load-time check: trigger[2] + layer2[1] + layer3[2]
+            must not form a dict word.
+        """
+        three = sorted(w for w in dict_words if len(w) == 3)
+        four = sorted(w for w in dict_words if len(w) == 4)
+        pp_list = list(pp_pool if pp_pool is not None else three)
+        l2_list = list(l2_pool if l2_pool is not None else four)
+        l3_list = list(l3_pool if l3_pool is not None else three)
+
+        if tr_pool_by_first is None:
+            tr_pool_by_first = {}
+            for t in four:
+                if t in dict_words and len(t) == 4:
+                    tr_pool_by_first.setdefault(t[0], []).append(t)
+
+        pairs: list[tuple[str, str]] = []
+        for pp in pp_list:
+            if pp not in dict_words or len(pp) != 3:
+                continue
+            for tr in tr_pool_by_first.get(pp[2], []):
+                pairs.append((pp, tr))
+        rng.shuffle(pairs)
+
+        yielded = 0
+        for (preprime, trigger) in pairs:
+            if is_valid_word(trigger[:3], dict_words):
+                continue  # row 3 at load would accidentally prime
+            l2_local = l2_list[:]
+            l3_local = l3_list[:]
+            rng.shuffle(l2_local)
+            rng.shuffle(l3_local)
+            found = False
+            for layer2 in l2_local:
+                if found:
+                    break
+                if layer2 not in dict_words or len(layer2) != 4:
+                    continue
+                for layer3 in l3_local:
+                    if layer3 not in dict_words or len(layer3) != 3:
+                        continue
+                    # Col at trigger_2 vertical run: trigger[2], layer2[1], layer3[2].
+                    if is_valid_word(trigger[2] + layer2[1] + layer3[2], dict_words):
+                        continue
+                    decorative = _safe_decorative(dict_words)
+                    letters = {
+                        "preprime_0": preprime[0], "preprime_1": preprime[1],
+                        "preprime_2": preprime[2],
+                        "trigger_1": trigger[1], "trigger_2": trigger[2],
+                        "decorative": decorative,
+                        "layer2_0": layer2[0], "layer2_1": layer2[1],
+                        "layer2_2": layer2[2], "layer2_3": layer2[3],
+                        "layer3_0": layer3[0], "layer3_1": layer3[1],
+                        "layer3_2": layer3[2],
+                    }
+                    trace = [
+                        {"clusterSize": 1, "chainDepthAtScore": 0,
+                         "triggerWord": trigger, "primedWord": preprime},
+                        {"clusterSize": 1, "chainDepthAtScore": 2,
+                         "triggerWord": layer2},
+                        {"clusterSize": 1, "chainDepthAtScore": 4,
+                         "triggerWord": layer3},
+                    ]
+                    cand = Candidate(
+                        equation_id=self.id,
+                        layout_name=layout.name,
+                        words={"preprime": preprime, "trigger": trigger,
+                               "layer2": layer2, "layer3": layer3},
+                        letters=letters,
+                        expected_trace=trace,
+                    )
+                    yield cand
+                    yielded += 1
+                    found = True
+                    if cap is not None and yielded >= cap:
+                        return
+                    break
+
+
 # ── Registry ────────────────────────────────────────────────────────────────
 EQUATIONS: dict[str, Equation] = {
     "eq_3v_4h_4h_3h_linear":  EqLinear3v4h4h3h(),
     "eq_3v_4h_3h_short":      EqShort3v4h3h(),
     "eq_3v_3v_4h_cluster":    EqCluster3v3v4h(),
     "eq_3h_4v_3v_inverted":   EqInverted3h4v3v(),
+    "eq_drop_3v_4h_4h_3h":    EqDrop3v4h4h3h(),
 }
 
 
