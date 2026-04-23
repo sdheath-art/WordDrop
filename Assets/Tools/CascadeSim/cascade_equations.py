@@ -1063,6 +1063,166 @@ class EqDrop3v4h4h3h(EqLinear3v4h4h3h):
                     break
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Equation 6: Self-overlap — no preprime at load. Player forms a 4-letter
+# horizontal trigger; since nothing is pre-primed, the trigger has no
+# chain target. Rule C still clears the trigger's cells in Level mode.
+# Stones below chain-clear. Gravity drops 3 letters into row 0 forming a
+# 3-letter Layer 2 word that self-triggers via Rule A at chainDepth > 0.
+#
+# Visual difference from L210 and the other equations:
+#   - NO pink primed-glow cells at load — the board is just stones + a
+#     partial trigger row + some scattered letters.
+#   - The player's own word is the fuse; nothing detonates at Layer 1,
+#     but the cleared cells + stone chain open the cascade zone.
+#   - Layer 2 word "appears out of nowhere" via gravity then explodes.
+# ─────────────────────────────────────────────────────────────────────────────
+class EqSelfOverlap4h3h(Equation):
+    id = "eq_selfoverlap_4h_3h"
+    description = (
+        "No pre-primed word at load. Player forms a 4-letter horizontal "
+        "trigger; Rule C clears its cells; 4 stones below chain-clear; "
+        "gravity drops 3 letters into row 0 forming a 3-letter Layer 2 "
+        "word that self-triggers via Rule A. 2-layer cascade with a very "
+        "different opening beat than equations that start with a "
+        "pre-primed detonation."
+    )
+    layer_count = 2
+
+    def iter_layouts(self) -> Iterator[Layout]:
+        # anchor ∈ {0, 1, 2} places the trigger at cols anchor..anchor+3.
+        # row_offset shifts trigger_row up (0 → row 3, 2 → row 5). Both
+        # dimensions preserve the cascade math because the stones stay
+        # one row below the trigger and L2 letter positions scale with
+        # trigger_row.
+        for anchor in [0, 1, 2]:
+            for row_offset in [0, 1, 2]:
+                yield self._build_layout(anchor, row_offset)
+
+    def _build_layout(self, anchor: int, row_offset: int) -> Layout:
+        trigger_row = 3 + row_offset
+
+        pos = {
+            "trigger_0":  (anchor,     trigger_row),
+            "trigger_1":  (anchor + 1, trigger_row),
+            "trigger_2":  (anchor + 2, trigger_row),
+            "safety":     (anchor + 3, trigger_row),   # post-edit → trigger[3]
+            "trigger_3":  (COLS - 1,   0),              # pre-edit far cell
+            # Layer 2 letter sources: one letter per column in cols
+            # anchor..anchor+2. After Layer 1 clears trigger + stones,
+            # gravity compacts each col's single survivor down to row 0.
+            "layer2_0":   (anchor,     trigger_row + 1),
+            "layer2_1":   (anchor + 1, trigger_row - 2),
+            "layer2_2":   (anchor + 2, 0),
+        }
+        # 4 stones at row trigger_row - 1 cols anchor..anchor+3. Adjacent
+        # to every trigger cell → they all chain-clear in wave 1.
+        stones = [(anchor + i, trigger_row - 1) for i in range(4)]
+
+        canonical = {
+            "type": "edit",
+            "cell_a": list(pos["safety"]),
+            "cell_b": list(pos["trigger_3"]),
+        }
+        name = f"col{anchor}_trow{trigger_row}"
+        return Layout(
+            name=name, positions=pos, stones=stones,
+            canonical_action=canonical, mirror=False,
+            preprime_col=-1,   # no preprime
+        )
+
+    def iter_candidates(
+        self,
+        dict_words: frozenset[str],
+        layout: Layout,
+        rng: random.Random,
+        tr_pool: list[str] | None = None,
+        l2_pool: list[str] | None = None,
+        cap: int | None = None,
+        **_kwargs,
+    ) -> Iterator[Candidate]:
+        """Shuffled (trigger, layer2) pair walk. Trigger has no preprime
+        overlap constraint (no preprime exists). Main filters:
+          - trigger[:3] must NOT be dict-valid (would auto-prime at load
+            since the first 3 trigger cells are placed at load).
+          - Safety letter at (anchor+3, trigger_row) must not complete a
+            3-letter word with trigger[1:3] or trigger[:3]+safety.
+          - Layer2 is 3-letter; no cross-row validation needed post-gravity.
+        """
+        four = sorted(w for w in dict_words if len(w) == 4)
+        three = sorted(w for w in dict_words if len(w) == 3)
+        tr_list = list(tr_pool if tr_pool is not None else four)
+        l2_list = list(l2_pool if l2_pool is not None else three)
+        rng.shuffle(tr_list)
+        rng.shuffle(l2_list)
+
+        yielded = 0
+        for trigger in tr_list:
+            if trigger not in dict_words or len(trigger) != 4:
+                continue
+            if is_valid_word(trigger[:3], dict_words):
+                continue  # row trigger_row would auto-prime at load
+            safety = None
+            for s in ["R", "L", "C", "F", "M", "G", "H", "B", "P", "T"]:
+                if is_valid_word(trigger[:3] + s, dict_words):
+                    continue
+                if is_valid_word(trigger[1:3] + s, dict_words):
+                    continue
+                safety = s
+                break
+            if safety is None:
+                continue
+
+            l2_local = l2_list[:]
+            rng.shuffle(l2_local)
+            for layer2 in l2_local:
+                if layer2 not in dict_words or len(layer2) != 3:
+                    continue
+                letters = {
+                    "trigger_0": trigger[0],
+                    "trigger_1": trigger[1],
+                    "trigger_2": trigger[2],
+                    "safety":    safety,
+                    "trigger_3": trigger[3],
+                    "layer2_0":  layer2[0],
+                    "layer2_1":  layer2[1],
+                    "layer2_2":  layer2[2],
+                }
+                # Layer 1: trigger scores at chainDepth=0 but no primed
+                # word exists to chain — Rule C clears trigger cells.
+                # Layer 2: L2 scores at chainDepth=1 (only gravity
+                # incremented chainDepth between Layer 1 and Layer 2;
+                # unlike linear, no primed-detonation increment).
+                trace = [
+                    {"clusterSize": 1, "chainDepthAtScore": 0,
+                     "triggerWord": trigger},
+                    {"clusterSize": 1, "chainDepthAtScore": 1,
+                     "triggerWord": layer2},
+                ]
+                cand = Candidate(
+                    equation_id=self.id,
+                    layout_name=layout.name,
+                    words={"trigger": trigger, "layer2": layer2},
+                    letters=letters,
+                    expected_trace=trace,
+                )
+                yield cand
+                yielded += 1
+                if cap is not None and yielded >= cap:
+                    return
+                break  # one candidate per trigger
+
+    def build_board(self, layout: Layout, cand: Candidate) -> list[dict]:
+        board: list[dict] = []
+        for role, letter in cand.letters.items():
+            col, row = layout.positions[role]
+            board.append({"x": col, "y": row, "letter": letter.upper(),
+                          "variant": "normal"})
+        for (c, r) in layout.stones:
+            board.append({"x": c, "y": r, "letter": "X", "variant": "stone"})
+        return board
+
+
 # ── Registry ────────────────────────────────────────────────────────────────
 EQUATIONS: dict[str, Equation] = {
     "eq_3v_4h_4h_3h_linear":  EqLinear3v4h4h3h(),
@@ -1070,6 +1230,7 @@ EQUATIONS: dict[str, Equation] = {
     "eq_3v_3v_4h_cluster":    EqCluster3v3v4h(),
     "eq_3h_4v_3v_inverted":   EqInverted3h4v3v(),
     "eq_drop_3v_4h_4h_3h":    EqDrop3v4h4h3h(),
+    "eq_selfoverlap_4h_3h":   EqSelfOverlap4h3h(),
 }
 
 
