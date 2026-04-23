@@ -67,6 +67,11 @@ LETTER_POINTS = {
 # RulesEngine.cs:1404-1410
 LENGTH_MULT = {3: 1.0, 4: 1.5, 5: 2.5, 6: 4.0, 7: 6.0}
 
+# Detonation scoring (RulesEngine.cs:98-107)
+DETONATION_SCORE_MULTIPLIER = 1.5
+BREAKER_BONUS = 10
+CHAIN_DEPTH_SCALE_CAP = 3
+
 
 def calculate_word_score(word: str) -> int:
     if not word:
@@ -74,6 +79,12 @@ def calculate_word_score(word: str) -> int:
     raw = sum(LETTER_POINTS.get(c, 0) for c in word.upper())
     mult = LENGTH_MULT.get(len(word), 1.0)
     return round(raw * mult)
+
+
+def triangular_chain_multiplier(chain_depth: int) -> float:
+    """RulesEngine.cs:126-130. 1 + (d² + d)/2, capped at d=3 (→ 7.0x)."""
+    d = max(0, min(chain_depth, CHAIN_DEPTH_SCALE_CAP))
+    return 1.0 + (d * d + d) / 2.0
 
 
 # ── Data types ───────────────────────────────────────────────────────────────
@@ -382,13 +393,25 @@ class CascadeSim:
 
     def _do_score_and_prime(self) -> int:
         """DoScoreAndPrime (line 3370). Adds each new word to primed registry,
-        records it in step_just_primed, seeds scored_keys. Returns score delta."""
+        records it in step_just_primed, seeds scored_keys. Returns score delta.
+
+        Applies the full chain multiplier (line 3379-3392):
+            effectiveChainStep = chainDepth + max(0, clusterSize-1)
+            chainMult = 1 + min(effectiveChainStep, 3) * 0.5
+            chainBoosted = round(baseScore * chainMult)
+        pw.Score is stored as the PRE-chain base score (matches engine's use
+        of it as the detonation-bonus input)."""
         cluster_size = len(self.step_pending_words)
+        effective_chain_step = self.step_chain_depth + max(0, cluster_size - 1)
+        if effective_chain_step > 0:
+            chain_mult = 1.0 + min(effective_chain_step, CHAIN_DEPTH_SCALE_CAP) * 0.5
+        else:
+            chain_mult = 1.0
         score_delta = 0
         for match in self.step_pending_words:
             base = calculate_word_score(match.word)
-            # PM spec: skip chain multiplier / cluster boost detail.
-            score_delta += base
+            chain_boosted = round(base * chain_mult)
+            score_delta += chain_boosted
             pid = self._next_primed_id
             self._next_primed_id += 1
             self.primed.append(
@@ -442,6 +465,7 @@ class CascadeSim:
         """
         cleared: list[tuple[int, int]] = []
         primed_names: list[str] = []
+        detonation_bonus = 0
 
         for pid in self.step_pending_triggers:
             pw = next((p for p in self.primed if p.id == pid), None)
@@ -453,9 +477,16 @@ class CascadeSim:
                 if cell is not None:
                     self.board[c][r] = None
                     cleared.append((c, r))
+            # Detonation bonus (line 3785-3796). Heat=0 (fresh primes), gold=1.
+            raw_bonus = round(pw.score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS
+            # Chain multiplier evaluated at (chainDepth + 1) so the opening
+            # detonation is 2x, not 1x (RulesEngine.cs:3792).
+            chain_mult = triangular_chain_multiplier(self.step_chain_depth + 1)
+            detonation_bonus += round(raw_bonus * chain_mult)
             self._remove_primed(pid)
             # Line 3813 — chain depth escalates per cluster word.
             self.step_chain_depth += 1
+        self.step_total_score += detonation_bonus
 
         # Rule C (Level mode): clear trigger-word cells that survived.
         already_cleared = set(cleared)

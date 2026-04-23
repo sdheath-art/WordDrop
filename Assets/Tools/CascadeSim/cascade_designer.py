@@ -119,11 +119,11 @@ def build_template_a_level(
         "allowedMechanics": [],
         "hazards": [],
         "allowFail": True,
-        "rewriteCharges": 0,
-        "swapCharges": 1,
+        "rewriteCharges": 1,
+        "swapCharges": 0,
         "hudFlags": {
-            "showSwapCharges": True,
-            "showEditCharges": False,
+            "showSwapCharges": False,
+            "showEditCharges": True,
             "showChainMeter": False,
         },
         "startingBoard": board,
@@ -164,12 +164,17 @@ def enumerate_template_a(
     layer3_pool: list[str] | None = None,
     decorative: str = "K",
     cap: int | None = None,
+    per_preprime_cap: int | None = None,
 ) -> Iterator[tuple[str, str, str, str, str]]:
     """Yields (preprime, trigger, layer2, layer3, safety) tuples for every
     combination that survives the cheap pre-filters (dict validity,
     letter-junction check, safety-letter availability).
 
-    `cap` limits total yielded candidates; None = unlimited."""
+    Pools default to every dict word of the right length. `cap` limits total
+    yielded candidates; `per_preprime_cap` balances variety by stopping
+    enumeration within a preprime once its quota is hit so other preprimes
+    get a turn.
+    """
     three = sorted(w for w in dict_words if len(w) == 3)
     four = sorted(w for w in dict_words if len(w) == 4)
     pp_list = preprime_pool if preprime_pool is not None else three
@@ -177,42 +182,51 @@ def enumerate_template_a(
     l2_list = layer2_pool if layer2_pool is not None else four
     l3_list = layer3_pool if layer3_pool is not None else three
 
+    # Pre-bucket triggers by first letter so each preprime's inner loop
+    # doesn't scan the entire 4-letter space.
+    trig_by_first: dict[str, list[str]] = {}
+    for t in tr_list:
+        if t not in dict_words or len(t) != 4:
+            continue
+        trig_by_first.setdefault(t[0], []).append(t)
+
     count = 0
     for preprime in pp_list:
-        if preprime not in dict_words:
+        if preprime not in dict_words or len(preprime) != 3:
             continue
-        for trigger in tr_list:
-            if trigger not in dict_words:
-                continue
-            if trigger[0] != preprime[2]:
-                continue
-            # Row 3 at load must not accidentally prime any substring.
+        per_pp_count = 0
+        candidates = trig_by_first.get(preprime[2], [])
+        for trigger in candidates:
             if is_valid_word(trigger[:3], dict_words):
-                continue
+                continue  # row 3 load-time accidental prime
             for layer2 in l2_list:
-                if layer2 not in dict_words:
+                if layer2 not in dict_words or len(layer2) != 4:
                     continue
                 for layer3 in l3_list:
-                    if layer3 not in dict_words:
+                    if layer3 not in dict_words or len(layer3) != 3:
                         continue
-                    # Pick a safety letter that doesn't form a word with
-                    # layer3[1..2] on row 1 post-Layer-1 gravity.
                     safety = _pick_safety_letter(layer3, dict_words)
                     if safety is None:
                         continue
-                    # Row 3 substring checks (accounting for safety at col 4).
-                    if is_valid_word(trigger[:2] + trigger[2] + safety, dict_words):
-                        continue  # 4-letter word spans cols 1-4
-                    if is_valid_word(trigger[1] + trigger[2] + safety, dict_words):
-                        continue  # 3-letter word spans cols 2-4
-                    # Col 3 at load — trigger[2], layer2[1], layer3[2] must
-                    # not form a 3-letter word.
+                    # Row 3 accidental-prime checks with safety at col 4.
+                    if is_valid_word(trigger[:3] + safety, dict_words):
+                        continue
+                    if is_valid_word(trigger[1:3] + safety, dict_words):
+                        continue
+                    # Col 3 load-time: trigger[2], layer2[1], layer3[2].
                     if is_valid_word(trigger[2] + layer2[1] + layer3[2], dict_words):
                         continue
                     yield (preprime, trigger, layer2, layer3, safety)
                     count += 1
+                    per_pp_count += 1
                     if cap is not None and count >= cap:
                         return
+                    if per_preprime_cap is not None and per_pp_count >= per_preprime_cap:
+                        break
+                if per_preprime_cap is not None and per_pp_count >= per_preprime_cap:
+                    break
+            if per_preprime_cap is not None and per_pp_count >= per_preprime_cap:
+                break
 
 
 # ── Full candidate evaluation ───────────────────────────────────────────────
@@ -318,58 +332,47 @@ def robustness_tier(n: int) -> str:
     return "none"
 
 
-# ── Seed word pools ─────────────────────────────────────────────────────────
-# Curated starter pools so the first designer pass yields a focused output.
-# Spencer can extend these lists or override via CLI.
-SEED_PREPRIME = [
-    "PAW", "CAT", "DOG", "JAR", "MAP", "TOP", "BOP", "NAP", "CAP", "TAP",
-    "HIP", "PIG", "FIG", "RAM", "SUN", "BAR", "CAR", "FAR", "BUG", "HUG",
-    "CUB", "RUB", "TUB", "RUG", "MUG", "LUG", "JUG", "FAN", "RAN", "MEN",
-]
-SEED_TRIGGER = [
-    "WAND", "NAME", "FAME", "GAME", "TAKE", "BAKE", "FAKE", "LAKE", "MAKE",
-    "RACE", "FACE", "PACE", "LACE", "DOSE", "HOSE", "NOSE", "ROSE", "POSE",
-    "PART", "CART", "DART", "HART", "MART", "TART", "DARK", "HARK", "PARK",
-    "MANY", "PANY", "RAMP", "LAMP", "RING", "PING", "SING", "WING", "BANG",
-    "BEAN", "LEAN", "MEAN", "PEAR", "RAIN", "GAIN", "PAIN", "NAIL", "PAIL",
-    "MAIL", "RAIL", "TAIL", "MILE", "TILE", "PILE", "BILE", "ROPE", "HOPE",
-    "DOPE", "MOPE", "POKE", "BONE", "CONE", "DONE", "GONE", "LONE", "NONE",
-    "TONE", "ZONE", "NAVY", "NODE", "NOPE", "NOTE",
-]
-SEED_LAYER2 = [
-    "BEST", "CAST", "DUST", "FAST", "LAST", "MAST", "PAST", "REST", "TEST",
-    "WEST", "NEST", "DOME", "HOME", "SOME", "FIRM", "TERM", "WARM", "DRAW",
-    "CREW", "FREW", "GREW",  # filter via dict check
-    "FOLD", "GOLD", "HOLD", "MOLD", "BOLT", "JOLT",
-    "BUNT", "HUNT", "PUNT", "RUNT", "SOUP",
-]
-SEED_LAYER3 = [
-    "PEN", "DEN", "BEN", "GEM", "HEN", "MEN", "SEN", "TEN", "YEN", "ZEN",
-    "AGE", "ICE", "ACE", "AXE", "EYE", "OAK", "OIL", "BET", "GET", "JET",
-    "LET", "MET", "NET", "PET", "SET", "VET", "WET", "YET", "AND", "END",
-]
+def calibrate_stars(canonical_score: int) -> list[int]:
+    """Star thresholds derived from the canonical cascade total. The 3-star
+    line is the canonical score itself — getting the full intended cascade
+    earns all three stars. Lower tiers are 55% / 80% of canonical."""
+    if canonical_score <= 0:
+        return [1, 2, 3]
+    one = max(1, round(canonical_score * 0.55))
+    two = max(one + 1, round(canonical_score * 0.80))
+    three = max(two + 1, canonical_score)
+    return [one, two, three]
 
 
 def run_template_a(
     dict_words: frozenset[str],
-    candidate_cap: int | None = 300,
+    candidate_cap: int | None = 2000,
     min_robustness: int = 1,
     start_level_id: int = 910,
-) -> list[dict]:
-    """Enumerate + evaluate candidates for Template A. Returns a list of
-    passing {level_json, preprime, trigger, layer2, layer3, robustness,
-    tier} dicts, sorted by (robustness desc, score desc)."""
+    per_preprime_cap: int | None = 20,
+    preprime_pool: list[str] | None = None,
+    trigger_pool: list[str] | None = None,
+    layer2_pool: list[str] | None = None,
+    layer3_pool: list[str] | None = None,
+) -> tuple[list[dict], int, dict[str, int]]:
+    """Enumerate + evaluate candidates for Template A. Pools default to
+    every dict word of the right length for broad exploration.
+
+    Returns (passing_candidates, attempts, failed_reasons). Passing
+    candidates are sorted by (robustness desc, score desc) and include
+    calibrated star thresholds."""
     passing: list[dict] = []
     failed_reasons: dict[str, int] = {}
     attempts = 0
     next_id = start_level_id
     for (preprime, trigger, layer2, layer3, safety) in enumerate_template_a(
         dict_words,
-        preprime_pool=SEED_PREPRIME,
-        trigger_pool=SEED_TRIGGER,
-        layer2_pool=SEED_LAYER2,
-        layer3_pool=SEED_LAYER3,
+        preprime_pool=preprime_pool,
+        trigger_pool=trigger_pool,
+        layer2_pool=layer2_pool,
+        layer3_pool=layer3_pool,
         cap=candidate_cap,
+        per_preprime_cap=per_preprime_cap,
     ):
         attempts += 1
         level = build_template_a_level(
@@ -388,6 +391,10 @@ def run_template_a(
                 failed_reasons.get("below min_robustness", 0) + 1
             )
             continue
+        # Calibrate star thresholds using the canonical score.
+        stars = calibrate_stars(result["canonicalScore"])
+        level["starThresholds"] = stars
+        level["target"] = stars[0]
         passing.append(
             {
                 "preprime": preprime,
@@ -398,6 +405,7 @@ def run_template_a(
                 "robustness": result["robustness"],
                 "tier": robustness_tier(result["robustness"]),
                 "canonicalScore": result["canonicalScore"],
+                "starThresholds": stars,
                 "finalChainDepth": result["finalChainDepth"],
                 "level": level,
             }
@@ -412,8 +420,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--template", type=str, default="A")
     ap.add_argument("--dict", type=Path, default=None)
-    ap.add_argument("--cap", type=int, default=300,
-                    help="Max candidates to evaluate (default 300)")
+    ap.add_argument("--cap", type=int, default=2000,
+                    help="Max candidates to evaluate (default 2000)")
+    ap.add_argument("--per-preprime-cap", type=int, default=20,
+                    help="Max candidates per preprime word — keeps variety "
+                         "across preprimes instead of exhausting one first")
     ap.add_argument("--min-robustness", type=int, default=1,
                     help="Minimum # of 3-layer actions to keep a candidate")
     ap.add_argument("--output-dir", type=Path, default=None,
@@ -432,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     passing, attempts, failed_reasons = run_template_a(
         dict_words,
         candidate_cap=args.cap,
+        per_preprime_cap=args.per_preprime_cap,
         min_robustness=args.min_robustness,
         start_level_id=args.start_id,
     )
