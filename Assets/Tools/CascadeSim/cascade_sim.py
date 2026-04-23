@@ -617,20 +617,22 @@ class CascadeSim:
             # Invalidate primed words that included the old letter at this cell.
             self._remove_primed_containing_cells({(x, y)})
             self.step_seed_cells = [(x, y)]
-        elif t == "swap":
+        elif t in ("swap", "edit"):
+            # Board↔board letter exchange — the in-game "edit" mechanic. Both
+            # cells' letters are swapped; both cells are seeded so Layer 1
+            # word detection scans each of them. "swap" kept as an alias.
             ca = tuple(action["cell_a"])
             cb = tuple(action["cell_b"])
             a = self.board[ca[0]][ca[1]]
             b = self.board[cb[0]][cb[1]]
             if a is None or b is None:
-                raise ValueError("swap endpoint empty")
+                raise ValueError(f"{t} endpoint empty")
             if a.is_stone or b.is_stone:
-                raise ValueError("swap cannot move stones")
-            # Perform swap.
-            a.col, a.row = cb
-            b.col, b.row = ca
-            self.board[ca[0]][ca[1]] = b
-            self.board[cb[0]][cb[1]] = a
+                raise ValueError(f"{t} cannot move stones")
+            # Exchange letters in place; keep IsStone (false for both here).
+            a_letter, b_letter = a.letter, b.letter
+            self.board[ca[0]][ca[1]] = Cell(letter=b_letter, col=ca[0], row=ca[1])
+            self.board[cb[0]][cb[1]] = Cell(letter=a_letter, col=cb[0], row=cb[1])
             self._purge_scored_for([ca, cb])
             self._remove_primed_containing_cells({ca, cb})
             self.step_seed_cells = [ca, cb]
@@ -727,16 +729,174 @@ class CascadeSim:
         }
 
 
+def _run_single(level_path: Path, dict_words: frozenset[str], action: dict) -> dict:
+    sim = CascadeSim(dict_words)
+    sim.load_level(level_path)
+    try:
+        sim.apply_action(action)
+    except ValueError as e:
+        return {"error": str(e), "layers": []}
+    sim.resolve()
+    return sim.to_report()
+
+
+def _enumerate_actions(level_data: dict, hand_letters: list[str]):
+    from itertools import combinations
+
+    placed = level_data.get("startingBoard") or []
+    occupied = {(t["x"], t["y"]): t for t in placed}
+    occupied_letter_cells = [
+        (t["x"], t["y"])
+        for t in placed
+        if (t.get("variant") or "normal") != "stone"
+        and (t.get("letter") or "")
+    ]
+
+    # edit pairs (letter cells only)
+    for a, b in combinations(occupied_letter_cells, 2):
+        # skip swaps where letters are identical (would be a no-op)
+        la = occupied[a].get("letter", "").upper()
+        lb = occupied[b].get("letter", "").upper()
+        if la == lb:
+            continue
+        yield {"type": "edit", "cell_a": list(a), "cell_b": list(b)}
+
+    # drops — any column with an empty slot
+    for col in range(COLS):
+        has_empty = any(
+            (col, r) not in occupied for r in range(LEVEL_ROWS)
+        )
+        if not has_empty:
+            continue
+        for letter in hand_letters:
+            yield {"type": "drop", "col": col, "letter": letter}
+
+    # rewrites — every letter cell, every hand letter (except same)
+    for (x, y) in occupied_letter_cells:
+        orig = occupied[(x, y)].get("letter", "").upper()
+        for letter in hand_letters:
+            if letter == orig:
+                continue
+            yield {"type": "rewrite", "x": x, "y": y, "new_letter": letter}
+
+
+def explore_actions(
+    level_path: Path,
+    dict_words: frozenset[str] | None = None,
+    hand_letters: list[str] | None = None,
+    min_layers: int = 1,
+) -> list[dict]:
+    """Enumerate every legal action and run the sim on each. Returns a
+    list of {"action", "layers", "words", "score", "finalChainDepth"} dicts,
+    sorted by layer count descending, then score descending.
+
+    hand_letters defaults to A-Z for full exploration.
+    min_layers filters out actions that don't even produce 1 cascade layer.
+    """
+    if dict_words is None:
+        dict_words = load_dict()
+    if hand_letters is None:
+        hand_letters = [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+
+    level_data = json.loads(Path(level_path).read_text())
+    results: list[dict] = []
+    total_enumerated = 0
+    total_errored = 0
+    zero_layer = 0
+    for action in _enumerate_actions(level_data, hand_letters):
+        total_enumerated += 1
+        rep = _run_single(level_path, dict_words, action)
+        if "error" in rep:
+            total_errored += 1
+            continue
+        layers = rep.get("layers", [])
+        if len(layers) == 0:
+            zero_layer += 1
+        if len(layers) < min_layers:
+            continue
+        words: list[str] = []
+        for L in layers:
+            # Prefer pre-existing primed names (Layer 1 overlap) when present;
+            # otherwise use the trigger word (self-trigger via Rule A).
+            pw = L.get("primedWordsTriggered") or []
+            tw = L.get("triggerWords") or []
+            if pw:
+                # Dedup within the layer while preserving order.
+                seen = set()
+                for w in pw:
+                    if w not in seen:
+                        seen.add(w)
+                        words.append(w)
+            else:
+                words.extend(tw)
+        results.append(
+            {
+                "action": action,
+                "layers": len(layers),
+                "words": words,
+                "score": rep.get("totalScore", 0),
+                "finalChainDepth": rep.get("finalChainDepth", 0),
+            }
+        )
+
+    results.sort(key=lambda r: (-r["layers"], -r["score"]))
+    return {
+        "totalEnumerated": total_enumerated,
+        "totalErrored": total_errored,
+        "zeroLayerCount": zero_layer,
+        "results": results,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", required=True, type=Path)
-    ap.add_argument("--action", required=True, type=str,
+    ap.add_argument("--action", type=str,
                     help='JSON, e.g. \'{"type":"rewrite","x":4,"y":3,"new_letter":"D"}\'')
     ap.add_argument("--dict", type=Path, default=None,
                     help="Override dict path (defaults to Assets/Resources/dict_core.txt)")
+    ap.add_argument("--explore", action="store_true",
+                    help="Enumerate every legal action and rank by layer count")
+    ap.add_argument("--hand", type=str, default=None,
+                    help="Comma-separated letters for drop/rewrite exploration "
+                         "(default: A-Z)")
+    ap.add_argument("--min-layers", type=int, default=1,
+                    help="Filter out actions producing fewer than this many layers")
+    ap.add_argument("--top", type=int, default=25,
+                    help="Show top N results in explore mode")
     args = ap.parse_args(argv)
 
     dict_words = load_dict(args.dict) if args.dict else load_dict()
+
+    if args.explore:
+        hand = (
+            [c.strip().upper() for c in args.hand.split(",")]
+            if args.hand
+            else None
+        )
+        out = explore_actions(
+            args.level,
+            dict_words=dict_words,
+            hand_letters=hand,
+            min_layers=args.min_layers,
+        )
+        results = out["results"]
+        layer_counts: dict[int, int] = {}
+        for r in results:
+            layer_counts[r["layers"]] = layer_counts.get(r["layers"], 0) + 1
+        summary = {
+            "totalEnumerated": out["totalEnumerated"],
+            "totalErrored": out["totalErrored"],
+            "zeroLayerCount": out["zeroLayerCount"],
+            "passingFilter": sum(layer_counts.values()),
+            "layerCountHistogram": dict(sorted(layer_counts.items(), reverse=True)),
+            "top": results[: args.top],
+        }
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    if not args.action:
+        ap.error("--action is required unless --explore is set")
     sim = CascadeSim(dict_words)
     sim.load_level(args.level)
     sim.apply_action(json.loads(args.action))
