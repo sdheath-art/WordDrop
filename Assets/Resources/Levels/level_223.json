@@ -1,0 +1,192 @@
+{
+    "schemaVersion": 1,
+    "levelId": 223,
+    "displayName": "eq \u00b7 PUS\u2192SLEW\u2192STEP\u2192KID  [col1_row0]",
+    "target": 305,
+    "moveBudget": 5,
+    "starThresholds": [
+        305,
+        443,
+        554
+    ],
+    "allowedMechanics": [],
+    "hazards": [],
+    "allowFail": true,
+    "rewriteCharges": 1,
+    "swapCharges": 0,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": true,
+        "showChainMeter": false
+    },
+    "startingBoard": [
+        {
+            "x": 1,
+            "y": 5,
+            "letter": "P",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 4,
+            "letter": "U",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 3,
+            "letter": "S",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 3,
+            "letter": "L",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 3,
+            "letter": "E",
+            "variant": "normal"
+        },
+        {
+            "x": 4,
+            "y": 3,
+            "letter": "C",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 1,
+            "letter": "W",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 4,
+            "letter": "K",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 0,
+            "letter": "S",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 4,
+            "letter": "T",
+            "variant": "normal"
+        },
+        {
+            "x": 4,
+            "y": 4,
+            "letter": "E",
+            "variant": "normal"
+        },
+        {
+            "x": 5,
+            "y": 0,
+            "letter": "P",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 0,
+            "letter": "K",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 1,
+            "letter": "I",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 5,
+            "letter": "D",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 2,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 1,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 1,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 0,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 0,
+            "letter": "X",
+            "variant": "stone"
+        }
+    ],
+    "bag": null,
+    "seed": 0,
+    "visualCues": {},
+    "tutorialPrompts": [
+        {
+            "on": "start",
+            "text": "Edit to form SLEW and watch the cascade."
+        }
+    ],
+    "designer": {
+        "equationId": "eq_3v_4h_4h_3h_linear",
+        "layoutName": "col1_row0",
+        "words": {
+            "preprime": "PUS",
+            "trigger": "SLEW",
+            "layer2": "STEP",
+            "layer3": "KID"
+        },
+        "canonicalAction": {
+            "type": "edit",
+            "cell_a": [
+                1,
+                1
+            ],
+            "cell_b": [
+                4,
+                3
+            ]
+        }
+    }
+}

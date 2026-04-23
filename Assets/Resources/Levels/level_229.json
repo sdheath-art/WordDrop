@@ -1,0 +1,173 @@
+{
+    "schemaVersion": 1,
+    "levelId": 229,
+    "displayName": "eq \u00b7 REV\u2192VIBE\u2192CASE  [col1_row0]",
+    "target": 177,
+    "moveBudget": 5,
+    "starThresholds": [
+        177,
+        257,
+        321
+    ],
+    "allowedMechanics": [],
+    "hazards": [],
+    "allowFail": true,
+    "rewriteCharges": 1,
+    "swapCharges": 0,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": true,
+        "showChainMeter": false
+    },
+    "startingBoard": [
+        {
+            "x": 1,
+            "y": 5,
+            "letter": "R",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 4,
+            "letter": "E",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 3,
+            "letter": "V",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 3,
+            "letter": "I",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 3,
+            "letter": "B",
+            "variant": "normal"
+        },
+        {
+            "x": 4,
+            "y": 3,
+            "letter": "R",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 1,
+            "letter": "E",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 4,
+            "letter": "K",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 0,
+            "letter": "C",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 4,
+            "letter": "A",
+            "variant": "normal"
+        },
+        {
+            "x": 4,
+            "y": 4,
+            "letter": "S",
+            "variant": "normal"
+        },
+        {
+            "x": 5,
+            "y": 0,
+            "letter": "E",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 2,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 1,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 1,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 0,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 0,
+            "letter": "X",
+            "variant": "stone"
+        }
+    ],
+    "bag": null,
+    "seed": 0,
+    "visualCues": {},
+    "tutorialPrompts": [
+        {
+            "on": "start",
+            "text": "Edit to form VIBE and watch the cascade."
+        }
+    ],
+    "designer": {
+        "equationId": "eq_3v_4h_3h_short",
+        "layoutName": "col1_row0",
+        "words": {
+            "preprime": "REV",
+            "trigger": "VIBE",
+            "layer2": "CASE"
+        },
+        "canonicalAction": {
+            "type": "edit",
+            "cell_a": [
+                1,
+                1
+            ],
+            "cell_b": [
+                4,
+                3
+            ]
+        }
+    }
+}

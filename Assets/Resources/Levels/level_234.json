@@ -1,0 +1,156 @@
+{
+    "schemaVersion": 1,
+    "levelId": 234,
+    "displayName": "eq \u00b7 BET\u2192KIT\u2192TUTU\u2192WADS  [anchor1_row0]",
+    "target": 243,
+    "moveBudget": 5,
+    "starThresholds": [
+        243,
+        353,
+        441
+    ],
+    "allowedMechanics": [],
+    "hazards": [],
+    "allowFail": true,
+    "rewriteCharges": 1,
+    "swapCharges": 0,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": true,
+        "showChainMeter": false
+    },
+    "startingBoard": [
+        {
+            "x": 1,
+            "y": 5,
+            "letter": "B",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 4,
+            "letter": "E",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 3,
+            "letter": "T",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 5,
+            "letter": "K",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 4,
+            "letter": "I",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 3,
+            "letter": "T",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 3,
+            "letter": "U",
+            "variant": "normal"
+        },
+        {
+            "x": 4,
+            "y": 3,
+            "letter": "R",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 1,
+            "letter": "U",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 0,
+            "letter": "W",
+            "variant": "normal"
+        },
+        {
+            "x": 2,
+            "y": 4,
+            "letter": "A",
+            "variant": "normal"
+        },
+        {
+            "x": 3,
+            "y": 0,
+            "letter": "D",
+            "variant": "normal"
+        },
+        {
+            "x": 4,
+            "y": 0,
+            "letter": "S",
+            "variant": "normal"
+        },
+        {
+            "x": 1,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 2,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 3,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        },
+        {
+            "x": 4,
+            "y": 2,
+            "letter": "X",
+            "variant": "stone"
+        }
+    ],
+    "bag": null,
+    "seed": 0,
+    "visualCues": {},
+    "tutorialPrompts": [
+        {
+            "on": "start",
+            "text": "Edit to form TUTU and watch the cascade."
+        }
+    ],
+    "designer": {
+        "equationId": "eq_3v_3v_4h_cluster",
+        "layoutName": "anchor1_row0",
+        "words": {
+            "pp_a": "BET",
+            "pp_b": "KIT",
+            "trigger": "TUTU",
+            "layer2": "WADS"
+        },
+        "canonicalAction": {
+            "type": "edit",
+            "cell_a": [
+                1,
+                1
+            ],
+            "cell_b": [
+                4,
+                3
+            ]
+        }
+    }
+}
