@@ -211,6 +211,21 @@ namespace WordDrop
                 _bag = new TileBag();
             }
 
+            // Level mode: apply scripted rig letters from LevelData BEFORE the
+            // hand fills. Three sources, combined FIFO into the bag's rig queue:
+            //   1. scriptedInitialHand — exact letters for the opening hand
+            //   2. scriptedDrawQueue   — letters for subsequent refills
+            //   3. bag.letterOverrides — each (letter, count) expanded
+            // DrawLetter drains the rig queue before the weighted bag.
+            // PlayerHand.GovernedDraw detects HasRiggedNext and bypasses its
+            // governance layers so rigged letters can't be filtered out.
+            if (GameManager.IsLevelMode
+                && LevelController.Instance != null
+                && LevelController.Instance.CurrentLevel != null)
+            {
+                ApplyLevelBagRig(_bag, LevelController.Instance.CurrentLevel);
+            }
+
             // Level mode: per-level LevelData.rewriteCharges is authoritative.
             // Tutorial L1–L3 have rewriteCharges=0 (tool not taught yet), L4+
             // opts in via the schema. Runs BEFORE the Survival block so that
@@ -978,6 +993,52 @@ namespace WordDrop
 //                 Debug.Log($"[MatchController] Refunded swap. Remaining: {_swapsRemaining[PLAYER_HUMAN]}");
                 if (HUDManager.Instance != null)
                     HUDManager.Instance.ShowSwapCount(_swapsRemaining[PLAYER_HUMAN]);
+            }
+        }
+
+        /// <summary>
+        /// Populates the bag's rig queue from the level's deterministic draw
+        /// sources. Order of concatenation matters — drawn FIFO:
+        ///   1. scriptedInitialHand (exact opening-hand letters)
+        ///   2. scriptedDrawQueue (next-draw queue on refills)
+        ///   3. bag.letterOverrides expanded (first-N-draws letter guarantees)
+        ///
+        /// PlayerHand.GovernedDraw checks bag.HasRiggedNext and returns the
+        /// rigged letter unmodified, bypassing vowel/connector/low-utility
+        /// filters. This is what makes tutorial levels deterministic across
+        /// first launch, retry, and hand refill paths.
+        /// </summary>
+        private static void ApplyLevelBagRig(TileBag bag, LevelData level)
+        {
+            if (bag == null || level == null) return;
+
+            if (level.scriptedInitialHand != null)
+            {
+                var chars = new List<char>(level.scriptedInitialHand.Length);
+                foreach (string s in level.scriptedInitialHand)
+                    if (!string.IsNullOrEmpty(s)) chars.Add(s[0]);
+                bag.EnqueueRiggedLetters(chars);
+            }
+
+            if (level.scriptedDrawQueue != null)
+            {
+                var chars = new List<char>(level.scriptedDrawQueue.Length);
+                foreach (string s in level.scriptedDrawQueue)
+                    if (!string.IsNullOrEmpty(s)) chars.Add(s[0]);
+                bag.EnqueueRiggedLetters(chars);
+            }
+
+            if (level.bag != null && level.bag.letterOverrides != null)
+            {
+                var chars = new List<char>();
+                foreach (LetterWeight w in level.bag.letterOverrides)
+                {
+                    if (w == null || string.IsNullOrEmpty(w.letter)) continue;
+                    char c = w.letter[0];
+                    for (int i = 0; i < w.count; i++)
+                        chars.Add(c);
+                }
+                bag.EnqueueRiggedLetters(chars);
             }
         }
 

@@ -398,15 +398,24 @@ namespace WordDrop
             _slots[index] = '\0';
 
             // Swap uses a fair draw — no vowel forcing, no drought assist.
+            // Scripted determinism: if the bag has a rigged letter, use it
+            // unconditionally (tutorials may script swap results later).
             char replacement = '\0';
-            for (int attempt = 0; attempt < REROLL_ATTEMPTS; attempt++)
+            if (bag.HasRiggedNext)
             {
-                char drawn = bag.DrawLetter();
-                if (char.ToUpper(drawn) == char.ToUpper(old)) continue;
-                if (CountLetter(drawn) >= MAX_SAME_LETTER) continue;
-                if (IsLowUtility(drawn) && CountLowUtilityExcluding(index) >= MAX_LOW_UTILITY) continue;
-                replacement = drawn;
-                break;
+                replacement = bag.DrawLetter();
+            }
+            else
+            {
+                for (int attempt = 0; attempt < REROLL_ATTEMPTS; attempt++)
+                {
+                    char drawn = bag.DrawLetter();
+                    if (char.ToUpper(drawn) == char.ToUpper(old)) continue;
+                    if (CountLetter(drawn) >= MAX_SAME_LETTER) continue;
+                    if (IsLowUtility(drawn) && CountLowUtilityExcluding(index) >= MAX_LOW_UTILITY) continue;
+                    replacement = drawn;
+                    break;
+                }
             }
 
             _slots[index] = (replacement != '\0') ? replacement : bag.DrawLetter();
@@ -429,6 +438,16 @@ namespace WordDrop
 
         private char GovernedDraw(TileBag bag, int slotIndex)
         {
+            // Tutorial / scripted determinism: when the bag has a rigged
+            // letter queued (from LevelData scriptedInitialHand /
+            // scriptedDrawQueue / bag.letterOverrides), bypass every
+            // governance filter so the rigged letter can't be rejected by
+            // vowel-ceiling, low-utility, or connector gates. Without this
+            // bypass, GovernedDraw's rejection loops would drain the rig
+            // queue silently on filter misses, breaking tutorials.
+            if (bag != null && bag.HasRiggedNext)
+                return bag.DrawLetter();
+
             int vowelsInHand = CountVowelsExcluding(slotIndex);
 
             // ── SURVIVAL LAYER: Board-aware draw as DEFAULT behavior ────────────

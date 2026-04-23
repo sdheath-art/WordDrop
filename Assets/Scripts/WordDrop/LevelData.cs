@@ -78,6 +78,29 @@ namespace WordDrop
         /// Daily / Blitz) use their own charge sources and ignore this field.
         /// </summary>
         public int rewriteCharges;
+
+        /// <summary>
+        /// Optional exact letters for the opening hand, in slot order.
+        /// When present and non-empty, the first N draws from the bag
+        /// (HAND_SIZE) return these letters deterministically, bypassing
+        /// the governance layer. Used by tutorial levels that require
+        /// 100% determinism on first launch + every retry.
+        ///
+        /// Each entry must be a single A-Z character (as a string).
+        /// Entries beyond HAND_SIZE are queued into scriptedDrawQueue
+        /// behavior — consumed in order on subsequent refills.
+        /// </summary>
+        public string[] scriptedInitialHand;
+
+        /// <summary>
+        /// Optional queue of letters returned by subsequent draws AFTER
+        /// scriptedInitialHand exhausts. Consumed in order on each refill.
+        /// Once this queue also exhausts, bag.letterOverrides kicks in,
+        /// then the default weighted distribution.
+        ///
+        /// Each entry must be a single A-Z character (as a string).
+        /// </summary>
+        public string[] scriptedDrawQueue;
     }
 
     /// <summary>

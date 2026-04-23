@@ -90,6 +90,16 @@ namespace WordDrop
         private int        _totalDrawn = 0;
         private int        _refillCount = 0;
 
+        // Rig queue — deterministic letters served before the weighted bag.
+        // Populated at level load from LevelData.bag.letterOverrides,
+        // LevelData.scriptedInitialHand, and LevelData.scriptedDrawQueue.
+        // Drained FIFO by DrawLetter(). Consumers that wrap DrawLetter with
+        // rejection-loop governance (PlayerHand.GovernedDraw, SwapSlot)
+        // check HasRiggedNext and bypass governance so rigged letters can't
+        // be filtered out by vowel/connector/low-utility gates. This is
+        // what makes tutorial levels 100% deterministic on the first launch.
+        private Queue<char> _rigQueue = new Queue<char>();
+
         /// <summary>
         /// When non-null, this seeded System.Random is used instead of UnityEngine.Random
         /// to ensure deterministic, cross-device reproducible letter sequences.
@@ -147,6 +157,37 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// True when a rigged letter is queued and will be served by the
+        /// NEXT DrawLetter() call. Governance-aware consumers (PlayerHand
+        /// GovernedDraw, SwapSlot rejection loops) check this and bypass
+        /// their filters so tutorial draws are 100% deterministic.
+        /// </summary>
+        public bool HasRiggedNext => _rigQueue.Count > 0;
+
+        /// <summary>
+        /// Appends letters to the rig queue. They will be served by
+        /// DrawLetter() in FIFO order BEFORE the normal bag distribution.
+        /// Non-alphabetic entries are silently skipped.
+        ///
+        /// Level-load wiring (MatchController) enqueues in this order:
+        ///   1. LevelData.scriptedInitialHand — exact opening-hand letters
+        ///   2. LevelData.scriptedDrawQueue   — next-draw queue for refills
+        ///   3. LevelData.bag.letterOverrides — each (letter, count) pair
+        ///      expanded and appended (guarantees the first N draws
+        ///      return that letter, where N = count)
+        /// </summary>
+        public void EnqueueRiggedLetters(IEnumerable<char> letters)
+        {
+            if (letters == null) return;
+            foreach (char c in letters)
+            {
+                char up = char.ToUpper(c);
+                if (up >= 'A' && up <= 'Z')
+                    _rigQueue.Enqueue(up);
+            }
+        }
+
+        /// <summary>
         /// Draws a single letter from the bag.
         /// ALWAYS returns a valid A-Z character — never returns WILD_CHAR ('*').
         /// If the bag is empty, it automatically refills first.
@@ -159,6 +200,15 @@ namespace WordDrop
                 _forcedNextDraw = '\0';
                 _totalDrawn++;
                 return forced;
+            }
+
+            // Rig queue — deterministic letters from the level JSON (bag
+            // letterOverrides, scriptedInitialHand, scriptedDrawQueue).
+            // Served FIFO before the weighted bag, without governance.
+            if (_rigQueue.Count > 0)
+            {
+                _totalDrawn++;
+                return _rigQueue.Dequeue();
             }
 
             if (_bag.Count == 0)
@@ -214,6 +264,8 @@ namespace WordDrop
         /// </summary>
         public char PeekNext()
         {
+            if (_forcedNextDraw != '\0') return _forcedNextDraw;
+            if (_rigQueue.Count > 0) return _rigQueue.Peek();
             if (_bag.Count == 0) return '\0';
             return _bag[_bag.Count - 1];
         }

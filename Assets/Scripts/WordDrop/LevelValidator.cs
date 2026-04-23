@@ -130,6 +130,32 @@ namespace WordDrop
                 }
             }
 
+            if (data.scriptedInitialHand != null)
+            {
+                for (int i = 0; i < data.scriptedInitialHand.Length; i++)
+                {
+                    string s = data.scriptedInitialHand[i];
+                    if (string.IsNullOrEmpty(s) || s.Length != 1)
+                        return (false, $"scriptedInitialHand[{i}] '{s}' must be single character");
+                    char c = char.ToUpperInvariant(s[0]);
+                    if (c < 'A' || c > 'Z')
+                        return (false, $"scriptedInitialHand[{i}] '{s}' is not A-Z");
+                }
+            }
+
+            if (data.scriptedDrawQueue != null)
+            {
+                for (int i = 0; i < data.scriptedDrawQueue.Length; i++)
+                {
+                    string s = data.scriptedDrawQueue[i];
+                    if (string.IsNullOrEmpty(s) || s.Length != 1)
+                        return (false, $"scriptedDrawQueue[{i}] '{s}' must be single character");
+                    char c = char.ToUpperInvariant(s[0]);
+                    if (c < 'A' || c > 'Z')
+                        return (false, $"scriptedDrawQueue[{i}] '{s}' is not A-Z");
+                }
+            }
+
             if (data.tutorialPrompts != null)
             {
                 foreach (TutorialPrompt p in data.tutorialPrompts)
