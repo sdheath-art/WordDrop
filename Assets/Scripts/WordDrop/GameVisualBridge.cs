@@ -400,6 +400,12 @@ namespace WordDrop
             List<WordScoredEvent> _deferredScoredWords = null;
             List<List<Vector2Int>> _triggerWordGroups = null; // per-word cell groups for sequential explosions
 
+            // Phase 9.10: track whether this resolution has already hit Exploding.
+            // First Exploding = initial detonation (full pacing for feel).
+            // Subsequent Explodings = cascade layers (tighten timings in Level mode
+            // so the chain reads as one rapid crescendo).
+            bool hasExplodedThisDrop = false;
+
             while (resolving && safetyStepCount < MAX_STEPS)
             {
                 safetyStepCount++;
@@ -523,8 +529,13 @@ namespace WordDrop
 
                                 if (detonationComing)
                                 {
-                                    // Brief pause so primed sound registers before detonation
-                                    yield return WaitCache.Get(0.15f);
+                                    // Brief pause so primed sound registers before detonation.
+                                    // Phase 9.10: skip this pause for gravity-formed cascade
+                                    // words in Level mode (word primes and detonates in the
+                                    // same beat — no prime-glow pause mid-cascade).
+                                    bool skipPrimeDelay = GameManager.IsLevelMode && hasExplodedThisDrop;
+                                    if (!skipPrimeDelay)
+                                        yield return WaitCache.Get(0.15f);
                                 }
                                 else
                                 {
@@ -744,7 +755,18 @@ namespace WordDrop
                                 Debug.LogWarning($"[GameVisualBridge] RemoveTiles error: {ex.Message}");
                             }
 
-                            yield return WaitCache.Get(POST_EXPLOSION_PAUSE);
+                            // Phase 9.10: tighten post-explosion pause for cascade layers
+                            // in Level mode so multiple detonations chain visually without
+                            // dead air between them. Initial explosion keeps full breathing
+                            // room for impact.
+                            float postExplodePause = (GameManager.IsLevelMode && hasExplodedThisDrop)
+                                ? 0.05f
+                                : POST_EXPLOSION_PAUSE;
+                            yield return WaitCache.Get(postExplodePause);
+
+                            // Flag this resolution as having exploded — subsequent Exploding
+                            // phases are cascade layers and use the tightened timings above.
+                            hasExplodedThisDrop = true;
 
                             // Meltdown outro — fade stamp after chain played out (AI path)
                             if (meltdownActive && MeltdownManager.Instance != null)
@@ -787,7 +809,14 @@ namespace WordDrop
                         // causing a visual glitch. Final rebuild happens in Complete phase.
 
 //                         Debug.Log($"[GameVisualBridge]   Waiting {GRAVITY_SETTLE_PAUSE:F2}s gravity settle pause.");
-                        yield return WaitCache.Get(GRAVITY_SETTLE_PAUSE);
+                        // Phase 9.10: zero settle pause after cascade-layer gravity so the
+                        // next detonation fires the instant tiles land. Initial drop's
+                        // gravity (hasExplodedThisDrop=false here) keeps the full settle
+                        // pause for feel.
+                        float settlePause = (GameManager.IsLevelMode && hasExplodedThisDrop)
+                            ? 0f
+                            : GRAVITY_SETTLE_PAUSE;
+                        yield return WaitCache.Get(settlePause);
                         break;
                     }
 

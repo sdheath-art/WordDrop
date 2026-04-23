@@ -714,7 +714,13 @@ namespace WordDrop
         {
             // Per-column stagger — cascades feel organic instead of synchronized.
             // Candy Crush / Royal Match use ~40-60ms per column.
+            // Phase 9.10: Level mode uses uniform (no-stagger, fixed-duration)
+            // fall so cascade layers land in one beat rather than feeling
+            // disjointed across columns / fall-distances. Survival keeps the
+            // organic staggered feel for rising-row-driven gameplay.
+            bool levelUniform = GameManager.IsLevelMode;
             const float STAGGER_PER_COL = 0.045f;
+            const float UNIFORM_FALL_DURATION = 0.18f;
 
             List<Tile> animatingTiles = new List<Tile>();
             int totalMoved = 0;
@@ -767,8 +773,10 @@ namespace WordDrop
 
                     if (dist > 0.02f)
                     {
-                        float fallDuration = dist / GRAVITY_FALL_SPEED;
-                        float colDelay = col * STAGGER_PER_COL;
+                        float fallDuration = levelUniform
+                            ? UNIFORM_FALL_DURATION
+                            : dist / GRAVITY_FALL_SPEED;
+                        float colDelay = levelUniform ? 0f : col * STAGGER_PER_COL;
                         tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
                         animatingTiles.Add(tile);
                         totalMoved++;
