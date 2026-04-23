@@ -1,0 +1,54 @@
+{
+    "schemaVersion": 1,
+    "levelId": 210,
+    "displayName": "Triple Cascade",
+    "target": 300,
+    "moveBudget": 2,
+    "starThresholds": [300, 600, 1000],
+    "allowedMechanics": [],
+    "hazards": [],
+    "allowFail": true,
+    "rewriteCharges": 1,
+    "swapCharges": 0,
+    "hudFlags": {
+        "showSwapCharges": false,
+        "showEditCharges": true,
+        "showChainMeter": false
+    },
+    "startingBoard": [
+        {"x": 1, "y": 7, "letter": "P", "variant": "normal"},
+        {"x": 3, "y": 7, "letter": "N", "variant": "normal"},
+
+        {"x": 1, "y": 6, "letter": "A", "variant": "normal"},
+        {"x": 2, "y": 6, "letter": "K", "variant": "normal"},
+        {"x": 3, "y": 6, "letter": "E", "variant": "normal"},
+        {"x": 4, "y": 6, "letter": "S", "variant": "normal"},
+
+        {"x": 1, "y": 5, "letter": "W", "variant": "normal"},
+        {"x": 2, "y": 5, "letter": "A", "variant": "normal"},
+        {"x": 3, "y": 5, "letter": "N", "variant": "normal"},
+        {"x": 4, "y": 5, "letter": "R", "variant": "normal"},
+
+        {"x": 1, "y": 4, "letter": "X", "variant": "stone"},
+        {"x": 2, "y": 4, "letter": "X", "variant": "stone"},
+        {"x": 3, "y": 4, "letter": "X", "variant": "stone"},
+        {"x": 4, "y": 4, "letter": "X", "variant": "stone"},
+
+        {"x": 1, "y": 3, "letter": "R", "variant": "normal"},
+        {"x": 2, "y": 3, "letter": "E", "variant": "normal"},
+        {"x": 3, "y": 3, "letter": "X", "variant": "stone"},
+        {"x": 4, "y": 3, "letter": "X", "variant": "stone"},
+
+        {"x": 1, "y": 2, "letter": "P", "variant": "normal"},
+        {"x": 2, "y": 2, "letter": "B", "variant": "normal"},
+        {"x": 3, "y": 2, "letter": "X", "variant": "stone"},
+        {"x": 4, "y": 2, "letter": "X", "variant": "stone"},
+        {"x": 5, "y": 2, "letter": "T", "variant": "normal"}
+    ],
+    "bag": {"letterOverrides": [{"letter": "D", "count": 40}]},
+    "seed": 0,
+    "visualCues": {},
+    "tutorialPrompts": [
+        {"on": "start", "text": "Rewrite R to D at (4,5) to form WAND. Watch the 3-layer cascade."}
+    ]
+}
