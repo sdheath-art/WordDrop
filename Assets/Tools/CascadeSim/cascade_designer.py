@@ -34,6 +34,7 @@ CLI:
 from __future__ import annotations
 import argparse
 import json
+import random
 import sys
 from pathlib import Path
 from typing import Iterator
@@ -165,68 +166,115 @@ def enumerate_template_a(
     decorative: str = "K",
     cap: int | None = None,
     per_preprime_cap: int | None = None,
+    per_trigger_cap: int | None = None,
+    per_layer2_cap: int | None = None,
+    per_layer3_cap: int | None = None,
+    shuffle_seed: int = 42,
 ) -> Iterator[tuple[str, str, str, str, str]]:
     """Yields (preprime, trigger, layer2, layer3, safety) tuples for every
     combination that survives the cheap pre-filters (dict validity,
     letter-junction check, safety-letter availability).
 
-    Pools default to every dict word of the right length. `cap` limits total
-    yielded candidates; `per_preprime_cap` balances variety by stopping
-    enumeration within a preprime once its quota is hit so other preprimes
-    get a turn.
+    Pools default to every dict word of the right length. Iteration is a
+    SHUFFLED pair-walk over (preprime, trigger) so we don't burn through
+    the alphabetically-first trigger (ABET) before ever reaching the
+    second. For each pair, one valid (layer2, layer3, safety) combo is
+    yielded — the next iteration for a different pair picks a different
+    l2/l3 because those lists are shuffled independently.
+
+    Per-slot caps limit how many candidates can share the same preprime /
+    trigger / l2 / l3. A pair that would exceed any cap is skipped; total
+    is bounded by `cap`.
     """
     three = sorted(w for w in dict_words if len(w) == 3)
     four = sorted(w for w in dict_words if len(w) == 4)
-    pp_list = preprime_pool if preprime_pool is not None else three
-    tr_list = trigger_pool if trigger_pool is not None else four
-    l2_list = layer2_pool if layer2_pool is not None else four
-    l3_list = layer3_pool if layer3_pool is not None else three
+    pp_list = list(preprime_pool) if preprime_pool is not None else list(three)
+    tr_list = list(trigger_pool) if trigger_pool is not None else list(four)
+    l2_list = list(layer2_pool) if layer2_pool is not None else list(four)
+    l3_list = list(layer3_pool) if layer3_pool is not None else list(three)
 
-    # Pre-bucket triggers by first letter so each preprime's inner loop
-    # doesn't scan the entire 4-letter space.
+    rng = random.Random(shuffle_seed)
+    rng.shuffle(pp_list)
+    rng.shuffle(tr_list)
+    rng.shuffle(l2_list)
+    rng.shuffle(l3_list)
+
+    # Pre-bucket triggers by first letter so pair enumeration stays cheap.
     trig_by_first: dict[str, list[str]] = {}
     for t in tr_list:
         if t not in dict_words or len(t) != 4:
             continue
         trig_by_first.setdefault(t[0], []).append(t)
 
-    count = 0
-    for preprime in pp_list:
-        if preprime not in dict_words or len(preprime) != 3:
+    # Build the (preprime, trigger) pair stream, then shuffle the pairs
+    # so we don't yield (pp_i, firstValidTrigger) for every preprime in a
+    # row before trying a different trigger.
+    pairs: list[tuple[str, str]] = []
+    for pp in pp_list:
+        if pp not in dict_words or len(pp) != 3:
             continue
-        per_pp_count = 0
-        candidates = trig_by_first.get(preprime[2], [])
-        for trigger in candidates:
-            if is_valid_word(trigger[:3], dict_words):
-                continue  # row 3 load-time accidental prime
-            for layer2 in l2_list:
-                if layer2 not in dict_words or len(layer2) != 4:
-                    continue
-                for layer3 in l3_list:
-                    if layer3 not in dict_words or len(layer3) != 3:
-                        continue
-                    safety = _pick_safety_letter(layer3, dict_words)
-                    if safety is None:
-                        continue
-                    # Row 3 accidental-prime checks with safety at col 4.
-                    if is_valid_word(trigger[:3] + safety, dict_words):
-                        continue
-                    if is_valid_word(trigger[1:3] + safety, dict_words):
-                        continue
-                    # Col 3 load-time: trigger[2], layer2[1], layer3[2].
-                    if is_valid_word(trigger[2] + layer2[1] + layer3[2], dict_words):
-                        continue
-                    yield (preprime, trigger, layer2, layer3, safety)
-                    count += 1
-                    per_pp_count += 1
-                    if cap is not None and count >= cap:
-                        return
-                    if per_preprime_cap is not None and per_pp_count >= per_preprime_cap:
-                        break
-                if per_preprime_cap is not None and per_pp_count >= per_preprime_cap:
-                    break
-            if per_preprime_cap is not None and per_pp_count >= per_preprime_cap:
+        for tr in trig_by_first.get(pp[2], []):
+            pairs.append((pp, tr))
+    rng.shuffle(pairs)
+
+    pp_count: dict[str, int] = {}
+    tr_count: dict[str, int] = {}
+    l2_count: dict[str, int] = {}
+    l3_count: dict[str, int] = {}
+    total = 0
+
+    for (preprime, trigger) in pairs:
+        if per_preprime_cap is not None and pp_count.get(preprime, 0) >= per_preprime_cap:
+            continue
+        if per_trigger_cap is not None and tr_count.get(trigger, 0) >= per_trigger_cap:
+            continue
+        if is_valid_word(trigger[:3], dict_words):
+            continue  # row 3 load-time accidental prime
+
+        # Re-shuffle L2 and L3 per pair so the "first valid" word isn't
+        # always the same one across pairs. Without this, one lucky L2
+        # dominates all yields because it sits early in the global shuffle
+        # and passes validation for most pairs.
+        l2_local = l2_list[:]
+        l3_local = l3_list[:]
+        rng.shuffle(l2_local)
+        rng.shuffle(l3_local)
+
+        yielded = False
+        for layer2 in l2_local:
+            if yielded:
                 break
+            if per_layer2_cap is not None and l2_count.get(layer2, 0) >= per_layer2_cap:
+                continue
+            if layer2 not in dict_words or len(layer2) != 4:
+                continue
+            for layer3 in l3_local:
+                if per_layer3_cap is not None and l3_count.get(layer3, 0) >= per_layer3_cap:
+                    continue
+                if layer3 not in dict_words or len(layer3) != 3:
+                    continue
+                safety = _pick_safety_letter(layer3, dict_words)
+                if safety is None:
+                    continue
+                # Row 3 substring checks with safety at col 4.
+                if is_valid_word(trigger[:3] + safety, dict_words):
+                    continue
+                if is_valid_word(trigger[1:3] + safety, dict_words):
+                    continue
+                # Col 3 load-time — trigger[2] at (3,3), layer2[1] at (3,4),
+                # layer3[2] at (3,5) form a vertical run.
+                if is_valid_word(trigger[2] + layer2[1] + layer3[2], dict_words):
+                    continue
+                yield (preprime, trigger, layer2, layer3, safety)
+                pp_count[preprime] = pp_count.get(preprime, 0) + 1
+                tr_count[trigger] = tr_count.get(trigger, 0) + 1
+                l2_count[layer2] = l2_count.get(layer2, 0) + 1
+                l3_count[layer3] = l3_count.get(layer3, 0) + 1
+                total += 1
+                yielded = True
+                if cap is not None and total >= cap:
+                    return
+                break  # one yield per (preprime, trigger) pair
 
 
 # ── Full candidate evaluation ───────────────────────────────────────────────
@@ -350,6 +398,10 @@ def run_template_a(
     min_robustness: int = 1,
     start_level_id: int = 910,
     per_preprime_cap: int | None = 20,
+    per_trigger_cap: int | None = 20,
+    per_layer2_cap: int | None = None,
+    per_layer3_cap: int | None = 20,
+    shuffle_seed: int = 42,
     preprime_pool: list[str] | None = None,
     trigger_pool: list[str] | None = None,
     layer2_pool: list[str] | None = None,
@@ -373,6 +425,10 @@ def run_template_a(
         layer3_pool=layer3_pool,
         cap=candidate_cap,
         per_preprime_cap=per_preprime_cap,
+        per_trigger_cap=per_trigger_cap,
+        per_layer2_cap=per_layer2_cap,
+        per_layer3_cap=per_layer3_cap,
+        shuffle_seed=shuffle_seed,
     ):
         attempts += 1
         level = build_template_a_level(
@@ -423,8 +479,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cap", type=int, default=2000,
                     help="Max candidates to evaluate (default 2000)")
     ap.add_argument("--per-preprime-cap", type=int, default=20,
-                    help="Max candidates per preprime word — keeps variety "
-                         "across preprimes instead of exhausting one first")
+                    help="Max candidates per preprime word")
+    ap.add_argument("--per-trigger-cap", type=int, default=20,
+                    help="Max candidates per trigger word")
+    ap.add_argument("--per-l2-cap", type=int, default=None,
+                    help="Max candidates per Layer-2 word (default: unbounded)")
+    ap.add_argument("--per-l3-cap", type=int, default=20,
+                    help="Max candidates per Layer-3 word")
+    ap.add_argument("--shuffle-seed", type=int, default=42,
+                    help="Seed for the shuffle used during pair enumeration")
     ap.add_argument("--min-robustness", type=int, default=1,
                     help="Minimum # of 3-layer actions to keep a candidate")
     ap.add_argument("--output-dir", type=Path, default=None,
@@ -444,6 +507,10 @@ def main(argv: list[str] | None = None) -> int:
         dict_words,
         candidate_cap=args.cap,
         per_preprime_cap=args.per_preprime_cap,
+        per_trigger_cap=args.per_trigger_cap,
+        per_layer2_cap=args.per_l2_cap,
+        per_layer3_cap=args.per_l3_cap,
+        shuffle_seed=args.shuffle_seed,
         min_robustness=args.min_robustness,
         start_level_id=args.start_id,
     )
@@ -453,12 +520,36 @@ def main(argv: list[str] | None = None) -> int:
     for r in passing:
         tier_hist[r["tier"]] = tier_hist.get(r["tier"], 0) + 1
 
+    # Variety histograms — prove we're not picking the same words repeatedly.
+    def _top_n(counter: dict[str, int], n: int = 10) -> list[tuple[str, int]]:
+        return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
+
+    pp_hist: dict[str, int] = {}
+    tr_hist: dict[str, int] = {}
+    l2_hist: dict[str, int] = {}
+    l3_hist: dict[str, int] = {}
+    for r in passing:
+        pp_hist[r["preprime"]] = pp_hist.get(r["preprime"], 0) + 1
+        tr_hist[r["trigger"]] = tr_hist.get(r["trigger"], 0) + 1
+        l2_hist[r["layer2"]] = l2_hist.get(r["layer2"], 0) + 1
+        l3_hist[r["layer3"]] = l3_hist.get(r["layer3"], 0) + 1
+
     summary = {
         "template": args.template,
         "attempted": attempts,
         "passed": len(passing),
         "failedBy": dict(sorted(failed_reasons.items(), key=lambda kv: -kv[1])),
         "tierHistogram": tier_hist,
+        "variety": {
+            "uniquePreprimes": len(pp_hist),
+            "uniqueTriggers": len(tr_hist),
+            "uniqueLayer2": len(l2_hist),
+            "uniqueLayer3": len(l3_hist),
+            "topPreprimes": _top_n(pp_hist),
+            "topTriggers": _top_n(tr_hist),
+            "topLayer2": _top_n(l2_hist),
+            "topLayer3": _top_n(l3_hist),
+        },
     }
 
     if args.output_dir:
