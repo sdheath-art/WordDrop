@@ -3015,6 +3015,13 @@ namespace WordDrop
         {
             if (_stepPendingWords == null || _stepPendingWords.Count == 0) return false;
 
+            // Phase 9.10: mirror the Phase 9.7 DoCheckTriggers filter-skip so the
+            // peek matches actual trigger behavior for cascade self-overlaps.
+            // Without this, PeekHasTriggers returns false for gravity-formed words
+            // that will self-detonate mid-chain, which caused GameVisualBridge to
+            // play the slow non-detonation scoring branch (0.35s) during cascades.
+            bool skipJustPrimedFilter = GameManager.IsLevelMode && _stepChainDepth > 0;
+
             for (int w = 0; w < _stepPendingWords.Count; w++)
             {
                 var match = _stepPendingWords[w];
@@ -3024,7 +3031,7 @@ namespace WordDrop
                     var overlapping = _primedRegistry.GetPrimedWordsContaining(match.Cells[c]);
                     for (int p = 0; p < overlapping.Count; p++)
                     {
-                        if (!_stepJustPrimed.Contains(overlapping[p].Id))
+                        if (skipJustPrimedFilter || !_stepJustPrimed.Contains(overlapping[p].Id))
                             return true;
                     }
 
@@ -3034,7 +3041,7 @@ namespace WordDrop
                         var adjacent = _primedRegistry.GetPrimedWordsAdjacentTo(match.Cells[c]);
                         for (int p = 0; p < adjacent.Count; p++)
                         {
-                            if (!_stepJustPrimed.Contains(adjacent[p].Id))
+                            if (skipJustPrimedFilter || !_stepJustPrimed.Contains(adjacent[p].Id))
                                 return true;
                         }
                     }

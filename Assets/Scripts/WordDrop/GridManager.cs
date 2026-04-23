@@ -720,7 +720,9 @@ namespace WordDrop
             // organic staggered feel for rising-row-driven gameplay.
             bool levelUniform = GameManager.IsLevelMode;
             const float STAGGER_PER_COL = 0.045f;
-            const float UNIFORM_FALL_DURATION = 0.18f;
+            // Match Tile.FALL_DURATION (0.30f) so post-detonation gravity
+            // reads at the same pace as the player's initial tile drop.
+            const float UNIFORM_FALL_DURATION = 0.30f;
 
             List<Tile> animatingTiles = new List<Tile>();
             int totalMoved = 0;
