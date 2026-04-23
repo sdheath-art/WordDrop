@@ -3,7 +3,7 @@
     "levelId": 210,
     "displayName": "Triple Cascade",
     "target": 300,
-    "moveBudget": 2,
+    "moveBudget": 5,
     "starThresholds": [300, 600, 1000],
     "allowedMechanics": [],
     "hazards": [],
