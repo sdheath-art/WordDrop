@@ -82,30 +82,66 @@ namespace WordDrop
             _currenciesText.fontStyle = FontStyle.Bold;
             RefreshCurrencies();
 
-            // PLAY — primary CTA. Routes to Tutorial L1 if incomplete, else Level Select.
+            // SURVIVAL — hero CTA (Phase 11a pivot). Large, top, bold red-orange.
+            // Unlocked from first launch; no tutorial gate (Survival IS the game,
+            // first-time onboarding lives WITHIN the mode, Phase 11c).
+            CreateButton(_panel.transform, "SurvivalButton",
+                anchorMin: new Vector2(0.12f, 0.48f),
+                anchorMax: new Vector2(0.88f, 0.66f),
+                label:     "SURVIVAL",
+                bgColor:   new Color(0.88f, 0.32f, 0.20f, 1f),  // bold red-orange
+                textColor: Color.white,
+                fontSize:  56,
+                onClick:   OnSurvivalClicked);
+
+            // PUZZLES — demoted from primary CTA. Routes via OnPlayClicked to
+            // tutorial L1 if incomplete, else Level Select. Same behavior as the
+            // old PLAY button; smaller visual weight under the Survival hero.
             CreateButton(_panel.transform, "PlayButton",
-                anchorMin: new Vector2(0.18f, 0.44f),
-                anchorMax: new Vector2(0.82f, 0.58f),
-                label:     "PLAY",
+                anchorMin: new Vector2(0.24f, 0.36f),
+                anchorMax: new Vector2(0.76f, 0.44f),
+                label:     "PUZZLES",
                 bgColor:   cfg != null ? cfg.menuPlayBgColor : new Color(0.20f, 0.72f, 0.35f, 1f),
                 textColor: Color.white,
-                fontSize:  cfg != null ? cfg.menuPlayFontSize : 48,
+                fontSize:  30,
                 onClick:   OnPlayClicked);
 
-            // TODAY'S PUZZLE — secondary CTA. Hearts gate + save-streak + already-played
-            // modals all handled inside OnDailyClicked.
+            // TODAY'S PUZZLE — unchanged behavior, repositioned under Puzzles.
             _dailyButton = CreateDailyButton(_panel.transform, "DailyButton",
-                anchorMin: new Vector2(0.18f, 0.28f),
-                anchorMax: new Vector2(0.82f, 0.40f));
+                anchorMin: new Vector2(0.24f, 0.24f),
+                anchorMax: new Vector2(0.76f, 0.32f));
 
             // Streak / daily-info line directly under the daily CTA.
             _dailyInfoText = CreateLabel(_panel.transform, "DailyInfoText",
-                anchorMin: new Vector2(0.18f, 0.22f),
-                anchorMax: new Vector2(0.82f, 0.28f),
+                anchorMin: new Vector2(0.18f, 0.18f),
+                anchorMax: new Vector2(0.82f, 0.24f),
                 text: "",
                 fontSize: cfg != null ? cfg.menuDailyInfoFontSize : 16,
                 color: cfg != null ? cfg.menuDailyInfoColor : new Color(0.60f, 0.75f, 0.90f, 1f));
             RefreshDailyInfo();
+        }
+
+        /// <summary>
+        /// Phase 11a Survival-primary pivot. Hero CTA. Sets the mode flags +
+        /// transitions to Playing; MatchController.StartMatch does the rest
+        /// (new TileBag, fill hands, SurvivalManager.StartSurvival init).
+        ///
+        /// No hearts gate — Survival is the primary game mode, freely
+        /// replayable. No tutorial gate — onboarding lives inside the mode.
+        /// </summary>
+        private void OnSurvivalClicked()
+        {
+            AnalyticsManager.ButtonTap("survival");
+
+            BlitzManager.IsBlitzMode = false;
+            DailyDropManager.IsDailyMode = false;
+            SurvivalManager.IsSurvivalMode = true;
+            GameManager.CurrentMode = GameMode.Survival;
+
+            SetVisible(false);
+            AnalyticsManager.ScreenView("playing_survival");
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.Playing);
         }
 
         private void OnPlayClicked()
