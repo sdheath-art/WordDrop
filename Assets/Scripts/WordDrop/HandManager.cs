@@ -5440,16 +5440,14 @@ namespace WordDrop
                 return;
             }
 
-            // Show the cached next letter, but only if it would actually be used.
-            // The cache can be rejected at draw time due to vowel floor/ceiling/dupe checks.
+            // The preview is a hard contract with the player — whatever letter is
+            // cached WILL be dealt next. DrawSlot no longer re-validates the cache,
+            // so the displayed letter is always truthful.
             PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
             if (hand == null) { _nextTileLetter.text = ""; return; }
 
             char next = hand.CachedNextLetter;
-            if (next != '\0' && hand.WouldCacheBeUsed(next))
-                _nextTileLetter.text = next.ToString();
-            else
-                _nextTileLetter.text = "?";
+            _nextTileLetter.text = (next != '\0') ? next.ToString() : "";
         }
     }
 

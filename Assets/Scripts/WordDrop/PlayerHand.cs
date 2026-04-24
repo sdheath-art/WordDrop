@@ -222,21 +222,6 @@ namespace WordDrop
             _wildVisibleSinceUnscaled += seconds;
         }
 
-        /// <summary>Check if the cached letter would pass validation with current hand state.</summary>
-        public bool WouldCacheBeUsed(char cached)
-        {
-            if (cached == '\0') return false;
-            // Simulate the same checks DrawSlot does — find first empty slot
-            int emptySlot = -1;
-            for (int i = 0; i < HAND_SIZE; i++)
-                if (_slots[i] == '\0') { emptySlot = i; break; }
-            int vowelsNow = CountVowelsExcluding(emptySlot >= 0 ? emptySlot : 0);
-            bool isVowelChar = IsVowel(cached);
-            bool vowelOk = !isVowelChar || vowelsNow < VOWEL_CEILING;
-            bool dupeOk = CountLetter(cached) < MAX_SAME_LETTER;
-            bool floorOk = isVowelChar || vowelsNow >= VOWEL_FLOOR;
-            return vowelOk && dupeOk && floorOk;
-        }
         public void SetCachedNextLetter(char c) { _cachedNextLetter = c; }
         public void EnsureCachedNextLetter(TileBag bag)
         {
@@ -354,25 +339,12 @@ namespace WordDrop
 
             if (_cachedNextLetter != '\0')
             {
-                // Validate cached letter against CURRENT hand state before using it.
-                // The cache was computed at a different hand state — vowel ceiling,
-                // vowel floor, or duplicate limits may now be violated.
-                int vowelsNow = CountVowelsExcluding(index);
-                bool cachedIsVowel = IsVowel(_cachedNextLetter);
-                bool vowelOk = !cachedIsVowel || vowelsNow < VOWEL_CEILING;
-                bool dupeOk = CountLetter(_cachedNextLetter) < MAX_SAME_LETTER;
-                bool floorOk = cachedIsVowel || vowelsNow >= VOWEL_FLOOR;
-
-                if (vowelOk && dupeOk && floorOk)
-                {
-                    _slots[index] = _cachedNextLetter;
-                    _cachedNextLetter = '\0';
-                }
-                else
-                {
-                    _cachedNextLetter = '\0';
-                    _slots[index] = GovernedDraw(bag, index);
-                }
+                // The preview is a contract with the player: whatever the next-tile
+                // socket showed must be the letter that lands in the hand. Do NOT
+                // re-validate against the current hand state here — any vowel/dupe
+                // adjustments happen in the next PreCacheNext, never on this draw.
+                _slots[index] = _cachedNextLetter;
+                _cachedNextLetter = '\0';
             }
             else
             {
@@ -627,8 +599,11 @@ namespace WordDrop
         private void PreCacheNext(TileBag bag)
         {
             if (bag == null) { _cachedNextLetter = '\0'; return; }
-            // Use slot -1 so CountVowelsExcluding counts ALL current slots.
-            // The real validation happens in DrawSlot when the cache is consumed.
+            // Use slot -1 so CountVowelsExcluding counts ALL current slots, giving
+            // GovernedDraw an accurate picture of the hand post-draw. This is the
+            // ONLY point where hand-state rules can steer the preview — once cached,
+            // DrawSlot commits the cached letter unconditionally to preserve the
+            // "what you see is what you deal" contract with the player.
             _cachedNextLetter = GovernedDraw(bag, -1);
         }
 
