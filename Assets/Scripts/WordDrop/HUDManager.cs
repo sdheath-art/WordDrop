@@ -1268,12 +1268,26 @@ namespace WordDrop
             int   stageMovesLeft = sm.CurrentStageMovesRemaining;
             float riseSecondsLeft = sm.RisingRowSecondsRemaining;
 
-            // Primary HUD: stage progress + moves left in stage + rise countdown
+            // Charge counts — replacing the "N moves" readout per Phase 11b+
+            // feedback. Moves-left is still available for danger-color logic
+            // below (we want red when budget is near exhausted), but the
+            // visible text now shows remaining edits/swaps because those are
+            // the player-facing resources they actually manage.
+            int edits = 0;
+            int swaps = 0;
+            if (MatchController.Instance != null)
+            {
+                edits = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
+                swaps = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
+            }
+
+            // Primary HUD: stage progress + charge counts + rise countdown.
             // Phase 11b — rise countdown is wall-clock seconds, not moves.
-            // Ceiling the displayed number so "RISE in 1" covers 0.0-1.0s and
-            // the text never shows "0" while the timer is still approaching.
+            // Ceiling the displayed number so "RISE in 1s" covers 0.0-1.0s and
+            // the text never shows "0s" while the timer is still approaching.
             int riseCountdown = Mathf.CeilToInt(riseSecondsLeft);
-            _turnCounterText.text = $"S{stage} {stageScore}/{stageTarget}  |  {stageMovesLeft} moves  |  RISE in {riseCountdown}s";
+            _turnCounterText.text =
+                $"S{stage} {stageScore}/{stageTarget}  |  {edits} edits · {swaps} swaps  |  RISE in {riseCountdown}s";
 
             // Color logic:
             // - If stage already cleared this round → green (safe, bonus moves)
