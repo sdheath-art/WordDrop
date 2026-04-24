@@ -66,7 +66,7 @@ namespace WordDrop
         private AudioClip _rewrite;
         private AudioClip _chargeBack;
         private AudioClip _scoreTick;
-        private AudioClip _scoreMedium;
+        // _scoreMedium removed — PlayScoreImpact mid-tier now routes to _scoreTick instead.
         private AudioClip _scoreBig;
         private AudioClip _scoreMassive;
         private AudioClip _menuAppear;
@@ -166,7 +166,6 @@ namespace WordDrop
             _rewrite         = Resources.Load<AudioClip>("SFX/rewrite");
             _chargeBack      = Resources.Load<AudioClip>("SFX/charge_back");
             _scoreTick       = Resources.Load<AudioClip>("SFX/score_tick");
-            _scoreMedium     = Resources.Load<AudioClip>("SFX/score_medium");
             _scoreBig        = Resources.Load<AudioClip>("SFX/score_big");
             _scoreMassive    = Resources.Load<AudioClip>("SFX/score_massive");
             _menuAppear      = Resources.Load<AudioClip>("SFX/menu_appear");
@@ -540,7 +539,7 @@ namespace WordDrop
             else if (points >= 16)
                 Play(_scoreBig, 0.85f);
             else if (points >= 8)
-                Play(_scoreMedium, 0.7f);
+                Play(_scoreTick, 0.7f);  // was _scoreMedium — swapped to tick per Spencer's audio pass
             // Under 8: no extra impact, just the count-up ticks
         }
 
