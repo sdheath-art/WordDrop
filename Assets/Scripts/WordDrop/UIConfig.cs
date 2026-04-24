@@ -116,7 +116,12 @@ namespace WordDrop
 
         [Header("HUD — Bar")]
         public float hudBarHeight       = 78f;
-        public Color hudBarBgColor      = new Color(0.070f, 0.090f, 0.220f, 0.94f);
+        // Matches the bottom hand-tray RGB (HandManager trayColor line ~4403:
+        // Color(0.085, 0.105, 0.260, 0.60)) so the top bar and bottom rack
+        // share the same purple hue family. Alpha kept at 0.94 for the top
+        // bar so text stays legible against the body background; the tray's
+        // 0.60 alpha is its own, unchanged.
+        public Color hudBarBgColor      = new Color(0.085f, 0.105f, 0.260f, 0.94f);
 
         [Header("HUD — Player Score")]
         public Vector2 hudPlayerLabelAnchorMin = new Vector2(0.10f, 0.35f);
