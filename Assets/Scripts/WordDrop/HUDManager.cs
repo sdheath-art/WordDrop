@@ -83,7 +83,7 @@ namespace WordDrop
         private static readonly Color SWAP_COLOR      = new Color(0.63f, 0.53f, 0.75f, 0.8f); // light purple #A088C0
         private static readonly Color WORD_POPUP_P1   = new Color(1.00f, 0.84f, 0.42f, 1f);   // gold (match player)
         private static readonly Color WORD_POPUP_AI   = new Color(1.00f, 0.56f, 0.67f, 1f);   // pink (match AI)
-        private static readonly Color BAR_BG          = new Color(0.085f, 0.105f, 0.260f, 0.95f); // matches hand-tray purple; UIConfig overrides this at runtime
+        private static readonly Color BAR_BG          = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 Spencer-picked; UIConfig overrides this at runtime
         private static readonly Color RESET_NORMAL    = new Color(0.18f, 0.18f, 0.23f, 1f);
         private static readonly Color RESET_HIGHLIGHT = new Color(0.32f, 0.32f, 0.40f, 1f);
         private static readonly Color RESET_PRESSED   = new Color(0.10f, 0.10f, 0.14f, 1f);
@@ -240,6 +240,10 @@ namespace WordDrop
 
             Image barImg = barGO.AddComponent<Image>();
             barImg.color = cfg != null ? cfg.hudBarBgColor : BAR_BG;
+            // Force default UI material — guards against a stray Inspector
+            // drag-drop (e.g. the FeelSnake particle material wandering in)
+            // from changing the bar's look at runtime.
+            barImg.material = null;
 
             TMP_FontAsset heavyFont = GameFont.GetUITMP();
 

@@ -116,12 +116,11 @@ namespace WordDrop
 
         [Header("HUD — Bar")]
         public float hudBarHeight       = 78f;
-        // Matches the bottom hand-tray RGB (HandManager trayColor line ~4403:
-        // Color(0.085, 0.105, 0.260, 0.60)) so the top bar and bottom rack
-        // share the same purple hue family. Alpha kept at 0.94 for the top
-        // bar so text stays legible against the body background; the tray's
-        // 0.60 alpha is its own, unchanged.
-        public Color hudBarBgColor      = new Color(0.085f, 0.105f, 0.260f, 0.94f);
+        // Spencer-picked purple (#391D78 / R 0.2228, G 0.1134, B 0.4716,
+        // A 1.0). Eyedropper swatch from the Inspector Color picker —
+        // saturated violet that sits on the hand-tray hue family but
+        // reads more purple than navy.
+        public Color hudBarBgColor      = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f);
 
         [Header("HUD — Player Score")]
         public Vector2 hudPlayerLabelAnchorMin = new Vector2(0.10f, 0.35f);
