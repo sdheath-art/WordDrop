@@ -32,6 +32,17 @@ namespace WordDrop
         public const int MAX_TURNS       = 12;
         public const int INITIAL_SWAPS    = 2;  // per player (hand card trades)
         public const int INITIAL_REWRITES = 1;  // per player (board tile replacements)
+
+        /// <summary>
+        /// Debug / balancing flag (Phase 11+). When true, rewrite charges
+        /// never deplete — the `> 0` gate in UseRewrite/UseRewriteCharge is
+        /// bypassed and the decrement is skipped. HUD displays "∞ edits".
+        /// Off by default for Classic / Level / Daily; Spencer toggled on
+        /// during Survival tuning to see how unrestricted edit access
+        /// affects the stage-chip pacing. Flip to false to restore the
+        /// regular 3-charge Survival economy.
+        /// </summary>
+        public static bool UnlimitedRewrites = true;
         public const int PLAYER_HUMAN    = 0;
         public const int PLAYER_AI       = 1;
         public const int NUM_PLAYERS     = 2;
@@ -1224,6 +1235,14 @@ namespace WordDrop
         public void UseRewriteCharge(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return;
+            if (UnlimitedRewrites)
+            {
+                // Still fire the tutorial hook so L4's rewrite-reactive prompt
+                // triggers. Counter stays at its initial value; HUD shows ∞.
+                if (playerIndex == PLAYER_HUMAN)
+                    LevelController.Instance?.NotifyRewrite();
+                return;
+            }
             if (_rewritesRemaining[playerIndex] > 0)
             {
                 _rewritesRemaining[playerIndex]--;
@@ -1345,7 +1364,7 @@ namespace WordDrop
 
             int player = _currentPlayer;
 
-            if (_rewritesRemaining[player] <= 0)
+            if (!UnlimitedRewrites && _rewritesRemaining[player] <= 0)
             {
 //                 Debug.Log("[MatchController] UseRewrite: no rewrites remaining.");
                 return false;
@@ -1384,8 +1403,9 @@ namespace WordDrop
                 return false;
             }
 
-            // Consume rewrite charge
-            _rewritesRemaining[player]--;
+            // Consume rewrite charge (skipped when UnlimitedRewrites is on)
+            if (!UnlimitedRewrites)
+                _rewritesRemaining[player]--;
 
             // Clear the hand slot (will be refilled in CompleteDropBookkeeping)
             _hands[player].SetSlot(handSlot, '\0');

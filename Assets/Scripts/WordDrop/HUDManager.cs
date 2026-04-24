@@ -1280,6 +1280,8 @@ namespace WordDrop
                 edits = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
                 swaps = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
             }
+            // Debug flag: "∞ edits" when unlimited-rewrites testing is on.
+            string editsLabel = MatchController.UnlimitedRewrites ? "∞" : edits.ToString();
 
             // Primary HUD: stage progress + charge counts + rise countdown.
             // Phase 11b — rise countdown is wall-clock seconds, not moves.
@@ -1287,7 +1289,7 @@ namespace WordDrop
             // the text never shows "0s" while the timer is still approaching.
             int riseCountdown = Mathf.CeilToInt(riseSecondsLeft);
             _turnCounterText.text =
-                $"S{stage} {stageScore}/{stageTarget}  |  {edits} edits · {swaps} swaps  |  RISE in {riseCountdown}s";
+                $"S{stage} {stageScore}/{stageTarget}  |  {editsLabel} edits · {swaps} swaps  |  RISE in {riseCountdown}s";
 
             // Color logic:
             // - If stage already cleared this round → green (safe, bonus moves)
