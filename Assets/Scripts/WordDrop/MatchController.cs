@@ -37,12 +37,10 @@ namespace WordDrop
         /// Debug / balancing flag (Phase 11+). When true, rewrite charges
         /// never deplete — the `> 0` gate in UseRewrite/UseRewriteCharge is
         /// bypassed and the decrement is skipped. HUD displays "∞ edits".
-        /// Off by default for Classic / Level / Daily; Spencer toggled on
-        /// during Survival tuning to see how unrestricted edit access
-        /// affects the stage-chip pacing. Flip to false to restore the
-        /// regular 3-charge Survival economy.
+        /// Off by default. Economy during Survival: 3 edits at run start,
+        /// fully refilled to 3 on every stage clear.
         /// </summary>
-        public static bool UnlimitedRewrites = true;
+        public static bool UnlimitedRewrites = false;
         public const int PLAYER_HUMAN    = 0;
         public const int PLAYER_AI       = 1;
         public const int NUM_PLAYERS     = 2;
@@ -1284,16 +1282,20 @@ namespace WordDrop
 
         /// <summary>
         /// Called by SurvivalManager when the player hits a stage's chip target.
-        /// Grants +STAGE_CLEAR_REWRITES rewrite charges (currently +1) + banner.
+        /// Full-refill the player's rewrite charges back to the Survival cap (3)
+        /// — Spencer's Phase 11 economy: survival runs are about getting each
+        /// stage, not hoarding edits across stages. Banner shows "EDITS FULL".
         /// </summary>
         private void OnSurvivalStageCleared(int stage)
         {
-            for (int i = 0; i < SurvivalManager.STAGE_CLEAR_REWRITES; i++)
-                RefundRewriteCharge(PLAYER_HUMAN);
+            const int SURVIVAL_REWRITE_CAP = 3;
+            _rewritesRemaining[PLAYER_HUMAN] = SURVIVAL_REWRITE_CAP;
+            if (HUDManager.Instance != null)
+                HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[PLAYER_HUMAN]);
 
             if (BonusPopup.Instance != null)
                 BonusPopup.Instance.Show(
-                    $"S{stage} CLEARED! +{SurvivalManager.STAGE_CLEAR_REWRITES} EDIT",
+                    $"S{stage} CLEARED! EDITS FULL",
                     new Color(0.4f, 1f, 0.5f, 1f), Vector3.up * 2.5f, 1.5f);
 
             GameAudio.Instance?.PlayScorePowerup();
