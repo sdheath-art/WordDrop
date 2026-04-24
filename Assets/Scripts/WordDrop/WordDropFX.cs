@@ -450,7 +450,10 @@ namespace WordDrop
                     confetti = false;
                     break;
                 case 3: // Blast — heavy shake + more particles
-                    dissolveDur = 0.28f;
+                    // Phase 11+ — slower hold for big chain-reactions so the
+                    // particles + shake + screen flash land as a discrete moment
+                    // instead of blurring into the next cascade layer.
+                    dissolveDur = 0.45f;
                     particlesPerTile = mobile ? 12 : 20;
                     flashColor = new Color(1f, 0.85f, 0.3f, 1f);
                     screenFlash = true;
@@ -458,7 +461,10 @@ namespace WordDrop
                     confetti = false;
                     break;
                 default: // Chain Bomb — everything
-                    dissolveDur = 0.32f;
+                    // Phase 11+ — biggest tier slows down the most. Confetti +
+                    // meltdown particles get a full visible beat before the
+                    // chain proceeds.
+                    dissolveDur = 0.60f;
                     particlesPerTile = mobile ? 14 : 24;
                     flashColor = new Color(1f, 0.7f, 0.15f, 1f);
                     screenFlash = true;
