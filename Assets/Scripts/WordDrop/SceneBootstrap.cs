@@ -132,6 +132,11 @@ namespace WordDrop
             SpriteRenderer bgSR = bgGO.AddComponent<SpriteRenderer>();
             bgSR.sprite = bgGrad;
             bgSR.sortingOrder = -10;
+            // Darken-tint the whole gradient (Spencer-picked #C6C6C6).
+            // Multiplies each channel by 0.7735 at render time — keeps the
+            // blue→purple feel but drops overall brightness so the board
+            // + HUD read stronger against the backdrop.
+            bgSR.color = new Color(0.7735f, 0.7735f, 0.7735f, 1f);
             float bgNativeW = 4f / 100f;
             float bgNativeH = 128f / 100f;
             // 3x screen size — camera shake can't reveal the edges
