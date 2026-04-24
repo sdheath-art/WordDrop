@@ -2324,7 +2324,11 @@ namespace WordDrop
                     var wildPos = new Vector2Int(col, row);
                     var primedAtWild = _primedRegistry.GetPrimedWordsContaining(wildPos);
                     if (primedAtWild != null && primedAtWild.Count > 0)
+                    {
+                        Debug.Log($"[WildResolve] SKIP ({col},{row}) — locked by {primedAtWild.Count} primed word(s): " +
+                                  string.Join(",", primedAtWild.ConvertAll(p => p.Word)));
                         continue; // locked by an active primed word
+                    }
 
                     int  bestLen    = 0;
                     char bestLetter = '\0';
@@ -2349,10 +2353,41 @@ namespace WordDrop
 
                     if (bestLetter != '\0')
                     {
-//                         Debug.Log($"[RulesEngine] Wild resolved at ({col},{row}) → '{bestLetter}' (longest word len={bestLen})");
+                        Debug.Log($"[WildResolve] OK ({col},{row}) '{oldLetter}'→'{bestLetter}' (longest word len={bestLen})");
+                    }
+                    else
+                    {
+                        // Dump neighbor context so we can see why no word was possible.
+                        string ctx = DumpWildNeighborhood(col, row);
+                        Debug.Log($"[WildResolve] NO-WORD ({col},{row}) stays uncommitted. {ctx}");
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Debug helper — returns a short string describing the cells in the same
+        /// row and column as (col,row). Used by the wild-resolver trace logs.
+        /// </summary>
+        private string DumpWildNeighborhood(int col, int row)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("row=[");
+            for (int c = 0; c < COLS; c++)
+            {
+                var bc = _board[c, row];
+                char ch = (bc == null) ? '.' : (bc.IsStone ? '#' : (bc.Letter == '\0' ? '?' : bc.Letter));
+                sb.Append(c == col ? $"*{ch}*" : ch.ToString());
+            }
+            sb.Append("] col=[");
+            for (int r = 0; r < ROWS; r++)
+            {
+                var bc = _board[col, r];
+                char ch = (bc == null) ? '.' : (bc.IsStone ? '#' : (bc.Letter == '\0' ? '?' : bc.Letter));
+                sb.Append(r == row ? $"*{ch}*" : ch.ToString());
+            }
+            sb.Append("]");
+            return sb.ToString();
         }
 
         /// <summary>
