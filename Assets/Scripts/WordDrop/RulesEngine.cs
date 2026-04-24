@@ -3047,7 +3047,14 @@ namespace WordDrop
             // Without this, PeekHasTriggers returns false for gravity-formed words
             // that will self-detonate mid-chain, which caused GameVisualBridge to
             // play the slow non-detonation scoring branch (0.35s) during cascades.
-            bool skipJustPrimedFilter = GameManager.IsLevelMode && _stepChainDepth > 0;
+            //
+            // Phase 11+ extension: apply to Survival too. Spencer's ask — "I wish
+            // the cascade worked the same way in Survival as Level mode" — means
+            // gravity-formed words should self-detonate mid-chain instead of
+            // sitting there waiting for another trigger. One gate, both modes.
+            bool skipJustPrimedFilter =
+                (GameManager.IsLevelMode || SurvivalManager.IsSurvivalMode)
+                && _stepChainDepth > 0;
 
             for (int w = 0; w < _stepPendingWords.Count; w++)
             {
@@ -3600,14 +3607,23 @@ namespace WordDrop
                     {
                         PrimedWordRegistry.PrimedWord pw = overlapping[p];
 
-                        // Phase 9.7: Level-mode cascade rule change. At chainDepth 0
-                        // (initial drop/rewrite) the just-primed filter stays — the
-                        // trigger word itself shouldn't self-detonate. At chainDepth >= 1
-                        // (gravity-formed words during a cascade) skip the filter so
-                        // new words can trigger prior-step primes and self-overlap to
-                        // propagate the chain. Survival unchanged: its cascades already
-                        // emerge via dense boards + rising rows.
-                        bool skipJustPrimedFilter = GameManager.IsLevelMode && _stepChainDepth > 0;
+                        // Phase 9.7: cascade rule — at chainDepth 0 (initial
+                        // drop/rewrite) the just-primed filter stays (trigger
+                        // word shouldn't self-detonate on its own drop). At
+                        // chainDepth >= 1 (gravity-formed words during a
+                        // cascade) skip the filter so new words can trigger
+                        // prior-step primes AND self-overlap to propagate.
+                        //
+                        // Phase 11+ extension: Survival now uses the same
+                        // cascade rule as Level mode. Spencer's ask —
+                        // gravity-formed Survival words should fall, prime,
+                        // and explode on their own the way Level-mode cascades
+                        // do. Stone-chain propagation stays Level-only
+                        // (Phase 9.9): Survival's sparse stones + one-hop
+                        // clear is still the intended tuning for that axis.
+                        bool skipJustPrimedFilter =
+                            (GameManager.IsLevelMode || SurvivalManager.IsSurvivalMode)
+                            && _stepChainDepth > 0;
                         if (!skipJustPrimedFilter && _stepJustPrimed.Contains(pw.Id)) continue;
                         if (triggeredIds.Contains(pw.Id)) continue;
 
