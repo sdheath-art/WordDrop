@@ -886,6 +886,10 @@ namespace WordDrop
 
             ChainMeter.Instance?.ResetForNewRun();
             BonusMode.Instance?.ResetForNewRun();
+
+            // Phase 11+ — Survival BGM. No-op if the music clip isn't loaded
+            // (GameAudio warns once). Fades any prior track out first.
+            GameAudio.Instance?.PlaySurvivalMusic();
 //             Debug.Log("[SurvivalManager] Survival started!");
         }
 
@@ -895,6 +899,9 @@ namespace WordDrop
 
             BonusMode.Instance?.ResetForNewRun();
             ChainMeter.Instance?.ResetForNewRun();
+
+            // Phase 11+ — fade the BGM out when the run ends.
+            GameAudio.Instance?.StopMusic();
 
             // Clear stage-event delegates so a recreated MatchController doesn't
             // inherit stale subscriptions from a destroyed one.

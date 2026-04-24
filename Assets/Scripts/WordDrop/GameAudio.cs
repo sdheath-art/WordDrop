@@ -102,6 +102,43 @@ namespace WordDrop
 
         private AudioSource _source;
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
+        private AudioSource _musicSource;   // looping music layer (Survival BGM)
+
+        // ── Music clips ────────────────────────────────────────────────────────
+        private AudioClip _survivalMusic;
+
+        // Music layer volume + mute, persisted separately from SFX so a player
+        // can turn music off without losing feedback sounds.
+        private const string PREF_MUSIC_VOLUME = "MusicVolume";
+        private const string PREF_MUSIC_MUTED  = "MusicMuted";
+        private float _musicVolume = 0.35f;
+        private bool  _musicMuted  = false;
+
+        public float MusicVolume
+        {
+            get => _musicVolume;
+            set
+            {
+                _musicVolume = Mathf.Clamp01(value);
+                PlayerPrefs.SetFloat(PREF_MUSIC_VOLUME, _musicVolume);
+                PlayerPrefs.Save();
+                if (_musicSource != null)
+                    _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+            }
+        }
+
+        public bool MusicMuted
+        {
+            get => _musicMuted;
+            set
+            {
+                _musicMuted = value;
+                PlayerPrefs.SetInt(PREF_MUSIC_MUTED, _musicMuted ? 1 : 0);
+                PlayerPrefs.Save();
+                if (_musicSource != null)
+                    _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+            }
+        }
 
         // ── Bootstrap ──────────────────────────────────────────────────────────
 
@@ -124,10 +161,17 @@ namespace WordDrop
             _source.playOnAwake = false;
             _pitchedSource = gameObject.AddComponent<AudioSource>();
             _pitchedSource.playOnAwake = false;
+            // Dedicated music layer — looped, non-pitched, own volume.
+            _musicSource = gameObject.AddComponent<AudioSource>();
+            _musicSource.playOnAwake = false;
+            _musicSource.loop        = true;
+            _musicSource.priority    = 64;   // behind SFX (default 128)
 
             // Load saved prefs
-            _volume = PlayerPrefs.GetFloat(PREF_VOLUME, 0.4f);
-            _muted  = PlayerPrefs.GetInt(PREF_MUTED, 0) == 1;
+            _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.4f);
+            _muted       = PlayerPrefs.GetInt(PREF_MUTED, 0) == 1;
+            _musicVolume = PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.35f);
+            _musicMuted  = PlayerPrefs.GetInt(PREF_MUSIC_MUTED, 0) == 1;
 
             // Load all clips
             _tileDrop        = Resources.Load<AudioClip>("SFX/tile_drop");
@@ -177,6 +221,12 @@ namespace WordDrop
             _shuffleAlt      = Resources.Load<AudioClip>("SFX/shuffle_alt");
             _personalBest    = Resources.Load<AudioClip>("SFX/personal_best");
             _goldSpawn       = Resources.Load<AudioClip>("SFX/gold_spawn");
+
+            // Music tracks — drop the audio file at
+            // Assets/Resources/Music/survival_loop.{mp3,ogg,wav} to wire.
+            // If not present, Resources.Load returns null and PlaySurvivalMusic
+            // becomes a quiet no-op (logs a one-time warning).
+            _survivalMusic   = Resources.Load<AudioClip>("Music/survival_loop");
 
             // New SFX (April 7)
             _chainRumble     = Resources.Load<AudioClip>("SFX/chain_rumble");
@@ -546,6 +596,68 @@ namespace WordDrop
         public void PlayMenuAppear()
         {
             Play(_menuAppear, 0.7f);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // Music layer (looping BGM)
+        // ══════════════════════════════════════════════════════════════════════
+
+        private static bool _warnedMissingSurvivalMusic = false;
+
+        /// <summary>
+        /// Starts the Survival BGM loop. Idempotent — if the same clip is
+        /// already playing, does nothing. Called from MatchController
+        /// when a Survival run begins. Quiet no-op (with one-time warning)
+        /// if no clip is loaded at Assets/Resources/Music/survival_loop.*.
+        /// </summary>
+        public void PlaySurvivalMusic()
+        {
+            if (_musicSource == null) return;
+            if (_survivalMusic == null)
+            {
+                if (!_warnedMissingSurvivalMusic)
+                {
+                    Debug.LogWarning("[GameAudio] No survival music clip found at Resources/Music/survival_loop. " +
+                                     "Drop an .mp3/.ogg/.wav there to enable Survival BGM.");
+                    _warnedMissingSurvivalMusic = true;
+                }
+                return;
+            }
+            if (_musicSource.isPlaying && _musicSource.clip == _survivalMusic) return;
+
+            _musicSource.clip   = _survivalMusic;
+            _musicSource.loop   = true;
+            _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+            _musicSource.Play();
+        }
+
+        /// <summary>Fades music out (0.5s default) then stops the source.</summary>
+        public void StopMusic(float fadeSeconds = 0.5f)
+        {
+            if (_musicSource == null || !_musicSource.isPlaying) return;
+            if (fadeSeconds <= 0f)
+            {
+                _musicSource.Stop();
+                return;
+            }
+            StartCoroutine(FadeAndStop(_musicSource, fadeSeconds));
+        }
+
+        private System.Collections.IEnumerator FadeAndStop(AudioSource src, float dur)
+        {
+            float start = src.volume;
+            float t = 0f;
+            while (t < dur && src != null && src.isPlaying)
+            {
+                t += Time.unscaledDeltaTime;
+                src.volume = Mathf.Lerp(start, 0f, t / dur);
+                yield return null;
+            }
+            if (src != null)
+            {
+                src.Stop();
+                src.volume = _musicMuted ? 0f : _musicVolume;
+            }
         }
 
         public void PlayWordPopup()
