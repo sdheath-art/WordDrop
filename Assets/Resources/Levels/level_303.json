@@ -21,7 +21,7 @@
         {"x": 1, "y": 2, "letter": "A", "variant": "normal"},
         {"x": 3, "y": 2, "letter": "J", "variant": "normal"}
     ],
-    "bag": {"letterOverrides": [{"letter": "E", "count": 40}]},
+    "scriptedInitialHand": ["E", "T", "O", "I", "N"],
     "seed": 0,
     "visualCues": {"prominentPulseCells": [[3, 2]]},
     "tutorialPrompts": [{"on": "start", "text": "Rewrite J to E to form FACE — both primed words detonate"}]

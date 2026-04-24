@@ -39,14 +39,7 @@
             "variant": "normal"
         }
     ],
-    "bag": {
-        "letterOverrides": [
-            {
-                "letter": "S",
-                "count": 40
-            }
-        ]
-    },
+    "scriptedInitialHand": ["S", "E", "I", "R", "N"],
     "seed": 0,
     "visualCues": {
         "dropArrowCol": 0

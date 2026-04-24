@@ -20,7 +20,7 @@
         {"x": 1, "y": 0, "letter": "X", "variant": "stone"},
         {"x": 2, "y": 0, "letter": "X", "variant": "stone"}
     ],
-    "bag": {"letterOverrides": [{"letter": "S", "count": 40}]},
+    "scriptedInitialHand": ["S", "E", "A", "I", "N"],
     "seed": 0,
     "visualCues": {"dropArrowCol": 0},
     "tutorialPrompts": [{"on": "start", "text": "Drop S to trigger the stone chain"}]
