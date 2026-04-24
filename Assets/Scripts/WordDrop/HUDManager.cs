@@ -1262,14 +1262,18 @@ namespace WordDrop
         {
             if (sm == null || _turnCounterText == null) return;
 
-            int stage          = sm.GetCurrentStage();
-            int stageScore     = sm.CurrentStageScore;
-            int stageTarget    = sm.CurrentStageTarget;
-            int stageMovesLeft = sm.CurrentStageMovesRemaining;
-            int riseMovesLeft  = sm.RisingRowMovesRemaining;
+            int   stage          = sm.GetCurrentStage();
+            int   stageScore     = sm.CurrentStageScore;
+            int   stageTarget    = sm.CurrentStageTarget;
+            int   stageMovesLeft = sm.CurrentStageMovesRemaining;
+            float riseSecondsLeft = sm.RisingRowSecondsRemaining;
 
             // Primary HUD: stage progress + moves left in stage + rise countdown
-            _turnCounterText.text = $"S{stage} {stageScore}/{stageTarget}  |  {stageMovesLeft} moves  |  RISE in {riseMovesLeft}";
+            // Phase 11b — rise countdown is wall-clock seconds, not moves.
+            // Ceiling the displayed number so "RISE in 1" covers 0.0-1.0s and
+            // the text never shows "0" while the timer is still approaching.
+            int riseCountdown = Mathf.CeilToInt(riseSecondsLeft);
+            _turnCounterText.text = $"S{stage} {stageScore}/{stageTarget}  |  {stageMovesLeft} moves  |  RISE in {riseCountdown}s";
 
             // Color logic:
             // - If stage already cleared this round → green (safe, bonus moves)
@@ -1293,13 +1297,13 @@ namespace WordDrop
             {
                 _turnCounterText.color = TURN_WARN; // amber — behind pace
             }
-            else if (riseMovesLeft <= 1)
+            else if (riseSecondsLeft <= 2f)
             {
-                _turnCounterText.color = TURN_DANGER; // red — rise imminent
+                _turnCounterText.color = TURN_DANGER; // red — rise imminent (≤2s)
             }
-            else if (riseMovesLeft <= 2)
+            else if (riseSecondsLeft <= 5f)
             {
-                _turnCounterText.color = TURN_WARN; // amber — rise soon
+                _turnCounterText.color = TURN_WARN; // amber — rise soon (≤5s)
             }
             else
             {

@@ -28,15 +28,22 @@ namespace WordDrop
         public const float AUTO_DROP_RAMP_PERIOD     = 60f;
         private const float WILD_DROP_CHANCE         = 0.12f; // 12% chance when player has resources
 
-        // ── Rising row tuning (move-based, stage-aware) ───────────────────────────
-        // Calibrated to produce 6-12 rises per stage so rising rows actually matter
-        // within a stage (they were cosmetic at old cadence). Move-based means the
-        // player controls when rises fire — no wall-clock pressure — so "every
-        // turn" at late stages is still cognitively fair. Mercy slowdown adds
-        // +1/+2 moves at high board occupancy so bad RNG doesn't instant-kill.
-        // Floor is now 1 (every move at S7+) since the cognitive-load concern that
-        // justified the old 3-move floor was solved by move-based rising itself.
+        // ── Rising row tuning (time-based, stage-aware) ───────────────────────────
+        // Phase 11b pivot: rises fire on a wall-clock timer instead of move
+        // counts. The stage's MOVE BUDGET still gates run-end (miss target in
+        // N moves → fail), but the rising-row pressure now runs on real time —
+        // closer to the Tetris/Columns feel the Survival-primary pivot was
+        // asking for. Stage-aware curve preserves the old 6-12 rises-per-stage
+        // calibration assuming ~5s average per move.
+        //
+        // Move-based CurrentMovesPerRise is retained as a compat read for any
+        // debug/analytics paths that still query it; NotifyDropCommitted still
+        // increments _movesSinceLastRise so the field isn't stale. Neither is
+        // used for firing anymore — see Update() for the time-based gate.
         public const int MOVES_PER_RISE_FLOOR = 1;
+
+        // Stage-aware seconds-per-rise. S1 relaxed (15s) → S7+ frantic (6s).
+        public const float SECONDS_PER_RISE_FLOOR = 6f;
 
         // ── Stage chip targets (Balatro-shape, endless escalating) ────────────────
         // Each stage has a chip target; hit it in the stage's move budget or the
@@ -125,7 +132,9 @@ namespace WordDrop
         // ── State ─────────────────────────────────────────────────────────────────
         private float _elapsedTime;          // kept for HUD/debrief stats, not for difficulty
         private float _autoDropTimer;
-        private int   _movesSinceLastRise;   // increments on drop commit, caps at threshold
+        private int   _movesSinceLastRise;   // vestigial (Phase 11b) — NotifyDropCommitted still increments, but rises fire off _riseTimerSeconds now
+        private float _riseTimerSeconds;     // Phase 11b: time-based rising rows; resets on rise fire, stage advance, StartSurvival
+        private bool  _appPaused;            // Phase 11b: OnApplicationPause(true) sets this, Update skips timer accumulation while true
         private int   _movesPlayed;          // lifetime move count — drives stage + debrief
         private int   _totalAutoDrops;
         private int   _longestChain;
@@ -343,6 +352,8 @@ namespace WordDrop
             _currentStageCleared   = false;
             // Fresh rise window per Spencer's ask — full cadence before first rise.
             _movesSinceLastRise    = 0;
+            _riseTimerSeconds      = 0f;   // Phase 11b time-based rise clock
+
             // Reset per-stage rise counter for analytics
             _risesInCurrentStage   = 0;
 
@@ -505,9 +516,10 @@ namespace WordDrop
                 {
 //                     Debug.Log($"[SurvivalManager] Renewal row triggered — only {tilesRemaining} tiles remaining");
                     // Force-arm: next Update() tick (once resolution clears) fires a rise.
-                    // Counter cap in NotifyDropCommitted keeps this safe even if the
-                    // triggering drop's bookkeeping runs before Update.
+                    // Phase 11b: set both compat counter and the wall-clock
+                    // timer so whichever gate Update() is reading picks it up.
                     _movesSinceLastRise = CurrentMovesPerRise;
+                    _riseTimerSeconds   = CurrentSecondsPerRise;
                 }
             }
         }
@@ -579,6 +591,50 @@ namespace WordDrop
         public int RisingRowMovesRemaining => Mathf.Max(0, CurrentMovesPerRise - _movesSinceLastRise);
         public int MovesPlayed => _movesPlayed;
 
+        /// <summary>
+        /// Phase 11b: stage-aware seconds between rising rows. Calibrated to
+        /// keep the old rises-per-stage feel assuming ~5s per average move:
+        ///   S1: 15s (relaxed intro)
+        ///   S2: 12s
+        ///   S3: 10s
+        ///   S4:  9s
+        ///   S5:  8s
+        ///   S6:  7s
+        ///   S7+: 6s  (SECONDS_PER_RISE_FLOOR)
+        /// Mercy slowdown adds +2s / +1s at dangerous board occupancy,
+        /// mirroring the old move-based mercy bonus.
+        /// </summary>
+        public float CurrentSecondsPerRise
+        {
+            get
+            {
+                int stage = GetCurrentStage();
+                float baseSeconds;
+                switch (stage)
+                {
+                    case 1:  baseSeconds = 15f; break;
+                    case 2:  baseSeconds = 12f; break;
+                    case 3:  baseSeconds = 10f; break;
+                    case 4:  baseSeconds =  9f; break;
+                    case 5:  baseSeconds =  8f; break;
+                    case 6:  baseSeconds =  7f; break;
+                    default: baseSeconds =  6f; break;   // S7+ frantic floor
+                }
+
+                if (!NoAssistMode && RulesEngine.Instance != null)
+                {
+                    float occupancy = RulesEngine.Instance.GetBoardOccupancy();
+                    if (occupancy >= 0.80f)       baseSeconds += 2f;
+                    else if (occupancy >= 0.70f)  baseSeconds += 1f;
+                }
+
+                return Mathf.Max(baseSeconds, SECONDS_PER_RISE_FLOOR);
+            }
+        }
+
+        /// <summary>Seconds remaining until the next rising row fires. HUD reads this.</summary>
+        public float RisingRowSecondsRemaining => Mathf.Max(0f, CurrentSecondsPerRise - _riseTimerSeconds);
+
         // ── Unity lifecycle ───────────────────────────────────────────────────────
 
         private void Awake()
@@ -601,6 +657,17 @@ namespace WordDrop
                 ToggleNoAssistMode();
 
             UpdateSurvival();
+        }
+
+        /// <summary>
+        /// Phase 11b: freeze every time accumulator (elapsed, auto-drop,
+        /// rising-row clock) while the app is backgrounded. UpdateSurvival()
+        /// short-circuits on _appPaused so the rise timer doesn't keep
+        /// counting while the player is away.
+        /// </summary>
+        private void OnApplicationPause(bool pause)
+        {
+            _appPaused = pause;
         }
 
         private static GUIStyle _noAssistStyle;
@@ -670,7 +737,15 @@ namespace WordDrop
             // Pause during active auto-drop or rising row coroutine
             if (_isAutoDropping || _isRisingRow) return;
 
+            // Phase 11b: when the app is backgrounded (OnApplicationPause=true),
+            // freeze every time accumulator so the rise timer doesn't keep
+            // counting while the player is away. Unity clamps Time.deltaTime
+            // via Time.maximumDeltaTime on resume, but an explicit freeze is
+            // safer + more predictable.
+            if (_appPaused) return;
+
             _elapsedTime += Time.deltaTime;
+            _riseTimerSeconds += Time.deltaTime;
 
             // Post-clear boost time falloff
             if (_postClearBoostDrops > 0)
@@ -716,18 +791,21 @@ namespace WordDrop
                 return; // don't process normal rising this frame — stage-start takes precedence
             }
 
-            // Rising row: move-based. Counter is incremented by
-            // NotifyDropCommitted and capped at CurrentMovesPerRise, so at most
-            // one rise is queued even across deferred-animation windows.
-            if (_movesSinceLastRise >= CurrentMovesPerRise)
+            // Rising row: time-based (Phase 11b). Timer counts wall-clock
+            // seconds (advanced above, frozen when _appPaused or resolution
+            // is in flight). When it crosses CurrentSecondsPerRise and the
+            // board isn't mid-animation, a rise fires + timer resets. Move
+            // counter is kept vestigially for analytics compat.
+            if (_riseTimerSeconds >= CurrentSecondsPerRise)
             {
                 if (!IsBoardAnimating())
                 {
-                    _movesSinceLastRise = 0;
+                    _riseTimerSeconds = 0f;
+                    _movesSinceLastRise = 0;   // keep compat field consistent
                     NotifyRiseFired();
                     StartCoroutine(ExecuteRisingRow());
                 }
-                // else: counter stays at threshold, retries next frame
+                // else: timer stays past threshold, retries next frame
             }
 
             // Stage-up detection — fires on AdvanceToNextStage via the chip-target
@@ -753,6 +831,8 @@ namespace WordDrop
             _elapsedTime            = 0f;
             _autoDropTimer          = 0f;
             _movesSinceLastRise     = 0;
+            _riseTimerSeconds       = 0f;   // Phase 11b — fresh rise clock per run
+            _appPaused              = false;
             _movesPlayed            = 0;
             _totalAutoDrops         = 0;
             _longestChain           = 0;
@@ -840,6 +920,8 @@ namespace WordDrop
                 Instance._elapsedTime           = 0f;
                 Instance._autoDropTimer         = 0f;
                 Instance._movesSinceLastRise    = 0;
+                Instance._riseTimerSeconds      = 0f;   // Phase 11b
+                Instance._appPaused             = false; // Phase 11b
                 Instance._movesPlayed           = 0;
                 Instance._totalAutoDrops        = 0;
                 Instance._longestChain          = 0;
