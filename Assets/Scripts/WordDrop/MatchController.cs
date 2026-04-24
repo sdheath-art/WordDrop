@@ -69,6 +69,14 @@ namespace WordDrop
         private int   _survivalWordsMeter = 0; // counts scored words toward rewrite refund
         private const int SURVIVAL_WORDS_PER_REFUND = 4; // every 4 words scored → +1 rewrite (raised from 2 on 2026-04-18 — edits were too plentiful, players rarely ran dry so rising rows defused to "free refill" instead of pressure. Tightening to 4 creates scarcity.)
 
+        // Phase 11d — Edit refund on long-word formation (Survival only).
+        // Tracks cells most recently touched by an edit (rewrite or board swap).
+        // Cleared on drop, game-over, or once the refund check runs on a
+        // directly-formed word. See HandleWordScoredForEditRefund.
+        private readonly List<Vector2Int> _lastEditCells = new List<Vector2Int>();
+        public const int SURVIVAL_BIG_WORD_THRESHOLD = 5;
+        private bool _rulesWordScoredSubscribed = false;
+
         private PlayerHand[] _hands = new PlayerHand[NUM_PLAYERS];
         private TileBag      _bag;
 
@@ -155,6 +163,15 @@ namespace WordDrop
             }
             Instance = this;
 //             Debug.Log("[MatchController] Awake");
+        }
+
+        private void OnDestroy()
+        {
+            if (_rulesWordScoredSubscribed && RulesEngine.Instance != null)
+            {
+                RulesEngine.Instance.OnWordScored -= HandleWordScoredForEditRefund;
+                _rulesWordScoredSubscribed = false;
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -249,6 +266,7 @@ namespace WordDrop
 
             // Survival mode: Rewrite is a core verb — 3 charges, max 3
             _survivalWordsMeter = 0;
+            _lastEditCells.Clear();
             if (SurvivalManager.IsSurvivalMode)
             {
                 _rewritesRemaining[PLAYER_HUMAN] = 3;
@@ -263,6 +281,15 @@ namespace WordDrop
                     SurvivalManager.Instance.OnStageCleared += OnSurvivalStageCleared;
                     SurvivalManager.Instance.OnStageFailed  += OnSurvivalStageFailed;
                 }
+            }
+
+            // Phase 11d — subscribe to OnWordScored for the edit-refund check.
+            // Survival-only gate lives inside the handler so classic/level runs
+            // pay no cost beyond the no-op branch. Idempotent across restarts.
+            if (RulesEngine.Instance != null && !_rulesWordScoredSubscribed)
+            {
+                RulesEngine.Instance.OnWordScored += HandleWordScoredForEditRefund;
+                _rulesWordScoredSubscribed = true;
             }
 
             // Create hands (no AI hand in solo modes: daily, blitz, survival, or level)
@@ -1211,6 +1238,107 @@ namespace WordDrop
             return false;
         }
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PHASE 11d — Edit refund on long-word formation (Survival only)
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Record the board cell(s) affected by the player's most recent edit
+        /// (rewrite target or the two swapped positions). The next directly-formed
+        /// scored word overlapping these cells earns a refund if it's 5+ letters
+        /// long. Called by UseRewrite and the board-swap path.
+        /// </summary>
+        public void RecordEditCells(params Vector2Int[] cells)
+        {
+            if (!SurvivalManager.IsSurvivalMode) return;
+            _lastEditCells.Clear();
+            if (cells == null) return;
+            for (int i = 0; i < cells.Length; i++)
+                _lastEditCells.Add(cells[i]);
+        }
+
+        /// <summary>
+        /// Clears the edit-chain tracker. Called when the player drops a tile
+        /// (non-edit move breaks the chain) and on game-over.
+        /// </summary>
+        public void ClearLastEditCells()
+        {
+            _lastEditCells.Clear();
+        }
+
+        /// <summary>
+        /// Subscriber for RulesEngine.OnWordScored. Runs the Phase 11d refund
+        /// check: if Survival mode, the scored word is directly-formed (not a
+        /// cascade), the player formed it, and it's ≥ 5 letters and overlaps a
+        /// cell the player just edited, refund 1 charge and celebrate. Cascade
+        /// follow-ups (ChainStep > 0) are ignored — cause-and-effect must stay
+        /// legible. A single edit can form up to two ChainStep=0 words (one
+        /// horizontal, one vertical); at most one refund lands per edit, and
+        /// we keep the tracker populated across non-matching direct words so a
+        /// 5+ word still refunds even when a 4-letter word scored first in the
+        /// same resolution. The tracker is cleared on refund, next action, or
+        /// game over.
+        /// </summary>
+        private void HandleWordScoredForEditRefund(WordScoredEvent sw)
+        {
+            if (!SurvivalManager.IsSurvivalMode) return;
+            if (sw == null) return;
+            if (sw.PlayerIndex != PLAYER_HUMAN) return;
+            if (sw.ChainStep != 0) return; // cascades don't refund
+
+            if (_lastEditCells.Count == 0) return;
+            if (string.IsNullOrEmpty(sw.Word)) return;
+            if (sw.Word.Length < SURVIVAL_BIG_WORD_THRESHOLD) return;
+
+            bool overlaps = false;
+            if (sw.Cells != null)
+            {
+                for (int i = 0; i < sw.Cells.Count && !overlaps; i++)
+                {
+                    var c = sw.Cells[i];
+                    for (int j = 0; j < _lastEditCells.Count; j++)
+                    {
+                        if (_lastEditCells[j] == c) { overlaps = true; break; }
+                    }
+                }
+            }
+
+            if (!overlaps) return;
+
+            // Refund confirmed — consume the tracker so a second direct word
+            // (e.g. a crossing 5-letter) in the same resolution can't double-pay.
+            _lastEditCells.Clear();
+
+            // Refund + celebrate. RefundRewriteCharge handles the cap; we fire
+            // the popup/sound regardless so the player sees the reward signal
+            // even when capped (acceptance criterion: capped refund still feels
+            // acknowledged).
+            int before = _rewritesRemaining[PLAYER_HUMAN];
+            RefundRewriteCharge(PLAYER_HUMAN);
+            int after = _rewritesRemaining[PLAYER_HUMAN];
+
+            Vector3 worldPos = Vector3.zero;
+            if (sw.Cells != null && sw.Cells.Count > 0 && GridManager.Instance != null)
+            {
+                int n = 0;
+                for (int i = 0; i < sw.Cells.Count; i++)
+                {
+                    var t = GridManager.Instance.GetTile(sw.Cells[i].x, sw.Cells[i].y);
+                    if (t != null) { worldPos += t.transform.position; n++; }
+                }
+                if (n > 0) worldPos /= n;
+            }
+
+            if (BonusPopup.Instance != null)
+                BonusPopup.Instance.ShowEditFree(worldPos, capped: (after == before));
+
+            if (HUDManager.Instance != null && after > before)
+                HUDManager.Instance.PulseRewriteCounter();
+
+            Debug.Log($"[Phase11d] EDIT FREE — word='{sw.Word}' len={sw.Word.Length} " +
+                      $"rewrites {before}→{after}{(after == before ? " (capped)" : "")}");
+        }
+
         /// <summary>
         /// Survival rewrite meter: every 2 words scored refunds 1 rewrite.
         /// Called by HandManager when a word is scored during resolution.
@@ -1434,6 +1562,12 @@ namespace WordDrop
                 HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[player]);
 
             AnalyticsManager.ButtonTap("rewrite");
+
+            // Phase 11d — mark this cell so the directly-formed word that follows
+            // earns a refund if it's ≥ BIG_WORD_THRESHOLD. Survival-only; the
+            // RecordEditCells helper guards on mode.
+            if (player == PLAYER_HUMAN)
+                RecordEditCells(new Vector2Int(targetCol, targetRow));
 
             return true;
         }
@@ -1673,6 +1807,7 @@ namespace WordDrop
 
             _isGameOver    = true;
             _isMatchActive = false;
+            _lastEditCells.Clear();
 
             // Force-finish any running score count-up animations so HUD shows final values
             if (HUDManager.Instance != null)

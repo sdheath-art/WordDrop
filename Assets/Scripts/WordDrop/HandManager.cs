@@ -1452,6 +1452,12 @@ namespace WordDrop
             // Consume edit charge
             mc.UseRewriteCharge(MatchController.PLAYER_HUMAN);
 
+            // Phase 11d — both swapped cells count as edit targets. Either one
+            // appearing in a 5+ directly-formed word earns the refund.
+            mc.RecordEditCells(
+                new Vector2Int(col1, row1),
+                new Vector2Int(col2, row2));
+
             // Swap the letters in data
             cell1.Letter = letter2;
             cell2.Letter = letter1;
@@ -3430,6 +3436,12 @@ namespace WordDrop
 
             // Clear jam hint on any player action
             if (JamHint.Instance != null) JamHint.Instance.ClearHint();
+
+            // Phase 11d — a non-edit drop breaks the edit-refund chain. Any cells
+            // recorded by a prior rewrite/board-swap no longer qualify for refund
+            // once a regular tile-drop has intervened.
+            if (MatchController.Instance != null)
+                MatchController.Instance.ClearLastEditCells();
 
 //             Debug.Log($"[HandManager] FullTurnSequence BEGIN: " +
                       // $"CurrentPlayer={playerIndexBeforeDrop} " +

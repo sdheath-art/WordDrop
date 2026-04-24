@@ -914,6 +914,25 @@ namespace WordDrop
             ShowRewriteCount(count);
         }
 
+        /// <summary>
+        /// Phase 11d — brief scale + color pulse on the edit counter when a
+        /// refund lands. Separate from the text update so the number changes
+        /// first (done by ShowRewriteCount) and the animation draws the eye to
+        /// the increment. Killed + restarted on repeat calls so back-to-back
+        /// refunds each register visually.
+        /// </summary>
+        public void PulseRewriteCounter()
+        {
+            if (_rewriteCounterText == null) return;
+            var tr = _rewriteCounterText.rectTransform;
+            tr.DOKill();
+            tr.localScale = Vector3.one;
+            Sequence seq = DOTween.Sequence();
+            seq.Append(tr.DOScale(1.35f, 0.12f).SetEase(Ease.OutBack));
+            seq.Append(tr.DOScale(1.00f, 0.18f).SetEase(Ease.InOutQuad));
+            seq.SetTarget(tr);
+        }
+
         // ═══════════════════════════════════════════════════════════════════════════
         // PUBLIC API — Word Found Overlay
         // ═══════════════════════════════════════════════════════════════════════════

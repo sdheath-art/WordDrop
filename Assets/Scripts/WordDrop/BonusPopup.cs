@@ -140,6 +140,23 @@ namespace WordDrop
             Show("CHARGE BACK!", c, worldPos + Vector3.up * 0.3f, s);
         }
 
+        /// <summary>
+        /// Phase 11d — "EDIT FREE!" celebration fired when a Survival edit builds
+        /// a 5+ letter word. Gold/green, louder pop than ShowRefund. When capped
+        /// (player already at max edits), shows "EDIT FREE (CAP)" at a smaller
+        /// scale so the acknowledgment is there without implying a charge landed.
+        /// </summary>
+        public void ShowEditFree(Vector3 worldPos, bool capped = false)
+        {
+            GameAudio.Instance?.PlayChargeBack();
+            Color c = capped
+                ? new Color(0.75f, 0.85f, 0.55f, 1f)  // muted olive when capped
+                : new Color(0.40f, 1.00f, 0.55f, 1f); // vivid green on real refund
+            float s = capped ? 0.9f : 1.15f;
+            string text = capped ? "EDIT FREE (CAP)" : "EDIT FREE!";
+            Show(text, c, worldPos + Vector3.up * 0.4f, s);
+        }
+
         // ── Flying Score Animation ──────────────────────────────────────────
 
         private IEnumerator FlyScoreToHUD(string text, Color color, Vector3 startPos, bool isPlayer, int points = 0, float fontSize = 6f)
