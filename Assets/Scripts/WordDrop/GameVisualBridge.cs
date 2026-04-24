@@ -521,6 +521,28 @@ namespace WordDrop
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(scoredTilesForFX, hlColor, wordIndex);
 
+                                // Paint the pink primed-glow on every tile of the scored
+                                // word BEFORE the primeFlash wait fires below. Without
+                                // this, cascade-formed words were added to the primed
+                                // registry but no code path repainted the glow during
+                                // the WordsScored→Exploding gap — so the 0.40s cascade
+                                // telegraph was a silent pause with no visible glow.
+                                // PRIMED_GLOW color + playFlash:true so the pulse tween
+                                // starts immediately; tiles detonate in DoExplode a
+                                // few frames later regardless of fuse fields.
+                                for (int fx = 0; fx < scoredTilesForFX.Count; fx++)
+                                {
+                                    var glowTile = scoredTilesForFX[fx];
+                                    if (glowTile != null)
+                                        glowTile.SetPrimedGlow(
+                                            Tile.PRIMED_GLOW,
+                                            playFlash: true,
+                                            heatLevel: 0,
+                                            fuseRemaining: 999,
+                                            isGold: false,
+                                            maxAge: 0f);
+                                }
+
                                 // Primed sound — plays every time a word is scored/primed
                                 GameAudio.Instance?.PlayTilePrimed();
 
