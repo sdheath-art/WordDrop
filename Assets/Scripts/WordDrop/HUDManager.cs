@@ -1287,13 +1287,13 @@ namespace WordDrop
             // Debug flag: "∞ edits" when unlimited-rewrites testing is on.
             string editsLabel = MatchController.UnlimitedRewrites ? "∞" : edits.ToString();
 
-            // Primary HUD: stage progress + charge counts + rise countdown.
-            // Phase 11b — rise countdown is wall-clock seconds, not moves.
-            // Ceiling the displayed number so "RISE in 1s" covers 0.0-1.0s and
-            // the text never shows "0s" while the timer is still approaching.
-            int riseCountdown = Mathf.CeilToInt(riseSecondsLeft);
+            // Primary HUD: stage progress + charge counts. The rise countdown
+            // text readout was pulled per Spencer — he can feel the pressure
+            // from the rising rows themselves without a numeric countdown.
+            // riseSecondsLeft is still consumed below for color-state logic
+            // (line color shifts red/amber as a rise approaches).
             _turnCounterText.text =
-                $"S{stage} {stageScore}/{stageTarget}  |  {editsLabel} edits · {swaps} swaps  |  RISE in {riseCountdown}s";
+                $"S{stage} {stageScore}/{stageTarget}  |  {editsLabel} edits · {swaps} swaps";
 
             // Color logic:
             // - If stage already cleared this round → green (safe, bonus moves)
