@@ -291,6 +291,17 @@ namespace WordDrop
             bgSR.sprite       = bgSprite;
             bgSR.sortingOrder = 0;
 
+            // Custom background material (Phase 11+ aesthetic swap). Lives at
+            // Assets/Resources/FeelSnakeWhiteParticlesMaterial.mat so
+            // Resources.Load picks it up in the built player too, not just
+            // Editor. If missing, the default sprite material is used.
+            Material bgMat = Resources.Load<Material>("FeelSnakeWhiteParticlesMaterial");
+            if (bgMat != null)
+                bgSR.material = bgMat;
+            else
+                Debug.LogWarning("[GridManager] FeelSnakeWhiteParticlesMaterial not found in Resources — " +
+                                 "using default sprite material.");
+
             float nativeW = bgTexW / 100f;
             float nativeH = bgTexH / 100f;
             bgGO.transform.localScale = new Vector3(bgW / nativeW, bgH / nativeH, 1f);
