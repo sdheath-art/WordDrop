@@ -62,6 +62,14 @@ namespace WordDrop
 
         private const int MIN_WORD_LENGTH   = 3;
         private const int MAX_WORD_LENGTH   = 7;
+
+        /// <summary>
+        /// Phase 11+ rare-letter premium set. Any word in Survival containing
+        /// at least one of these letters gets a flat ×2 multiplier on top of
+        /// the length-tier mult. Kept tight — these are the four letters
+        /// every Scrabble player instinctively prices as "hard."
+        /// </summary>
+        private static readonly char[] RARE_LETTERS = { 'Q', 'Z', 'X', 'J' };
         private const int MAX_CHAIN_DEPTH   = 12;
         private const int CHAIN_BONUS       = 3;
 
@@ -1398,16 +1406,35 @@ namespace WordDrop
                 raw += LetterData.GetPoints(word[i]);
             }
 
-            // Triangular length multiplier — rewards longer words exponentially
-            // 3=1.0x, 4=1.5x, 5=2.5x, 6=4.0x, 7=6.0x
+            // Triangular length multiplier — rewards longer words exponentially.
+            // Survival uses a steeper 7-letter tier (Phase 11+ triangularity)
+            // so SPARKLE-tier words feel like a marquee moment instead of just
+            // "slightly more than a 6-letter." Other modes keep the legacy
+            // curve (Level/Daily/Classic don't have the same time pressure so
+            // the bump is Survival-specific).
             float multiplier;
+            bool isSurvival = SurvivalManager.IsSurvivalMode;
             switch (word.Length)
             {
                 case 3:  multiplier = 1.0f; break;
                 case 4:  multiplier = 1.5f; break;
                 case 5:  multiplier = 2.5f; break;
                 case 6:  multiplier = 4.0f; break;
-                default: multiplier = word.Length >= 7 ? 6.0f : 1.0f; break;
+                default: multiplier = word.Length >= 7
+                    ? (isSurvival ? 7.0f : 6.0f)
+                    : 1.0f; break;
+            }
+
+            // Rare-letter premium (Survival-only, Phase 11+): words that
+            // include at least one of Q/Z/X/J get a flat ×2 on top of the
+            // length mult. Flat multiplier per word — QUIZ doesn't get
+            // stacked bonuses for having Q and Z both. Deliberate play
+            // pattern: "can I make a Q word?"
+            if (isSurvival)
+            {
+                string upper = word.ToUpperInvariant();
+                if (upper.IndexOfAny(RARE_LETTERS) >= 0)
+                    multiplier *= 2.0f;
             }
 
             int score = Mathf.RoundToInt(raw * multiplier);

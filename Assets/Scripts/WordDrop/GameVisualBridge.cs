@@ -527,6 +527,20 @@ namespace WordDrop
                                 // Haptic feedback — light tap on word scored
                                 HapticsManager.Light();
 
+                                // Phase 11+ Survival triangularity: long-word rewards.
+                                // Fires only in Survival mode and only for the human
+                                // player, for words ≥ 5 letters. Wires:
+                                //   - Longest-word session tracker (game-over stat)
+                                //   - Rise-timer freeze  (2s / 4s / 6s)
+                                //   - Edit-charge refill (+1 / +2 / +3, capped at 3)
+                                //   - Escalating BonusPopup + SFX + haptics per tier
+                                if (SurvivalManager.IsSurvivalMode
+                                    && sw.PlayerIndex == MatchController.PLAYER_HUMAN
+                                    && !string.IsNullOrEmpty(sw.Word))
+                                {
+                                    TriggerSurvivalLongWordReward(sw.Word, scoredTilesForFX, isPlayer);
+                                }
+
                                 if (detonationComing)
                                 {
                                     // Layer 1 (player's own trigger): 0.15s is enough —
@@ -936,6 +950,106 @@ namespace WordDrop
                 Debug.LogWarning($"[GameVisualBridge] NextStep loop exited via break/default after {safetyStepCount} iteration(s) " +
                                  $"(non-clean exit — phase was {rules.CurrentPhase}). " +
                                  $"onComplete may not have been called from Complete phase — safe wrapper will handle.");
+            }
+        }
+
+        /// <summary>
+        /// Phase 11+ Survival triangularity: reward every scored word ≥ 5
+        /// letters with a chunkier payoff than short words. Tracks the
+        /// session-longest word for the game-over debrief, freezes the
+        /// rising-row timer, refills edit charges, and escalates visual +
+        /// audio feedback per length tier. Called from the WordsScored
+        /// phase; gated on SurvivalManager.IsSurvivalMode and the human
+        /// player. Cascades are fine to trigger this — PM said exclude
+        /// cascade-specific amplification, but a long word is still a long
+        /// word even if gravity assembled it.
+        /// </summary>
+        private void TriggerSurvivalLongWordReward(
+            string word, List<Tile> scoredTiles, bool isPlayer)
+        {
+            // Always track the session-longest, even for short 3/4 words
+            // so the game-over "Best Word" stat reflects the real max.
+            if (SurvivalManager.Instance != null)
+                SurvivalManager.Instance.UpdateLongestWord(word);
+
+            int len = word.Length;
+            if (len < 5) return;
+
+            // Rise-timer freeze, edit refill, popup tier per length.
+            float freezeSeconds;
+            int   editRefills;
+            string tierLabel;
+            float popupOffsetY;
+            switch (len)
+            {
+                case 5:
+                    freezeSeconds = 2f;
+                    editRefills   = 1;
+                    tierLabel     = "NICE!";
+                    popupOffsetY  = 2.0f;
+                    break;
+                case 6:
+                    freezeSeconds = 4f;
+                    editRefills   = 2;
+                    tierLabel     = "EXCELLENT!";
+                    popupOffsetY  = 2.5f;
+                    break;
+                default:  // 7+
+                    freezeSeconds = 6f;
+                    editRefills   = 3;
+                    tierLabel     = "MASTERFUL!";
+                    popupOffsetY  = 3.0f;
+                    break;
+            }
+
+            // 1. Freeze the rising-row timer.
+            SurvivalManager.Instance?.ApplyRiseFreeze(freezeSeconds);
+
+            // 2. Refill edit charges (each call caps at the Survival cap of 3).
+            if (MatchController.Instance != null)
+            {
+                for (int i = 0; i < editRefills; i++)
+                    MatchController.Instance.RefundRewriteCharge(
+                        MatchController.PLAYER_HUMAN);
+            }
+
+            // 3. Escalating text popup above the scored tiles.
+            if (BonusPopup.Instance != null && scoredTiles != null && scoredTiles.Count > 0)
+            {
+                Vector3 wc = Vector3.zero;
+                int n = 0;
+                for (int st = 0; st < scoredTiles.Count; st++)
+                    if (scoredTiles[st] != null) { wc += scoredTiles[st].transform.position; n++; }
+                if (n > 0) wc /= n;
+                Color tierColor = len >= 7
+                    ? new Color(1.00f, 0.85f, 0.25f, 1f)   // gold — masterful
+                    : (len == 6
+                        ? new Color(1.00f, 0.55f, 0.90f, 1f)   // pink-magenta
+                        : new Color(0.45f, 0.95f, 0.55f, 1f));  // green — nice
+                BonusPopup.Instance.Show(tierLabel, tierColor,
+                    wc + Vector3.up * popupOffsetY, 1.25f);
+            }
+
+            // 4. Escalating audio + haptics. Existing clips used at tier:
+            //    5+ → primed chord (already fires above) + ScorePowerup overlay
+            //    6+ → StageUp overlay
+            //    7+ → reserved "signature" (using StageUp for now — future
+            //         task: record a dedicated 7-letter jingle)
+            if (len >= 5)
+            {
+                GameAudio.Instance?.PlayScorePowerup();
+                HapticsManager.Medium();
+            }
+            if (len >= 6)
+            {
+                GameAudio.Instance?.PlayStageUp();
+                HapticsManager.Strong();
+            }
+            if (len >= 7)
+            {
+                // Signature beat — double StageUp stack for punch until a
+                // dedicated clip ships. Phase 11+ audio polish task.
+                GameAudio.Instance?.PlayStageUp();
             }
         }
 

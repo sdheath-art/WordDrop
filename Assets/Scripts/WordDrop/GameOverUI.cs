@@ -327,8 +327,13 @@ namespace WordDrop
                 }
                 if (_aiScoreText != null)
                 {
+                    string longestWord = SurvivalManager.Instance != null
+                        ? SurvivalManager.Instance.LongestWord : "";
+                    string wordLine = string.IsNullOrEmpty(longestWord)
+                        ? "—"
+                        : $"{longestWord} ({longestWord.Length})";
                     _aiScoreText.gameObject.SetActive(true);
-                    _aiScoreText.text = $"Words: {humanDrops}  |  Best Chain: {longestChain}";
+                    _aiScoreText.text = $"Best Word: {wordLine}  |  Best Chain: {longestChain}";
                     _aiScoreText.fontSize = 22;
                     _aiScoreText.color = TEXT_DIM;
                 }

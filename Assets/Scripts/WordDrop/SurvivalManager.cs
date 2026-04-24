@@ -138,6 +138,7 @@ namespace WordDrop
         private int   _movesPlayed;          // lifetime move count — drives stage + debrief
         private int   _totalAutoDrops;
         private int   _longestChain;
+        private string _longestWord = "";    // Phase 11+ session stat — updated on every Survival word ≥ 5
         private bool  _isGameOver;
         private bool  _isAutoDropping;   // prevents re-entrant auto-drops
         private bool  _isRisingRow;      // prevents re-entrant rising rows
@@ -537,7 +538,33 @@ namespace WordDrop
         public float ElapsedTime    => _elapsedTime;
         public int   TotalAutoDrops => _totalAutoDrops;
         public int   LongestChain   => _longestChain;
+        public string LongestWord   => _longestWord ?? "";
         public bool  IsGameOver     => _isGameOver;
+
+        /// <summary>
+        /// Phase 11+ triangularity: track the longest word formed this session.
+        /// Called from GameVisualBridge when a word is scored. Only tracks words
+        /// length 3+ (below MIN_WORD_LENGTH shouldn't score anyway).
+        /// </summary>
+        public void UpdateLongestWord(string word)
+        {
+            if (string.IsNullOrEmpty(word)) return;
+            if (word.Length > (_longestWord?.Length ?? 0))
+                _longestWord = word.ToUpperInvariant();
+        }
+
+        /// <summary>
+        /// Phase 11+ long-word reward: pause the rising-row timer by N seconds.
+        /// Implemented by decrementing _riseTimerSeconds (which counts UP to
+        /// CurrentSecondsPerRise before a rise fires) — subtracting effectively
+        /// extends the countdown. Clamped to zero so a series of long-word
+        /// freezes can't bank time beyond "fresh cadence."
+        /// </summary>
+        public void ApplyRiseFreeze(float seconds)
+        {
+            if (seconds <= 0f) return;
+            _riseTimerSeconds = Mathf.Max(0f, _riseTimerSeconds - seconds);
+        }
 
         // ── Computed intervals ────────────────────────────────────────────────────
         public float CurrentAutoDropInterval =>
@@ -836,6 +863,7 @@ namespace WordDrop
             _movesPlayed            = 0;
             _totalAutoDrops         = 0;
             _longestChain           = 0;
+            _longestWord            = "";
             _isGameOver             = false;
             _isAutoDropping         = false;
             _isRisingRow            = false;
@@ -925,6 +953,7 @@ namespace WordDrop
                 Instance._movesPlayed           = 0;
                 Instance._totalAutoDrops        = 0;
                 Instance._longestChain          = 0;
+                Instance._longestWord           = "";
                 Instance._isGameOver            = false;
                 Instance._isAutoDropping        = false;
                 Instance._lastStage             = 1;
