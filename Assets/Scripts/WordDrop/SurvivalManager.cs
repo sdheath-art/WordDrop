@@ -241,36 +241,14 @@ namespace WordDrop
             _movesSinceLastRise = Mathf.Min(_movesSinceLastRise + 1, CurrentMovesPerRise);
             _currentStageMovesUsed++;
 
-            // Clear-check first — if this drop crossed the target, the stage
-            // advances before we check the fail condition.
+            // Clear-check — if this drop crossed the target, the stage advances.
             CheckStageClear();
 
-            // Stage fail check: move budget hit AND target not cleared → run ends
-            if (!_currentStageCleared && _currentStageMovesUsed >= CurrentStageMoveBudget)
-            {
-                _lastStageReached   = _currentStageIndex;
-                _lastStageTarget    = CurrentStageTarget;
-                _lastStageShortfall = Mathf.Max(0, CurrentStageTarget - CurrentStageScore);
-
-                // Snapshot stage fail for balance analytics — this is the data
-                // that tells us if a stage target is too brutal. Shortfall
-                // distribution across 10 runs tells us whether to dial target
-                // down (most players fail short by a lot) or dial it up (most
-                // clear with ease, only fail on truly bad openings).
-                float occupancy = RulesEngine.Instance != null ? RulesEngine.Instance.GetBoardOccupancy() : 0f;
-                AnalyticsManager.Log("stage_fail",
-                    "stage", _currentStageIndex,
-                    "target", CurrentStageTarget,
-                    "score", CurrentStageScore,
-                    "shortfall", _lastStageShortfall,
-                    "moves_used", _currentStageMovesUsed,
-                    "moves_budget", CurrentStageMoveBudget,
-                    "rises_fired", _risesInCurrentStage,
-                    "occupancy", Mathf.RoundToInt(occupancy * 100f));
-
-                Debug.Log($"[Stage] FAILED stage {_currentStageIndex}: needed {CurrentStageTarget}, got {CurrentStageScore} (short {_lastStageShortfall}, rises {_risesInCurrentStage})");
-                OnStageFailed?.Invoke(_currentStageIndex);
-            }
+            // Phase 11b+: stage-move-budget fail is REMOVED for time-based
+            // Survival. Rising rows are now the sole pressure source — death
+            // comes from topout, not from running out of an invisible move
+            // counter. _currentStageMovesUsed still increments above so the
+            // stage-clear analytics record retains a moves_used signal.
         }
 
         /// <summary>

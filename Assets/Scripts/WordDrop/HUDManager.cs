@@ -1288,7 +1288,6 @@ namespace WordDrop
             int   stage          = sm.GetCurrentStage();
             int   stageScore     = sm.CurrentStageScore;
             int   stageTarget    = sm.CurrentStageTarget;
-            int   stageMovesLeft = sm.CurrentStageMovesRemaining;
             float riseSecondsLeft = sm.RisingRowSecondsRemaining;
 
             // Charge counts — replacing the "N moves" readout per Phase 11b+
@@ -1314,39 +1313,28 @@ namespace WordDrop
             _turnCounterText.text =
                 $"S{stage} {stageScore}/{stageTarget}  |  {editsLabel} edits · {swaps} swaps";
 
-            // Color logic:
-            // - If stage already cleared this round → green (safe, bonus moves)
-            // - If behind pace + running out of moves → red
-            // - If behind pace but moves OK → amber
-            // - Otherwise survival cyan
+            // Color logic — purely rise-timer driven now that move-budget
+            // stage-fail has been removed. Pressure comes from rising rows.
+            //   cleared this stage          → green (safe, victory lap)
+            //   rise imminent (≤2s)         → red
+            //   rise soon (≤5s)             → amber
+            //   otherwise                   → survival cyan
             bool cleared = sm.IsCurrentStageCleared;
-            float requiredPerMove = stageMovesLeft > 0
-                ? (float)(stageTarget - stageScore) / stageMovesLeft
-                : 0f;
-
             if (cleared)
             {
-                _turnCounterText.color = new Color(0.4f, 1f, 0.5f, 1f); // green — already cleared
-            }
-            else if (stageMovesLeft <= 3 && stageScore < stageTarget)
-            {
-                _turnCounterText.color = TURN_DANGER; // red — about to fail
-            }
-            else if (requiredPerMove > 100f)
-            {
-                _turnCounterText.color = TURN_WARN; // amber — behind pace
+                _turnCounterText.color = new Color(0.4f, 1f, 0.5f, 1f); // green
             }
             else if (riseSecondsLeft <= 2f)
             {
-                _turnCounterText.color = TURN_DANGER; // red — rise imminent (≤2s)
+                _turnCounterText.color = TURN_DANGER; // red
             }
             else if (riseSecondsLeft <= 5f)
             {
-                _turnCounterText.color = TURN_WARN; // amber — rise soon (≤5s)
+                _turnCounterText.color = TURN_WARN; // amber
             }
             else
             {
-                _turnCounterText.color = new Color(0.1f, 0.85f, 0.9f, 1f); // survival cyan
+                _turnCounterText.color = new Color(0.1f, 0.85f, 0.9f, 1f); // cyan
             }
         }
 
