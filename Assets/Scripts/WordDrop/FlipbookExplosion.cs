@@ -20,7 +20,12 @@ namespace WordDrop
 
         private Sprite[] _frames;
         private Material _additiveMat;
-        private Sprite _glowSprite;
+        // Two glow sprite variants for the explosion halo. A/B-tested 50/50 per
+        // explosion so Spencer can compare the look in playtest. bubble@2x is
+        // 512x512 (twice circle's 256), so it's loaded at ppu=200 to keep the
+        // world-space size identical — only the texture detail differs.
+        private Sprite _glowSpriteCircle;
+        private Sprite _glowSpriteBubble;
         private readonly Stack<SpriteRenderer> _pool = new Stack<SpriteRenderer>(POOL_SIZE);
         private readonly Stack<SpriteRenderer> _glowPool = new Stack<SpriteRenderer>(POOL_SIZE);
 
@@ -73,17 +78,28 @@ namespace WordDrop
             if (addShader == null) addShader = Shader.Find("Sprites/Default");
             _additiveMat = new Material(addShader);
 
-            // Bubble sprite for glow layer
-            LoadBubbleSprite();
+            // Glow halo sprites — A/B variants
+            LoadGlowSprites();
         }
 
-        private void LoadBubbleSprite()
+        private void LoadGlowSprites()
         {
-            // Load the circle sprite from Resources/Particles
             Texture2D circleTex = Resources.Load<Texture2D>("Particles/circle");
             if (circleTex != null)
-                _glowSprite = Sprite.Create(circleTex, new Rect(0, 0, circleTex.width, circleTex.height),
+                _glowSpriteCircle = Sprite.Create(
+                    circleTex,
+                    new Rect(0, 0, circleTex.width, circleTex.height),
                     new Vector2(0.5f, 0.5f), 100f);
+
+            // bubble@2x is 512x512 — twice circle's 256. Set pixelsPerUnit=200
+            // so its world-space bounds match circle's at the same transform
+            // scale, isolating texture-look as the single A/B variable.
+            Texture2D bubbleTex = Resources.Load<Texture2D>("Particles/bubble@2x");
+            if (bubbleTex != null)
+                _glowSpriteBubble = Sprite.Create(
+                    bubbleTex,
+                    new Rect(0, 0, bubbleTex.width, bubbleTex.height),
+                    new Vector2(0.5f, 0.5f), 200f);
         }
 
         private void PrewarmPool()
@@ -112,7 +128,10 @@ namespace WordDrop
             go.transform.SetParent(transform, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
             sr.material = _additiveMat;
-            sr.sprite = _glowSprite;
+            // Sprite is assigned per-explosion in GlowCoroutine for the A/B
+            // variant; default to circle here so a renderer that's somehow
+            // checked out before GlowCoroutine sets the sprite still draws.
+            sr.sprite = _glowSpriteCircle;
             sr.sortingOrder = 29;
             go.SetActive(false);
             return sr;
@@ -221,6 +240,12 @@ namespace WordDrop
         {
             SpriteRenderer glow = CheckoutGlow();
             glow.transform.position = new Vector3(worldPos.x, worldPos.y, -1.5f);
+
+            // 50/50 A/B between circle and bubble@2x glow textures. ppu was
+            // tuned at load so both render at the same world size for the same
+            // transform scale — only the texture look differs.
+            bool useBubble = _glowSpriteBubble != null && Random.value < 0.5f;
+            glow.sprite = useBubble ? _glowSpriteBubble : _glowSpriteCircle;
 
             float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
 
