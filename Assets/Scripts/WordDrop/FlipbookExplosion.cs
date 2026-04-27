@@ -100,6 +100,10 @@ namespace WordDrop
                     bubbleTex,
                     new Rect(0, 0, bubbleTex.width, bubbleTex.height),
                     new Vector2(0.5f, 0.5f), 200f);
+
+            Debug.Log($"[FlipbookFX] glow load — circle: " +
+                      $"{(circleTex != null ? $"{circleTex.width}x{circleTex.height}" : "MISSING")}, " +
+                      $"bubble@2x: {(bubbleTex != null ? $"{bubbleTex.width}x{bubbleTex.height}" : "MISSING")}");
         }
 
         private void PrewarmPool()
@@ -246,6 +250,7 @@ namespace WordDrop
             // transform scale — only the texture look differs.
             bool useBubble = _glowSpriteBubble != null && Random.value < 0.5f;
             glow.sprite = useBubble ? _glowSpriteBubble : _glowSpriteCircle;
+            Debug.Log($"[FlipbookFX] glow variant: {(useBubble ? "bubble" : "circle")} (tier={tier})");
 
             float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
 
