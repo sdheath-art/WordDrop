@@ -580,7 +580,11 @@ namespace WordDrop
 
         public void PlayScoreTick(float pitch = 1f)
         {
-            Play(_scoreTick, 0.2f, pitch);
+            // 0.55 mult lands at ~0.22 final at default master 0.4 — audible
+            // alongside music and other SFX. Was 0.2 (final ~0.08) which read
+            // as silent in playtest. PlayScoreImpact still uses 0.7 for the
+            // discrete mid/big hits so those still pop above the count-up tick.
+            Play(_scoreTick, 0.55f, pitch);
         }
 
         /// <summary>
