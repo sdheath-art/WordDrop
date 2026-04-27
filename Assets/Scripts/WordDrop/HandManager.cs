@@ -303,17 +303,19 @@ namespace WordDrop
 
             RefreshAllCardVisuals();
 
-            // Snap cards into final positions — no slide-from-side. The board
-            // tiles get the bouncy pop-in opening; the rack just appears in
-            // place so the eye lands on the board first.
+            // Snap cards to their final position but at scale 0 first — the
+            // staggered coroutine below pops each one in with a high-overshoot
+            // OutBack so the rack assembles itself with a cartoony punch and
+            // settle. Same pattern as the bag-deal single-tile pop, just with
+            // more overshoot and a per-card delay.
             float baseY = GetCardRowY();
-            Vector3 baseScale = GetCardBaseScale();
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
                 _cardObjects[i].SetActive(true);
+                _cardObjects[i].transform.DOKill();
                 _cardObjects[i].transform.position = new Vector3(GetCardX(i), baseY, -1f);
-                _cardObjects[i].transform.localScale = baseScale;
+                _cardObjects[i].transform.localScale = Vector3.zero;
                 if (_cardShadows[i] != null)
                 {
                     _cardShadows[i].color = new Color(0f, 0f, 0f, 0.15f);
@@ -322,9 +324,33 @@ namespace WordDrop
                 }
             }
 
+            // Player can interact immediately; the pop-in is purely cosmetic
+            // and won't affect input pickup.
             IsInteractable = true;
             if (ColumnArrowManager.Instance != null)
-                ColumnArrowManager.Instance.ShowArrows(false); // No arrows until card selected
+                ColumnArrowManager.Instance.ShowArrows(false);
+
+            StartCoroutine(StaggeredHandPopIn());
+        }
+
+        /// <summary>
+        /// Cartoony pop-in for each hand card. Scale 0 → base scale on
+        /// OutBack with overshoot 4.0 — punches well past 1.0 and settles
+        /// back, no linear segment. Stagger 0.06s per card, 0.22s tween,
+        /// PlayCardDeal sound on each pop.
+        /// </summary>
+        private IEnumerator StaggeredHandPopIn()
+        {
+            Vector3 baseScale = GetCardBaseScale();
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] == null) continue;
+                _cardObjects[i].transform
+                    .DOScale(baseScale, 0.22f)
+                    .SetEase(DG.Tweening.Ease.OutBack, 4.0f);
+                GameAudio.Instance?.PlayCardDeal();
+                yield return WaitCache.Get(0.06f);
+            }
         }
 
         /// <summary>
