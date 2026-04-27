@@ -222,6 +222,10 @@ namespace WordDrop
 
                     if (MenuUI.Instance != null)
                         MenuUI.Instance.SetVisible(true);
+
+                    // Main-menu BGM. Idempotent if already playing; replaces
+                    // any survival music left running after a return-to-menu.
+                    GameAudio.Instance?.PlayMenuMusic();
                     break;
 
                 // ── Playing ───────────────────────────────────────────────────────

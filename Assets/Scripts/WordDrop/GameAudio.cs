@@ -108,6 +108,7 @@ namespace WordDrop
         private AudioClip _survivalMusic;
         private AudioClip _survivalMusic2;        // plays after track 1 finishes; loops thereafter
         private Coroutine _musicSequenceRoutine;  // watches track 1 → switches to track 2 on end
+        private AudioClip _menuMusic;             // main-menu loop (Monkeys Spinning Monkeys)
 
         // Music layer volume + mute, persisted separately from SFX so a player
         // can turn music off without losing feedback sounds.
@@ -230,6 +231,7 @@ namespace WordDrop
             // becomes a quiet no-op (logs a one-time warning).
             _survivalMusic   = Resources.Load<AudioClip>("Music/survival_loop");
             _survivalMusic2  = Resources.Load<AudioClip>("Music/survival_loop_2");
+            _menuMusic       = Resources.Load<AudioClip>("Music/menu_loop");
 
             // New SFX (April 7)
             _chainRumble     = Resources.Load<AudioClip>("SFX/chain_rumble");
@@ -678,6 +680,34 @@ namespace WordDrop
             _musicSource.volume = _musicMuted ? 0f : _musicVolume;
             _musicSource.Play();
             _musicSequenceRoutine = null;
+        }
+
+        /// <summary>
+        /// Starts the main-menu BGM loop (Monkeys Spinning Monkeys). Idempotent
+        /// against the menu clip so re-entering the Menu state mid-loop doesn't
+        /// restart the track. Cancels any in-flight survival sequence so the
+        /// post-survival return-to-menu lands on the menu loop cleanly.
+        /// </summary>
+        public void PlayMenuMusic()
+        {
+            if (_musicSource == null) return;
+            if (_menuMusic == null)
+            {
+                Debug.LogWarning("[GameAudio] No menu music clip at Resources/Music/menu_loop.");
+                return;
+            }
+            if (_musicSource.isPlaying && _musicSource.clip == _menuMusic) return;
+
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
+
+            _musicSource.clip   = _menuMusic;
+            _musicSource.loop   = true;
+            _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+            _musicSource.Play();
         }
 
         /// <summary>Fades music out (0.5s default) then stops the source.</summary>
