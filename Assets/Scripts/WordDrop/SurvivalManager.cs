@@ -42,7 +42,7 @@ namespace WordDrop
         // used for firing anymore — see Update() for the time-based gate.
         public const int MOVES_PER_RISE_FLOOR = 1;
 
-        // Stage-aware seconds-per-rise. S1 relaxed (15s) → S7+ frantic (6s).
+        // Stage-aware seconds-per-rise. S1 relaxed (20s) → S11+ frantic (6s).
         public const float SECONDS_PER_RISE_FLOOR = 6f;
 
         // ── Stage chip targets (Balatro-shape, endless escalating) ────────────────
@@ -619,15 +619,21 @@ namespace WordDrop
         public int MovesPlayed => _movesPlayed;
 
         /// <summary>
-        /// Phase 11b: stage-aware seconds between rising rows. Calibrated to
-        /// keep the old rises-per-stage feel assuming ~5s per average move:
-        ///   S1: 15s (relaxed intro)
-        ///   S2: 12s
-        ///   S3: 10s
-        ///   S4:  9s
-        ///   S5:  8s
-        ///   S6:  7s
-        ///   S7+: 6s  (SECONDS_PER_RISE_FLOOR)
+        /// Phase 11b: stage-aware seconds between rising rows. Gentler ramp
+        /// than the original 15→6 over 6 stages — 20s S1 intro tapers across
+        /// 10 transitions to the 6s floor at S11+, with -2s per stage early
+        /// and -1s in the late game:
+        ///   S1: 20s (relaxed intro)
+        ///   S2: 18s
+        ///   S3: 16s
+        ///   S4: 14s
+        ///   S5: 12s
+        ///   S6: 11s
+        ///   S7: 10s
+        ///   S8:  9s
+        ///   S9:  8s
+        ///   S10: 7s
+        ///   S11+: 6s (SECONDS_PER_RISE_FLOOR)
         /// Mercy slowdown adds +2s / +1s at dangerous board occupancy,
         /// mirroring the old move-based mercy bonus.
         /// </summary>
@@ -639,13 +645,17 @@ namespace WordDrop
                 float baseSeconds;
                 switch (stage)
                 {
-                    case 1:  baseSeconds = 15f; break;
-                    case 2:  baseSeconds = 12f; break;
-                    case 3:  baseSeconds = 10f; break;
-                    case 4:  baseSeconds =  9f; break;
-                    case 5:  baseSeconds =  8f; break;
-                    case 6:  baseSeconds =  7f; break;
-                    default: baseSeconds =  6f; break;   // S7+ frantic floor
+                    case 1:  baseSeconds = 20f; break;
+                    case 2:  baseSeconds = 18f; break;
+                    case 3:  baseSeconds = 16f; break;
+                    case 4:  baseSeconds = 14f; break;
+                    case 5:  baseSeconds = 12f; break;
+                    case 6:  baseSeconds = 11f; break;
+                    case 7:  baseSeconds = 10f; break;
+                    case 8:  baseSeconds =  9f; break;
+                    case 9:  baseSeconds =  8f; break;
+                    case 10: baseSeconds =  7f; break;
+                    default: baseSeconds =  6f; break;   // S11+ frantic floor
                 }
 
                 if (!NoAssistMode && RulesEngine.Instance != null)
