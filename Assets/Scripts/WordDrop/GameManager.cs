@@ -113,6 +113,12 @@ namespace WordDrop
                 Debug.LogWarning("[GameManager] MatchController.Instance is null in Start() — " +
                                  "OnMatchEnd will not be wired. Check creation order in SceneBootstrap.");
             }
+
+            // CurrentState initialises to Menu but TransitionTo never fires for
+            // it — so OnStateEntered(Menu) doesn't run on cold boot. Kick the
+            // menu BGM directly here so the first launch has music. Subsequent
+            // transitions back to Menu run the full OnStateEntered path.
+            GameAudio.Instance?.PlayMenuMusic();
         }
 
         private void OnDestroy()
