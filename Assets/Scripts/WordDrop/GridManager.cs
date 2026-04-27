@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using DG.Tweening;
 
 namespace WordDrop
 {
@@ -524,6 +525,21 @@ namespace WordDrop
                     if (rulesCell.IsWild) tile.SetWild(true);
                     if (RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, row))
                         tile.SetGoldBonus(true);
+
+                    // Bouncy pop-in: each tile starts invisible (scale 0) and
+                    // OutBack-eases to its target scale with a high overshoot so
+                    // the letter punches past 1.0 and settles back. Slight per-
+                    // tile stagger keyed by row + column gives a bottom-up,
+                    // left-to-right wave that reads as the board materialising
+                    // rather than blinking in. Tight (~0.28s per tile) so the
+                    // whole board lands in well under a second.
+                    Vector3 targetScale = tile.transform.localScale;
+                    tile.transform.localScale = Vector3.zero;
+                    float popDelay = (row * 0.012f) + (col * 0.020f);
+                    tile.transform
+                        .DOScale(targetScale, 0.28f)
+                        .SetDelay(popDelay)
+                        .SetEase(Ease.OutBack, 3.0f);
 
                     created++;
                 }

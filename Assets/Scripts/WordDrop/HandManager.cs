@@ -303,18 +303,28 @@ namespace WordDrop
 
             RefreshAllCardVisuals();
 
-            // Hide all cards before deal animation starts (prevents flash of cards in final position)
+            // Snap cards into final positions — no slide-from-side. The board
+            // tiles get the bouncy pop-in opening; the rack just appears in
+            // place so the eye lands on the board first.
+            float baseY = GetCardRowY();
+            Vector3 baseScale = GetCardBaseScale();
             for (int i = 0; i < HAND_SIZE; i++)
-                if (_cardObjects[i] != null) _cardObjects[i].SetActive(false);
-
-            // Deal cards in one at a time (Balatro style)
-            StartCoroutine(DealCardsAnimation(() =>
             {
-                IsInteractable = true;
-                if (ColumnArrowManager.Instance != null)
-                    ColumnArrowManager.Instance.ShowArrows(false); // No arrows until card selected
-//                 Debug.Log($"[HandManager] InitialiseHand complete — hand: {new string(_hand)}");
-            }));
+                if (_cardObjects[i] == null) continue;
+                _cardObjects[i].SetActive(true);
+                _cardObjects[i].transform.position = new Vector3(GetCardX(i), baseY, -1f);
+                _cardObjects[i].transform.localScale = baseScale;
+                if (_cardShadows[i] != null)
+                {
+                    _cardShadows[i].color = new Color(0f, 0f, 0f, 0.15f);
+                    _cardShadows[i].transform.position = new Vector3(
+                        GetCardX(i), baseY - _cardSize * 0.03f, 0f);
+                }
+            }
+
+            IsInteractable = true;
+            if (ColumnArrowManager.Instance != null)
+                ColumnArrowManager.Instance.ShowArrows(false); // No arrows until card selected
         }
 
         /// <summary>
