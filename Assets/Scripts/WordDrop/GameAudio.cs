@@ -106,6 +106,8 @@ namespace WordDrop
 
         // ── Music clips ────────────────────────────────────────────────────────
         private AudioClip _survivalMusic;
+        private AudioClip _survivalMusic2;        // plays after track 1 finishes; loops thereafter
+        private Coroutine _musicSequenceRoutine;  // watches track 1 → switches to track 2 on end
 
         // Music layer volume + mute, persisted separately from SFX so a player
         // can turn music off without losing feedback sounds.
@@ -227,6 +229,7 @@ namespace WordDrop
             // If not present, Resources.Load returns null and PlaySurvivalMusic
             // becomes a quiet no-op (logs a one-time warning).
             _survivalMusic   = Resources.Load<AudioClip>("Music/survival_loop");
+            _survivalMusic2  = Resources.Load<AudioClip>("Music/survival_loop_2");
 
             // New SFX (April 7)
             _chainRumble     = Resources.Load<AudioClip>("SFX/chain_rumble");
@@ -623,17 +626,68 @@ namespace WordDrop
                 }
                 return;
             }
-            if (_musicSource.isPlaying && _musicSource.clip == _survivalMusic) return;
+            // Idempotent across both tracks — if either survival clip is
+            // already playing, leave it running.
+            if (_musicSource.isPlaying
+                && (_musicSource.clip == _survivalMusic || _musicSource.clip == _survivalMusic2))
+                return;
 
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
+
+            // Track 1 plays once (loop=false) iff a track 2 is queued; otherwise
+            // it loops by itself the way it always did.
             _musicSource.clip   = _survivalMusic;
+            _musicSource.loop   = (_survivalMusic2 == null);
+            _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+            _musicSource.Play();
+
+            if (_survivalMusic2 != null)
+                _musicSequenceRoutine = StartCoroutine(SurvivalMusicSequence());
+        }
+
+        /// <summary>
+        /// Watches track 1 — once it finishes naturally, switches the music
+        /// source to track 2 (looping). External Stop cancels this coroutine
+        /// before the switch can happen.
+        /// </summary>
+        private System.Collections.IEnumerator SurvivalMusicSequence()
+        {
+            // Wait until track 1 is no longer playing on this source. Either
+            // it finished naturally (then we switch) or StopMusic cancels us.
+            while (_musicSource != null
+                   && _musicSource.clip == _survivalMusic
+                   && _musicSource.isPlaying)
+            {
+                yield return null;
+            }
+
+            // Bail if state shifted under us (StopMusic, scene change, etc.)
+            if (_musicSource == null || _survivalMusic2 == null
+                || _musicSource.clip != _survivalMusic)
+            {
+                _musicSequenceRoutine = null;
+                yield break;
+            }
+
+            _musicSource.clip   = _survivalMusic2;
             _musicSource.loop   = true;
             _musicSource.volume = _musicMuted ? 0f : _musicVolume;
             _musicSource.Play();
+            _musicSequenceRoutine = null;
         }
 
         /// <summary>Fades music out (0.5s default) then stops the source.</summary>
         public void StopMusic(float fadeSeconds = 0.5f)
         {
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
             if (_musicSource == null || !_musicSource.isPlaying) return;
             if (fadeSeconds <= 0f)
             {
