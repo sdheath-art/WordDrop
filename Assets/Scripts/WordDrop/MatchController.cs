@@ -1423,8 +1423,8 @@ namespace WordDrop
 
             if (BonusPopup.Instance != null)
                 BonusPopup.Instance.Show(
-                    $"S{stage} CLEARED! EDITS FULL",
-                    new Color(0.4f, 1f, 0.5f, 1f), Vector3.up * 2.5f, 1.5f);
+                    $"S{stage} CLEARED!\nEDITS FULL",
+                    new Color(0.4f, 1f, 0.5f, 1f), Vector3.up * 2.5f, 1.3f);
 
             GameAudio.Instance?.PlayScorePowerup();
             HapticsManager.Strong();
