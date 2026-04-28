@@ -2312,6 +2312,13 @@ namespace WordDrop
                 return;
             }
 
+            // Phase 11g — duck music briefly when a big moment lands. Per-spec
+            // gate: chainDepth >= 2 OR longestWord >= 6. Avoids ducking on
+            // every plain detonation (which would pump the music). MeltdownManager
+            // owns the longer 0.30s duck for full meltdowns separately.
+            if (_pendingBurstChainDepth >= 2 || _pendingBurstLongestWord >= 6)
+                GameAudio.Instance?.DuckMusicBriefly(0.25f);
+
             Color burstTint = (_pendingBurstChainDepth >= 2 && _pendingBurstLongestWord >= 6)
                 ? new Color(1.8f, 1.4f, 0.7f, 1f)   // HDR warm gold — big + skilled
                 : new Color(1.6f, 1.6f, 1.6f, 1f);  // HDR white

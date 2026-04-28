@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Audio;
 
 namespace WordDrop
 {
@@ -13,7 +14,7 @@ namespace WordDrop
         public static GameAudio Instance { get; private set; }
 
         // ── Volume ─────────────────────────────────────────────────────────────
-        private float _volume = 0.4f; // lower default — phone speakers are loud
+        private float _volume = 0.80f; // SFX default — AAA mobile mix
         private bool  _muted  = false;
         private const string PREF_VOLUME = "SFXVolume";
         private const string PREF_MUTED  = "SFXMuted";
@@ -26,6 +27,7 @@ namespace WordDrop
                 _volume = Mathf.Clamp01(value);
                 PlayerPrefs.SetFloat(PREF_VOLUME, _volume);
                 PlayerPrefs.Save();
+                ApplyMixerLevels();
             }
         }
 
@@ -37,6 +39,7 @@ namespace WordDrop
                 _muted = value;
                 PlayerPrefs.SetInt(PREF_MUTED, _muted ? 1 : 0);
                 PlayerPrefs.Save();
+                ApplyMixerLevels();
             }
         }
 
@@ -104,6 +107,88 @@ namespace WordDrop
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
         private AudioSource _musicSource;   // looping music layer (Survival BGM)
 
+        // ── AudioMixer routing (Phase 11g) ─────────────────────────────────────
+        // The mixer asset (Resources/Audio/WordDropMixer) owns final attenuation
+        // for Music / SFX / UI groups via exposed dB params (MusicVol/SFXVol/
+        // UIVol). If the asset is missing at runtime, ApplyMixerLevels falls
+        // back to direct AudioSource.volume so audio still plays sanely.
+        [SerializeField] private AudioMixer _mixer;
+        private AudioMixerGroup _musicGroup;
+        private AudioMixerGroup _sfxGroup;
+        private AudioMixerGroup _uiGroup;
+        private AudioMixerSnapshot _baseSnapshot;
+        private AudioMixerSnapshot _duckSnapshot;
+
+        private float _uiVolume = 0.65f;
+        private bool  _uiMuted  = false;
+        private const string PREF_UI_VOLUME = "UIVolume";
+        private const string PREF_UI_MUTED  = "UIMuted";
+
+        public float UIVolume
+        {
+            get => _uiVolume;
+            set
+            {
+                _uiVolume = Mathf.Clamp01(value);
+                PlayerPrefs.SetFloat(PREF_UI_VOLUME, _uiVolume);
+                PlayerPrefs.Save();
+                ApplyMixerLevels();
+            }
+        }
+
+        public bool UIMuted
+        {
+            get => _uiMuted;
+            set
+            {
+                _uiMuted = value;
+                PlayerPrefs.SetInt(PREF_UI_MUTED, _uiMuted ? 1 : 0);
+                PlayerPrefs.Save();
+                ApplyMixerLevels();
+            }
+        }
+
+        private static float LinearToDb(float linear)
+        {
+            if (linear <= 0.0001f) return -80f;
+            return Mathf.Log10(Mathf.Clamp01(linear)) * 20f;
+        }
+
+        private void ApplyMixerLevels()
+        {
+            if (_mixer != null)
+            {
+                _mixer.SetFloat("MusicVol", _musicMuted ? -80f : LinearToDb(_musicVolume));
+                _mixer.SetFloat("SFXVol",   _muted      ? -80f : LinearToDb(_volume));
+                _mixer.SetFloat("UIVol",    _uiMuted    ? -80f : LinearToDb(_uiVolume));
+                if (_musicSource != null) _musicSource.volume = 1f;
+                return;
+            }
+            // Fallback path — mixer asset missing. Drive music attenuation on
+            // the source directly so volume controls still work end-to-end.
+            // SFX volume is already applied per-call in Play() via volumeMult.
+            if (_musicSource != null)
+                _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+        }
+
+        /// <summary>
+        /// Phase 11g: briefly transition to the DuckMusic snapshot so the music
+        /// dips during a big detonation, then transitions back. No-op if the
+        /// mixer / snapshots aren't loaded.
+        /// </summary>
+        public void DuckMusicBriefly(float durationSeconds = 0.30f)
+        {
+            if (_mixer == null || _baseSnapshot == null || _duckSnapshot == null) return;
+            _duckSnapshot.TransitionTo(0.05f);
+            StartCoroutine(RestoreSnapshotAfter(durationSeconds));
+        }
+
+        private System.Collections.IEnumerator RestoreSnapshotAfter(float t)
+        {
+            yield return new WaitForSeconds(t);
+            if (_baseSnapshot != null) _baseSnapshot.TransitionTo(0.15f);
+        }
+
         // ── Music clips ────────────────────────────────────────────────────────
         private AudioClip _survivalMusic;
         private AudioClip _survivalMusic2;        // plays after track 1 finishes; loops thereafter
@@ -114,7 +199,7 @@ namespace WordDrop
         // can turn music off without losing feedback sounds.
         private const string PREF_MUSIC_VOLUME = "MusicVolume";
         private const string PREF_MUSIC_MUTED  = "MusicMuted";
-        private float _musicVolume = 0.35f;
+        private float _musicVolume = 0.30f; // music sits behind SFX in AAA mobile mix
         private bool  _musicMuted  = false;
 
         public float MusicVolume
@@ -125,8 +210,7 @@ namespace WordDrop
                 _musicVolume = Mathf.Clamp01(value);
                 PlayerPrefs.SetFloat(PREF_MUSIC_VOLUME, _musicVolume);
                 PlayerPrefs.Save();
-                if (_musicSource != null)
-                    _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+                ApplyMixerLevels();
             }
         }
 
@@ -138,8 +222,7 @@ namespace WordDrop
                 _musicMuted = value;
                 PlayerPrefs.SetInt(PREF_MUSIC_MUTED, _musicMuted ? 1 : 0);
                 PlayerPrefs.Save();
-                if (_musicSource != null)
-                    _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+                ApplyMixerLevels();
             }
         }
 
@@ -171,10 +254,33 @@ namespace WordDrop
             _musicSource.priority    = 64;   // behind SFX (default 128)
 
             // Load saved prefs
-            _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.4f);
+            _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.80f);
             _muted       = PlayerPrefs.GetInt(PREF_MUTED, 0) == 1;
-            _musicVolume = PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.35f);
+            _musicVolume = PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.30f);
             _musicMuted  = PlayerPrefs.GetInt(PREF_MUSIC_MUTED, 0) == 1;
+            _uiVolume    = PlayerPrefs.GetFloat(PREF_UI_VOLUME, 0.65f);
+            _uiMuted     = PlayerPrefs.GetInt(PREF_UI_MUTED, 0) == 1;
+
+            // Phase 11g: bind to WordDropMixer if present. Group routing
+            // ensures Music / SFX / UI hit the correct attenuator + the
+            // DuckMusic snapshot can dip music under big detonations.
+            if (_mixer == null) _mixer = Resources.Load<AudioMixer>("Audio/WordDropMixer");
+            if (_mixer != null)
+            {
+                var musicGroups = _mixer.FindMatchingGroups("Master/Music");
+                var sfxGroups   = _mixer.FindMatchingGroups("Master/SFX");
+                var uiGroups    = _mixer.FindMatchingGroups("Master/UI");
+                _musicGroup = musicGroups.Length > 0 ? musicGroups[0] : null;
+                _sfxGroup   = sfxGroups.Length   > 0 ? sfxGroups[0]   : null;
+                _uiGroup    = uiGroups.Length    > 0 ? uiGroups[0]    : null;
+                _baseSnapshot = _mixer.FindSnapshot("Snapshot");
+                _duckSnapshot = _mixer.FindSnapshot("DuckMusic");
+            }
+            _source.outputAudioMixerGroup        = _sfxGroup;
+            _pitchedSource.outputAudioMixerGroup = _sfxGroup;
+            _musicSource.outputAudioMixerGroup   = _musicGroup;
+
+            ApplyMixerLevels();
 
             // Load all clips
             _tileDrop        = Resources.Load<AudioClip>("SFX/tile_drop");
@@ -648,7 +754,6 @@ namespace WordDrop
             // it loops by itself the way it always did.
             _musicSource.clip   = _survivalMusic;
             _musicSource.loop   = (_survivalMusic2 == null);
-            _musicSource.volume = _musicMuted ? 0f : _musicVolume;
             _musicSource.Play();
 
             if (_survivalMusic2 != null)
@@ -681,7 +786,6 @@ namespace WordDrop
 
             _musicSource.clip   = _survivalMusic2;
             _musicSource.loop   = true;
-            _musicSource.volume = _musicMuted ? 0f : _musicVolume;
             _musicSource.Play();
             _musicSequenceRoutine = null;
         }
@@ -710,7 +814,6 @@ namespace WordDrop
 
             _musicSource.clip   = _menuMusic;
             _musicSource.loop   = true;
-            _musicSource.volume = _musicMuted ? 0f : _musicVolume;
             _musicSource.Play();
         }
 
@@ -733,19 +836,36 @@ namespace WordDrop
 
         private System.Collections.IEnumerator FadeAndStop(AudioSource src, float dur)
         {
-            float start = src.volume;
+            // Phase 11g: fade by lerping the mixer's MusicVol param so the fade
+            // happens at the bus stage; ApplyMixerLevels at the end restores
+            // the user's saved music level. If the mixer isn't loaded, fall
+            // back to lerping the AudioSource volume directly.
+            if (_mixer == null)
+            {
+                float startVol = src.volume;
+                float tFallback = 0f;
+                while (tFallback < dur && src != null && src.isPlaying)
+                {
+                    tFallback += Time.unscaledDeltaTime;
+                    src.volume = Mathf.Lerp(startVol, 0f, tFallback / dur);
+                    yield return null;
+                }
+                if (src != null) src.Stop();
+                ApplyMixerLevels();
+                yield break;
+            }
+
+            _mixer.GetFloat("MusicVol", out float startDb);
             float t = 0f;
-            while (t < dur && src != null && src.isPlaying)
+            while (t < dur)
             {
                 t += Time.unscaledDeltaTime;
-                src.volume = Mathf.Lerp(start, 0f, t / dur);
+                float k = Mathf.Clamp01(t / dur);
+                _mixer.SetFloat("MusicVol", Mathf.Lerp(startDb, -80f, k));
                 yield return null;
             }
-            if (src != null)
-            {
-                src.Stop();
-                src.volume = _musicMuted ? 0f : _musicVolume;
-            }
+            if (src != null) src.Stop();
+            ApplyMixerLevels(); // restore to user's setting
         }
 
         public void PlayWordPopup()

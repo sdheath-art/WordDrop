@@ -196,6 +196,10 @@ namespace WordDrop
             string title = GetMeltdownTitle(chainDepth, triggerCount, detonationBonus, isLastTurn);
             if (title == null) return null;
 
+            // Phase 11g — duck the music for the meltdown so the explosion
+            // payoff isn't fighting the BGM at full volume.
+            GameAudio.Instance?.DuckMusicBriefly(0.30f);
+
             Color titleColor = GetTitleColor(title);
 //             Debug.Log($"[Meltdown] Intro: \"{title}\" (depth={chainDepth}, triggers={triggerCount}, detBonus={detonationBonus}, lastTurn={isLastTurn})");
             return StartCoroutine(IntroCoroutine(title, titleColor, chainDepth));
