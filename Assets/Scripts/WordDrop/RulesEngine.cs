@@ -1716,13 +1716,16 @@ namespace WordDrop
 
                             if (overlaps)
                             {
-                                oldPw.CreatedAtTime = Time.time;
-                                oldPw.ExpiresOnTurn = _globalTurn + GetFuseLength(oldPw.Word.Length);
+                                if (oldPw.OverlapFuseBonusGranted >= MAX_OVERLAP_FUSE_BONUS) continue;
+
+                                oldPw.ExpiresOnTurn += OVERLAP_FUSE_EXTENSION;
+                                oldPw.OverlapFuseBonusGranted += OVERLAP_FUSE_EXTENSION;
                                 alreadyExtended.Add(oldPw.Id);
                                 RefreshPrimedWordTiles(oldPw, _globalTurn);
-//                                 Debug.Log($"[OverlapFuse] Legacy: NewPrimed={newPw.Word} overlapped Existing={oldPw.Word} " +
-                                          // $"-> +{OVERLAP_FUSE_EXTENSION} fuse (expires={oldPw.ExpiresOnTurn}, " +
-                                          // $"bonusGranted={oldPw.OverlapFuseBonusGranted})");
+                                Debug.Log($"[OverlapFuse] Legacy: '{newPw.Word}' touched '{oldPw.Word}' " +
+                                          $"→ +{OVERLAP_FUSE_EXTENSION} fuse " +
+                                          $"(expires={oldPw.ExpiresOnTurn}, " +
+                                          $"granted={oldPw.OverlapFuseBonusGranted}/{MAX_OVERLAP_FUSE_BONUS})");
                             }
                         }
                     }
@@ -3746,6 +3749,52 @@ namespace WordDrop
 //                     Debug.Log($"[PrimedChain] ConnectedGroup size={triggeredIds.Count} " +
                               // $"(direct={triggeredIds.Count - chainTriggeredCount}, chain={chainTriggeredCount}) " +
                               // $"words=[{string.Join(", ", triggerEvents.ConvertAll(e => e.TriggeredWord))}]");
+                }
+            }
+
+            // ── Touch-Extends-Fuse (Phase 11f) ──
+            // New primes that orthogonally touch (or overlap) a NON-detonating
+            // existing primed word grant it +1 fuse, capped at
+            // MAX_OVERLAP_FUSE_BONUS per prime over its lifetime. Does NOT
+            // trigger detonation.
+            if (_stepJustPrimed != null && _stepJustPrimed.Count > 0)
+            {
+                HashSet<int> alreadyExtendedThisStep = new HashSet<int>();
+                foreach (int newId in _stepJustPrimed)
+                {
+                    var newPw = _primedRegistry.GetById(newId);
+                    if (newPw == null || newPw.Cells == null) continue;
+
+                    for (int p = 0; p < _primedRegistry.Count; p++)
+                    {
+                        var oldPw = _primedRegistry.GetByIndex(p);
+                        if (oldPw == null) continue;
+                        if (_stepJustPrimed.Contains(oldPw.Id)) continue;
+                        if (triggeredIds.Contains(oldPw.Id)) continue;
+                        if (alreadyExtendedThisStep.Contains(oldPw.Id)) continue;
+                        if (oldPw.OverlapFuseBonusGranted >= MAX_OVERLAP_FUSE_BONUS) continue;
+
+                        bool touches = false;
+                        for (int c = 0; c < newPw.Cells.Count && !touches; c++)
+                            for (int d = 0; d < oldPw.Cells.Count && !touches; d++)
+                            {
+                                int ddx = Mathf.Abs(newPw.Cells[c].x - oldPw.Cells[d].x);
+                                int ddy = Mathf.Abs(newPw.Cells[c].y - oldPw.Cells[d].y);
+                                if (ddx + ddy <= 1) touches = true;
+                            }
+
+                        if (touches)
+                        {
+                            oldPw.ExpiresOnTurn += OVERLAP_FUSE_EXTENSION;
+                            oldPw.OverlapFuseBonusGranted += OVERLAP_FUSE_EXTENSION;
+                            alreadyExtendedThisStep.Add(oldPw.Id);
+                            RefreshPrimedWordTiles(oldPw, _globalTurn);
+                            Debug.Log($"[OverlapFuse] '{newPw.Word}' touched '{oldPw.Word}' " +
+                                      $"→ +{OVERLAP_FUSE_EXTENSION} fuse " +
+                                      $"(expires={oldPw.ExpiresOnTurn}, " +
+                                      $"granted={oldPw.OverlapFuseBonusGranted}/{MAX_OVERLAP_FUSE_BONUS})");
+                        }
+                    }
                 }
             }
 

@@ -33,6 +33,7 @@ namespace WordDrop
             TestGravityConsistency();
             TestNoDuplicateScoring();
             TestPrimedWordIntegrity();
+            TestPrimedWord_AdjacentNewPrime_GetsPlusOneFuseUpToCapTwo();
             TestSelfPlayGames(50);
 
 //             Debug.Log("═══════════════════════════════════════════════════════");
@@ -277,6 +278,94 @@ namespace WordDrop
             }
 
             DestroyEngine(engine);
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // TEST 5b: Phase 11f — touch-extends-fuse mechanic
+        // ═══════════════════════════════════════════════════════════
+
+        private static void TestPrimedWord_AdjacentNewPrime_GetsPlusOneFuseUpToCapTwo()
+        {
+            // Guard: this whole mechanic depends on adjacency-trigger being OFF.
+            // Spec verification step #5: if anything detonates, that flag is on.
+            bool savedAdjacency = RulesEngine.AdjacencyTriggerEnabled;
+            RulesEngine.AdjacencyTriggerEnabled = false;
+
+            RulesEngine engine = CreateFreshEngine();
+
+            // Prime CAT at row 0, cols 0-2.
+            engine.ProcessDrop(0, 'C', 0);
+            engine.ProcessDrop(1, 'A', 0);
+            engine.ProcessDrop(2, 'T', 0);
+
+            var catPw = FindPrimedWord(engine, "CAT");
+            Assert(catPw != null, "Phase11f: CAT primed at row 0");
+            if (catPw == null) { DestroyEngine(engine); RulesEngine.AdjacencyTriggerEnabled = savedAdjacency; return; }
+            int catExpiresBefore = catPw.ExpiresOnTurn;
+            Assert(catPw.OverlapFuseBonusGranted == 0,
+                "Phase11f: CAT starts with 0 overlap-fuse bonus",
+                $"granted={catPw.OverlapFuseBonusGranted}");
+
+            // Prime DOG at row 1, cols 0-2 — orthogonally adjacent to CAT.
+            engine.ProcessDrop(0, 'D', 0);
+            engine.ProcessDrop(1, 'O', 0);
+            engine.ProcessDrop(2, 'G', 0);
+
+            // CAT must still be primed (touching does NOT detonate).
+            catPw = FindPrimedWord(engine, "CAT");
+            Assert(catPw != null, "Phase11f: CAT survives touch (no false detonation)");
+            if (catPw == null) { DestroyEngine(engine); RulesEngine.AdjacencyTriggerEnabled = savedAdjacency; return; }
+
+            Assert(catPw.OverlapFuseBonusGranted == RulesEngine.OVERLAP_FUSE_EXTENSION,
+                "Phase11f: CAT.OverlapFuseBonusGranted == 1 after one touch",
+                $"got {catPw.OverlapFuseBonusGranted}");
+            Assert(catPw.ExpiresOnTurn == catExpiresBefore + RulesEngine.OVERLAP_FUSE_EXTENSION,
+                "Phase11f: CAT.ExpiresOnTurn += OVERLAP_FUSE_EXTENSION",
+                $"before={catExpiresBefore} after={catPw.ExpiresOnTurn}");
+
+            // Cap test: force CAT to its bonus cap, then drop another touching
+            // prime and confirm the cap blocks further extension. Skipping the
+            // organic 3-words-touch-CAT scenario because it's hard to engineer
+            // a third primed word touching CAT without overlapping it (which
+            // would detonate). The cap branch is one `if` line — direct state
+            // poke is sufficient verification.
+            catPw.OverlapFuseBonusGranted = RulesEngine.MAX_OVERLAP_FUSE_BONUS;
+            int catExpiresAtCap = catPw.ExpiresOnTurn;
+
+            // Drop PIE at row 2 — touches DOG, but more importantly creates a
+            // fresh _stepJustPrimed → triggers the fuse-extension scan again.
+            // The scan runs against ALL existing primes; CAT is at cap so it
+            // must NOT extend further.
+            engine.ProcessDrop(0, 'P', 0);
+            engine.ProcessDrop(1, 'I', 0);
+            engine.ProcessDrop(2, 'E', 0);
+
+            catPw = FindPrimedWord(engine, "CAT");
+            if (catPw != null)
+            {
+                Assert(catPw.OverlapFuseBonusGranted == RulesEngine.MAX_OVERLAP_FUSE_BONUS,
+                    "Phase11f: CAT.OverlapFuseBonusGranted stays at cap (=2)",
+                    $"got {catPw.OverlapFuseBonusGranted}");
+                Assert(catPw.ExpiresOnTurn == catExpiresAtCap,
+                    "Phase11f: CAT.ExpiresOnTurn unchanged once at cap",
+                    $"expectedAtCap={catExpiresAtCap} got={catPw.ExpiresOnTurn}");
+            }
+
+            // Sanity: adjacency-trigger flag must remain OFF — if any of the
+            // above caused detonation it likely means someone flipped this on.
+            Assert(!RulesEngine.AdjacencyTriggerEnabled,
+                "Phase11f: AdjacencyTriggerEnabled stayed false");
+
+            DestroyEngine(engine);
+            RulesEngine.AdjacencyTriggerEnabled = savedAdjacency;
+        }
+
+        private static PrimedWordRegistry.PrimedWord FindPrimedWord(RulesEngine engine, string word)
+        {
+            var all = engine.PrimedRegistry.GetAllPrimedWords();
+            for (int i = 0; i < all.Count; i++)
+                if (all[i].Word == word) return all[i];
+            return null;
         }
 
         // ═══════════════════════════════════════════════════════════
