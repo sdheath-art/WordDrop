@@ -192,7 +192,13 @@ namespace WordDrop
                 Debug.LogWarning("[FlipbookFX] Meltdown prefab not assigned (Resources/Prefabs/FX/Magic Explosive Spell) — skipping");
                 return;
             }
+            // Configure BEFORE the particle systems start playing.
+            // Instantiate inactive so playOnAwake doesn't fire under the
+            // authored settings — then activate after we've zeroed start
+            // delays + flipped scaling mode + scaled the root. This avoids
+            // the Stop+Play race that was cutting layers off mid-animation.
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
+            inst.SetActive(false);
 
             // 2× scale for the whole hierarchy. ParticleSystem scaling mode
             // must be Hierarchy (not Local) for transform.scale to actually
@@ -215,10 +221,9 @@ namespace WordDrop
                 var main = systems[i].main;
                 main.startDelay = 0f;
                 main.scalingMode = ParticleSystemScalingMode.Hierarchy;
-                systems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                systems[i].Play();
             }
 
+            inst.SetActive(true);
             Destroy(inst, 4f);
         }
 
