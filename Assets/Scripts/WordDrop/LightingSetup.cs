@@ -131,16 +131,16 @@ namespace WordDrop
             // build. Keeping the stack minimal so normal colors render as painted;
             // bloom still catches HDR values (primed=1.8, gold=2.0, flash=1.6).
             var bloom = profile.Add<UnityEngine.Rendering.Universal.Bloom>(true);
-            // Phase 11h tuning — push bloom to a "lit" Candy Crush read.
-            //   threshold 1.0 → 0.85: mid-bright HDR pixels (primed/gold ~1.6-1.8)
-            //                          now bloom too, not just the flash peaks.
-            //   intensity 0.8 → 1.2:   stronger overall glow drive.
-            //   scatter   0.3 → 0.8:   key change — soft billowy spread that
-            //                          gives detonations the "light source
-            //                          appearing" feel.
-            bloom.threshold.value = 0.85f;
-            bloom.intensity.value = 1.2f;
-            bloom.scatter.value   = 0.8f;
+            // Phase 11h hotfix — keep threshold above 1.0 so only HDR pixels
+            // bloom; the 0.85 setting was pulling SDR tiles/UI/BG into the
+            // bloom and producing whole-screen haze. HDR sources (radial 4.5×,
+            // beam 4×, primed 1.8, gold 2.0) all sit comfortably above 1.05.
+            //   threshold 1.05: HDR-only gate (anything ≤1.0 SDR does NOT bloom)
+            //   intensity 1.0:  moderate drive
+            //   scatter   0.7:  soft billowy spread for the HDR pixels that DO bloom
+            bloom.threshold.value = 1.05f;
+            bloom.intensity.value = 1.0f;
+            bloom.scatter.value   = 0.7f;
 
             // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
             // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams
