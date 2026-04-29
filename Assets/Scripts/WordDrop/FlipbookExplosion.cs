@@ -20,11 +20,12 @@ namespace WordDrop
 
         private Sprite[] _frames;
         private Material _additiveMat;
-        // Two glow sprite variants for the explosion halo. A/B-tested 50/50 per
-        // explosion so Spencer can compare the look in playtest. bubble@2x is
-        // 512x512 (twice circle's 256), so it's loaded at ppu=200 to keep the
-        // world-space size identical — only the texture detail differs.
-        private Sprite _glowSpriteCircle;
+        // Phase 11h: A/B between circle.png and bubble@2x concluded — bubble
+        // wins. circle is a hard ring (white-on-black with a black core) which
+        // bloomed into shockwave globs; bubble@2x is a soft radial gradient
+        // and reads as a clean halo. Loaded at ppu=200 because the source is
+        // 512×512 — keeps world-space bounds identical to the old circle path
+        // so the rest of the scale math doesn't need re-tuning.
         private Sprite _glowSpriteBubble;
         private readonly Stack<SpriteRenderer> _pool = new Stack<SpriteRenderer>(POOL_SIZE);
         private readonly Stack<SpriteRenderer> _glowPool = new Stack<SpriteRenderer>(POOL_SIZE);
@@ -78,22 +79,13 @@ namespace WordDrop
             if (addShader == null) addShader = Shader.Find("Sprites/Default");
             _additiveMat = new Material(addShader);
 
-            // Glow halo sprites — A/B variants
-            LoadGlowSprites();
+            // Glow halo sprite — soft radial gradient. ppu=200 because the
+            // source is 512×512 (vs the legacy 256 circle path).
+            LoadGlowSprite();
         }
 
-        private void LoadGlowSprites()
+        private void LoadGlowSprite()
         {
-            Texture2D circleTex = Resources.Load<Texture2D>("Particles/circle");
-            if (circleTex != null)
-                _glowSpriteCircle = Sprite.Create(
-                    circleTex,
-                    new Rect(0, 0, circleTex.width, circleTex.height),
-                    new Vector2(0.5f, 0.5f), 100f);
-
-            // bubble@2x is 512x512 — twice circle's 256. Set pixelsPerUnit=200
-            // so its world-space bounds match circle's at the same transform
-            // scale, isolating texture-look as the single A/B variable.
             Texture2D bubbleTex = Resources.Load<Texture2D>("Particles/bubble@2x");
             if (bubbleTex != null)
                 _glowSpriteBubble = Sprite.Create(
@@ -101,9 +93,8 @@ namespace WordDrop
                     new Rect(0, 0, bubbleTex.width, bubbleTex.height),
                     new Vector2(0.5f, 0.5f), 200f);
 
-            Debug.Log($"[FlipbookFX] glow load — circle: " +
-                      $"{(circleTex != null ? $"{circleTex.width}x{circleTex.height}" : "MISSING")}, " +
-                      $"bubble@2x: {(bubbleTex != null ? $"{bubbleTex.width}x{bubbleTex.height}" : "MISSING")}");
+            Debug.Log($"[FlipbookFX] glow load — bubble@2x: " +
+                      $"{(bubbleTex != null ? $"{bubbleTex.width}x{bubbleTex.height}" : "MISSING")}");
         }
 
         private void PrewarmPool()
@@ -132,10 +123,7 @@ namespace WordDrop
             go.transform.SetParent(transform, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
             sr.material = _additiveMat;
-            // Sprite is assigned per-explosion in GlowCoroutine for the A/B
-            // variant; default to circle here so a renderer that's somehow
-            // checked out before GlowCoroutine sets the sprite still draws.
-            sr.sprite = _glowSpriteCircle;
+            sr.sprite = _glowSpriteBubble;
             sr.sortingOrder = 29;
             go.SetActive(false);
             return sr;
@@ -245,12 +233,10 @@ namespace WordDrop
             SpriteRenderer glow = CheckoutGlow();
             glow.transform.position = new Vector3(worldPos.x, worldPos.y, -1.5f);
 
-            // 50/50 A/B between circle and bubble@2x glow textures. ppu was
-            // tuned at load so both render at the same world size for the same
-            // transform scale — only the texture look differs.
-            bool useBubble = _glowSpriteBubble != null && Random.value < 0.5f;
-            glow.sprite = useBubble ? _glowSpriteBubble : _glowSpriteCircle;
-            Debug.Log($"[FlipbookFX] glow variant: {(useBubble ? "bubble" : "circle")} (tier={tier})");
+            // A/B concluded — bubble@2x always wins. CreateGlowRenderer set
+            // this on prewarm, but reassign defensively in case the sprite
+            // loaded after some renderers were already created.
+            if (_glowSpriteBubble != null) glow.sprite = _glowSpriteBubble;
 
             float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
 
