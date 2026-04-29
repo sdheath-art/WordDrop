@@ -131,16 +131,17 @@ namespace WordDrop
             // build. Keeping the stack minimal so normal colors render as painted;
             // bloom still catches HDR values (primed=1.8, gold=2.0, flash=1.6).
             var bloom = profile.Add<UnityEngine.Rendering.Universal.Bloom>(true);
-            // Phase 11h hotfix — keep threshold above 1.0 so only HDR pixels
-            // bloom; the 0.85 setting was pulling SDR tiles/UI/BG into the
-            // bloom and producing whole-screen haze. HDR sources (radial 4.5×,
-            // beam 4×, primed 1.8, gold 2.0) all sit comfortably above 1.05.
+            // Phase 11h second hotfix — burst was whiting out the whole
+            // screen with the previous values stacking on radial 4.5× + beam
+            // 4× HDR. Threshold stays HDR-only; intensity + scatter dialed
+            // down to keep the "lit" character without blowout (still softer
+            // than the original 0.3 scatter / 0.8 intensity baseline).
             //   threshold 1.05: HDR-only gate (anything ≤1.0 SDR does NOT bloom)
-            //   intensity 1.0:  moderate drive
-            //   scatter   0.7:  soft billowy spread for the HDR pixels that DO bloom
+            //   intensity 0.7:  moderate amplification (was 1.0 — too hot)
+            //   scatter   0.55: narrower spread (was 0.7 — bled across screen)
             bloom.threshold.value = 1.05f;
-            bloom.intensity.value = 1.0f;
-            bloom.scatter.value   = 0.7f;
+            bloom.intensity.value = 0.7f;
+            bloom.scatter.value   = 0.55f;
 
             // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
             // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams

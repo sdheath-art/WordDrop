@@ -39,9 +39,9 @@ namespace WordDrop
         // beam. Reads as a "light source appearing" at the burst center.
         private Sprite   _radialSprite;
         private readonly Stack<SpriteRenderer> _radialPool = new Stack<SpriteRenderer>(POOL_SIZE);
-        private const float RADIAL_HDR_INTENSITY = 4.5f;
+        private const float RADIAL_HDR_INTENSITY = 2.8f; // was 4.5 — same target as beam, no stacking blowout
         private const float RADIAL_START_SCALE   = 0.2f;
-        private const float RADIAL_END_SCALE     = 1.6f;
+        private const float RADIAL_END_SCALE     = 1.05f; // was 1.6 — contained to local burst, not screen-wide
         private const float RADIAL_RISE_DURATION = 0.18f;
         private const float RADIAL_FADE_OUT      = 0.40f;
 
@@ -176,7 +176,7 @@ namespace WordDrop
             // This avoids the "hard on / slow off" snap that reads as harsh.
             // HDR default (2.5× white) so bloom catches the flash even without a
             // caller-supplied tint. Caller tints already in SDR/HDR are respected.
-            Color c = tint ?? new Color(4f, 4f, 4f, 1f); // was 2.5 — Phase 11h: stronger bloom drive
+            Color c = tint ?? new Color(2.8f, 2.8f, 2.8f, 1f); // was 4 — Phase 11h hotfix 2: too hot at scatter 0.55
             c.a = 0f;
             sr.color = c;
 
