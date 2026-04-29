@@ -200,6 +200,23 @@ namespace WordDrop
             // payoff isn't fighting the BGM at full volume.
             GameAudio.Instance?.DuckMusicBriefly(0.30f);
 
+            // Phase 11j-meltdown — spawn the AllIn1 Magic Explosive Spell
+            // hero prefab at screen center. Gating happens above (title
+            // null-check returns early for non-meltdowns), so this fires
+            // exactly once per meltdown intro. Camera center keeps it
+            // visually aligned with the screen-wide MELTDOWN text overlay.
+            if (FlipbookExplosion.Instance != null)
+            {
+                Vector3 meltdownCenter = Vector3.zero;
+                Camera cam = Camera.main;
+                if (cam != null)
+                {
+                    Vector3 c = cam.transform.position;
+                    meltdownCenter = new Vector3(c.x, c.y, 0f);
+                }
+                FlipbookExplosion.Instance.PlayMeltdown(meltdownCenter);
+            }
+
             Color titleColor = GetTitleColor(title);
 //             Debug.Log($"[Meltdown] Intro: \"{title}\" (depth={chainDepth}, triggers={triggerCount}, detBonus={detonationBonus}, lastTurn={isLastTurn})");
             return StartCoroutine(IntroCoroutine(title, titleColor, chainDepth));

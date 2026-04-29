@@ -30,6 +30,14 @@ namespace WordDrop
         private readonly Stack<SpriteRenderer> _pool = new Stack<SpriteRenderer>(POOL_SIZE);
         private readonly Stack<SpriteRenderer> _glowPool = new Stack<SpriteRenderer>(POOL_SIZE);
 
+        // Phase 11j-meltdown: AllIn1 "Magic Explosive Spell" prefab is the
+        // hero VFX for meltdown events. Inspector-assignable for easy swap;
+        // auto-loaded from Resources/Prefabs/FX/ in Awake if not assigned.
+        // Plugins/AllIn1VfxToolkit is gitignored so the prefab + its
+        // dependencies (materials, scripts) only resolve on machines that
+        // have the package imported.
+        [SerializeField] private GameObject _meltdownPrefab;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
         {
@@ -47,6 +55,13 @@ namespace WordDrop
 
             SliceSpriteSheet();
             PrewarmPool();
+
+            // Phase 11j-meltdown — auto-load if not Inspector-assigned.
+            // FlipbookExplosion is auto-created at runtime so a scene-baked
+            // Inspector reference isn't realistic; Resources.Load is the
+            // canonical way for this singleton.
+            if (_meltdownPrefab == null)
+                _meltdownPrefab = Resources.Load<GameObject>("Prefabs/FX/Magic Explosive Spell");
         }
 
         private void SliceSpriteSheet()
@@ -163,6 +178,22 @@ namespace WordDrop
             if (_frames == null || _frames.Length == 0) return;
             StartCoroutine(PlayCoroutine(worldPos, tier));
             StartCoroutine(GlowCoroutine(worldPos, tier));
+        }
+
+        /// <summary>
+        /// Spawn the meltdown hero VFX (AllIn1 Magic Explosive Spell) at
+        /// worldPos. One-shot — caller must gate to once per meltdown burst.
+        /// Auto-destroys 4s after spawn (prefab plays for ~2-3s, 1s margin).
+        /// </summary>
+        public void PlayMeltdown(Vector3 worldPos)
+        {
+            if (_meltdownPrefab == null)
+            {
+                Debug.LogWarning("[FlipbookFX] Meltdown prefab not assigned (Resources/Prefabs/FX/Magic Explosive Spell) — skipping");
+                return;
+            }
+            GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
+            Destroy(inst, 4f);
         }
 
         private IEnumerator PlayCoroutine(Vector3 worldPos, int tier)
