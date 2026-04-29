@@ -2235,9 +2235,6 @@ namespace WordDrop
         // ScreenFlash should fire ONCE per burst pass, not once per primed word.
         // FirePerWordBurst iterates cluster members and we only want one screen tint.
         private bool _screenFlashFiredThisBurst;
-        // Phase 11i: BigBurstFlash also caps at one fire per burst pass.
-        // Stacking N beams per chain compounded to screen-wide white-out.
-        private bool _bigBurstFiredThisBurst;
 
         /// <summary>
         /// Phase 11i: returns the screen extent (in world units) along the
@@ -2308,7 +2305,6 @@ namespace WordDrop
         private void FirePerWordBurst()
         {
             _screenFlashFiredThisBurst = false; // reset per burst pass
-            _bigBurstFiredThisBurst    = false; // Phase 11i — one beam per burst
             if (BigBurstFlash.Instance == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;
@@ -2377,17 +2373,14 @@ namespace WordDrop
                 // the blast reads as a narrow beam through the word, not a fat slab.
                 float thickness = _grid.CellSize * 1.4f;
 
-                // Phase 11i — BigBurstFlash fires ONCE per burst pass (cap), and
-                // its beam length is screen-spanning regardless of word length so
-                // it reads as a Candy Crush striped-candy "wall of light traveling
-                // across the row." Stacking N beams on a chain compounded into
-                // screen-wide white-out, hence the cap.
-                if (!_bigBurstFiredThisBurst)
-                {
-                    float screenLength = ScreenExtentAlongAxis(vertical);
-                    BigBurstFlash.Instance.Play(wordCenter, screenLength, thickness, vertical, burstTint);
-                    _bigBurstFiredThisBurst = true;
-                }
+                // Phase 11i regression fix — per-word beam direction restored.
+                // Each detonating word fires its own screen-spanning beam along
+                // its own axis; vertical primed words show a vertical sweep,
+                // horizontal show a horizontal sweep. The earlier per-burst cap
+                // collapsed every word in a chain to the FIRST word's direction,
+                // which read wrong on mixed-direction cascades.
+                float screenLength = ScreenExtentAlongAxis(vertical);
+                BigBurstFlash.Instance.Play(wordCenter, screenLength, thickness, vertical, burstTint);
 
                 // RadialBurst removed Phase 11i — its big halo stacked with
                 // BigBurstFlash's own radial layer + ScreenFlash to produce a
@@ -2471,15 +2464,10 @@ namespace WordDrop
                     float halfW = halfH * ((float)Screen.width / Screen.height);
                     float thickness = _grid.CellSize * 1.4f;
 
-                    // Phase 11i — BigBurstFlash gated by the same per-burst cap
-                    // as the primed-word pass above. If the primed words already
-                    // fired the beam, the trigger words don't fire a second one.
-                    if (!_bigBurstFiredThisBurst)
-                    {
-                        float screenLength = ScreenExtentAlongAxis(twVertical);
-                        BigBurstFlash.Instance.Play(twCenter, screenLength, thickness, twVertical, burstTint);
-                        _bigBurstFiredThisBurst = true;
-                    }
+                    // Per-word beam — each trigger word fires along its own axis
+                    // (see matching note in the primed-word pass above).
+                    float screenLength = ScreenExtentAlongAxis(twVertical);
+                    BigBurstFlash.Instance.Play(twCenter, screenLength, thickness, twVertical, burstTint);
 
                     // RadialBurst removed Phase 11i — see note in primed-word pass.
 
