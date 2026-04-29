@@ -194,6 +194,13 @@ namespace WordDrop
             }
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
 
+            // 2× scale for the whole hierarchy. ParticleSystem scaling mode
+            // must be Hierarchy (not Local) for transform.scale to actually
+            // grow the emitted particles — otherwise the parent scales but
+            // the particles stay original-sized.
+            const float MELTDOWN_SCALE = 2f;
+            inst.transform.localScale = Vector3.one * MELTDOWN_SCALE;
+
             // The AllIn1 prefab was authored with startDelay values up to 1.7s
             // on its blast particle systems — designed as a slow magical reveal,
             // not a tight game-feel explosion. Override every startDelay to 0
@@ -207,6 +214,7 @@ namespace WordDrop
                 if (systems[i] == null) continue;
                 var main = systems[i].main;
                 main.startDelay = 0f;
+                main.scalingMode = ParticleSystemScalingMode.Hierarchy;
                 systems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 systems[i].Play();
             }
