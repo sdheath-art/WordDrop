@@ -230,7 +230,11 @@ namespace WordDrop
             rs.transform.position = new Vector3(worldPos.x, worldPos.y, -0.6f);
             rs.transform.localRotation = Quaternion.identity;
 
-            float radialBase = Mathf.Max(targetThicknessUnits, targetLengthUnits * 0.35f);
+            // Radial size is tied to the word's THICKNESS (per-cell), not the
+            // beam's screen-spanning length. The old formula multiplied by
+            // length × 0.35 which produced ~10-unit halos when length was the
+            // full screen width — those stacked into screen-fill on chains.
+            float radialBase = targetThicknessUnits * 1.4f;
             float startScale = radialBase * RADIAL_START_SCALE;
             float endScale   = radialBase * RADIAL_END_SCALE;
             rs.transform.localScale = new Vector3(startScale, startScale, 1f);
