@@ -192,12 +192,25 @@ namespace WordDrop
                 Debug.LogWarning("[FlipbookFX] Meltdown prefab not assigned (Resources/Prefabs/FX/Magic Explosive Spell) — skipping");
                 return;
             }
-            // Plays the prefab from t=0 with its full wind-up intact.
-            // WordDropFX.ExplosionCoroutine spawns this FIRST, then waits
-            // MELTDOWN_WINDUP_DELAY before running the rest of the
-            // explosion FX so the prefab's blast peak coincides with the
-            // tile destruction (Candy Crush "telegraph then bang" pattern).
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
+
+            // The AllIn1 prefab was authored with startDelay values up to 1.7s
+            // on its blast particle systems — designed as a slow magical reveal,
+            // not a tight game-feel explosion. Override every startDelay to 0
+            // so each PS fires from t=0; the wind-up plays as overlapping
+            // sparkle layers in the first ~0.5s instead of a long pause then
+            // delayed bang. WordDropFX.ExplosionCoroutine yields 0.5s after
+            // this call so the bubble glow + flipbook + dissolve land together.
+            var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
+            for (int i = 0; i < systems.Length; i++)
+            {
+                if (systems[i] == null) continue;
+                var main = systems[i].main;
+                main.startDelay = 0f;
+                systems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                systems[i].Play();
+            }
+
             Destroy(inst, 4f);
         }
 
