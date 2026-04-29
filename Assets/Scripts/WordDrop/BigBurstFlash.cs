@@ -24,7 +24,7 @@ namespace WordDrop
         private const float RISE_DURATION     = 0.24f; // scale ramp — visible outward extension
         private const float FADE_IN_DURATION  = 0.05f; // 0 → 1 alpha: fast so the growth is visible
         private const float HOLD_DURATION     = 0.04f; // brief peak at full extension
-        private const float FADE_OUT_DURATION = 0.22f; // 1 → 0 alpha: slower decay for natural fall-off
+        private const float FADE_OUT_DURATION = 0.45f; // was 0.22 — Phase 11h: longer "after-light" tail like Candy Crush
         private const float START_SCALE_X   = 0.15f;   // narrow sliver — starts at word center
         private const float END_SCALE_X     = 1.15f;   // slight overshoot past the target length
         private const float START_SCALE_Y   = 0.80f;   // near-full thickness from the start
@@ -34,6 +34,16 @@ namespace WordDrop
         private Sprite   _sprite;
         private Material _additiveMat;
         private readonly Stack<SpriteRenderer> _pool = new Stack<SpriteRenderer>(POOL_SIZE);
+
+        // Phase 11h: radial-glow layer that sits over the existing horizontal
+        // beam. Reads as a "light source appearing" at the burst center.
+        private Sprite   _radialSprite;
+        private readonly Stack<SpriteRenderer> _radialPool = new Stack<SpriteRenderer>(POOL_SIZE);
+        private const float RADIAL_HDR_INTENSITY = 4.5f;
+        private const float RADIAL_START_SCALE   = 0.2f;
+        private const float RADIAL_END_SCALE     = 1.6f;
+        private const float RADIAL_RISE_DURATION = 0.18f;
+        private const float RADIAL_FADE_OUT      = 0.40f;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
@@ -70,11 +80,28 @@ namespace WordDrop
             Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
             if (addShader == null) addShader = Shader.Find("Sprites/Default");
             _additiveMat = new Material(addShader);
+
+            // Phase 11h radial glow uses Particles/circle as a soft white-to-
+            // transparent disc. Falls back to "no radial layer" if missing.
+            Texture2D radialTex = Resources.Load<Texture2D>("Particles/circle");
+            if (radialTex == null)
+            {
+                Debug.LogWarning("[BigBurstFlash] Particles/circle.png not found — radial glow disabled");
+            }
+            else
+            {
+                _radialSprite = Sprite.Create(
+                    radialTex,
+                    new Rect(0, 0, radialTex.width, radialTex.height),
+                    new Vector2(0.5f, 0.5f),
+                    100f);
+            }
         }
 
         private void PrewarmPool()
         {
             for (int i = 0; i < POOL_SIZE; i++) _pool.Push(BuildRenderer());
+            for (int i = 0; i < POOL_SIZE; i++) _radialPool.Push(BuildRadialRenderer());
         }
 
         private SpriteRenderer BuildRenderer()
@@ -93,6 +120,24 @@ namespace WordDrop
         {
             if (_pool.Count > 0) return _pool.Pop();
             return BuildRenderer();
+        }
+
+        private SpriteRenderer BuildRadialRenderer()
+        {
+            var go = new GameObject("BigBurstFlash_Radial");
+            go.transform.SetParent(transform, false);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = _radialSprite;
+            sr.material = _additiveMat;
+            sr.sortingOrder = SORT_ORDER + 1; // sit above the beam
+            sr.enabled = false;
+            return sr;
+        }
+
+        private SpriteRenderer CheckoutRadial()
+        {
+            if (_radialPool.Count > 0) return _radialPool.Pop();
+            return BuildRadialRenderer();
         }
 
         /// <summary>
@@ -131,7 +176,7 @@ namespace WordDrop
             // This avoids the "hard on / slow off" snap that reads as harsh.
             // HDR default (2.5× white) so bloom catches the flash even without a
             // caller-supplied tint. Caller tints already in SDR/HDR are respected.
-            Color c = tint ?? new Color(2.5f, 2.5f, 2.5f, 1f);
+            Color c = tint ?? new Color(4f, 4f, 4f, 1f); // was 2.5 — Phase 11h: stronger bloom drive
             c.a = 0f;
             sr.color = c;
 
@@ -155,6 +200,38 @@ namespace WordDrop
 
             float totalLife = FADE_IN_DURATION + HOLD_DURATION + FADE_OUT_DURATION + 0.02f;
             StartCoroutine(ReturnAfter(sr, totalLife));
+
+            // Phase 11h: emit a radial glow on top of the beam. Reads as a
+            // luminous light source appearing at the burst center, matching
+            // the Candy Crush "lit" feel. Sits above the beam in sort order.
+            if (_radialSprite != null)
+            {
+                SpriteRenderer rs = CheckoutRadial();
+                rs.gameObject.SetActive(true);
+                rs.enabled = true;
+                rs.transform.position = new Vector3(worldPos.x, worldPos.y, -0.6f);
+                rs.transform.localRotation = Quaternion.identity;
+
+                float radialBase = Mathf.Max(targetThicknessUnits, targetLengthUnits * 0.35f);
+                float startScale = radialBase * RADIAL_START_SCALE;
+                float endScale   = radialBase * RADIAL_END_SCALE;
+                rs.transform.localScale = new Vector3(startScale, startScale, 1f);
+
+                Color rc = new Color(RADIAL_HDR_INTENSITY, RADIAL_HDR_INTENSITY, RADIAL_HDR_INTENSITY, 0f);
+                rs.color = rc;
+
+                rs.transform.DOKill();
+                rs.DOKill();
+                rs.transform.DOScale(new Vector3(endScale, endScale, 1f), RADIAL_RISE_DURATION)
+                    .SetEase(Ease.OutCubic);
+
+                var rseq = DOTween.Sequence();
+                rseq.Append(DOTween.ToAlpha(() => rs.color, v => rs.color = v, 1f, 0.04f).SetEase(Ease.OutQuad));
+                rseq.AppendInterval(0.06f);
+                rseq.Append(DOTween.ToAlpha(() => rs.color, v => rs.color = v, 0f, RADIAL_FADE_OUT).SetEase(Ease.InQuad));
+
+                StartCoroutine(ReturnRadialAfter(rs, 0.04f + 0.06f + RADIAL_FADE_OUT + 0.02f));
+            }
         }
 
         private IEnumerator ReturnAfter(SpriteRenderer sr, float delay)
@@ -168,6 +245,18 @@ namespace WordDrop
             sr.transform.localRotation = Quaternion.identity; // reset for next checkout
             sr.color = Color.white;
             _pool.Push(sr);
+        }
+
+        private IEnumerator ReturnRadialAfter(SpriteRenderer sr, float delay)
+        {
+            yield return WaitCache.Get(delay);
+            if (sr == null) yield break;
+            sr.transform.DOKill();
+            sr.DOKill();
+            sr.enabled = false;
+            sr.gameObject.SetActive(false);
+            sr.color = Color.white;
+            _radialPool.Push(sr);
         }
     }
 }
