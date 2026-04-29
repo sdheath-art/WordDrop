@@ -65,16 +65,13 @@ namespace WordDrop
 
         private void LoadSprite()
         {
-            // Phase 11j Tier 1 — sprites swapped to AllIn1 VFX toolkit shapes:
-            //   beam:   big_burst_sweep → beam_shape (proper authored beam
-            //           silhouette with soft falloff on ALL edges, not just
-            //           top/bottom). The previous big_burst_sweep had a hard
-            //           horizontal core that produced a slab when stretched.
-            //   radial: flare → light_rays (light-rays texture reads as soft
-            //           rays emanating from a point — closer to the "lit"
-            //           Candy Crush halo than flare's lens-streak character).
-            // Both copied into Resources/Particles/ from
-            // Plugins/AllIn1VfxToolkit/Demo & Assets/Textures/Shapes/.
+            // Phase 11j Tier 1 (partial): radial swapped to light_rays
+            // (Spencer-confirmed soft diffusion). Beam stayed on
+            // big_burst_sweep — the AllIn1 BeamShape texture is a centered
+            // narrow column, not a long horizontal beam, and produced
+            // flanking-beams flanking the explosion when stretched. Reverted
+            // beam to the previous big_burst_sweep silhouette which DOES
+            // sweep edge-to-edge through the word's row.
             Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
             if (addShader == null) addShader = Shader.Find("Sprites/Default");
             _additiveMat = new Material(addShader);
@@ -93,10 +90,10 @@ namespace WordDrop
                     100f);
             }
 
-            Texture2D beamTex = Resources.Load<Texture2D>("Particles/beam_shape");
+            Texture2D beamTex = Resources.Load<Texture2D>("Particles/big_burst_sweep");
             if (beamTex == null)
             {
-                Debug.LogWarning("[BigBurstFlash] Particles/beam_shape.png not found — beam disabled");
+                Debug.LogWarning("[BigBurstFlash] Particles/big_burst_sweep.png not found — beam disabled");
             }
             else
             {
