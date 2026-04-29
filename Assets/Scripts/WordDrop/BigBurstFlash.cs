@@ -65,10 +65,18 @@ namespace WordDrop
 
         private void LoadSprite()
         {
-            Texture2D tex = Resources.Load<Texture2D>("Particles/big_burst_sweep");
+            // Phase 11h hotfix 4 — swapped from big_burst_sweep.png to flare.png
+            // because the former has a solid white core running edge-to-edge
+            // horizontally; stretched at HDR 2.8 with bloom scatter 0.55 it
+            // bloomed into a uniform white slab, no halo character. flare.png
+            // has soft radial falloff in all directions, so the stretched
+            // beam reads as a bright source with rays — the Candy Crush
+            // beam shape — and the bloom amplifies the existing alpha
+            // gradient instead of fighting it.
+            Texture2D tex = Resources.Load<Texture2D>("Particles/flare");
             if (tex == null)
             {
-                Debug.LogError("[BigBurstFlash] Particles/big_burst_sweep.png not found");
+                Debug.LogError("[BigBurstFlash] Particles/flare.png not found");
                 return;
             }
             _sprite = Sprite.Create(
