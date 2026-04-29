@@ -2235,6 +2235,24 @@ namespace WordDrop
         // ScreenFlash should fire ONCE per burst pass, not once per primed word.
         // FirePerWordBurst iterates cluster members and we only want one screen tint.
         private bool _screenFlashFiredThisBurst;
+        // Phase 11i: BigBurstFlash also caps at one fire per burst pass.
+        // Stacking N beams per chain compounded to screen-wide white-out.
+        private bool _bigBurstFiredThisBurst;
+
+        /// <summary>
+        /// Phase 11i: returns the screen extent (in world units) along the
+        /// word's axis with a small bleed past the edge — used so the
+        /// BigBurstFlash beam spans the FULL screen width/height regardless
+        /// of how many tiles the word covers (Candy Crush striped-candy feel).
+        /// </summary>
+        private float ScreenExtentAlongAxis(bool vertical)
+        {
+            Camera cam = _cam != null ? _cam : Camera.main;
+            if (cam == null) return 20f;
+            float halfHeight = cam.orthographicSize;
+            float halfWidth  = halfHeight * cam.aspect;
+            return vertical ? halfHeight * 2.2f : halfWidth * 2.2f;
+        }
 
         /// <summary>
         /// Fires a TileFlashBox under each dying tile. Single coin flip PER
@@ -2290,6 +2308,7 @@ namespace WordDrop
         private void FirePerWordBurst()
         {
             _screenFlashFiredThisBurst = false; // reset per burst pass
+            _bigBurstFiredThisBurst    = false; // Phase 11i — one beam per burst
             if (BigBurstFlash.Instance == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;
@@ -2353,18 +2372,27 @@ namespace WordDrop
                 Camera cam = _cam != null ? _cam : Camera.main;
                 float halfH = cam != null ? cam.orthographicSize : 10f;
                 float halfW = halfH * ((float)Screen.width / Screen.height);
-                float targetLength = (vertical ? halfH : halfW) * 2.4f; // 2x = screen edge; 2.4x bleeds past
 
                 // Thickness spans just a bit more than one tile row (cell + bleed) so
                 // the blast reads as a narrow beam through the word, not a fat slab.
                 float thickness = _grid.CellSize * 1.4f;
-                BigBurstFlash.Instance.Play(wordCenter, targetLength, thickness, vertical, burstTint);
 
-                // Radial burst accent at the word's center — "the star at the center
-                // of the explosion" that BigBurstFlash radiates from. Size matches
-                // ~3 cells so it reads as a punchy point, not another wide sweep.
-                if (RadialBurst.Instance != null)
-                    RadialBurst.Instance.Play(wordCenter, _grid.CellSize * 3.0f, burstTint);
+                // Phase 11i — BigBurstFlash fires ONCE per burst pass (cap), and
+                // its beam length is screen-spanning regardless of word length so
+                // it reads as a Candy Crush striped-candy "wall of light traveling
+                // across the row." Stacking N beams on a chain compounded into
+                // screen-wide white-out, hence the cap.
+                if (!_bigBurstFiredThisBurst)
+                {
+                    float screenLength = ScreenExtentAlongAxis(vertical);
+                    BigBurstFlash.Instance.Play(wordCenter, screenLength, thickness, vertical, burstTint);
+                    _bigBurstFiredThisBurst = true;
+                }
+
+                // RadialBurst removed Phase 11i — its big halo stacked with
+                // BigBurstFlash's own radial layer + ScreenFlash to produce a
+                // "giant shockwave globs" look. The BigBurstFlash radial layer
+                // (added in Phase 11h) covers this read on its own.
 
                 // HDR sparkle spray — 8-16 tiny stars flying radially outward.
                 // Intensity scales with word length so longer words throw more stars.
@@ -2374,11 +2402,14 @@ namespace WordDrop
                     SparkleSpray.Instance.Play(wordCenter, intensity);
                 }
 
-                // Full-screen color wash — briefly tints the whole screen so the
-                // moment reads "something big just happened" even outside the
-                // detonation area. Fires once per burst pass (not per trigger
-                // word) via the shared _screenFlashFiredThisBurst gate below.
-                if (ScreenFlash.Instance != null && !_screenFlashFiredThisBurst)
+                // Phase 11i — ScreenFlash now gated to MELTDOWN-grade events
+                // only. Used to fire on every "bigMoment" which fired on
+                // chainDepth >= 1, washing the whole screen on routine chains.
+                // Fallback signal (no preexisting gate in this scope): chainDepth
+                // >= 3 OR longestPrimedWord >= 7 — same threshold MeltdownManager's
+                // GetMeltdownTitle uses for its top tier names.
+                bool isMeltdown = _pendingBurstChainDepth >= 3 || _pendingBurstLongestWord >= 7;
+                if (ScreenFlash.Instance != null && !_screenFlashFiredThisBurst && isMeltdown)
                 {
                     float intensity = Mathf.Clamp01((wordLen - 3) / 4f + 0.5f);
                     ScreenFlash.Instance.Play(burstTint, intensity);
@@ -2438,15 +2469,19 @@ namespace WordDrop
                     Camera cam = _cam != null ? _cam : Camera.main;
                     float halfH = cam != null ? cam.orthographicSize : 10f;
                     float halfW = halfH * ((float)Screen.width / Screen.height);
-                    float targetLength = (twVertical ? halfH : halfW) * 2.4f;
-                    float thickness    = _grid.CellSize * 1.4f;
+                    float thickness = _grid.CellSize * 1.4f;
 
-                    BigBurstFlash.Instance.Play(twCenter, targetLength, thickness, twVertical, burstTint);
+                    // Phase 11i — BigBurstFlash gated by the same per-burst cap
+                    // as the primed-word pass above. If the primed words already
+                    // fired the beam, the trigger words don't fire a second one.
+                    if (!_bigBurstFiredThisBurst)
+                    {
+                        float screenLength = ScreenExtentAlongAxis(twVertical);
+                        BigBurstFlash.Instance.Play(twCenter, screenLength, thickness, twVertical, burstTint);
+                        _bigBurstFiredThisBurst = true;
+                    }
 
-                    // Radial burst on the trigger word too — the player's own word
-                    // gets the same center-of-impact treatment as the primed words.
-                    if (RadialBurst.Instance != null)
-                        RadialBurst.Instance.Play(twCenter, _grid.CellSize * 3.0f, burstTint);
+                    // RadialBurst removed Phase 11i — see note in primed-word pass.
 
                     if (SparkleSpray.Instance != null)
                     {

@@ -351,8 +351,9 @@ namespace WordDrop
                 Color tint = new Color(1.8f, 1.4f, 0.7f, 1f); // warm gold — it's a "best chain" highlight
                 BigBurstFlash.Instance.Play(center, length, thickness, vertical, tint);
 
-                if (RadialBurst.Instance != null)
-                    RadialBurst.Instance.Play(center, grid.CellSize * 3.0f, tint);
+                // Phase 11i — RadialBurst removed (was stacking with BigBurstFlash's
+                // own radial layer + ScreenFlash to compound into screen-wide
+                // white-out). BigBurstFlash now emits its own radial halo.
 
                 if (GameParticles.Instance != null)
                 {

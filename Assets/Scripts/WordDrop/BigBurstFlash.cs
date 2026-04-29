@@ -65,42 +65,46 @@ namespace WordDrop
 
         private void LoadSprite()
         {
-            // Phase 11h hotfix 4 — swapped from big_burst_sweep.png to flare.png
-            // because the former has a solid white core running edge-to-edge
-            // horizontally; stretched at HDR 2.8 with bloom scatter 0.55 it
-            // bloomed into a uniform white slab, no halo character. flare.png
-            // has soft radial falloff in all directions, so the stretched
-            // beam reads as a bright source with rays — the Candy Crush
-            // beam shape — and the bloom amplifies the existing alpha
-            // gradient instead of fighting it.
-            Texture2D tex = Resources.Load<Texture2D>("Particles/flare");
-            if (tex == null)
-            {
-                Debug.LogError("[BigBurstFlash] Particles/flare.png not found");
-                return;
-            }
-            _sprite = Sprite.Create(
-                tex,
-                new Rect(0, 0, tex.width, tex.height),
-                new Vector2(0.5f, 0.5f),
-                100f);
-
+            // Phase 11i — beam back on big_burst_sweep so the screen-spanning
+            // sweep reads as a Candy Crush striped-candy beam. The previous
+            // hotfix-4 flare swap was made because the beam was bloomed
+            // beyond the word's row width and produced a slab; with the new
+            // tighter alpha + bloom curve and the screen-extent passing in
+            // HandManager, big_burst_sweep is the right shape — long
+            // top/bottom falloff with a hard horizontal core that reads as
+            // a "wall of light traveling across the row."
             Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
             if (addShader == null) addShader = Shader.Find("Sprites/Default");
             _additiveMat = new Material(addShader);
 
-            // Phase 11h radial glow uses Particles/circle as a soft white-to-
-            // transparent disc. Falls back to "no radial layer" if missing.
-            Texture2D radialTex = Resources.Load<Texture2D>("Particles/circle");
+            // Radial glow uses Particles/flare for soft radial falloff. The
+            // earlier circle.png loaded a hard-edged ring (lesson logged in
+            // commit cfba5ef on the FlipbookExplosion glow A/B); flare gives
+            // a clean halo that bloom amplifies cleanly.
+            Texture2D radialTex = Resources.Load<Texture2D>("Particles/flare");
             if (radialTex == null)
             {
-                Debug.LogWarning("[BigBurstFlash] Particles/circle.png not found — radial glow disabled");
+                Debug.LogWarning("[BigBurstFlash] Particles/flare.png not found — radial glow disabled");
             }
             else
             {
                 _radialSprite = Sprite.Create(
                     radialTex,
                     new Rect(0, 0, radialTex.width, radialTex.height),
+                    new Vector2(0.5f, 0.5f),
+                    100f);
+            }
+
+            Texture2D beamTex = Resources.Load<Texture2D>("Particles/big_burst_sweep");
+            if (beamTex == null)
+            {
+                Debug.LogWarning("[BigBurstFlash] Particles/big_burst_sweep.png not found — beam disabled");
+            }
+            else
+            {
+                _sprite = Sprite.Create(
+                    beamTex,
+                    new Rect(0, 0, beamTex.width, beamTex.height),
                     new Vector2(0.5f, 0.5f),
                     100f);
             }
@@ -160,8 +164,18 @@ namespace WordDrop
         public void Play(Vector3 worldPos, float targetLengthUnits, float targetThicknessUnits,
                          bool vertical = false, Color? tint = null)
         {
-            if (_sprite == null) return;
+            // Beam spawn — gated by _sprite presence so a missing big_burst_sweep
+            // texture doesn't kill the radial layer too.
+            if (_sprite != null)
+            PlayBeam(worldPos, targetLengthUnits, targetThicknessUnits, vertical, tint);
 
+            if (_radialSprite != null)
+            PlayRadial(worldPos, targetLengthUnits, targetThicknessUnits);
+        }
+
+        private void PlayBeam(Vector3 worldPos, float targetLengthUnits, float targetThicknessUnits,
+                              bool vertical, Color? tint)
+        {
             SpriteRenderer sr = Checkout();
             sr.gameObject.SetActive(true);
             sr.enabled = true;
@@ -208,38 +222,38 @@ namespace WordDrop
 
             float totalLife = FADE_IN_DURATION + HOLD_DURATION + FADE_OUT_DURATION + 0.02f;
             StartCoroutine(ReturnAfter(sr, totalLife));
+        }
 
-            // Phase 11h: emit a radial glow on top of the beam. Reads as a
-            // luminous light source appearing at the burst center, matching
-            // the Candy Crush "lit" feel. Sits above the beam in sort order.
-            if (_radialSprite != null)
-            {
-                SpriteRenderer rs = CheckoutRadial();
-                rs.gameObject.SetActive(true);
-                rs.enabled = true;
-                rs.transform.position = new Vector3(worldPos.x, worldPos.y, -0.6f);
-                rs.transform.localRotation = Quaternion.identity;
+        // Radial halo on top of the beam. Reads as a luminous light source
+        // appearing at the burst center, matching the Candy Crush "lit" feel.
+        // Sits one above the beam in sort order.
+        private void PlayRadial(Vector3 worldPos, float targetLengthUnits, float targetThicknessUnits)
+        {
+            SpriteRenderer rs = CheckoutRadial();
+            rs.gameObject.SetActive(true);
+            rs.enabled = true;
+            rs.transform.position = new Vector3(worldPos.x, worldPos.y, -0.6f);
+            rs.transform.localRotation = Quaternion.identity;
 
-                float radialBase = Mathf.Max(targetThicknessUnits, targetLengthUnits * 0.35f);
-                float startScale = radialBase * RADIAL_START_SCALE;
-                float endScale   = radialBase * RADIAL_END_SCALE;
-                rs.transform.localScale = new Vector3(startScale, startScale, 1f);
+            float radialBase = Mathf.Max(targetThicknessUnits, targetLengthUnits * 0.35f);
+            float startScale = radialBase * RADIAL_START_SCALE;
+            float endScale   = radialBase * RADIAL_END_SCALE;
+            rs.transform.localScale = new Vector3(startScale, startScale, 1f);
 
-                Color rc = new Color(RADIAL_HDR_INTENSITY, RADIAL_HDR_INTENSITY, RADIAL_HDR_INTENSITY, 0f);
-                rs.color = rc;
+            Color rc = new Color(RADIAL_HDR_INTENSITY, RADIAL_HDR_INTENSITY, RADIAL_HDR_INTENSITY, 0f);
+            rs.color = rc;
 
-                rs.transform.DOKill();
-                rs.DOKill();
-                rs.transform.DOScale(new Vector3(endScale, endScale, 1f), RADIAL_RISE_DURATION)
-                    .SetEase(Ease.OutCubic);
+            rs.transform.DOKill();
+            rs.DOKill();
+            rs.transform.DOScale(new Vector3(endScale, endScale, 1f), RADIAL_RISE_DURATION)
+                .SetEase(Ease.OutCubic);
 
-                var rseq = DOTween.Sequence();
-                rseq.Append(DOTween.ToAlpha(() => rs.color, v => rs.color = v, 1f, 0.04f).SetEase(Ease.OutQuad));
-                rseq.AppendInterval(0.06f);
-                rseq.Append(DOTween.ToAlpha(() => rs.color, v => rs.color = v, 0f, RADIAL_FADE_OUT).SetEase(Ease.InQuad));
+            var rseq = DOTween.Sequence();
+            rseq.Append(DOTween.ToAlpha(() => rs.color, v => rs.color = v, 1f, 0.04f).SetEase(Ease.OutQuad));
+            rseq.AppendInterval(0.06f);
+            rseq.Append(DOTween.ToAlpha(() => rs.color, v => rs.color = v, 0f, RADIAL_FADE_OUT).SetEase(Ease.InQuad));
 
-                StartCoroutine(ReturnRadialAfter(rs, 0.04f + 0.06f + RADIAL_FADE_OUT + 0.02f));
-            }
+            StartCoroutine(ReturnRadialAfter(rs, 0.04f + 0.06f + RADIAL_FADE_OUT + 0.02f));
         }
 
         private IEnumerator ReturnAfter(SpriteRenderer sr, float delay)
