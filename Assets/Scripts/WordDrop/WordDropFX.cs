@@ -491,9 +491,20 @@ namespace WordDrop
             // ── Flipbook explosion per tile ──
             if (FlipbookExplosion.Instance != null)
             {
+                bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
                 for (int i = 0; i < tiles.Count; i++)
-                    if (tiles[i] != null)
-                        FlipbookExplosion.Instance.Play(tiles[i].transform.position, tier);
+                {
+                    if (tiles[i] == null) continue;
+                    Vector3 tpos = tiles[i].transform.position;
+                    FlipbookExplosion.Instance.Play(tpos, tier);
+
+                    // Phase 11j-meltdown: when a meltdown is active, also spawn
+                    // the AllIn1 Magic Explosive Spell prefab on each detonating
+                    // tile so the hero VFX reads as covering the actual cluster
+                    // rather than a single central blob.
+                    if (meltdownActive)
+                        FlipbookExplosion.Instance.PlayMeltdown(tpos);
+                }
             }
 
             // ── Shatter + particles + sparkles ──
