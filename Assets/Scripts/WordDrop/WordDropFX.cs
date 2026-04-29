@@ -481,8 +481,10 @@ namespace WordDrop
                 tiles[i].FlashHighlight(flashColor);
             }
 
-            // ── Screen flash + sound (tier 2+) ──
-            if (screenFlash) PlayScreenFlash(tier - 1);
+            // ── Screen flash DISABLED 2026-04-29 — colored prefabs now provide impact reading.
+            //    Re-enable only if Spencer wants white-wash back for hero events. Gate to
+            //    meltdown-grade chains, not tier-2+. ──
+            // if (screenFlash) PlayScreenFlash(tier - 1);
             Debug.Log($"[DetonationSFX] WordDropFX.PlayExplosion calling PlayDetonation(tier={tier}, arg={tier-1}). GameAudio.Instance null? {GameAudio.Instance == null}");
             GameAudio.Instance?.PlayDetonation(tier - 1);
 
