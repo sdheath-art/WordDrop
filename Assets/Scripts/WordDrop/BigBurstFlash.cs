@@ -65,26 +65,24 @@ namespace WordDrop
 
         private void LoadSprite()
         {
-            // Phase 11i — beam back on big_burst_sweep so the screen-spanning
-            // sweep reads as a Candy Crush striped-candy beam. The previous
-            // hotfix-4 flare swap was made because the beam was bloomed
-            // beyond the word's row width and produced a slab; with the new
-            // tighter alpha + bloom curve and the screen-extent passing in
-            // HandManager, big_burst_sweep is the right shape — long
-            // top/bottom falloff with a hard horizontal core that reads as
-            // a "wall of light traveling across the row."
+            // Phase 11j Tier 1 — sprites swapped to AllIn1 VFX toolkit shapes:
+            //   beam:   big_burst_sweep → beam_shape (proper authored beam
+            //           silhouette with soft falloff on ALL edges, not just
+            //           top/bottom). The previous big_burst_sweep had a hard
+            //           horizontal core that produced a slab when stretched.
+            //   radial: flare → light_rays (light-rays texture reads as soft
+            //           rays emanating from a point — closer to the "lit"
+            //           Candy Crush halo than flare's lens-streak character).
+            // Both copied into Resources/Particles/ from
+            // Plugins/AllIn1VfxToolkit/Demo & Assets/Textures/Shapes/.
             Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
             if (addShader == null) addShader = Shader.Find("Sprites/Default");
             _additiveMat = new Material(addShader);
 
-            // Radial glow uses Particles/flare for soft radial falloff. The
-            // earlier circle.png loaded a hard-edged ring (lesson logged in
-            // commit cfba5ef on the FlipbookExplosion glow A/B); flare gives
-            // a clean halo that bloom amplifies cleanly.
-            Texture2D radialTex = Resources.Load<Texture2D>("Particles/flare");
+            Texture2D radialTex = Resources.Load<Texture2D>("Particles/light_rays");
             if (radialTex == null)
             {
-                Debug.LogWarning("[BigBurstFlash] Particles/flare.png not found — radial glow disabled");
+                Debug.LogWarning("[BigBurstFlash] Particles/light_rays.png not found — radial glow disabled");
             }
             else
             {
@@ -95,10 +93,10 @@ namespace WordDrop
                     100f);
             }
 
-            Texture2D beamTex = Resources.Load<Texture2D>("Particles/big_burst_sweep");
+            Texture2D beamTex = Resources.Load<Texture2D>("Particles/beam_shape");
             if (beamTex == null)
             {
-                Debug.LogWarning("[BigBurstFlash] Particles/big_burst_sweep.png not found — beam disabled");
+                Debug.LogWarning("[BigBurstFlash] Particles/beam_shape.png not found — beam disabled");
             }
             else
             {
