@@ -406,6 +406,25 @@ namespace WordDrop
             bool mobile = Application.isMobilePlatform;
             int tileCount = tiles.Count;
 
+            // Phase 11j-meltdown — Candy-Crush-style telegraph: spawn the
+            // AllIn1 Magic Explosive Spell prefab on each tile FIRST so it
+            // starts its wind-up animation, then defer the rest of the
+            // explosion FX (flash, dissolve, fragments, audio, flipbook) so
+            // they peak at the prefab's blast moment. Without this defer,
+            // tiles destruct first and the prefab's late-arriving blast
+            // hits empty cells (Spencer's screenshot).
+            const float MELTDOWN_WINDUP_DELAY = 0.50f;
+            bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
+            if (meltdownActive && FlipbookExplosion.Instance != null)
+            {
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    if (tiles[i] == null) continue;
+                    FlipbookExplosion.Instance.PlayMeltdown(tiles[i].transform.position);
+                }
+                yield return WaitCache.Get(MELTDOWN_WINDUP_DELAY);
+            }
+
             // Determine tier by tiles exploded + chain depth
             int tier;
             if (chainStep >= 3 || tileCount >= 15) tier = 4;
@@ -489,22 +508,14 @@ namespace WordDrop
             GameAudio.Instance?.PlayDetonation(tier - 1);
 
             // ── Flipbook explosion per tile ──
+            // (Meltdown prefab — if any — was spawned at the top of the
+            // coroutine before the wind-up yield; this block now only fires
+            // the bubble@2x glow flipbook per tile.)
             if (FlipbookExplosion.Instance != null)
             {
-                bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
                 for (int i = 0; i < tiles.Count; i++)
-                {
-                    if (tiles[i] == null) continue;
-                    Vector3 tpos = tiles[i].transform.position;
-                    FlipbookExplosion.Instance.Play(tpos, tier);
-
-                    // Phase 11j-meltdown: when a meltdown is active, also spawn
-                    // the AllIn1 Magic Explosive Spell prefab on each detonating
-                    // tile so the hero VFX reads as covering the actual cluster
-                    // rather than a single central blob.
-                    if (meltdownActive)
-                        FlipbookExplosion.Instance.PlayMeltdown(tpos);
-                }
+                    if (tiles[i] != null)
+                        FlipbookExplosion.Instance.Play(tiles[i].transform.position, tier);
             }
 
             // ── Shatter + particles + sparkles ──

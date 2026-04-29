@@ -192,23 +192,12 @@ namespace WordDrop
                 Debug.LogWarning("[FlipbookFX] Meltdown prefab not assigned (Resources/Prefabs/FX/Magic Explosive Spell) — skipping");
                 return;
             }
+            // Plays the prefab from t=0 with its full wind-up intact.
+            // WordDropFX.ExplosionCoroutine spawns this FIRST, then waits
+            // MELTDOWN_WINDUP_DELAY before running the rest of the
+            // explosion FX so the prefab's blast peak coincides with the
+            // tile destruction (Candy Crush "telegraph then bang" pattern).
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
-
-            // The AllIn1 Magic Explosive Spell prefab has a ~0.6s wind-up
-            // before its visible blast. Tile detonations in WordDropFX run
-            // ~0.3-0.4s, so without skipping the wind-up the prefab's blast
-            // peak landed AFTER the tiles were already gone. Fast-forward
-            // every ParticleSystem in the spawned hierarchy past the wind-up
-            // so the blast peak coincides with the rest of the explosion.
-            const float WINDUP_SKIP = 0.55f;
-            var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
-            for (int i = 0; i < systems.Length; i++)
-            {
-                if (systems[i] == null) continue;
-                systems[i].Simulate(WINDUP_SKIP, withChildren: false, restart: true);
-                systems[i].Play();
-            }
-
             Destroy(inst, 4f);
         }
 
