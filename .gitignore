@@ -32,6 +32,8 @@ Thumbs.db
 Assets/Feel/
 Assets/Plugins/
 Assets/TextMesh Pro/
+Assets/Hovl Studio/
+Assets/Particle VFX/
 
 # Binary assets (fonts, audio, etc.)
 Assets/Fonts/
@@ -64,3 +66,5 @@ WordDropiOS/
 
 # Mono crash dumps
 mono_crash.*.json
+mono_crash.mem.*
+mono_crash.*.blob
