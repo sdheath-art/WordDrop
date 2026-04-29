@@ -141,7 +141,7 @@ namespace WordDrop
             //   scatter   0.55: narrower spread (was 0.7 — bled across screen)
             bloom.threshold.value = 1.05f;
             bloom.intensity.value = 0.7f;
-            bloom.scatter.value   = 0.55f;
+            bloom.scatter.value   = 0.40f;
 
             // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
             // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams
