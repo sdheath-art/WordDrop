@@ -245,29 +245,34 @@ namespace WordDrop
             Color tint;
 
             // HDR glow halo tints so bloom catches the outer glow ring.
+            // Sizes halved from prior values — bubble@2x's native sprite is
+            // 2.56 world units (512px @ ppu=200), so the old endSize × cellSize
+            // produced ~2-3 cell-wide glows; chains stacked into screen-fill.
+            // New endSize multipliers target ~0.5/0.8/1.1/1.4 cells wide for
+            // tiers 1/2/3/4 so a 5-way overlap stays bounded.
             switch (tier)
             {
                 case 1:
-                    startSize = cellSize * 0.08f;
-                    endSize = cellSize * 0.4f;
+                    startSize = cellSize * 0.04f;
+                    endSize = cellSize * 0.20f;
                     tint = new Color(1.3f, 1.75f, 2.2f, 0.5f);
                     duration = 0.25f;
                     break;
                 case 2:
-                    startSize = cellSize * 0.1f;
-                    endSize = cellSize * 0.6f;
+                    startSize = cellSize * 0.05f;
+                    endSize = cellSize * 0.30f;
                     tint = new Color(1.1f, 2.2f, 1.3f, 0.6f);
                     duration = 0.3f;
                     break;
                 case 3:
-                    startSize = cellSize * 0.15f;
-                    endSize = cellSize * 0.85f;
+                    startSize = cellSize * 0.08f;
+                    endSize = cellSize * 0.42f;
                     tint = new Color(2.2f, 1.5f, 0.6f, 0.7f);
                     duration = 0.35f;
                     break;
                 default:
-                    startSize = cellSize * 0.2f;
-                    endSize = cellSize * 1.1f;
+                    startSize = cellSize * 0.10f;
+                    endSize = cellSize * 0.55f;
                     tint = new Color(2.2f, 1.1f, 0.9f, 0.8f);
                     duration = 0.4f;
                     break;
