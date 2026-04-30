@@ -391,6 +391,18 @@ namespace WordDrop
             if (forceMeltdown && isPlayingField != null && MeltdownManager.Instance != null)
                 isPlayingField.SetValue(MeltdownManager.Instance, true);
 
+            // Force the meltdown FX toggles on for the test — the user might
+            // not have flipped them in the panel. Save and restore so the
+            // global state doesn't leak across test fires.
+            bool savedMeltdownPrefab    = WordDropFX.FX_MeltdownPrefab;
+            bool savedTileHeatOverlay   = WordDropFX.FX_TileHeatOverlay;
+            if (forceMeltdown)
+            {
+                WordDropFX.FX_MeltdownPrefab  = true;
+                WordDropFX.FX_TileHeatOverlay = true;
+                Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay ON for the duration of this test fire");
+            }
+
             // Cache positions so we can re-place tiles after PlayExplosion's
             // SetActive(false) at end of its loop.
             var positions = new List<Vector3>(tiles.Count);
@@ -413,6 +425,14 @@ namespace WordDrop
 
             if (forceMeltdown && isPlayingField != null && MeltdownManager.Instance != null)
                 isPlayingField.SetValue(MeltdownManager.Instance, false);
+
+            // Restore the toggles we forced on at the start so global state
+            // doesn't leak past this test fire.
+            if (forceMeltdown)
+            {
+                WordDropFX.FX_MeltdownPrefab  = savedMeltdownPrefab;
+                WordDropFX.FX_TileHeatOverlay = savedTileHeatOverlay;
+            }
         }
 
         private IEnumerator ForcedMeltdownDetonation(List<Tile> fake, int chainStep, int wordLen)

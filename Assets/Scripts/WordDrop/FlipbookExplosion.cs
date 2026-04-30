@@ -219,6 +219,13 @@ namespace WordDrop
             // matches the prefab's full lifecycle (~3-4s).
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
 
+            // Strip AllIn1 demo helper scripts that error in our scene
+            // (no AllIn1Shaker singleton exists). We have our own shake
+            // systems via WordDropFX so the demo helper is redundant anyway.
+            var demoShakers = inst.GetComponentsInChildren<AllIn1VfxToolkit.Demo.Scripts.AllIn1DoShake>(true);
+            for (int i = 0; i < demoShakers.Length; i++)
+                if (demoShakers[i] != null) Destroy(demoShakers[i]);
+
             // Slight upsize so the FX reads as cluster-spanning. ParticleSystem
             // scalingMode must be Hierarchy (not the default Local) for the
             // transform scale to actually grow the emitted particles. Only
