@@ -409,7 +409,7 @@ namespace WordDrop
         // toggle is false, that's an ungated leak — grep debug_log.txt for
         // [FX] entries to find which layer fired anyway. Each gate logs FIRED
         // or SKIPPED so the trace is in the log even when visuals are absent.
-        public static bool FX_MeltdownPrefab    = false; // AllIn1 Magic Explosive Spell on each tile (meltdown only)
+        public static bool FX_MeltdownPrefab    = true;  // AllIn1 Magic Explosive Spell on each tile (meltdown only)
         public static bool FX_TileFlash         = false; // white/yellow flash on each tile pre-dissolve
         public static bool FX_DetonationAudio   = false; // tiered detonation SFX (PlayDetonation)
         public static bool FX_FlipbookFrames    = false; // 16-frame explosion_flipbook sprite-sheet animation per tile
@@ -439,7 +439,11 @@ namespace WordDrop
             // hits empty cells (Spencer's screenshot).
             Debug.Log($"[FX-Detonation] tier={(chainStep >= 3 || tileCount >= 15 ? 4 : chainStep >= 2 || tileCount >= 9 ? 3 : tileCount >= 5 ? 2 : 1)} chain={chainStep} tiles={tileCount}");
 
-            const float MELTDOWN_WINDUP_DELAY = 0.50f;
+            // 1.5s aligns the tile-destruction moment with the AllIn1 prefab's
+            // blast peak (authored startDelay ~1.7s on its blast PSes). Tile
+            // dissolves slightly before the peak so the cause-and-effect reads
+            // as "blast destroys tile" rather than "tile vanishes mid-animation."
+            const float MELTDOWN_WINDUP_DELAY = 1.50f;
             bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
             if (FX_MeltdownPrefab && meltdownActive && FlipbookExplosion.Instance != null)
             {

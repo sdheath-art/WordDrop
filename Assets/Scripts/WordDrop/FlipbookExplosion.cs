@@ -199,6 +199,18 @@ namespace WordDrop
             // (wind-up → blast → fade) at its natural pace. Destroy timer
             // matches the prefab's full lifecycle (~3-4s).
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
+
+            // Force every Renderer in the spawned hierarchy in front of
+            // the tile sprites. Tiles render at sortingOrder = 5; the prefab
+            // defaults to 0 which puts the FX behind them. Sort 50 lands
+            // above tiles + their letter text (5 / 6) and is in the same
+            // band as FlipbookExplosion (30) — below the screen-spanning
+            // BigBurstFlash beam (150) which we want to remain on top.
+            const int MELTDOWN_SORT_ORDER = 50;
+            var renderers = inst.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+                if (renderers[i] != null) renderers[i].sortingOrder = MELTDOWN_SORT_ORDER;
+
             Destroy(inst, 4f);
         }
 
