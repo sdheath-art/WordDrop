@@ -336,7 +336,10 @@ namespace WordDrop
 
             // Meltdown SFX + haptic (the big hit)
             GameAudio.Instance?.PlayMeltdown();
-            GameParticles.Instance?.PlayMeltdown(Vector3.zero);
+            // Confetti gated by the same FX_Confetti toggle as WordDropFX so a
+            // single switch covers both spawn paths.
+            if (WordDropFX.FX_Confetti)
+                GameParticles.Instance?.PlayMeltdown(Vector3.zero);
             HapticsManager.Meltdown();
 
             // White screen flash — instant to peak
