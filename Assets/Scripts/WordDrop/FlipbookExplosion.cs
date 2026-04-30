@@ -38,6 +38,15 @@ namespace WordDrop
         // have the package imported.
         [SerializeField] private GameObject _meltdownPrefab;
 
+        // Speed multiplier applied to every ParticleSystem in the spawned
+        // meltdown prefab. >1 plays faster, <1 plays slower. WordDropFX
+        // reads this constant to scale MELTDOWN_WINDUP_DELAY automatically
+        // so tile destruction stays aligned with the blast peak.
+        public const float MELTDOWN_PREFAB_SPEED = 2.0f;
+        // Authored blast peak in the prefab is at startDelay 1.7s in real
+        // time; at simulationSpeed=N the peak moves to 1.7 / N.
+        public const float MELTDOWN_BLAST_PEAK_AT_REAL_SPEED = 1.70f;
+
         // Phase 11j-heat-overlay: a soft rounded-square aura sprite tinted
         // and pulsed during the meltdown wind-up so each tile reads as
         // "heating up before the bang." The aura is rendered through a
@@ -249,6 +258,7 @@ namespace WordDrop
                 if (systems[i] == null) continue;
                 var main = systems[i].main;
                 main.scalingMode = ParticleSystemScalingMode.Hierarchy;
+                main.simulationSpeed = MELTDOWN_PREFAB_SPEED;
             }
 
             // Force every Renderer in the spawned hierarchy in front of
@@ -262,7 +272,10 @@ namespace WordDrop
             for (int i = 0; i < renderers.Length; i++)
                 if (renderers[i] != null) renderers[i].sortingOrder = MELTDOWN_SORT_ORDER;
 
-            Destroy(inst, 4f);
+            // Destroy timer scales with the simulation speed so we don't
+            // either truncate the tail (timer too short) or leak invisible
+            // GOs (timer too long).
+            Destroy(inst, 4f / MELTDOWN_PREFAB_SPEED);
         }
 
         /// <summary>
