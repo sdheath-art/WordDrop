@@ -194,38 +194,11 @@ namespace WordDrop
                 Debug.LogWarning("[FlipbookFX] Meltdown prefab not assigned (Resources/Prefabs/FX/Magic Explosive Spell) — skipping");
                 return;
             }
-            // Configure BEFORE the particle systems start playing.
-            // Instantiate inactive so playOnAwake doesn't fire under the
-            // authored settings — then activate after we've zeroed start
-            // delays + flipped scaling mode + scaled the root. This avoids
-            // the Stop+Play race that was cutting layers off mid-animation.
+            // Plain spawn — no scale override, no startDelay rewrite, no
+            // scalingMode flip. The prefab plays its authored sequence
+            // (wind-up → blast → fade) at its natural pace. Destroy timer
+            // matches the prefab's full lifecycle (~3-4s).
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
-            inst.SetActive(false);
-
-            // 2× scale for the whole hierarchy. ParticleSystem scaling mode
-            // must be Hierarchy (not Local) for transform.scale to actually
-            // grow the emitted particles — otherwise the parent scales but
-            // the particles stay original-sized.
-            const float MELTDOWN_SCALE = 2f;
-            inst.transform.localScale = Vector3.one * MELTDOWN_SCALE;
-
-            // The AllIn1 prefab was authored with startDelay values up to 1.7s
-            // on its blast particle systems — designed as a slow magical reveal,
-            // not a tight game-feel explosion. Override every startDelay to 0
-            // so each PS fires from t=0; the wind-up plays as overlapping
-            // sparkle layers in the first ~0.5s instead of a long pause then
-            // delayed bang. WordDropFX.ExplosionCoroutine yields 0.5s after
-            // this call so the bubble glow + flipbook + dissolve land together.
-            var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
-            for (int i = 0; i < systems.Length; i++)
-            {
-                if (systems[i] == null) continue;
-                var main = systems[i].main;
-                main.startDelay = 0f;
-                main.scalingMode = ParticleSystemScalingMode.Hierarchy;
-            }
-
-            inst.SetActive(true);
             Destroy(inst, 4f);
         }
 
