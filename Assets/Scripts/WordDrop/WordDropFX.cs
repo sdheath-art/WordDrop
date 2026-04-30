@@ -601,10 +601,14 @@ namespace WordDrop
                 if (tiles[i] == null) continue;
                 Vector3 pos = tiles[i].transform.position;
 
-                // Tile fragments
-                if (FX_TileFragments && TileFragments.Instance != null)
+                // Tile fragments — also fires unconditionally during meltdown,
+                // so the tiles visibly shatter at the blast peak regardless
+                // of the global FX_TileFragments toggle (which still gates
+                // non-meltdown detonations).
+                bool fragsThisShot = (FX_TileFragments || meltdownActive) && TileFragments.Instance != null;
+                if (fragsThisShot)
                 {
-                    if (i == 0) Debug.Log("[FX] TileFragments: FIRED");
+                    if (i == 0) Debug.Log($"[FX] TileFragments: FIRED (toggle={FX_TileFragments}, meltdown={meltdownActive})");
                     TileFragments.Instance.Shatter(tiles[i]);
                 }
                 else if (i == 0) { Debug.Log("[FX] TileFragments: SKIPPED"); }
