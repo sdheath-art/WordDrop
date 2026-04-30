@@ -2260,6 +2260,7 @@ namespace WordDrop
         private const float TILE_FLASH_BOX_CHANCE = 0.6f; // 60% of detonations show boxes
         private void FireTileFlashBoxes(IList<Tile> dying)
         {
+            if (!WordDropFX.FX_TileFlashBox) return; // Phase 11j tuning toggle
             if (TileFlashBox.Instance == null || _grid == null || dying == null) return;
             if (dying.Count == 0) return;
 
@@ -2305,6 +2306,7 @@ namespace WordDrop
         private void FirePerWordBurst()
         {
             _screenFlashFiredThisBurst = false; // reset per burst pass
+            if (!WordDropFX.FX_BigBurstFlash) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; } // Phase 11j tuning toggle
             if (BigBurstFlash.Instance == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;

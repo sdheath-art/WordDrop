@@ -401,6 +401,25 @@ namespace WordDrop
             return StartCoroutine(ExplosionCoroutine(tiles, chainStep, wordLength));
         }
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        // FX LAYER TOGGLES (Phase 11j tuning — flip to A/B individual layers)
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Each detonation fires this stack of independent FX layers. Flip any to
+        // false to disable that layer cluster-wide and isolate the visual reading.
+        // Recompile (Unity hot-reloads in 2-3s) to see changes. All default true =
+        // current full stack.
+        public static bool FX_MeltdownPrefab    = true;  // AllIn1 Magic Explosive Spell on each tile (meltdown only)
+        public static bool FX_TileFlash         = true;  // white/yellow flash on each tile pre-dissolve
+        public static bool FX_DetonationAudio   = true;  // tiered detonation SFX (PlayDetonation)
+        public static bool FX_FlipbookGlow      = true;  // bubble@2x glow halo per tile (FlipbookExplosion.Play)
+        public static bool FX_TileFragments     = true;  // shattered tile pieces per tile
+        public static bool FX_SparkleParticles  = true;  // PlayPrimed + PlayWordScored sparkles (tier 2+)
+        public static bool FX_BoardShake        = true;  // camera shake + hand-card shake + neighbor ripple
+        public static bool FX_Confetti          = true;  // tier-4 confetti burst at cluster center
+        public static bool FX_Haptics           = true;  // phone vibration
+        public static bool FX_BigBurstFlash     = true;  // screen-spanning beam + radial halo (per-word, HandManager)
+        public static bool FX_TileFlashBox      = true;  // bright box overlay per tile (HandManager.FireTileFlashBoxes)
+
         private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
         {
             bool mobile = Application.isMobilePlatform;
@@ -415,7 +434,7 @@ namespace WordDrop
             // hits empty cells (Spencer's screenshot).
             const float MELTDOWN_WINDUP_DELAY = 0.50f;
             bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
-            if (meltdownActive && FlipbookExplosion.Instance != null)
+            if (FX_MeltdownPrefab && meltdownActive && FlipbookExplosion.Instance != null)
             {
                 for (int i = 0; i < tiles.Count; i++)
                 {
@@ -435,7 +454,7 @@ namespace WordDrop
             Debug.Log($"[VFX] Explosion tier={tier} tiles={tileCount} chain={chainStep}");
 
             // Tiered haptic feedback
-            HapticsManager.Explosion(tier);
+            if (FX_Haptics) HapticsManager.Explosion(tier);
 
             // All tiers: flash → dissolve → particles → shake
             // NO DOScale or DORotate — dissolve handles the visual death.
@@ -493,25 +512,31 @@ namespace WordDrop
             }
 
             // ── Flash all tiles ──
-            for (int i = 0; i < tiles.Count; i++)
+            if (FX_TileFlash)
             {
-                if (tiles[i] == null) continue;
-                tiles[i].transform.DOComplete(); // kill any in-progress tweens cleanly
-                tiles[i].FlashHighlight(flashColor);
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    if (tiles[i] == null) continue;
+                    tiles[i].transform.DOComplete(); // kill any in-progress tweens cleanly
+                    tiles[i].FlashHighlight(flashColor);
+                }
             }
 
             // ── Screen flash DISABLED 2026-04-29 — colored prefabs now provide impact reading.
             //    Re-enable only if Spencer wants white-wash back for hero events. Gate to
             //    meltdown-grade chains, not tier-2+. ──
             // if (screenFlash) PlayScreenFlash(tier - 1);
-            Debug.Log($"[DetonationSFX] WordDropFX.PlayExplosion calling PlayDetonation(tier={tier}, arg={tier-1}). GameAudio.Instance null? {GameAudio.Instance == null}");
-            GameAudio.Instance?.PlayDetonation(tier - 1);
+            if (FX_DetonationAudio)
+            {
+                Debug.Log($"[DetonationSFX] WordDropFX.PlayExplosion calling PlayDetonation(tier={tier}, arg={tier-1}). GameAudio.Instance null? {GameAudio.Instance == null}");
+                GameAudio.Instance?.PlayDetonation(tier - 1);
+            }
 
             // ── Flipbook explosion per tile ──
             // (Meltdown prefab — if any — was spawned at the top of the
             // coroutine before the wind-up yield; this block now only fires
             // the bubble@2x glow flipbook per tile.)
-            if (FlipbookExplosion.Instance != null)
+            if (FX_FlipbookGlow && FlipbookExplosion.Instance != null)
             {
                 for (int i = 0; i < tiles.Count; i++)
                     if (tiles[i] != null)
@@ -525,13 +550,13 @@ namespace WordDrop
                 Vector3 pos = tiles[i].transform.position;
 
                 // Tile fragments
-                if (TileFragments.Instance != null)
+                if (FX_TileFragments && TileFragments.Instance != null)
                     TileFragments.Instance.Shatter(tiles[i]);
 
                 // Ember particles removed — flipbook + bubble + fragments is enough
 
                 // Sparkle stars + glow (tier 2+)
-                if (tier >= 2 && GameParticles.Instance != null)
+                if (FX_SparkleParticles && tier >= 2 && GameParticles.Instance != null)
                 {
                     GameParticles.Instance.PlayPrimed(pos);
                     if (tier >= 3)
@@ -543,7 +568,7 @@ namespace WordDrop
             }
 
             // ── Shake (tier 2+) ──
-            if (boardShake)
+            if (FX_BoardShake && boardShake)
             {
                 PlayBoardShake(tier - 1, tileCount);
                 if (tier >= 3) ShakeHandCards(tier - 1, tileCount);
@@ -551,7 +576,7 @@ namespace WordDrop
             }
 
             // ── Confetti (tier 4) ──
-            if (confetti)
+            if (FX_Confetti && confetti)
             {
                 Vector3 center = Vector3.zero;
                 int count = 0;
