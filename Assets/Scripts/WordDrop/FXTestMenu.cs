@@ -145,6 +145,24 @@ namespace WordDrop
                 FireMeltdownIntroOnly();
             innerY += BTN_H + GAP;
 
+            innerY += 8;
+
+            // ── Real-tile detonations — fires FX on actual board tiles, then
+            // reactivates them so game state stays clean. Useful for seeing
+            // how the explosion reads against the populated grid (vs dummy
+            // tiles in empty space).
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 4 board tiles (Tier 2)", _btnStyle))
+                DetonateRealBoardTiles(count: 4, chainStep: 1, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 8 board tiles (Tier 3)", _btnStyle))
+                DetonateRealBoardTiles(count: 8, chainStep: 2, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 12 tiles MELTDOWN (Tier 4)", _btnStyle))
+                DetonateRealBoardTiles(count: 12, chainStep: 3, forceMeltdown: true);
+            innerY += BTN_H + GAP;
+
             innerY += 14;
 
             // ── Layer toggles ────────────────────────────────────────────────────
@@ -333,6 +351,66 @@ namespace WordDrop
             MeltdownManager.Instance.TryMeltdownOutro();
 
             WordDropFX.FX_MeltdownIntroFlash = saved;
+        }
+
+        // ── Real-tile detonation — picks live tiles from the grid, runs FX on
+        // them, then reactivates them so RulesEngine/MatchController state
+        // stays correct. Caller doesn't need a primed word, edits, or chain.
+        private void DetonateRealBoardTiles(int count, int chainStep, bool forceMeltdown)
+        {
+            if (WordDropFX.Instance == null || GridManager.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] WordDropFX or GridManager missing");
+                return;
+            }
+
+            var tiles = new List<Tile>();
+            for (int row = 0; row < RulesEngine.ROWS && tiles.Count < count; row++)
+                for (int col = 0; col < RulesEngine.COLS && tiles.Count < count; col++)
+                {
+                    Tile t = GridManager.Instance.GetTile(col, row);
+                    if (t != null && t.gameObject.activeSelf) tiles.Add(t);
+                }
+
+            if (tiles.Count == 0)
+            {
+                Debug.LogWarning("[FXTest] No live tiles on the board — drop a few first or run Tier-buttons instead");
+                return;
+            }
+
+            StartCoroutine(RealDetonationCoroutine(tiles, chainStep, forceMeltdown));
+        }
+
+        private IEnumerator RealDetonationCoroutine(List<Tile> tiles, int chainStep, bool forceMeltdown)
+        {
+            FieldInfo isPlayingField = forceMeltdown
+                ? typeof(MeltdownManager).GetField("_isPlaying", BindingFlags.NonPublic | BindingFlags.Instance)
+                : null;
+            if (forceMeltdown && isPlayingField != null && MeltdownManager.Instance != null)
+                isPlayingField.SetValue(MeltdownManager.Instance, true);
+
+            // Cache positions so we can re-place tiles after PlayExplosion's
+            // SetActive(false) at end of its loop.
+            var positions = new List<Vector3>(tiles.Count);
+            for (int i = 0; i < tiles.Count; i++) positions.Add(tiles[i].transform.position);
+
+            yield return WordDropFX.Instance.PlayExplosion(tiles, chainStep, tiles.Count);
+
+            // Hold a beat for the prefab tail / fragments to settle.
+            yield return new WaitForSeconds(0.6f);
+
+            // Restore tiles — re-activate the GameObjects and snap positions
+            // back (TileFragments shifts the visible tile while shattering
+            // sometimes; resetting position guarantees visual integrity).
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                if (tiles[i] == null) continue;
+                tiles[i].gameObject.SetActive(true);
+                tiles[i].transform.position = positions[i];
+            }
+
+            if (forceMeltdown && isPlayingField != null && MeltdownManager.Instance != null)
+                isPlayingField.SetValue(MeltdownManager.Instance, false);
         }
 
         private IEnumerator ForcedMeltdownDetonation(List<Tile> fake, int chainStep, int wordLen)
