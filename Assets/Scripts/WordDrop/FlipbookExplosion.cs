@@ -40,8 +40,11 @@ namespace WordDrop
 
         // Phase 11j-heat-overlay: a soft rounded-square aura sprite tinted
         // and pulsed during the meltdown wind-up so each tile reads as
-        // "heating up before the bang."
+        // "heating up before the bang." The aura is rendered through a
+        // SpriteMask shaped like the tile so the soft falloff is clipped
+        // cleanly to the tile silhouette (no halo bleed past tile edges).
         private Sprite _heatAuraSprite;
+        private Sprite _tileMaskSprite;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
@@ -83,6 +86,10 @@ namespace WordDrop
             {
                 Debug.LogWarning("[FlipbookFX] Particles/square_aura missing — tile heat-up disabled");
             }
+
+            // Tile sprite acts as the SpriteMask shape so the aura stays
+            // clipped to the rounded-rect silhouette.
+            _tileMaskSprite = Resources.Load<Sprite>("Tiles/test_tile");
         }
 
         private void SliceSpriteSheet()
@@ -272,21 +279,39 @@ namespace WordDrop
 
         private IEnumerator TileHeatOverlayCoroutine(Vector3 worldPos, float cellSize, float duration)
         {
-            // Simple SpriteRenderer with the rounded-square aura texture.
-            // Tint + alpha-pulse + scale-ramp drive the "heating up" feel —
-            // no shader complexity, no AllIn1 dependencies.
+            // Parent overlay GO holds the SpriteMask + aura SpriteRenderer.
             GameObject overlay = new GameObject("TileHeatOverlay");
             overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.4f);
 
+            // Mask child — uses tile sprite, sized to one tile, clips the aura
+            // to the rounded-rect silhouette so the soft falloff doesn't
+            // bleed past tile edges.
+            SpriteMask mask = null;
+            if (_tileMaskSprite != null)
+            {
+                GameObject maskGO = new GameObject("TileHeatMask");
+                maskGO.transform.SetParent(overlay.transform, false);
+                mask = maskGO.AddComponent<SpriteMask>();
+                mask.sprite = _tileMaskSprite;
+                // Mask scaled to exactly one cell.
+                float maskNative = _tileMaskSprite.bounds.size.x;
+                float maskScale = cellSize / Mathf.Max(maskNative, 0.001f);
+                maskGO.transform.localScale = new Vector3(maskScale, maskScale, 1f);
+                mask.isolateMaskedSprites = true; // confine masking to children
+            }
+
+            // Aura sprite — tinted, pulsed, alpha-faded, masked by the
+            // SpriteMask above so visible pixels are clipped to the tile shape.
             SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
             sr.sprite = _heatAuraSprite;
             sr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
+            // VisibleInsideMask = render only where the mask sprite has alpha.
+            sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
 
             // Magenta/pink aura tint with HDR > 1 so bloom catches it cleanly.
-            // Color matches the meltdown prefab's purple swirl theme.
             Color baseTint = new Color(1.6f, 0.4f, 1.4f, 1f);
 
-            Debug.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s");
+            Debug.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s mask={(mask != null ? "ON" : "OFF")}");
 
             float elapsed = 0f;
             // Math: square_aura.png is 256x256 at ppu=100 → native world
