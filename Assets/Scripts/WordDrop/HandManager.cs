@@ -2260,9 +2260,10 @@ namespace WordDrop
         private const float TILE_FLASH_BOX_CHANCE = 0.6f; // 60% of detonations show boxes
         private void FireTileFlashBoxes(IList<Tile> dying)
         {
-            if (!WordDropFX.FX_TileFlashBox) return; // Phase 11j tuning toggle
+            if (!WordDropFX.FX_TileFlashBox) { Debug.Log("[FX] TileFlashBox: SKIPPED"); return; }
             if (TileFlashBox.Instance == null || _grid == null || dying == null) return;
             if (dying.Count == 0) return;
+            Debug.Log("[FX] TileFlashBox: FIRED");
 
             // One roll for the entire detonation — all-or-nothing variety.
             if (Random.value >= TILE_FLASH_BOX_CHANCE) return;
@@ -2306,7 +2307,6 @@ namespace WordDrop
         private void FirePerWordBurst()
         {
             _screenFlashFiredThisBurst = false; // reset per burst pass
-            if (!WordDropFX.FX_BigBurstFlash) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; } // Phase 11j tuning toggle
             if (BigBurstFlash.Instance == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;
@@ -2381,21 +2381,22 @@ namespace WordDrop
                 // horizontal show a horizontal sweep. The earlier per-burst cap
                 // collapsed every word in a chain to the FIRST word's direction,
                 // which read wrong on mixed-direction cascades.
-                float screenLength = ScreenExtentAlongAxis(vertical);
-                BigBurstFlash.Instance.Play(wordCenter, screenLength, thickness, vertical, burstTint);
-
-                // RadialBurst removed Phase 11i — its big halo stacked with
-                // BigBurstFlash's own radial layer + ScreenFlash to produce a
-                // "giant shockwave globs" look. The BigBurstFlash radial layer
-                // (added in Phase 11h) covers this read on its own.
+                if (WordDropFX.FX_BigBurstFlash)
+                {
+                    Debug.Log("[FX] BigBurstFlash: FIRED (primed word)");
+                    float screenLength = ScreenExtentAlongAxis(vertical);
+                    BigBurstFlash.Instance.Play(wordCenter, screenLength, thickness, vertical, burstTint);
+                }
+                else { Debug.Log("[FX] BigBurstFlash: SKIPPED (primed word)"); }
 
                 // HDR sparkle spray — 8-16 tiny stars flying radially outward.
-                // Intensity scales with word length so longer words throw more stars.
-                if (SparkleSpray.Instance != null)
+                if (WordDropFX.FX_SparkleSpray && SparkleSpray.Instance != null)
                 {
+                    Debug.Log("[FX] SparkleSpray: FIRED (primed word)");
                     float intensity = Mathf.Clamp01((wordLen - 3) / 4f + 0.4f);
                     SparkleSpray.Instance.Play(wordCenter, intensity);
                 }
+                else { Debug.Log("[FX] SparkleSpray: SKIPPED (primed word)"); }
 
                 // Phase 11i — ScreenFlash now gated to MELTDOWN-grade events
                 // only. Used to fire on every "bigMoment" which fired on
@@ -2411,11 +2412,10 @@ namespace WordDrop
                     _screenFlashFiredThisBurst = true;
                 }
 
-                // Scatter flare_star sparkles along the full blast line — matches
-                // the Candy Crush look where stars are scattered across the entire
-                // flash, not just the detonation cells.
-                if (GameParticles.Instance != null)
+                // Scatter flare_star sparkles along the full blast line.
+                if (WordDropFX.FX_SparkleLine && GameParticles.Instance != null)
                 {
+                    Debug.Log("[FX] SparkleLine: FIRED (primed word)");
                     Vector3 lineStart, lineEnd;
                     if (vertical)
                     {
@@ -2427,11 +2427,10 @@ namespace WordDrop
                         lineStart = new Vector3(wordCenter.x - halfW * 1.1f, wordCenter.y, wordCenter.z);
                         lineEnd   = new Vector3(wordCenter.x + halfW * 1.1f, wordCenter.y, wordCenter.z);
                     }
-                    // Sparkle count scales lightly with word length so longer words
-                    // get proportionally more stars without flooding the screen.
                     int sparkleCount = Mathf.Clamp(14 + wordLen * 2, 14, 26);
                     GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, sparkleCount);
                 }
+                else { Debug.Log("[FX] SparkleLine: SKIPPED (primed word)"); }
             }
             // Second pass: the TRIGGER words themselves (the new words the player
             // just formed that ignited the primed cluster). Each gets its own blast
@@ -2466,21 +2465,25 @@ namespace WordDrop
                     float halfW = halfH * ((float)Screen.width / Screen.height);
                     float thickness = _grid.CellSize * 1.4f;
 
-                    // Per-word beam — each trigger word fires along its own axis
-                    // (see matching note in the primed-word pass above).
-                    float screenLength = ScreenExtentAlongAxis(twVertical);
-                    BigBurstFlash.Instance.Play(twCenter, screenLength, thickness, twVertical, burstTint);
-
-                    // RadialBurst removed Phase 11i — see note in primed-word pass.
-
-                    if (SparkleSpray.Instance != null)
+                    if (WordDropFX.FX_BigBurstFlash)
                     {
+                        Debug.Log("[FX] BigBurstFlash: FIRED (trigger word)");
+                        float screenLength = ScreenExtentAlongAxis(twVertical);
+                        BigBurstFlash.Instance.Play(twCenter, screenLength, thickness, twVertical, burstTint);
+                    }
+                    else { Debug.Log("[FX] BigBurstFlash: SKIPPED (trigger word)"); }
+
+                    if (WordDropFX.FX_SparkleSpray && SparkleSpray.Instance != null)
+                    {
+                        Debug.Log("[FX] SparkleSpray: FIRED (trigger word)");
                         float intensity = Mathf.Clamp01((twWordLen - 3) / 4f + 0.4f);
                         SparkleSpray.Instance.Play(twCenter, intensity);
                     }
+                    else { Debug.Log("[FX] SparkleSpray: SKIPPED (trigger word)"); }
 
-                    if (GameParticles.Instance != null)
+                    if (WordDropFX.FX_SparkleLine && GameParticles.Instance != null)
                     {
+                        Debug.Log("[FX] SparkleLine: FIRED (trigger word)");
                         Vector3 lineStart, lineEnd;
                         if (twVertical)
                         {
@@ -2495,6 +2498,7 @@ namespace WordDrop
                         int twSparkleCount = Mathf.Clamp(14 + twWordLen * 2, 14, 26);
                         GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, twSparkleCount);
                     }
+                    else { Debug.Log("[FX] SparkleLine: SKIPPED (trigger word)"); }
                 }
             }
 

@@ -196,6 +196,17 @@ namespace WordDrop
             string title = GetMeltdownTitle(chainDepth, triggerCount, detonationBonus, isLastTurn);
             if (title == null) return null;
 
+            // Phase 11j tuning — entire intro (build-up shake + vignette dim
+            // + shimmer particles + meltdown SFX + white flash + MELTDOWN
+            // title stamp + hitstop) gated on a single toggle so Spencer can
+            // A/B with the rest of the explosion stack off.
+            if (!WordDropFX.FX_MeltdownIntroFlash)
+            {
+                Debug.Log("[FX] MeltdownIntroFlash: SKIPPED");
+                return null;
+            }
+            Debug.Log("[FX] MeltdownIntroFlash: FIRED");
+
             // Phase 11g — duck the music for the meltdown so the explosion
             // payoff isn't fighting the BGM at full volume.
             GameAudio.Instance?.DuckMusicBriefly(0.30f);

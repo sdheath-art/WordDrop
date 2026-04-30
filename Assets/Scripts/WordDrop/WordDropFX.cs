@@ -404,22 +404,26 @@ namespace WordDrop
         // ═══════════════════════════════════════════════════════════════════════════
         // FX LAYER TOGGLES (Phase 11j tuning — flip to A/B individual layers)
         // ═══════════════════════════════════════════════════════════════════════════
-        // Each detonation fires this stack of independent FX layers. Flip any to
-        // false to disable that layer cluster-wide and isolate the visual reading.
-        // Recompile (Unity hot-reloads in 2-3s) to see changes. All default true =
-        // current full stack.
-        public static bool FX_MeltdownPrefab    = true;  // AllIn1 Magic Explosive Spell on each tile (meltdown only)
-        public static bool FX_TileFlash         = true;  // white/yellow flash on each tile pre-dissolve
-        public static bool FX_DetonationAudio   = true;  // tiered detonation SFX (PlayDetonation)
-        public static bool FX_FlipbookFrames    = true;  // 16-frame explosion_flipbook sprite-sheet animation per tile
-        public static bool FX_FlipbookGlow      = true;  // bubble@2x scale-up halo per tile (sits behind the flipbook)
-        public static bool FX_TileFragments     = true;  // shattered tile pieces per tile
-        public static bool FX_SparkleParticles  = true;  // PlayPrimed + PlayWordScored sparkles (tier 2+)
-        public static bool FX_BoardShake        = true;  // camera shake + hand-card shake + neighbor ripple
+        // BASELINE: all OFF. Flip ONE to true at a time, recompile (Unity hot-
+        // reloads in 2-3s), playtest, observe. If something fires while every
+        // toggle is false, that's an ungated leak — grep debug_log.txt for
+        // [FX] entries to find which layer fired anyway. Each gate logs FIRED
+        // or SKIPPED so the trace is in the log even when visuals are absent.
+        public static bool FX_MeltdownPrefab    = false; // AllIn1 Magic Explosive Spell on each tile (meltdown only)
+        public static bool FX_TileFlash         = false; // white/yellow flash on each tile pre-dissolve
+        public static bool FX_DetonationAudio   = false; // tiered detonation SFX (PlayDetonation)
+        public static bool FX_FlipbookFrames    = false; // 16-frame explosion_flipbook sprite-sheet animation per tile
+        public static bool FX_FlipbookGlow      = false; // bubble@2x scale-up halo per tile (sits behind the flipbook)
+        public static bool FX_TileFragments     = false; // shattered tile pieces per tile
+        public static bool FX_SparkleParticles  = false; // PlayPrimed + PlayWordScored sparkles (tier 2+)
+        public static bool FX_BoardShake        = false; // camera shake + hand-card shake + neighbor ripple
         public static bool FX_Confetti          = false; // tier-4 confetti burst at cluster center
-        public static bool FX_Haptics           = true;  // phone vibration
-        public static bool FX_BigBurstFlash     = true;  // screen-spanning beam + radial halo (per-word, HandManager)
-        public static bool FX_TileFlashBox      = true;  // bright box overlay per tile (HandManager.FireTileFlashBoxes)
+        public static bool FX_Haptics           = false; // phone vibration
+        public static bool FX_BigBurstFlash     = false; // screen-spanning beam + radial halo (per-word, HandManager)
+        public static bool FX_TileFlashBox      = false; // bright box overlay per tile (HandManager.FireTileFlashBoxes)
+        public static bool FX_SparkleSpray      = false; // HDR sparkle stars from FirePerWordBurst (HandManager)
+        public static bool FX_SparkleLine       = false; // GameParticles.PlaySparkleLine — flare_star sparkles along blast line
+        public static bool FX_MeltdownIntroFlash = false; // MeltdownManager IntroCoroutine white screen flash + title slam visuals
 
         private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
         {
@@ -433,10 +437,13 @@ namespace WordDrop
             // they peak at the prefab's blast moment. Without this defer,
             // tiles destruct first and the prefab's late-arriving blast
             // hits empty cells (Spencer's screenshot).
+            Debug.Log($"[FX-Detonation] tier={(chainStep >= 3 || tileCount >= 15 ? 4 : chainStep >= 2 || tileCount >= 9 ? 3 : tileCount >= 5 ? 2 : 1)} chain={chainStep} tiles={tileCount}");
+
             const float MELTDOWN_WINDUP_DELAY = 0.50f;
             bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
             if (FX_MeltdownPrefab && meltdownActive && FlipbookExplosion.Instance != null)
             {
+                Debug.Log("[FX] MeltdownPrefab: FIRED");
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
@@ -444,6 +451,7 @@ namespace WordDrop
                 }
                 yield return WaitCache.Get(MELTDOWN_WINDUP_DELAY);
             }
+            else { Debug.Log($"[FX] MeltdownPrefab: SKIPPED (toggle={FX_MeltdownPrefab}, meltdownActive={meltdownActive})"); }
 
             // Determine tier by tiles exploded + chain depth
             int tier;
@@ -455,7 +463,8 @@ namespace WordDrop
             Debug.Log($"[VFX] Explosion tier={tier} tiles={tileCount} chain={chainStep}");
 
             // Tiered haptic feedback
-            if (FX_Haptics) HapticsManager.Explosion(tier);
+            if (FX_Haptics) { Debug.Log("[FX] Haptics: FIRED"); HapticsManager.Explosion(tier); }
+            else { Debug.Log("[FX] Haptics: SKIPPED"); }
 
             // All tiers: flash → dissolve → particles → shake
             // NO DOScale or DORotate — dissolve handles the visual death.
@@ -515,6 +524,7 @@ namespace WordDrop
             // ── Flash all tiles ──
             if (FX_TileFlash)
             {
+                Debug.Log("[FX] TileFlash: FIRED");
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
@@ -522,6 +532,7 @@ namespace WordDrop
                     tiles[i].FlashHighlight(flashColor);
                 }
             }
+            else { Debug.Log("[FX] TileFlash: SKIPPED"); }
 
             // ── Screen flash DISABLED 2026-04-29 — colored prefabs now provide impact reading.
             //    Re-enable only if Spencer wants white-wash back for hero events. Gate to
@@ -529,9 +540,10 @@ namespace WordDrop
             // if (screenFlash) PlayScreenFlash(tier - 1);
             if (FX_DetonationAudio)
             {
-                Debug.Log($"[DetonationSFX] WordDropFX.PlayExplosion calling PlayDetonation(tier={tier}, arg={tier-1}). GameAudio.Instance null? {GameAudio.Instance == null}");
+                Debug.Log("[FX] DetonationAudio: FIRED");
                 GameAudio.Instance?.PlayDetonation(tier - 1);
             }
+            else { Debug.Log("[FX] DetonationAudio: SKIPPED"); }
 
             // ── Flipbook explosion per tile ──
             // (Meltdown prefab — if any — was spawned at the top of the
@@ -541,10 +553,12 @@ namespace WordDrop
             // Skip the loop entirely if both layers are off.
             if ((FX_FlipbookFrames || FX_FlipbookGlow) && FlipbookExplosion.Instance != null)
             {
+                Debug.Log($"[FX] FlipbookFrames: {(FX_FlipbookFrames ? "FIRED" : "SKIPPED")}, FlipbookGlow: {(FX_FlipbookGlow ? "FIRED" : "SKIPPED")}");
                 for (int i = 0; i < tiles.Count; i++)
                     if (tiles[i] != null)
                         FlipbookExplosion.Instance.Play(tiles[i].transform.position, tier);
             }
+            else { Debug.Log("[FX] FlipbookFrames: SKIPPED, FlipbookGlow: SKIPPED"); }
 
             // ── Shatter + particles + sparkles ──
             for (int i = 0; i < tiles.Count; i++)
@@ -554,17 +568,21 @@ namespace WordDrop
 
                 // Tile fragments
                 if (FX_TileFragments && TileFragments.Instance != null)
+                {
+                    if (i == 0) Debug.Log("[FX] TileFragments: FIRED");
                     TileFragments.Instance.Shatter(tiles[i]);
-
-                // Ember particles removed — flipbook + bubble + fragments is enough
+                }
+                else if (i == 0) { Debug.Log("[FX] TileFragments: SKIPPED"); }
 
                 // Sparkle stars + glow (tier 2+)
                 if (FX_SparkleParticles && tier >= 2 && GameParticles.Instance != null)
                 {
+                    if (i == 0) Debug.Log("[FX] SparkleParticles: FIRED");
                     GameParticles.Instance.PlayPrimed(pos);
                     if (tier >= 3)
                         GameParticles.Instance.PlayWordScored(pos, tier * 3);
                 }
+                else if (i == 0) { Debug.Log($"[FX] SparkleParticles: SKIPPED (toggle={FX_SparkleParticles}, tier={tier})"); }
 
                 // Hide tile — flipbook + fragments cover the visual
                 tiles[i].gameObject.SetActive(false);
@@ -573,14 +591,17 @@ namespace WordDrop
             // ── Shake (tier 2+) ──
             if (FX_BoardShake && boardShake)
             {
+                Debug.Log("[FX] BoardShake: FIRED");
                 PlayBoardShake(tier - 1, tileCount);
                 if (tier >= 3) ShakeHandCards(tier - 1, tileCount);
                 if (tier >= 4) PlayNeighborRipple(tiles, chainStep);
             }
+            else { Debug.Log($"[FX] BoardShake: SKIPPED (toggle={FX_BoardShake}, boardShake={boardShake})"); }
 
             // ── Confetti (tier 4) ──
             if (FX_Confetti && confetti)
             {
+                Debug.Log("[FX] Confetti: FIRED");
                 Vector3 center = Vector3.zero;
                 int count = 0;
                 for (int i = 0; i < tiles.Count; i++)
@@ -592,6 +613,7 @@ namespace WordDrop
                     GameParticles.Instance?.PlayMeltdown(center);
                 }
             }
+            else { Debug.Log($"[FX] Confetti: SKIPPED (toggle={FX_Confetti}, confetti={confetti})"); }
 
             yield return WaitCache.Get(dissolveDur + 0.03f);
         }
