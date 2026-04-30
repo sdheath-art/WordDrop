@@ -416,7 +416,7 @@ namespace WordDrop
         public static bool FX_TileFragments     = true;  // shattered tile pieces per tile
         public static bool FX_SparkleParticles  = true;  // PlayPrimed + PlayWordScored sparkles (tier 2+)
         public static bool FX_BoardShake        = true;  // camera shake + hand-card shake + neighbor ripple
-        public static bool FX_Confetti          = true;  // tier-4 confetti burst at cluster center
+        public static bool FX_Confetti          = false; // tier-4 confetti burst at cluster center
         public static bool FX_Haptics           = true;  // phone vibration
         public static bool FX_BigBurstFlash     = true;  // screen-spanning beam + radial halo (per-word, HandManager)
         public static bool FX_TileFlashBox      = true;  // bright box overlay per tile (HandManager.FireTileFlashBoxes)
