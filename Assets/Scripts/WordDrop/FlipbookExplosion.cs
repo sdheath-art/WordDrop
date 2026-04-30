@@ -73,14 +73,13 @@ namespace WordDrop
             if (_tileHeatMaterial == null)
                 Debug.LogWarning("[FlipbookFX] Materials/TileHeatOverlay missing — tile heat-up disabled");
 
-            // 2×2 white texture — a substrate for the AllIn1 stack-effect
-            // material to render onto. Sized small because the SpriteRenderer
-            // scales it via transform.localScale anyway.
-            var tex = new Texture2D(2, 2);
-            tex.SetPixels(new[] { Color.white, Color.white, Color.white, Color.white });
-            tex.Apply();
-            _whiteSquareSprite = Sprite.Create(
-                tex, new Rect(0, 0, 2, 2), new Vector2(0.5f, 0.5f), 100f);
+            // Use the actual tile sprite as the mask substrate so the AllIn1
+            // swirl renders WITHIN the tile silhouette (rounded-rect shape)
+            // rather than as a circular ball from the material's authored
+            // shape texture.
+            _whiteSquareSprite = Resources.Load<Sprite>("Tiles/test_tile");
+            if (_whiteSquareSprite == null)
+                Debug.LogWarning("[FlipbookFX] Tiles/test_tile missing — tile heat-up will fall back to circle");
         }
 
         private void SliceSpriteSheet()
@@ -270,29 +269,34 @@ namespace WordDrop
 
         private IEnumerator TileHeatOverlayCoroutine(Vector3 worldPos, float cellSize, float duration)
         {
-            // MeshRenderer + Quad — does NOT override the material's authored
-            // _MainTex (which a SpriteRenderer would do with its sprite). The
-            // AllIn1 stack-effect shader uses the material's own shape texture
-            // to render its swirl; if we override that with a generic white
-            // sprite the shader paints flat invisible.
-            //
-            // Quad face: PrimitiveType.Quad's normal points +Z; the URP 2D
-            // camera (at -10 z, looking +Z) sees the BACK face of the quad,
-            // which gets backface-culled. Rotating 180° on Y flips the quad
-            // so its front faces the camera.
-            GameObject overlay = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            overlay.name = "TileHeatOverlay";
-            var col = overlay.GetComponent<Collider>();
-            if (col != null) Destroy(col);
-
+            // SpriteRenderer with the actual tile sprite — the sprite's
+            // rounded-rect alpha becomes the AllIn1 shader's _MainTex,
+            // which acts as both the visible shape AND the modulation
+            // mask. Result: the swirl is clipped to the tile silhouette
+            // instead of rendering as a circular ball.
+            GameObject overlay = new GameObject("TileHeatOverlay");
             overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.4f);
-            overlay.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
-            overlay.transform.localScale = Vector3.one * cellSize * 1.5f;
+            overlay.transform.localScale = Vector3.one * cellSize * 0.95f;
 
-            MeshRenderer mr = overlay.GetComponent<MeshRenderer>();
+            SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
+            sr.sprite = _whiteSquareSprite; // actually the tile sprite — name kept for compat
+
             Material instMat = new Material(_tileHeatMaterial);
-            mr.material = instMat;
-            mr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
+            // Drop the AllIn1 demo's HDR tint so bloom doesn't blow it out
+            // to white. Keeps hue, clamps to SDR.
+            if (instMat.HasProperty("_Color"))
+            {
+                Color c = instMat.GetColor("_Color");
+                float maxChan = Mathf.Max(c.r, c.g, c.b, 0.001f);
+                if (maxChan > 1f)
+                {
+                    float scaleC = 0.85f / maxChan;
+                    c = new Color(c.r * scaleC, c.g * scaleC, c.b * scaleC, c.a);
+                    instMat.SetColor("_Color", c);
+                }
+            }
+            sr.material = instMat;
+            sr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
 
             Debug.Log($"[FX-Heat] Spawned tile heat overlay at {worldPos} duration={duration:F2}s shader={instMat.shader?.name ?? "NULL"}");
 
