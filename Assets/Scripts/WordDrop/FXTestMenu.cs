@@ -138,6 +138,10 @@ namespace WordDrop
                 FireFakeDetonation(chainStep: 3, fakeTileCount: 15, forceMeltdown: true);
             innerY += BTN_H + GAP;
 
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown Intro Only (text + flash)", _btnStyle))
+                FireMeltdownIntroOnly();
+            innerY += BTN_H + GAP;
+
             innerY += 10;
 
             // ── Layer toggles ────────────────────────────────────────────────────
@@ -296,6 +300,36 @@ namespace WordDrop
                 StartCoroutine(ForcedMeltdownDetonation(fake, chainStep, fakeTileCount));
             else
                 WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
+        }
+
+        private void FireMeltdownIntroOnly()
+        {
+            if (MeltdownManager.Instance == null) { Debug.LogWarning("[FXTest] MeltdownManager missing"); return; }
+            StartCoroutine(MeltdownIntroOnlyCoroutine());
+        }
+
+        private IEnumerator MeltdownIntroOnlyCoroutine()
+        {
+            // Flip FX_MeltdownIntroFlash on for the duration so the intro
+            // doesn't return null at its own gate, then restore.
+            bool saved = WordDropFX.FX_MeltdownIntroFlash;
+            WordDropFX.FX_MeltdownIntroFlash = true;
+
+            // High thresholds so GetMeltdownTitle returns a non-null title
+            // (chainDepth >= 3 + triggerCount >= 3 lands on the top tier).
+            Coroutine intro = MeltdownManager.Instance.TryMeltdownIntro(
+                chainDepth: 4, triggerCount: 4, detonationBonus: 200, isLastTurn: false);
+
+            if (intro != null) yield return intro;
+
+            // Hold the stamp briefly so Spencer can read the title clearly.
+            yield return new WaitForSeconds(1.0f);
+
+            // Cleanup — Outro fades the overlay + clears _isPlaying so
+            // subsequent test fires aren't blocked by the IsActive guard.
+            MeltdownManager.Instance.TryMeltdownOutro();
+
+            WordDropFX.FX_MeltdownIntroFlash = saved;
         }
 
         private IEnumerator ForcedMeltdownDetonation(List<Tile> fake, int chainStep, int wordLen)
