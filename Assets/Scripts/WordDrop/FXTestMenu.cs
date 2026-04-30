@@ -43,9 +43,12 @@ namespace WordDrop
         private GUIStyle _toggleStyle;
         private GUIStyle _headerStyle;
 
-        private const int PANEL_W = 280;
-        private const int BTN_H   = 26;
-        private const int GAP     = 3;
+        private const int PANEL_W   = 460;
+        private const int BTN_H     = 44;
+        private const int GAP       = 6;
+        private const int TOGGLE_H  = 32;
+        private const int HEADER_H  = 34;
+        private const int CONTENT_H = 1900;
 
         private void OnGUI()
         {
@@ -63,18 +66,18 @@ namespace WordDrop
             y += BTN_H + GAP;
             if (!_open) return;
 
-            int panelH = Mathf.Min(Screen.height - y - 20, 760);
+            int panelH = Mathf.Min(Screen.height - y - 20, 1100);
             GUI.Box(new Rect(x - 4, y - 4, PANEL_W + 8, panelH + 8), GUIContent.none);
 
             _scroll = GUI.BeginScrollView(new Rect(x, y, PANEL_W, panelH),
                                           _scroll,
-                                          new Rect(0, 0, PANEL_W - 20, 1200));
+                                          new Rect(0, 0, PANEL_W - 20, CONTENT_H));
 
             int innerY = 0;
 
             // ── Direct-fire buttons ──────────────────────────────────────────────
-            GUI.Label(new Rect(0, innerY, PANEL_W - 20, 20), "── Direct Fire ──", _headerStyle);
-            innerY += 22;
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, HEADER_H), "── Direct Fire ──", _headerStyle);
+            innerY += HEADER_H + 4;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown Prefab @ center", _btnStyle))
                 FireMeltdownPrefab();
@@ -116,11 +119,11 @@ namespace WordDrop
                 WordDropFX.Instance?.PlayBoardShake(1, 5);
             innerY += BTN_H + GAP;
 
-            innerY += 10;
+            innerY += 14;
 
             // ── Forced full-stack detonations ────────────────────────────────────
-            GUI.Label(new Rect(0, innerY, PANEL_W - 20, 20), "── Forced Detonation ──", _headerStyle);
-            innerY += 22;
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, HEADER_H), "── Forced Detonation ──", _headerStyle);
+            innerY += HEADER_H + 4;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 1 (3 tiles)", _btnStyle))
                 FireFakeDetonation(chainStep: 0, fakeTileCount: 3, forceMeltdown: false);
@@ -142,11 +145,11 @@ namespace WordDrop
                 FireMeltdownIntroOnly();
             innerY += BTN_H + GAP;
 
-            innerY += 10;
+            innerY += 14;
 
             // ── Layer toggles ────────────────────────────────────────────────────
-            GUI.Label(new Rect(0, innerY, PANEL_W - 20, 20), "── Layer Toggles ──", _headerStyle);
-            innerY += 22;
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, HEADER_H), "── Layer Toggles ──", _headerStyle);
+            innerY += HEADER_H + 4;
 
             innerY = ToggleRow(innerY, "Meltdown Prefab",        ref WordDropFX.FX_MeltdownPrefab);
             innerY = ToggleRow(innerY, "Meltdown Intro Flash",   ref WordDropFX.FX_MeltdownIntroFlash);
@@ -178,8 +181,8 @@ namespace WordDrop
 
         private int ToggleRow(int innerY, string label, ref bool flag)
         {
-            flag = GUI.Toggle(new Rect(0, innerY, PANEL_W - 20, 20), flag, " " + label, _toggleStyle);
-            return innerY + 20;
+            flag = GUI.Toggle(new Rect(0, innerY, PANEL_W - 20, TOGGLE_H), flag, " " + label, _toggleStyle);
+            return innerY + TOGGLE_H;
         }
 
         private void SetAll(bool v)
@@ -360,9 +363,9 @@ namespace WordDrop
         private void EnsureStyles()
         {
             if (_btnStyle != null) return;
-            _btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 12, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(6, 6, 4, 4) };
-            _toggleStyle = new GUIStyle(GUI.skin.toggle) { fontSize = 11 };
-            _headerStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.7f, 0.9f, 1f) } };
+            _btnStyle    = new GUIStyle(GUI.skin.button) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(10, 10, 6, 6) };
+            _toggleStyle = new GUIStyle(GUI.skin.toggle) { fontSize = 16, padding = new RectOffset(6, 6, 4, 4) };
+            _headerStyle = new GUIStyle(GUI.skin.label)  { fontSize = 18, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.7f, 0.9f, 1f) } };
         }
     }
 }
