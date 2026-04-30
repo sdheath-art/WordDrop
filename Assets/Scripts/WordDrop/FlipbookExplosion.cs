@@ -289,12 +289,14 @@ namespace WordDrop
             Debug.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s");
 
             float elapsed = 0f;
-            // Square_aura.png has significant soft falloff past its rendered
-            // core, so the visible aura is wider than the geometric scale.
-            // 0.45→0.65 × cellSize keeps each tile's halo inside its own cell
-            // (no overlap with neighbours).
-            float baseScale = cellSize * 0.45f;
-            float endScale  = cellSize * 0.65f;
+            // Math: square_aura.png is 256x256 at ppu=100 → native world
+            // size 2.56 units. Tile is cellSize units (~0.6). To make the
+            // aura match a tile, scale = cellSize / 2.56. The +0.20 padding
+            // factor at endScale lets it grow ~20% past tile edges for
+            // a "swelling" feel without overlapping neighbours.
+            float nativeSize = _heatAuraSprite.bounds.size.x;
+            float baseScale = (cellSize * 0.85f) / nativeSize;
+            float endScale  = (cellSize * 1.20f) / nativeSize;
             while (elapsed < duration)
             {
                 elapsed += Time.deltaTime;
