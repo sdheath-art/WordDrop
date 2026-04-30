@@ -38,11 +38,10 @@ namespace WordDrop
         // have the package imported.
         [SerializeField] private GameObject _meltdownPrefab;
 
-        // Phase 11j-heat-overlay: AllIn1 charge-up swirl applied to each
-        // detonating tile during the meltdown wind-up so the tile reads
-        // as "heating up before the bang."
-        private Material _tileHeatMaterial;
-        private Sprite   _whiteSquareSprite;
+        // Phase 11j-heat-overlay: a soft rounded-square aura sprite tinted
+        // and pulsed during the meltdown wind-up so each tile reads as
+        // "heating up before the bang."
+        private Sprite _heatAuraSprite;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
@@ -69,17 +68,21 @@ namespace WordDrop
             if (_meltdownPrefab == null)
                 _meltdownPrefab = Resources.Load<GameObject>("Prefabs/FX/Magic Explosive Spell");
 
-            _tileHeatMaterial = Resources.Load<Material>("Materials/TileHeatOverlay");
-            if (_tileHeatMaterial == null)
-                Debug.LogWarning("[FlipbookFX] Materials/TileHeatOverlay missing — tile heat-up disabled");
-
-            // Use the actual tile sprite as the mask substrate so the AllIn1
-            // swirl renders WITHIN the tile silhouette (rounded-rect shape)
-            // rather than as a circular ball from the material's authored
-            // shape texture.
-            _whiteSquareSprite = Resources.Load<Sprite>("Tiles/test_tile");
-            if (_whiteSquareSprite == null)
-                Debug.LogWarning("[FlipbookFX] Tiles/test_tile missing — tile heat-up will fall back to circle");
+            // Particle VFX pack's Square_aura — a rounded-square soft aura
+            // texture. We tint + pulse it ourselves; no AllIn1 shader needed.
+            Texture2D auraTex = Resources.Load<Texture2D>("Particles/square_aura");
+            if (auraTex != null)
+            {
+                _heatAuraSprite = Sprite.Create(
+                    auraTex,
+                    new Rect(0, 0, auraTex.width, auraTex.height),
+                    new Vector2(0.5f, 0.5f),
+                    100f);
+            }
+            else
+            {
+                Debug.LogWarning("[FlipbookFX] Particles/square_aura missing — tile heat-up disabled");
+            }
         }
 
         private void SliceSpriteSheet()
@@ -263,47 +266,52 @@ namespace WordDrop
         /// </summary>
         public void PlayTileHeatOverlay(Vector3 worldPos, float cellSize, float duration)
         {
-            if (_tileHeatMaterial == null) return;
+            if (_heatAuraSprite == null) return;
             StartCoroutine(TileHeatOverlayCoroutine(worldPos, cellSize, duration));
         }
 
         private IEnumerator TileHeatOverlayCoroutine(Vector3 worldPos, float cellSize, float duration)
         {
-            // SpriteRenderer with the actual tile sprite — the sprite's
-            // rounded-rect alpha becomes the AllIn1 shader's _MainTex,
-            // which acts as both the visible shape AND the modulation
-            // mask. Result: the swirl is clipped to the tile silhouette
-            // instead of rendering as a circular ball.
+            // Simple SpriteRenderer with the rounded-square aura texture.
+            // Tint + alpha-pulse + scale-ramp drive the "heating up" feel —
+            // no shader complexity, no AllIn1 dependencies.
             GameObject overlay = new GameObject("TileHeatOverlay");
             overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.4f);
-            overlay.transform.localScale = Vector3.one * cellSize * 0.95f;
 
             SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
-            sr.sprite = _whiteSquareSprite; // actually the tile sprite — name kept for compat
-
-            Material instMat = new Material(_tileHeatMaterial);
-            // Drop the AllIn1 demo's HDR tint so bloom doesn't blow it out
-            // to white. Keeps hue, clamps to SDR.
-            if (instMat.HasProperty("_Color"))
-            {
-                Color c = instMat.GetColor("_Color");
-                float maxChan = Mathf.Max(c.r, c.g, c.b, 0.001f);
-                if (maxChan > 1f)
-                {
-                    float scaleC = 0.85f / maxChan;
-                    c = new Color(c.r * scaleC, c.g * scaleC, c.b * scaleC, c.a);
-                    instMat.SetColor("_Color", c);
-                }
-            }
-            sr.material = instMat;
+            sr.sprite = _heatAuraSprite;
             sr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
 
-            Debug.Log($"[FX-Heat] Spawned tile heat overlay at {worldPos} duration={duration:F2}s shader={instMat.shader?.name ?? "NULL"}");
+            // Magenta/pink aura tint with HDR > 1 so bloom catches it cleanly.
+            // Color matches the meltdown prefab's purple swirl theme.
+            Color baseTint = new Color(1.6f, 0.4f, 1.4f, 1f);
 
-            yield return new WaitForSeconds(duration);
+            Debug.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s");
+
+            float elapsed = 0f;
+            float baseScale = cellSize * 0.95f;
+            float endScale  = cellSize * 1.30f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+
+                // Alpha: ease-in-quad from 0 → 1 — subtle at start, building.
+                float alpha = t * t;
+
+                // Scale: gentle ramp 0.95× → 1.30× over the wind-up so the
+                // aura "swells" as charge builds. Plus a fast 6Hz wobble
+                // for subtle pulse jitter (keeps it feeling alive, not
+                // a static grow).
+                float wobble = 1f + Mathf.Sin(elapsed * 6f * Mathf.PI * 2f) * 0.04f;
+                float s = Mathf.Lerp(baseScale, endScale, t) * wobble;
+                overlay.transform.localScale = new Vector3(s, s, 1f);
+
+                sr.color = new Color(baseTint.r, baseTint.g, baseTint.b, alpha);
+                yield return null;
+            }
 
             if (overlay != null) Destroy(overlay);
-            if (instMat != null) Destroy(instMat);
         }
 
         private IEnumerator PlayCoroutine(Vector3 worldPos, int tier)
