@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using DG.Tweening;
 
 namespace WordDrop
 {
@@ -407,24 +408,35 @@ namespace WordDrop
                 Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay + FX_MeltdownTilePunch ON for the duration of this test fire");
             }
 
-            // Cache positions so we can re-place tiles after PlayExplosion's
-            // SetActive(false) at end of its loop.
+            // Cache positions AND scales so we can re-place tiles after
+            // PlayExplosion's SetActive(false) at end of its loop.
+            // PlayDetonation's squeeze→pop→settle tween can leave the tile
+            // mid-tween if SetActive interrupts it, so the cached scale is
+            // what we restore when re-activating.
             var positions = new List<Vector3>(tiles.Count);
-            for (int i = 0; i < tiles.Count; i++) positions.Add(tiles[i].transform.position);
+            var scales    = new List<Vector3>(tiles.Count);
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                positions.Add(tiles[i].transform.position);
+                scales.Add(tiles[i].transform.localScale);
+            }
 
             yield return WordDropFX.Instance.PlayExplosion(tiles, chainStep, tiles.Count);
 
             // Hold a beat for the prefab tail / fragments to settle.
             yield return new WaitForSeconds(0.6f);
 
-            // Restore tiles — re-activate the GameObjects and snap positions
-            // back (TileFragments shifts the visible tile while shattering
-            // sometimes; resetting position guarantees visual integrity).
+            // Restore tiles — re-activate the GameObjects, kill any tweens
+            // still attached to the transform, snap position + scale back
+            // to the pre-explosion values.
             for (int i = 0; i < tiles.Count; i++)
             {
                 if (tiles[i] == null) continue;
                 tiles[i].gameObject.SetActive(true);
-                tiles[i].transform.position = positions[i];
+                tiles[i].transform.DOKill(); // stops any leftover squeeze/pop tween
+                tiles[i].transform.position    = positions[i];
+                tiles[i].transform.localScale  = scales[i];
+                tiles[i].transform.localRotation = Quaternion.identity;
             }
 
             if (forceMeltdown && isPlayingField != null && MeltdownManager.Instance != null)
