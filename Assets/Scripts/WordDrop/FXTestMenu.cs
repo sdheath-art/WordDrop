@@ -1,0 +1,335 @@
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
+using UnityEngine;
+
+namespace WordDrop
+{
+    /// <summary>
+    /// Editor / dev-build debug overlay for iterating on detonation FX without
+    /// playing a full Survival session. Auto-spawns at scene load. Adds a
+    /// top-right OnGUI panel with:
+    ///   - Direct-fire buttons for each FX layer (one-shot, no real tiles needed)
+    ///   - "Forced Meltdown" button that flips MeltdownManager.IsActive on,
+    ///     fires a faked explosion stack at screen center, flips back off
+    ///   - Toggle checkboxes for every WordDropFX.FX_* flag (no recompile)
+    ///
+    /// Stripped from release builds via #if UNITY_EDITOR || DEVELOPMENT_BUILD.
+    /// </summary>
+    public class FXTestMenu : MonoBehaviour
+    {
+        public static FXTestMenu Instance { get; private set; }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void AutoCreate()
+        {
+            if (Instance != null) return;
+            var go = new GameObject("FXTestMenu");
+            go.AddComponent<FXTestMenu>();
+        }
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+
+        // ── UI state ──────────────────────────────────────────────────────────────
+        private bool _open = true;
+        private Vector2 _scroll;
+        private GUIStyle _btnStyle;
+        private GUIStyle _toggleStyle;
+        private GUIStyle _headerStyle;
+
+        private const int PANEL_W = 280;
+        private const int BTN_H   = 26;
+        private const int GAP     = 3;
+
+        private void OnGUI()
+        {
+            EnsureStyles();
+
+            int x = Screen.width - PANEL_W - 12;
+            int y = 12;
+
+            // Collapse / expand header
+            if (GUI.Button(new Rect(x, y, PANEL_W, BTN_H),
+                           _open ? "▼ FX Test Menu (click to hide)" : "▶ FX Test Menu", _btnStyle))
+            {
+                _open = !_open;
+            }
+            y += BTN_H + GAP;
+            if (!_open) return;
+
+            int panelH = Mathf.Min(Screen.height - y - 20, 760);
+            GUI.Box(new Rect(x - 4, y - 4, PANEL_W + 8, panelH + 8), GUIContent.none);
+
+            _scroll = GUI.BeginScrollView(new Rect(x, y, PANEL_W, panelH),
+                                          _scroll,
+                                          new Rect(0, 0, PANEL_W - 20, 1200));
+
+            int innerY = 0;
+
+            // ── Direct-fire buttons ──────────────────────────────────────────────
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, 20), "── Direct Fire ──", _headerStyle);
+            innerY += 22;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown Prefab @ center", _btnStyle))
+                FireMeltdownPrefab();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flipbook Frames @ center", _btnStyle))
+                FireFlipbookFrames();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flipbook Glow (bubble@2x) @ center", _btnStyle))
+                FireFlipbookGlow();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "BigBurstFlash horizontal", _btnStyle))
+                FireBigBurst(vertical: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "BigBurstFlash vertical", _btnStyle))
+                FireBigBurst(vertical: true);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Sparkle Spray", _btnStyle))
+                FireSparkleSpray();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Sparkle Line (horizontal)", _btnStyle))
+                FireSparkleLine();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Confetti / Meltdown particles", _btnStyle))
+                FireConfetti();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonation Audio (tier 2)", _btnStyle))
+                GameAudio.Instance?.PlayDetonation(1);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Board Shake (tier 2)", _btnStyle))
+                WordDropFX.Instance?.PlayBoardShake(1, 5);
+            innerY += BTN_H + GAP;
+
+            innerY += 10;
+
+            // ── Forced full-stack detonations ────────────────────────────────────
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, 20), "── Forced Detonation ──", _headerStyle);
+            innerY += 22;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 1 (3 tiles)", _btnStyle))
+                FireFakeDetonation(chainStep: 0, fakeTileCount: 3, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 2 (6 tiles)", _btnStyle))
+                FireFakeDetonation(chainStep: 1, fakeTileCount: 6, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 3 (10 tiles, chain=2)", _btnStyle))
+                FireFakeDetonation(chainStep: 2, fakeTileCount: 10, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 4 MELTDOWN (15 tiles)", _btnStyle))
+                FireFakeDetonation(chainStep: 3, fakeTileCount: 15, forceMeltdown: true);
+            innerY += BTN_H + GAP;
+
+            innerY += 10;
+
+            // ── Layer toggles ────────────────────────────────────────────────────
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, 20), "── Layer Toggles ──", _headerStyle);
+            innerY += 22;
+
+            innerY = ToggleRow(innerY, "Meltdown Prefab",        ref WordDropFX.FX_MeltdownPrefab);
+            innerY = ToggleRow(innerY, "Meltdown Intro Flash",   ref WordDropFX.FX_MeltdownIntroFlash);
+            innerY = ToggleRow(innerY, "Flipbook Frames",        ref WordDropFX.FX_FlipbookFrames);
+            innerY = ToggleRow(innerY, "Flipbook Glow",          ref WordDropFX.FX_FlipbookGlow);
+            innerY = ToggleRow(innerY, "Tile Flash",             ref WordDropFX.FX_TileFlash);
+            innerY = ToggleRow(innerY, "Tile Fragments",         ref WordDropFX.FX_TileFragments);
+            innerY = ToggleRow(innerY, "Tile Flash Box",         ref WordDropFX.FX_TileFlashBox);
+            innerY = ToggleRow(innerY, "Sparkle Particles",      ref WordDropFX.FX_SparkleParticles);
+            innerY = ToggleRow(innerY, "Sparkle Spray",          ref WordDropFX.FX_SparkleSpray);
+            innerY = ToggleRow(innerY, "Sparkle Line",           ref WordDropFX.FX_SparkleLine);
+            innerY = ToggleRow(innerY, "Big Burst Flash",        ref WordDropFX.FX_BigBurstFlash);
+            innerY = ToggleRow(innerY, "Board Shake",            ref WordDropFX.FX_BoardShake);
+            innerY = ToggleRow(innerY, "Confetti",               ref WordDropFX.FX_Confetti);
+            innerY = ToggleRow(innerY, "Detonation Audio",       ref WordDropFX.FX_DetonationAudio);
+            innerY = ToggleRow(innerY, "Haptics",                ref WordDropFX.FX_Haptics);
+
+            innerY += 10;
+
+            // ── Bulk ─────────────────────────────────────────────────────────────
+            if (GUI.Button(new Rect(0, innerY, (PANEL_W - 24) / 2, BTN_H), "All ON", _btnStyle))
+                SetAll(true);
+            if (GUI.Button(new Rect((PANEL_W - 24) / 2 + 4, innerY, (PANEL_W - 24) / 2, BTN_H), "All OFF", _btnStyle))
+                SetAll(false);
+            innerY += BTN_H + GAP;
+
+            GUI.EndScrollView();
+        }
+
+        private int ToggleRow(int innerY, string label, ref bool flag)
+        {
+            flag = GUI.Toggle(new Rect(0, innerY, PANEL_W - 20, 20), flag, " " + label, _toggleStyle);
+            return innerY + 20;
+        }
+
+        private void SetAll(bool v)
+        {
+            WordDropFX.FX_MeltdownPrefab     = v;
+            WordDropFX.FX_MeltdownIntroFlash = v;
+            WordDropFX.FX_FlipbookFrames     = v;
+            WordDropFX.FX_FlipbookGlow       = v;
+            WordDropFX.FX_TileFlash          = v;
+            WordDropFX.FX_TileFragments      = v;
+            WordDropFX.FX_TileFlashBox       = v;
+            WordDropFX.FX_SparkleParticles   = v;
+            WordDropFX.FX_SparkleSpray       = v;
+            WordDropFX.FX_SparkleLine        = v;
+            WordDropFX.FX_BigBurstFlash      = v;
+            WordDropFX.FX_BoardShake         = v;
+            WordDropFX.FX_Confetti           = v;
+            WordDropFX.FX_DetonationAudio    = v;
+            WordDropFX.FX_Haptics            = v;
+        }
+
+        // ── Direct-fire helpers ───────────────────────────────────────────────────
+
+        private Vector3 ScreenCenterWorld()
+        {
+            Camera cam = Camera.main;
+            if (cam == null) return Vector3.zero;
+            return new Vector3(cam.transform.position.x, cam.transform.position.y, 0f);
+        }
+
+        private void FireMeltdownPrefab()
+        {
+            if (FlipbookExplosion.Instance == null) { Debug.LogWarning("[FXTest] FlipbookExplosion missing"); return; }
+            FlipbookExplosion.Instance.PlayMeltdown(ScreenCenterWorld());
+        }
+
+        private void FireFlipbookFrames()
+        {
+            // Force-bypass the toggle so the button always shows its layer.
+            bool savedFrames = WordDropFX.FX_FlipbookFrames;
+            bool savedGlow   = WordDropFX.FX_FlipbookGlow;
+            WordDropFX.FX_FlipbookFrames = true;
+            WordDropFX.FX_FlipbookGlow   = false;
+            FlipbookExplosion.Instance?.Play(ScreenCenterWorld(), tier: 3);
+            WordDropFX.FX_FlipbookFrames = savedFrames;
+            WordDropFX.FX_FlipbookGlow   = savedGlow;
+        }
+
+        private void FireFlipbookGlow()
+        {
+            bool savedFrames = WordDropFX.FX_FlipbookFrames;
+            bool savedGlow   = WordDropFX.FX_FlipbookGlow;
+            WordDropFX.FX_FlipbookFrames = false;
+            WordDropFX.FX_FlipbookGlow   = true;
+            FlipbookExplosion.Instance?.Play(ScreenCenterWorld(), tier: 3);
+            WordDropFX.FX_FlipbookFrames = savedFrames;
+            WordDropFX.FX_FlipbookGlow   = savedGlow;
+        }
+
+        private void FireBigBurst(bool vertical)
+        {
+            if (BigBurstFlash.Instance == null) return;
+            Camera cam = Camera.main;
+            if (cam == null) return;
+            float halfH = cam.orthographicSize;
+            float halfW = halfH * cam.aspect;
+            float length = (vertical ? halfH : halfW) * 2.4f;
+            float thickness = 1.0f;
+            BigBurstFlash.Instance.Play(ScreenCenterWorld(), length, thickness, vertical, null);
+        }
+
+        private void FireSparkleSpray()
+        {
+            if (SparkleSpray.Instance == null) return;
+            SparkleSpray.Instance.Play(ScreenCenterWorld(), 1f);
+        }
+
+        private void FireSparkleLine()
+        {
+            if (GameParticles.Instance == null) return;
+            Camera cam = Camera.main;
+            if (cam == null) return;
+            float halfW = cam.orthographicSize * cam.aspect;
+            Vector3 c = ScreenCenterWorld();
+            Vector3 a = new Vector3(c.x - halfW * 1.1f, c.y, c.z);
+            Vector3 b = new Vector3(c.x + halfW * 1.1f, c.y, c.z);
+            GameParticles.Instance.PlaySparkleLine(a, b, 20);
+        }
+
+        private void FireConfetti()
+        {
+            GameParticles.Instance?.PlayMeltdown(ScreenCenterWorld());
+        }
+
+        // ── Forced full-stack detonation ─────────────────────────────────────────
+
+        private void FireFakeDetonation(int chainStep, int fakeTileCount, bool forceMeltdown)
+        {
+            if (WordDropFX.Instance == null) { Debug.LogWarning("[FXTest] WordDropFX missing"); return; }
+
+            // Build a row of dummy GameObjects with positions only — enough for
+            // PlayExplosion's per-tile loops to iterate. The Tile component IS
+            // attached but not Initialise()d — FlashHighlight/Shatter check for
+            // null sub-components and short-circuit cleanly.
+            var fake = new List<Tile>();
+            Vector3 c = ScreenCenterWorld();
+            float spacing = 0.7f;
+            for (int i = 0; i < fakeTileCount; i++)
+            {
+                var go = new GameObject($"FXTest_DummyTile_{i}");
+                go.transform.position = new Vector3(c.x + (i - fakeTileCount * 0.5f + 0.5f) * spacing, c.y, 0f);
+                var tile = go.AddComponent<Tile>();
+                fake.Add(tile);
+                Destroy(go, 5f); // safety cleanup
+            }
+
+            if (forceMeltdown)
+                StartCoroutine(ForcedMeltdownDetonation(fake, chainStep, fakeTileCount));
+            else
+                WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
+        }
+
+        private IEnumerator ForcedMeltdownDetonation(List<Tile> fake, int chainStep, int wordLen)
+        {
+            // Flip MeltdownManager.IsActive for the duration of the explosion so
+            // ExplosionCoroutine's meltdown gate fires the prefab. Use reflection
+            // to write the private _isPlaying field; avoids adding a public test
+            // setter to production code.
+            FieldInfo f = typeof(MeltdownManager).GetField("_isPlaying", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (f != null && MeltdownManager.Instance != null)
+            {
+                f.SetValue(MeltdownManager.Instance, true);
+            }
+
+            WordDropFX.Instance.PlayExplosion(fake, chainStep, wordLen);
+
+            // Hold true for ~3s so the prefab's full lifecycle plays under the
+            // active flag, then release.
+            yield return new WaitForSeconds(3f);
+            if (f != null && MeltdownManager.Instance != null)
+            {
+                f.SetValue(MeltdownManager.Instance, false);
+            }
+        }
+
+        // ── Styles ────────────────────────────────────────────────────────────────
+
+        private void EnsureStyles()
+        {
+            if (_btnStyle != null) return;
+            _btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 12, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(6, 6, 4, 4) };
+            _toggleStyle = new GUIStyle(GUI.skin.toggle) { fontSize = 11 };
+            _headerStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.7f, 0.9f, 1f) } };
+        }
+    }
+}
+#endif
