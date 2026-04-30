@@ -270,33 +270,36 @@ namespace WordDrop
 
         private IEnumerator TileHeatOverlayCoroutine(Vector3 worldPos, float cellSize, float duration)
         {
-            // SpriteRenderer over a Quad mesh: 2D-renderer-friendly, always
-            // camera-facing, sortingOrder honored by URP 2D Renderer. Quad
-            // mesh defaults face +Z and back-face cull on a -Z camera = invisible.
-            GameObject overlay = new GameObject("TileHeatOverlay");
+            // MeshRenderer + Quad — does NOT override the material's authored
+            // _MainTex (which a SpriteRenderer would do with its sprite). The
+            // AllIn1 stack-effect shader uses the material's own shape texture
+            // to render its swirl; if we override that with a generic white
+            // sprite the shader paints flat invisible.
+            //
+            // Quad face: PrimitiveType.Quad's normal points +Z; the URP 2D
+            // camera (at -10 z, looking +Z) sees the BACK face of the quad,
+            // which gets backface-culled. Rotating 180° on Y flips the quad
+            // so its front faces the camera.
+            GameObject overlay = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            overlay.name = "TileHeatOverlay";
+            var col = overlay.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
             overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.4f);
-            // Bigger than a tile so the swirl bleeds past the tile edges and
-            // reads cluster-aware rather than tile-tight.
+            overlay.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
             overlay.transform.localScale = Vector3.one * cellSize * 1.5f;
 
-            SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
-            sr.sprite = _whiteSquareSprite;
-            // Per-overlay material clone so we don't mutate the shared asset.
-            sr.material = new Material(_tileHeatMaterial);
-            sr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
+            MeshRenderer mr = overlay.GetComponent<MeshRenderer>();
+            Material instMat = new Material(_tileHeatMaterial);
+            mr.material = instMat;
+            mr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
 
-            Debug.Log($"[FX-Heat] Spawned tile heat overlay at {worldPos} duration={duration:F2}s");
+            Debug.Log($"[FX-Heat] Spawned tile heat overlay at {worldPos} duration={duration:F2}s shader={instMat.shader?.name ?? "NULL"}");
 
-            // No alpha fade — the AllIn1 charge-up material has its OWN
-            // animation cycle (the swirl loops on the shader's _Time). Holding
-            // it at full opacity for the duration lets the player see the
-            // charge effect cleanly. If you want a fade-in later we can drive
-            // a shader param instead of _Color.a (which AllIn1 mats often
-            // don't honor for transparency).
             yield return new WaitForSeconds(duration);
 
-            if (sr != null) Destroy(sr.material);
             if (overlay != null) Destroy(overlay);
+            if (instMat != null) Destroy(instMat);
         }
 
         private IEnumerator PlayCoroutine(Vector3 worldPos, int tier)
