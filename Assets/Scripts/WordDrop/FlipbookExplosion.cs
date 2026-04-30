@@ -38,6 +38,11 @@ namespace WordDrop
         // have the package imported.
         [SerializeField] private GameObject _meltdownPrefab;
 
+        // Phase 11j-heat-overlay: AllIn1 charge-up swirl applied to each
+        // detonating tile during the meltdown wind-up so the tile reads
+        // as "heating up before the bang."
+        private Material _tileHeatMaterial;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
         {
@@ -62,6 +67,10 @@ namespace WordDrop
             // canonical way for this singleton.
             if (_meltdownPrefab == null)
                 _meltdownPrefab = Resources.Load<GameObject>("Prefabs/FX/Magic Explosive Spell");
+
+            _tileHeatMaterial = Resources.Load<Material>("Materials/TileHeatOverlay");
+            if (_tileHeatMaterial == null)
+                Debug.LogWarning("[FlipbookFX] Materials/TileHeatOverlay missing — tile heat-up disabled");
         }
 
         private void SliceSpriteSheet()
@@ -228,6 +237,63 @@ namespace WordDrop
                 if (renderers[i] != null) renderers[i].sortingOrder = MELTDOWN_SORT_ORDER;
 
             Destroy(inst, 4f);
+        }
+
+        /// <summary>
+        /// Spawn the AllIn1 charge-up swirl as an overlay on a tile during
+        /// meltdown wind-up. Plays for `duration` seconds, fading alpha
+        /// 0→1 so it ramps in then peaks right before the explosion fires.
+        /// One overlay per tile; auto-destroys when the duration completes.
+        /// </summary>
+        public void PlayTileHeatOverlay(Vector3 worldPos, float cellSize, float duration)
+        {
+            if (_tileHeatMaterial == null) return;
+            StartCoroutine(TileHeatOverlayCoroutine(worldPos, cellSize, duration));
+        }
+
+        private IEnumerator TileHeatOverlayCoroutine(Vector3 worldPos, float cellSize, float duration)
+        {
+            // AllIn1 materials render onto a Quad mesh — the shader's stack
+            // effects (charge-up swirl + glow + distortion) draw onto whatever
+            // surface they're applied to.
+            GameObject overlay = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            overlay.name = "TileHeatOverlay";
+            // Strip the auto-generated MeshCollider — we don't want physics here.
+            var col = overlay.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.4f);
+            // Slightly larger than a tile so the swirl bleeds past the tile edges.
+            overlay.transform.localScale = Vector3.one * cellSize * 1.25f;
+
+            // Use a per-overlay material instance so we can fade alpha without
+            // mutating the shared Resources material asset.
+            MeshRenderer mr = overlay.GetComponent<MeshRenderer>();
+            Material instMat = new Material(_tileHeatMaterial);
+            mr.material = instMat;
+            mr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
+
+            float elapsed = 0f;
+            // Animate alpha 0 → 1 over the full duration so the heat-up reads
+            // as a charging crescendo. Most AllIn1 stack-effect mats expose
+            // either a "_Color" alpha channel or "_FadeIn" — try _Color first
+            // (universal Unity convention) and fall back to renderer alpha.
+            Color baseCol = instMat.HasProperty("_Color") ? instMat.GetColor("_Color") : Color.white;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+                // Ease-in cubic — slow start, accelerating ramp into the peak.
+                float a = t * t * t;
+                if (instMat.HasProperty("_Color"))
+                {
+                    instMat.SetColor("_Color", new Color(baseCol.r, baseCol.g, baseCol.b, a));
+                }
+                yield return null;
+            }
+
+            if (overlay != null) Destroy(overlay);
+            if (instMat != null) Destroy(instMat);
         }
 
         private IEnumerator PlayCoroutine(Vector3 worldPos, int tier)

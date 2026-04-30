@@ -171,6 +171,7 @@ namespace WordDrop
 
             innerY = ToggleRow(innerY, "Meltdown Prefab",        ref WordDropFX.FX_MeltdownPrefab);
             innerY = ToggleRow(innerY, "Meltdown Intro Flash",   ref WordDropFX.FX_MeltdownIntroFlash);
+            innerY = ToggleRow(innerY, "Tile Heat Overlay",      ref WordDropFX.FX_TileHeatOverlay);
             innerY = ToggleRow(innerY, "Flipbook Frames",        ref WordDropFX.FX_FlipbookFrames);
             innerY = ToggleRow(innerY, "Flipbook Glow",          ref WordDropFX.FX_FlipbookGlow);
             innerY = ToggleRow(innerY, "Tile Flash",             ref WordDropFX.FX_TileFlash);
@@ -207,6 +208,7 @@ namespace WordDrop
         {
             WordDropFX.FX_MeltdownPrefab     = v;
             WordDropFX.FX_MeltdownIntroFlash = v;
+            WordDropFX.FX_TileHeatOverlay    = v;
             WordDropFX.FX_FlipbookFrames     = v;
             WordDropFX.FX_FlipbookGlow       = v;
             WordDropFX.FX_TileFlash          = v;

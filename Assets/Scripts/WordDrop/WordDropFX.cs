@@ -424,6 +424,7 @@ namespace WordDrop
         public static bool FX_SparkleSpray      = false; // HDR sparkle stars from FirePerWordBurst (HandManager)
         public static bool FX_SparkleLine       = false; // GameParticles.PlaySparkleLine — flare_star sparkles along blast line
         public static bool FX_MeltdownIntroFlash = false; // MeltdownManager IntroCoroutine white screen flash + title slam visuals
+        public static bool FX_TileHeatOverlay   = false; // AllIn1 charge-up swirl overlay on each detonating tile during meltdown wind-up
 
         private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
         {
@@ -452,6 +453,22 @@ namespace WordDrop
                     if (tiles[i] == null) continue;
                     FlipbookExplosion.Instance.PlayMeltdown(tiles[i].transform.position);
                 }
+
+                // Tile heat-up overlay — runs in parallel with the prefab
+                // wind-up so each tile visibly charges before the bang.
+                if (FX_TileHeatOverlay)
+                {
+                    Debug.Log("[FX] TileHeatOverlay: FIRED");
+                    float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                    for (int i = 0; i < tiles.Count; i++)
+                    {
+                        if (tiles[i] == null) continue;
+                        FlipbookExplosion.Instance.PlayTileHeatOverlay(
+                            tiles[i].transform.position, cellSize, MELTDOWN_WINDUP_DELAY);
+                    }
+                }
+                else { Debug.Log("[FX] TileHeatOverlay: SKIPPED"); }
+
                 yield return WaitCache.Get(MELTDOWN_WINDUP_DELAY);
             }
             else { Debug.Log($"[FX] MeltdownPrefab: SKIPPED (toggle={FX_MeltdownPrefab}, meltdownActive={meltdownActive})"); }
