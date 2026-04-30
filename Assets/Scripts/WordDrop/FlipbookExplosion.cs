@@ -42,7 +42,10 @@ namespace WordDrop
         // meltdown prefab. >1 plays faster, <1 plays slower. WordDropFX
         // reads this constant to scale MELTDOWN_WINDUP_DELAY automatically
         // so tile destruction stays aligned with the blast peak.
-        public const float MELTDOWN_PREFAB_SPEED = 2.0f;
+        //   2.0 = very snappy but prefab finishes before tile dissolve completes
+        //   1.5 = compromise: faster wind-up, still visible through tile dissolve
+        //   1.0 = original authored timing
+        public const float MELTDOWN_PREFAB_SPEED = 1.5f;
         // Authored blast peak in the prefab is at startDelay 1.7s in real
         // time; at simulationSpeed=N the peak moves to 1.7 / N.
         public const float MELTDOWN_BLAST_PEAK_AT_REAL_SPEED = 1.70f;
