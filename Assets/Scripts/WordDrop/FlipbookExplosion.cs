@@ -289,8 +289,12 @@ namespace WordDrop
             Debug.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s");
 
             float elapsed = 0f;
-            float baseScale = cellSize * 0.95f;
-            float endScale  = cellSize * 1.30f;
+            // Square_aura.png has significant soft falloff past its rendered
+            // core, so the visible aura is wider than the geometric scale.
+            // 0.45→0.65 × cellSize keeps each tile's halo inside its own cell
+            // (no overlap with neighbours).
+            float baseScale = cellSize * 0.45f;
+            float endScale  = cellSize * 0.65f;
             while (elapsed < duration)
             {
                 elapsed += Time.deltaTime;
