@@ -297,7 +297,9 @@ namespace WordDrop
                 float maskNative = _tileMaskSprite.bounds.size.x;
                 float maskScale = cellSize / Mathf.Max(maskNative, 0.001f);
                 maskGO.transform.localScale = new Vector3(maskScale, maskScale, 1f);
-                mask.isolateMaskedSprites = true; // confine masking to children
+                // SpriteMask only affects sprites whose maskInteraction is
+                // set to VisibleInsideMask / VisibleOutsideMask. Tile
+                // SpriteRenderers default to None, so they're untouched.
             }
 
             // Aura sprite — tinted, pulsed, alpha-faded, masked by the
