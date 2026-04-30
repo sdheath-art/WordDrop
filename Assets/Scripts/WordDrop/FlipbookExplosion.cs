@@ -176,8 +176,10 @@ namespace WordDrop
         public void Play(Vector3 worldPos, int tier = 1)
         {
             if (_frames == null || _frames.Length == 0) return;
-            StartCoroutine(PlayCoroutine(worldPos, tier));
-            StartCoroutine(GlowCoroutine(worldPos, tier));
+            // Two independent layers — gated by the per-layer FX toggles in
+            // WordDropFX so Spencer can A/B them separately.
+            if (WordDropFX.FX_FlipbookFrames) StartCoroutine(PlayCoroutine(worldPos, tier));
+            if (WordDropFX.FX_FlipbookGlow)   StartCoroutine(GlowCoroutine(worldPos, tier));
         }
 
         /// <summary>

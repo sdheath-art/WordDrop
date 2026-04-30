@@ -411,7 +411,8 @@ namespace WordDrop
         public static bool FX_MeltdownPrefab    = true;  // AllIn1 Magic Explosive Spell on each tile (meltdown only)
         public static bool FX_TileFlash         = true;  // white/yellow flash on each tile pre-dissolve
         public static bool FX_DetonationAudio   = true;  // tiered detonation SFX (PlayDetonation)
-        public static bool FX_FlipbookGlow      = true;  // bubble@2x glow halo per tile (FlipbookExplosion.Play)
+        public static bool FX_FlipbookFrames    = true;  // 16-frame explosion_flipbook sprite-sheet animation per tile
+        public static bool FX_FlipbookGlow      = true;  // bubble@2x scale-up halo per tile (sits behind the flipbook)
         public static bool FX_TileFragments     = true;  // shattered tile pieces per tile
         public static bool FX_SparkleParticles  = true;  // PlayPrimed + PlayWordScored sparkles (tier 2+)
         public static bool FX_BoardShake        = true;  // camera shake + hand-card shake + neighbor ripple
@@ -534,9 +535,11 @@ namespace WordDrop
 
             // ── Flipbook explosion per tile ──
             // (Meltdown prefab — if any — was spawned at the top of the
-            // coroutine before the wind-up yield; this block now only fires
-            // the bubble@2x glow flipbook per tile.)
-            if (FX_FlipbookGlow && FlipbookExplosion.Instance != null)
+            // coroutine before the wind-up yield.) Play() fires two layers
+            // internally — the 16-frame sprite-sheet animation and the
+            // bubble@2x glow halo — each gated by its own FX_Flipbook* flag.
+            // Skip the loop entirely if both layers are off.
+            if ((FX_FlipbookFrames || FX_FlipbookGlow) && FlipbookExplosion.Instance != null)
             {
                 for (int i = 0; i < tiles.Count; i++)
                     if (tiles[i] != null)
