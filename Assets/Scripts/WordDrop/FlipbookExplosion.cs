@@ -200,6 +200,22 @@ namespace WordDrop
             // matches the prefab's full lifecycle (~3-4s).
             GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
 
+            // Slight upsize so the FX reads as cluster-spanning. ParticleSystem
+            // scalingMode must be Hierarchy (not the default Local) for the
+            // transform scale to actually grow the emitted particles. Only
+            // touches scaling-related fields — startDelays / playOnAwake /
+            // particle counts left untouched so the prefab's authored
+            // sequence (wind-up → blast → fade) runs naturally.
+            const float MELTDOWN_SCALE = 1.4f;
+            inst.transform.localScale = Vector3.one * MELTDOWN_SCALE;
+            var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
+            for (int i = 0; i < systems.Length; i++)
+            {
+                if (systems[i] == null) continue;
+                var main = systems[i].main;
+                main.scalingMode = ParticleSystemScalingMode.Hierarchy;
+            }
+
             // Force every Renderer in the spawned hierarchy in front of
             // the tile sprites. Tiles render at sortingOrder = 5; the prefab
             // defaults to 0 which puts the FX behind them. Sort 50 lands
