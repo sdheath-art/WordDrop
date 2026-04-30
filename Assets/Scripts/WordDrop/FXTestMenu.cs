@@ -172,6 +172,7 @@ namespace WordDrop
             innerY = ToggleRow(innerY, "Meltdown Prefab",        ref WordDropFX.FX_MeltdownPrefab);
             innerY = ToggleRow(innerY, "Meltdown Intro Flash",   ref WordDropFX.FX_MeltdownIntroFlash);
             innerY = ToggleRow(innerY, "Tile Heat Overlay",      ref WordDropFX.FX_TileHeatOverlay);
+            innerY = ToggleRow(innerY, "Meltdown Tile Punch",    ref WordDropFX.FX_MeltdownTilePunch);
             innerY = ToggleRow(innerY, "Flipbook Frames",        ref WordDropFX.FX_FlipbookFrames);
             innerY = ToggleRow(innerY, "Flipbook Glow",          ref WordDropFX.FX_FlipbookGlow);
             innerY = ToggleRow(innerY, "Tile Flash",             ref WordDropFX.FX_TileFlash);
@@ -209,6 +210,7 @@ namespace WordDrop
             WordDropFX.FX_MeltdownPrefab     = v;
             WordDropFX.FX_MeltdownIntroFlash = v;
             WordDropFX.FX_TileHeatOverlay    = v;
+            WordDropFX.FX_MeltdownTilePunch  = v;
             WordDropFX.FX_FlipbookFrames     = v;
             WordDropFX.FX_FlipbookGlow       = v;
             WordDropFX.FX_TileFlash          = v;
@@ -396,11 +398,13 @@ namespace WordDrop
             // global state doesn't leak across test fires.
             bool savedMeltdownPrefab    = WordDropFX.FX_MeltdownPrefab;
             bool savedTileHeatOverlay   = WordDropFX.FX_TileHeatOverlay;
+            bool savedMeltdownTilePunch = WordDropFX.FX_MeltdownTilePunch;
             if (forceMeltdown)
             {
-                WordDropFX.FX_MeltdownPrefab  = true;
-                WordDropFX.FX_TileHeatOverlay = true;
-                Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay ON for the duration of this test fire");
+                WordDropFX.FX_MeltdownPrefab    = true;
+                WordDropFX.FX_TileHeatOverlay   = true;
+                WordDropFX.FX_MeltdownTilePunch = true;
+                Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay + FX_MeltdownTilePunch ON for the duration of this test fire");
             }
 
             // Cache positions so we can re-place tiles after PlayExplosion's
@@ -430,8 +434,9 @@ namespace WordDrop
             // doesn't leak past this test fire.
             if (forceMeltdown)
             {
-                WordDropFX.FX_MeltdownPrefab  = savedMeltdownPrefab;
-                WordDropFX.FX_TileHeatOverlay = savedTileHeatOverlay;
+                WordDropFX.FX_MeltdownPrefab    = savedMeltdownPrefab;
+                WordDropFX.FX_TileHeatOverlay   = savedTileHeatOverlay;
+                WordDropFX.FX_MeltdownTilePunch = savedMeltdownTilePunch;
             }
         }
 

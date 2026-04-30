@@ -425,6 +425,7 @@ namespace WordDrop
         public static bool FX_SparkleLine       = false; // GameParticles.PlaySparkleLine — flare_star sparkles along blast line
         public static bool FX_MeltdownIntroFlash = false; // MeltdownManager IntroCoroutine white screen flash + title slam visuals
         public static bool FX_TileHeatOverlay   = false; // AllIn1 charge-up swirl overlay on each detonating tile during meltdown wind-up
+        public static bool FX_MeltdownTilePunch = false; // squeeze → pop → settle scale sequence on each tile during meltdown wind-up
 
         private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
         {
@@ -456,6 +457,17 @@ namespace WordDrop
                     if (tiles[i] == null) continue;
                     FlipbookExplosion.Instance.PlayMeltdown(tiles[i].transform.position);
                 }
+
+                // Tile punch — squeeze → pop → settle scale sequence per
+                // tile, telegraphing that the tiles are being "grabbed" by
+                // the magic during the wind-up. Sequence runs ~250ms so it
+                // completes well before the blast peak at WINDUP_DELAY.
+                if (FX_MeltdownTilePunch)
+                {
+                    Debug.Log("[FX] MeltdownTilePunch: FIRED");
+                    PlayDetonation(tiles, chainStep);
+                }
+                else { Debug.Log("[FX] MeltdownTilePunch: SKIPPED"); }
 
                 // Tile heat-up overlay — runs in parallel with the prefab
                 // wind-up so each tile visibly charges before the bang.
