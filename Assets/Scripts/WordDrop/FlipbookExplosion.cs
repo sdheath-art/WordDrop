@@ -253,7 +253,7 @@ namespace WordDrop
             // touches scaling-related fields — startDelays / playOnAwake /
             // particle counts left untouched so the prefab's authored
             // sequence (wind-up → blast → fade) runs naturally.
-            const float MELTDOWN_SCALE = 2.2f;
+            const float MELTDOWN_SCALE = 2.7f;
             inst.transform.localScale = Vector3.one * MELTDOWN_SCALE;
             var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
             for (int i = 0; i < systems.Length; i++)
