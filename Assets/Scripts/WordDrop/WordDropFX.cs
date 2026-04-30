@@ -439,11 +439,10 @@ namespace WordDrop
             // hits empty cells (Spencer's screenshot).
             Debug.Log($"[FX-Detonation] tier={(chainStep >= 3 || tileCount >= 15 ? 4 : chainStep >= 2 || tileCount >= 9 ? 3 : tileCount >= 5 ? 2 : 1)} chain={chainStep} tiles={tileCount}");
 
-            // 1.5s aligns the tile-destruction moment with the AllIn1 prefab's
-            // blast peak (authored startDelay ~1.7s on its blast PSes). Tile
-            // dissolves slightly before the peak so the cause-and-effect reads
-            // as "blast destroys tile" rather than "tile vanishes mid-animation."
-            const float MELTDOWN_WINDUP_DELAY = 1.50f;
+            // 1.7s matches the AllIn1 prefab's authored blast startDelay so
+            // the tile destruction fires AT the visible blast peak instead
+            // of slightly before it.
+            const float MELTDOWN_WINDUP_DELAY = 1.70f;
             bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
             if (FX_MeltdownPrefab && meltdownActive && FlipbookExplosion.Instance != null)
             {
