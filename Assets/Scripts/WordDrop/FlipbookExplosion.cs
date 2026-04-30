@@ -297,6 +297,14 @@ namespace WordDrop
                 float maskNative = _tileMaskSprite.bounds.size.x;
                 float maskScale = cellSize / Mathf.Max(maskNative, 0.001f);
                 maskGO.transform.localScale = new Vector3(maskScale, maskScale, 1f);
+                // Span the mask's sorting-order range across the aura's
+                // sortingOrder (10). Default is 0–0, which would mean the
+                // mask doesn't affect our aura at sortingOrder 10 → aura
+                // gets VisibleInsideMask but never sees a mask hit → renders
+                // invisible. Wide range = mask catches anything in this
+                // sortingLayer.
+                mask.frontSortingOrder = 32767;
+                mask.backSortingOrder  = -32768;
                 // SpriteMask only affects sprites whose maskInteraction is
                 // set to VisibleInsideMask / VisibleOutsideMask. Tile
                 // SpriteRenderers default to None, so they're untouched.
