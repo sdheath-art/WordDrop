@@ -3858,6 +3858,14 @@ namespace WordDrop
             int editRefillCount = 0;
             int wildRefillCount = 0;
             int longestPrimedWord = 0; // track for splash scaling
+            // Per-cluster-word chain depth inflation. Reverted 2026-05-04 —
+            // the per-word increment is load-bearing for the game's reward
+            // economy: splash gates, meltdown thresholds, big-moment burst
+            // gates, and Survival long-word rewards are all calibrated to
+            // expect chain depth values that climb across a cluster's
+            // word loop. Removing the inflation made the game flatter and
+            // less fun. Codex flagged it as "wrong" but the gates around it
+            // were tuned to it; the apparent bug is de facto game design.
             // Cluster-size boost in DoExplode removed 2026-04-18 — combined with
             // DoScoreAndPrime's cluster boost + raised cap=8, it made mega-combos
             // the only viable path. DoScoreAndPrime cluster boost alone is enough.
@@ -3916,6 +3924,8 @@ namespace WordDrop
                 // Chain-depth scaling: each word in a cluster escalates the chain.
                 // Evaluate at depth+1 so the OPENING boom is 2x, not a flat 1x.
                 // First detonation = 2x, second = 4x, third = 7x (capped by CHAIN_DEPTH_SCALE_CAP=3).
+                // _stepChainDepth is incremented per word at the bottom of this
+                // loop — by design, see top-of-method comment.
                 float chainMultiplier = TriangularChainMultiplier(_stepChainDepth + 1);
                 float goldMultiplier = pw.IsGold ? 2f : 1f;
                 int bonus = Mathf.RoundToInt(rawBonus * chainMultiplier * goldMultiplier);
@@ -3935,8 +3945,9 @@ namespace WordDrop
                 _primedRegistry.RemovePrimedWord(pid);
                 _stepJustPrimed.Remove(pid);
 
-                // Escalate chain depth for each word in the cluster.
-                // Connected cluster = cascading chain, not simultaneous pop.
+                // Escalate chain depth per cluster word — load-bearing for
+                // splash/meltdown/burst gates that expect chain depth to climb
+                // across a cluster.
                 _stepChainDepth++;
             }
 
@@ -3997,7 +4008,8 @@ namespace WordDrop
                 // Any primed word caught in the splash detonates as chain
                 // continuation. Gated to match BigBurstFlash: chain depth ≥ 2 OR
                 // longest primed word ≥ 6 OR 2+ primed cluster.
-                // ═══════════════════════════════════════════════════════════════
+                // The chain >= 2 threshold relies on per-cluster-word chain
+                // depth inflation in DoExplode — see top-of-method comment.
                 // Phase 9.7: big-moment splash stays Survival-only even though the
                 // outer trigger-word-clear block now runs in Level mode too.
                 bool splashGate = SurvivalManager.IsSurvivalMode

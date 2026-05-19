@@ -883,13 +883,14 @@ namespace WordDrop
                 HighScoreManager.SubmitCombo(totalScore, comboMode);
             }
 
-            // Update last word display with FULL turn total — but only re-fire
-            // if it's bigger than what we already showed live during scoring.
-            // First-word immediate fire (in HandManager/GameVisualBridge scoring
-            // loop) already showed the first word's own score; this catches any
-            // chain/detonation additions on top.
+            // Update last word display with FULL turn total. The gate is >= not >
+            // so that even when no chain/detonation grew the score (or the immediate
+            // ShowWord was suppressed because detonationComing=true but the detonation
+            // added nothing), the final tally still renders. Without this, the previous
+            // turn's display lingered indefinitely in editor (no auto-fade off mobile)
+            // whenever a rewrite/drop's detonation fizzled to zero bonus.
             if (totalScore > 0 && LastWordDisplay.Instance != null && !string.IsNullOrEmpty(LastTurnWord)
-                && totalScore > LastTurnShownScore)
+                && totalScore >= LastTurnShownScore)
             {
                 LastWordDisplay.Instance.ShowWord(LastTurnWord, totalScore, playerIndex == PLAYER_HUMAN);
             }
@@ -1427,7 +1428,7 @@ namespace WordDrop
                     new Color(0.4f, 1f, 0.5f, 1f), Vector3.up * 2.5f, 1.3f);
 
             GameAudio.Instance?.PlayScorePowerup();
-            HapticsManager.Strong();
+            StartCoroutine(HapticsManager.StageClearChord()); // 3-tick ascending celebration chord
         }
 
         /// <summary>

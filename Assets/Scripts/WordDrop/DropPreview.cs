@@ -198,7 +198,7 @@ namespace WordDrop
             _ghostTile.SetActive(true);
 
             // Use the selected (green) tile sprite if available, fallback to procedural
-            Sprite selectedSprite = Resources.Load<Sprite>("Tiles/selected_test@2x");
+            Sprite selectedSprite = Resources.Load<Sprite>("Tiles/green_tile2@2x");
             if (selectedSprite != null)
             {
                 _ghostSR.sprite = selectedSprite;

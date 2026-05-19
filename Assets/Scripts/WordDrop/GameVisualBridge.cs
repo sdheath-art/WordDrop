@@ -486,12 +486,21 @@ namespace WordDrop
                                 var sw = step.ScoredWords[w];
 
                                 // Track first word + fire ShowWord NOW so player sees their
-                                // word during scoring animation, not after CompleteDropBookkeeping.
+                                // word during scoring animation. SKIP the ShowWord if a
+                                // detonation is coming — the base score (e.g. "HOE +10")
+                                // is misleading because cascade bonuses will balloon it
+                                // (e.g. to "+952"). For detonating drops, let
+                                // CompleteDropBookkeeping fire ShowWord ONCE with the
+                                // final tallied score after chains finish counting.
+                                // LastTurnWord still gets set so other code reading it
+                                // has the data.
                                 if (MatchController.Instance != null && string.IsNullOrEmpty(MatchController.Instance.LastTurnWord))
                                 {
                                     MatchController.Instance.LastTurnWord = sw.Word;
                                     MatchController.Instance.LastTurnShownScore = sw.FinalScore;
-                                    if (LastWordDisplay.Instance != null && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
+                                    if (!detonationComing
+                                        && LastWordDisplay.Instance != null
+                                        && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
                                         LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
                                 }
 
@@ -520,6 +529,24 @@ namespace WordDrop
                                 Color hlColor = isPlayer ? PLAYER_COLOR : AI_COLOR;
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(scoredTilesForFX, hlColor, wordIndex);
+
+                                // Stash THIS scored word's tiles as a separate
+                                // entry in _pendingCascadeWords. Each entry is
+                                // ONE word, so the cascade BigBurst path can
+                                // fire one beam per word centered on each
+                                // word's own cluster. Multi-word cascades get
+                                // multi-beam telegraphs, not a single beam at
+                                // the centroid of all detonating tiles.
+                                if (detonationComing)
+                                {
+                                    if (WordDropFX._pendingCascadeWords == null)
+                                        WordDropFX._pendingCascadeWords = new List<List<Tile>>();
+                                    if (scoredTilesForFX.Count > 0)
+                                    {
+                                        WordDropFX._pendingCascadeWords.Add(new List<Tile>(scoredTilesForFX));
+                                        Debug.Log($"[FX] _pendingCascadeWords += {sw.Word} ({scoredTilesForFX.Count} tiles, gated by detonationComing)");
+                                    }
+                                }
 
                                 // Paint the pink primed-glow on every tile of the scored
                                 // word BEFORE the primeFlash wait fires below. Without
@@ -649,6 +676,12 @@ namespace WordDrop
                                     _triggerWordGroups.Add(new List<Vector2Int>(trig.TriggeredCells));
                             }
 
+                            // Primed-being-detonated tiles are NOT appended here —
+                            // they already have their visual via SetPrimedGlow,
+                            // and adding them to _pendingCascadeWords would
+                            // double the cascade preamble (pulse on top of pulse).
+                            // WordsScored handles the trigger-word population.
+
                             // Haptic feedback — medium pulse on primed tile trigger
                             HapticsManager.Medium();
 
@@ -703,8 +736,11 @@ namespace WordDrop
                             HapticsManager.Strong();
 
                             // Named Meltdown — build-up + stamp BEFORE explosion
+                            // 2026-05-15: gated to step.ChainDepth == 0 (initial detonation only).
+                            // Cascade steps no longer fire CHAIN REACTION / MELTDOWN / AFTERSHOCK
+                            // intros — they get the simple pop + pitched-audio treatment instead.
                             bool meltdownActive = false;
-                            if (MeltdownManager.Instance != null)
+                            if (step.ChainDepth == 0 && MeltdownManager.Instance != null)
                             {
                                 Coroutine meltdownIntro = MeltdownManager.Instance.TryMeltdownIntro(
                                     step.ChainDepth, step.ChainTriggeredCount, step.DetonationBonus, false);
@@ -715,10 +751,11 @@ namespace WordDrop
                                 }
                             }
 
-                            // Hitstop — only on chain depth 2+ (reserved for big moments)
-                            if (!meltdownActive && dyingTiles.Count > 0 && step.ChainDepth >= 2)
+                            // Hitstop — only on initial detonation step, never on cascades
+                            // (2026-05-15). Cascades pop instantly with no time-freeze pause.
+                            if (!meltdownActive && dyingTiles.Count > 0 && step.ChainDepth == 0)
                             {
-                                float hitStopDur = Application.isMobilePlatform ? 0.04f : 0.08f;
+                                float hitStopDur = Application.isMobilePlatform ? 0.04f : 0.05f;
                                 yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
                             }
 
@@ -986,7 +1023,7 @@ namespace WordDrop
         /// cascade-specific amplification, but a long word is still a long
         /// word even if gravity assembled it.
         /// </summary>
-        private void TriggerSurvivalLongWordReward(
+        public void TriggerSurvivalLongWordReward(
             string word, List<Tile> scoredTiles, bool isPlayer)
         {
             // Always track the session-longest, even for short 3/4 words

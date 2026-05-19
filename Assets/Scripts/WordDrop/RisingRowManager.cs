@@ -88,6 +88,12 @@ namespace WordDrop
                 yield break;
             }
 
+            // Cancel any active drop preview before the board shifts —
+            // otherwise stale ghost tile, word highlights, and primed-chain
+            // overlays render against the new (shifted) board positions.
+            // Player can re-trigger the preview by tapping/dragging again.
+            DropPreview.Instance?.ClearPreview();
+
             TileBag bag = MatchController.Instance != null
                 ? MatchController.Instance.Bag
                 : new TileBag();

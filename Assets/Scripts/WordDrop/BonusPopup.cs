@@ -159,8 +159,21 @@ namespace WordDrop
 
         // ── Flying Score Animation ──────────────────────────────────────────
 
+        // 2026-05-15: temporarily disabled per Spencer's request.
+        //
+        // FlyingScoreEnabled: the small "+points" particles that fly from tile
+        //   locations to the main score readout.
+        // BonusTextEnabled: all word popups like "DOUBLE", "EDIT FREE!",
+        //   "CHARGE BACK!", "CLEAR!", "COMEBACK", "FINAL", etc.
+        //
+        // Both default OFF. Flip to true to re-enable that category.
+        public static bool FlyingScoreEnabled = false;
+        public static bool BonusTextEnabled   = false;
+
         private IEnumerator FlyScoreToHUD(string text, Color color, Vector3 startPos, bool isPlayer, int points = 0, float fontSize = 6f)
         {
+            if (!FlyingScoreEnabled) yield break;
+
             GameAudio.Instance?.PlayBonusPopup();
 
             GameObject go = new GameObject("FlyingScore");
@@ -261,6 +274,8 @@ namespace WordDrop
 
         private IEnumerator AnimatePopup(string text, Color color, Vector3 worldPos, float scale)
         {
+            if (!BonusTextEnabled) yield break;
+
             GameAudio.Instance?.PlayBonusPopup();
             var cfg = UIConfig.Instance;
 

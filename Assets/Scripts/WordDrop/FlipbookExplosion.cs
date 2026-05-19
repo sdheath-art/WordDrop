@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using DG.Tweening;
 
 namespace WordDrop
 {
@@ -44,8 +45,8 @@ namespace WordDrop
         // so tile destruction stays aligned with the blast peak.
         //   2.0 = very snappy but prefab finishes before tile dissolve completes
         //   1.5 = compromise: faster wind-up, still visible through tile dissolve
-        //   1.0 = original authored timing
-        public const float MELTDOWN_PREFAB_SPEED = 1.5f;
+        //   1.0 = original authored timing (Spencer 2026-05-01)
+        public const float MELTDOWN_PREFAB_SPEED = 1.0f;
         // Authored blast peak in the prefab is at startDelay 1.7s in real
         // time; at simulationSpeed=N the peak moves to 1.7 / N.
         public const float MELTDOWN_BLAST_PEAK_AT_REAL_SPEED = 1.70f;
@@ -57,6 +58,8 @@ namespace WordDrop
         // cleanly to the tile silhouette (no halo bleed past tile edges).
         private Sprite _heatAuraSprite;
         private Sprite _tileMaskSprite;
+        private Sprite _glowOrbSprite;
+        private Material _glowOrbMat;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
@@ -102,6 +105,39 @@ namespace WordDrop
             // Tile sprite acts as the SpriteMask shape so the aura stays
             // clipped to the rounded-rect silhouette.
             _tileMaskSprite = Resources.Load<Sprite>("Tiles/test_tile");
+
+            // Soft-circle sprite for the round primed-glow orb overlay
+            // (Candy-Crush-color-bomb style — a pulsing radial halo on top
+            // of each tile during the meltdown windup, NOT clipped to tile
+            // silhouette so the glow extends past edges).
+            // Load priority: vfx_glow (clean radial gradient — bright center,
+            // soft falloff, no organic shape) → previous fallbacks. Switched
+            // from water_puddle 2026-04-30: Spencer wanted a simple clean
+            // glow that scales up, not a distorting cloud.
+            Texture2D orbTex = Resources.Load<Texture2D>("Particles/vfx_glow")
+                            ?? Resources.Load<Texture2D>("Particles/water_puddle")
+                            ?? Resources.Load<Texture2D>("Particles/acid_puddle")
+                            ?? Resources.Load<Texture2D>("Particles/glow")
+                            ?? Resources.Load<Texture2D>("Particles/glowfree1")
+                            ?? Resources.Load<Texture2D>("Particles/soft_circle")
+                            ?? Resources.Load<Texture2D>("Particles/circle");
+            if (orbTex != null)
+            {
+                _glowOrbSprite = Sprite.Create(orbTex,
+                    new Rect(0, 0, orbTex.width, orbTex.height),
+                    new Vector2(0.5f, 0.5f), 100f);
+                // Photoshop "Screen" blend (no UV warp) — clean static glow
+                // that brightens the underlying tile without blowing out.
+                // Movement now comes solely from the scale ramp-up, not from
+                // any shader-side distortion.
+                Shader screenShader = Shader.Find("WordDrop/ScreenSprite")
+                                  ?? Shader.Find("Sprites/Default");
+                _glowOrbMat = new Material(screenShader);
+            }
+            else
+            {
+                Debug.LogWarning("[FlipbookFX] No soft_circle/glow/circle in Resources/Particles — primed glow orb disabled");
+            }
         }
 
         private void SliceSpriteSheet()
@@ -216,9 +252,8 @@ namespace WordDrop
         public void Play(Vector3 worldPos, int tier = 1)
         {
             if (_frames == null || _frames.Length == 0) return;
-            // Two independent layers — gated by the per-layer FX toggles in
-            // WordDropFX so Spencer can A/B them separately.
-            if (WordDropFX.FX_FlipbookFrames) StartCoroutine(PlayCoroutine(worldPos, tier));
+            // Orange shrapnel sprite-sheet retired 2026-04-30 — colored prefab + tile shards
+            // carry the impact now. Glow halo layer kept (still gated by FX_FlipbookGlow).
             if (WordDropFX.FX_FlipbookGlow)   StartCoroutine(GlowCoroutine(worldPos, tier));
         }
 
@@ -253,7 +288,14 @@ namespace WordDrop
             // touches scaling-related fields — startDelays / playOnAwake /
             // particle counts left untouched so the prefab's authored
             // sequence (wind-up → blast → fade) runs naturally.
+            // Bumped to 2.7× per Spencer 2026-05-01 — bloom is now tamer
+            // (threshold 1.30, intensity 0.20) so the prefab can be larger
+            // without blowing out into a screen-spanning white blob.
             const float MELTDOWN_SCALE = 2.7f;
+            // Brightness multiplier on each PS's startColor — 0.75 softens
+            // additive stacking enough to avoid white-out without sapping
+            // the prefab's life.
+            const float MELTDOWN_BRIGHTNESS = 0.75f;
             inst.transform.localScale = Vector3.one * MELTDOWN_SCALE;
             var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
             for (int i = 0; i < systems.Length; i++)
@@ -262,6 +304,35 @@ namespace WordDrop
                 var main = systems[i].main;
                 main.scalingMode = ParticleSystemScalingMode.Hierarchy;
                 main.simulationSpeed = MELTDOWN_PREFAB_SPEED;
+
+                // Dim startColor in-place so the prefab's additive layers
+                // stack without blowing out into white. Constant-mode and
+                // gradient-mode both supported.
+                var sc = main.startColor;
+                if (sc.mode == ParticleSystemGradientMode.Color)
+                {
+                    Color c = sc.color;
+                    sc.color = new Color(c.r * MELTDOWN_BRIGHTNESS, c.g * MELTDOWN_BRIGHTNESS, c.b * MELTDOWN_BRIGHTNESS, c.a);
+                }
+                else if (sc.mode == ParticleSystemGradientMode.TwoColors)
+                {
+                    Color a = sc.colorMin;
+                    Color b = sc.colorMax;
+                    sc.colorMin = new Color(a.r * MELTDOWN_BRIGHTNESS, a.g * MELTDOWN_BRIGHTNESS, a.b * MELTDOWN_BRIGHTNESS, a.a);
+                    sc.colorMax = new Color(b.r * MELTDOWN_BRIGHTNESS, b.g * MELTDOWN_BRIGHTNESS, b.b * MELTDOWN_BRIGHTNESS, b.a);
+                }
+                main.startColor = sc;
+
+                // Strip the prefab's authored projectile/shrapnel layers — our
+                // own TileFragments handles per-tile chunk shatter, so we don't
+                // want competing prefab-level pieces flying around.
+                string n = systems[i].name;
+                if (n == "AbosrbMagicPieces" || n == "AbosrbMagicPiecesExplosion")
+                {
+                    var emission = systems[i].emission;
+                    emission.enabled = false;
+                    systems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                }
             }
 
             // Force every Renderer in the spawned hierarchy in front of
@@ -291,6 +362,220 @@ namespace WordDrop
         {
             if (_heatAuraSprite == null) return;
             StartCoroutine(TileHeatOverlayCoroutine(worldPos, cellSize, duration));
+        }
+
+        /// <summary>
+        /// Tier-1 Candy-Crush-style overlay square — bright frame around the
+        /// tile, similar to the heat overlay but UNCLIPPED (extends past tile
+        /// edges) and faster. Used by PlayTier1Pop as the bright square that
+        /// pulses in CC frame 1 of the pop reference.
+        /// </summary>
+        public void PlayPopOverlaySquare(Vector3 worldPos, float cellSize, float duration, Color tint)
+        {
+            if (_heatAuraSprite == null) return;
+            StartCoroutine(PopOverlaySquareCoroutine(worldPos, cellSize, duration, tint));
+        }
+
+        private IEnumerator PopOverlaySquareCoroutine(Vector3 worldPos, float cellSize, float duration, Color tint)
+        {
+            GameObject overlay = new GameObject("Tier1PopOverlaySquare");
+            overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.45f);
+
+            SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
+            sr.sprite = _heatAuraSprite;
+            sr.material = _additiveMat;
+            sr.sortingOrder = 28; // above tiles (5/6), below bubble (29) and fragments (31)
+
+            // square_aura native size = 2.56 world units (256px @ ppu=100).
+            // FIXED scale — does not animate. Sized close to one tile width so
+            // the soft falloff extends just slightly past tile edges.
+            float nativeSize = _heatAuraSprite.bounds.size.x;
+            float fixedScale = (cellSize * 0.85f) / Mathf.Max(nativeSize, 0.001f);
+            overlay.transform.localScale = new Vector3(fixedScale, fixedScale, 1f);
+
+            // Constant low alpha — subtle frame, not a peaked flash. Brief
+            // fade-in at start + fade-out at end so it doesn't pop in/out.
+            const float HOLD_ALPHA = 0.20f;
+            const float FADE_IN  = 0.04f; // first 40ms ramp up
+            const float FADE_OUT = 0.06f; // last 60ms ramp down
+
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+
+                float alpha;
+                if (elapsed < FADE_IN)
+                    alpha = Mathf.Lerp(0f, HOLD_ALPHA, elapsed / FADE_IN);
+                else if (elapsed > duration - FADE_OUT)
+                    alpha = Mathf.Lerp(HOLD_ALPHA, 0f, (elapsed - (duration - FADE_OUT)) / FADE_OUT);
+                else
+                    alpha = HOLD_ALPHA;
+
+                sr.color = new Color(tint.r, tint.g, tint.b, tint.a * alpha);
+                yield return null;
+            }
+
+            if (overlay != null) Destroy(overlay);
+        }
+
+        /// <summary>
+        /// Tier-1 Candy-Crush-style "pop" bubble halo. Spawns the bubble@2x
+        /// sprite at worldPos, scales 0.5×→1.6× cellSize×sizeMultiplier,
+        /// fades alpha 0 → peak (0.85) at midpoint → 0, with a caller-
+        /// provided tint (replaces the hardcoded HDR cyan in GlowCoroutine
+        /// for this NEW path only — existing GlowCoroutine is untouched).
+        /// Cleans up the spawned GameObject when finished.
+        /// </summary>
+        public void PlayBubble(Vector3 pos, Color tint, float sizeMultiplier, float duration)
+        {
+            if (_glowSpriteBubble == null)
+            {
+                LoadGlowSprite();
+                if (_glowSpriteBubble == null) return;
+            }
+            StartCoroutine(BubbleCoroutine(pos, tint, sizeMultiplier, duration));
+        }
+
+        private IEnumerator BubbleCoroutine(Vector3 pos, Color tint, float sizeMultiplier, float duration)
+        {
+            GameObject bubble = new GameObject("Tier1PopBubble");
+            bubble.transform.position = new Vector3(pos.x, pos.y, -1.5f);
+
+            SpriteRenderer sr = bubble.AddComponent<SpriteRenderer>();
+            sr.sprite = _glowSpriteBubble;
+            // Alpha-blended overlay (NOT additive). CC bubbles are translucent
+            // — you see through them to the candy. Additive on a white-radial
+            // texture would clip to white at the center (bloom amplifier rule).
+            // Leaving sr.material unset → SpriteRenderer uses the default
+            // Sprites/Default material (Blend SrcAlpha OneMinusSrcAlpha).
+            sr.sortingOrder = 29;
+
+            float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+            // bubble@2x is loaded at ppu=200 → native sprite bounds ≈ 2.56 world
+            // units. Shrunk 15% from prior values per Spencer 2026-05-01.
+            // startScale bumped 2026-05-04 from 0.051 to 0.30 — with the
+            // continuous-expansion + simultaneous-fade pattern, a 0.051 start
+            // meant the bubble was a dot at peak alpha and only grew large
+            // after most of the alpha had already faded. Reading from a
+            // meaningful size ensures the bubble is visibly present.
+            float startScale = 0.30f * cellSize * sizeMultiplier;
+            float endScale   = 0.574f * cellSize * sizeMultiplier;
+
+            // Translucent overlay alpha — see-through, like a soap bubble.
+            const float PEAK_ALPHA = 0.45f;
+
+            // Initial state — small, invisible.
+            bubble.transform.localScale = new Vector3(startScale, startScale, 1f);
+            sr.color = new Color(tint.r, tint.g, tint.b, 0f);
+
+            // Scale: continuous expansion across the FULL duration. No pop,
+            // no hold, no shrink. OutQuart for an aggressive front-loaded
+            // expansion — bubble has gained 75% of its size in the first half
+            // of the (now 120ms) duration, decelerating into the final 25%.
+            // Reads as "fast pop" rather than "slow grow."
+            bubble.transform.DOScale(new Vector3(endScale, endScale, 1f), duration)
+                .SetEase(DG.Tweening.Ease.OutQuart);
+
+            // Alpha: instant snap-on (5% of duration ≈ 6ms), then fade-out
+            // across the remaining 95% with InCubic. InCubic fades slowly at
+            // first and accelerates at the end — bubble stays visible through
+            // most of its expansion, then disappears quickly at the end.
+            // (OutQuart was wrong here — front-loaded the fade so the bubble
+            // was at ~6% alpha by the halfway point.)
+            DG.Tweening.Sequence alphaSeq = DOTween.Sequence();
+            alphaSeq.Append(DOTween.ToAlpha(() => sr.color, c => sr.color = c, PEAK_ALPHA, duration * 0.05f)
+                .SetEase(DG.Tweening.Ease.OutQuad));
+            alphaSeq.Append(DOTween.ToAlpha(() => sr.color, c => sr.color = c, 0f, duration * 0.95f)
+                .SetEase(DG.Tweening.Ease.InCubic));
+
+            yield return new WaitForSeconds(duration);
+
+            if (bubble != null)
+            {
+                bubble.transform.DOKill();
+                if (sr != null) sr.DOKill();
+                Destroy(bubble);
+            }
+        }
+
+        /// <summary>
+        /// Candy-Crush-color-bomb-style primed glow orb: a round soft-circle
+        /// sprite layered over the tile. Pulsing diffused light overlay
+        /// using Photoshop "Screen" blend mode. If `targetTile` is provided,
+        /// the orb dies the instant the tile becomes inactive (shatter hides
+        /// it) so the overlay shuts off cleanly when the tile disappears.
+        /// </summary>
+        public void PlayPrimedGlowOrb(Vector3 worldPos, float cellSize, float duration, Transform targetTile = null)
+        {
+            if (_glowOrbSprite == null) return;
+            StartCoroutine(PrimedGlowOrbCoroutine(worldPos, cellSize, duration, targetTile));
+        }
+
+        private IEnumerator PrimedGlowOrbCoroutine(Vector3 worldPos, float cellSize, float duration, Transform targetTile)
+        {
+            GameObject orb = new GameObject("PrimedGlowOrb");
+            orb.transform.position = new Vector3(worldPos.x, worldPos.y, -0.5f);
+
+            SpriteRenderer sr = orb.AddComponent<SpriteRenderer>();
+            sr.sprite = _glowOrbSprite;
+            sr.material = _glowOrbMat;
+            // 3 = BEHIND tiles (5/6) — the orb halo extends past the tile
+            // edges so you see it as a glow surrounding the tile, while the
+            // tile itself stays clean and readable on top.
+            sr.sortingOrder = 3;
+
+            // Saturated cool blue — R/G dropped, B pushed further above the
+            // bloom threshold so bloom catches a stronger blue rim.
+            Color baseTint = new Color(0.25f, 0.55f, 1.20f, 1f);
+
+            float nativeSize = _glowOrbSprite.bounds.size.x;
+            // Orb sized 1.8× cell — halo extends past tile edges but tighter
+            // than the previous 2.2 (tile renders on top at sortingOrder 5/6).
+            float orbScale = (cellSize * 1.80f) / Mathf.Max(nativeSize, 0.001f);
+            const float PEAK_ALPHA = 0.38f; // translucent so candy/tile shows through
+
+            // Three-phase alpha envelope so the orb stays bright through the
+            // windup AND the explosion, only fading at the tail:
+            //   ramp up (0 → 0.3s):  0 → 1.0
+            //   hold (0.3s → end-0.4s): 1.0
+            //   ramp down (last 0.4s): 1.0 → 0
+            const float RAMP_UP   = 0.30f;
+            const float RAMP_DOWN = 0.40f;
+            float holdEnd = Mathf.Max(RAMP_UP, duration - RAMP_DOWN);
+
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                // Tile shattered → orb dies immediately. Skips the slow tail
+                // fade so the overlay shuts off the instant the tile vanishes.
+                if (targetTile != null && !targetTile.gameObject.activeInHierarchy)
+                    break;
+
+                elapsed += Time.deltaTime;
+
+                float alpha;
+                if (elapsed < RAMP_UP)
+                    alpha = Mathf.SmoothStep(0f, PEAK_ALPHA, elapsed / RAMP_UP);
+                else if (elapsed < holdEnd)
+                    alpha = PEAK_ALPHA;
+                else
+                    alpha = Mathf.SmoothStep(PEAK_ALPHA, 0f, (elapsed - holdEnd) / Mathf.Max(0.01f, duration - holdEnd));
+
+                // Scale envelope — start at 70% so the halo is visible
+                // immediately when the animation starts, then grow to 100%
+                // over the RAMP_UP window. (No ongoing warp; just grow + hold.)
+                float scaleK = elapsed < RAMP_UP
+                    ? Mathf.SmoothStep(0.70f, 1.00f, elapsed / RAMP_UP)
+                    : 1.00f;
+                float s = orbScale * scaleK;
+                orb.transform.localScale = new Vector3(s, s, 1f);
+
+                sr.color = new Color(baseTint.r, baseTint.g, baseTint.b, alpha);
+                yield return null;
+            }
+
+            if (orb != null) Destroy(orb);
         }
 
         private IEnumerator TileHeatOverlayCoroutine(Vector3 worldPos, float cellSize, float duration)

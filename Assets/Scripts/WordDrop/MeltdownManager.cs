@@ -38,7 +38,7 @@ namespace WordDrop
         // ── Thresholds (Inspector) ──────────────────────────────────────────────
         [Header("Thresholds")]
         [SerializeField, Tooltip("Minimum chain depth for any meltdown moment (1 = chains only, 0 = every detonation)")]
-        public int minChainDepthForMeltdown = 2;
+        public int minChainDepthForMeltdown = 4;
         [SerializeField, Tooltip("Minimum trigger count at chain depth 0")]
         public int minTriggersForChainReaction = 1;
 
@@ -347,10 +347,9 @@ namespace WordDrop
 
             // Meltdown SFX + haptic (the big hit)
             GameAudio.Instance?.PlayMeltdown();
-            // Confetti gated by the same FX_Confetti toggle as WordDropFX so a
-            // single switch covers both spawn paths.
-            if (WordDropFX.FX_Confetti)
-                GameParticles.Instance?.PlayMeltdown(Vector3.zero);
+            // Orange particle burst removed 2026-04-30 — was firing on the
+            // MELTDOWN-stamp moment and reading as visual noise. The text +
+            // flash + hitstop carry the impact on their own.
             HapticsManager.Meltdown();
 
             // White screen flash — instant to peak

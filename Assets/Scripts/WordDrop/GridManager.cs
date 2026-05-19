@@ -221,6 +221,12 @@ namespace WordDrop
             float gridCenterX = 0f;
             float gridAreaBottom = -halfH + bottomReserve;
 
+            // Vertical fine-tune: positive = move board up, negative = down.
+            // Expressed as fraction of halfH. -0.10 = move board down 5% of screen height.
+            // The hand area anchors to GridBottom, so it shifts with the board.
+            const float BOARD_Y_OFFSET = -0.10f;
+            gridAreaBottom += halfH * BOARD_Y_OFFSET;
+
             GridLeft   = gridCenterX - gridWorldWidth  / 2f;
             GridRight  = gridCenterX + gridWorldWidth  / 2f;
             GridBottom = gridAreaBottom;

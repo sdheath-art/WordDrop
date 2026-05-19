@@ -84,6 +84,10 @@ namespace WordDrop
 
         // ── New SFX (April 7, 2026) ──────────────────────────────────────────
         private AudioClip _chainRumble;
+        private AudioClip _earthquake;
+        // Dedicated source for stoppable rumble loops (earthquake) so we can
+        // cut them off when the detonation bang plays.
+        private AudioSource _rumbleSource;
         private AudioClip[] _deepImpactVariants;
         private AudioClip[] _scorePowerupVariants;
         private AudioClip[] _poofExplosionVariants;
@@ -102,6 +106,7 @@ namespace WordDrop
         private AudioClip[] _whooshFastVariants;
         private AudioClip[] _cardDealVariants;
         private AudioClip[] _cardDropHandVariants;
+        private AudioClip[] _matchLineVariants;
 
         private AudioSource _source;
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
@@ -190,10 +195,15 @@ namespace WordDrop
         }
 
         // ── Music clips ────────────────────────────────────────────────────────
-        private AudioClip _survivalMusic;
-        private AudioClip _survivalMusic2;        // plays after track 1 finishes; loops thereafter
-        private Coroutine _musicSequenceRoutine;  // watches track 1 → switches to track 2 on end
-        private AudioClip _menuMusic;             // main-menu loop (Monkeys Spinning Monkeys)
+        // 2026-05-16: upgraded from 2 fixed survival tracks + 1 menu track
+        // to folder-based pools loaded via Resources.LoadAll.
+        // Drop new MP3s into the folders and they're auto-included on next build.
+        private AudioClip[] _survivalMusicPool;   // Resources/Music/Gameplay/ — random pick per track, infinite rotation
+        private AudioClip[] _menuMusicPool;       // Resources/Music/Menu/ — main_menu is signature
+        private AudioClip[] _victoryMusicPool;    // Resources/Music/Victory/ — Skybound is canonical
+        private AudioClip   _menuSignatureClip;   // cached "main_menu" track for signature-priority menu playback
+        private AudioClip   _victorySkyboundClip; // cached "Skybound_Victory" for canonical victory
+        private Coroutine   _musicSequenceRoutine; // watches current track and rotates to a fresh random pick when it ends
 
         // Music layer volume + mute, persisted separately from SFX so a player
         // can turn music off without losing feedback sounds.
@@ -211,6 +221,18 @@ namespace WordDrop
                 PlayerPrefs.SetFloat(PREF_MUSIC_VOLUME, _musicVolume);
                 PlayerPrefs.Save();
                 ApplyMixerLevels();
+            }
+        }
+
+        // Hotkey toggle for music — press M to mute/unmute. Quick option
+        // while a proper settings UI doesn't exist yet. Logs to console so
+        // it's clear whether a key press registered.
+        private void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.M))
+            {
+                MusicMuted = !MusicMuted;
+                Debug.Log($"[GameAudio] Music {(MusicMuted ? "MUTED" : "UNMUTED")} (press M to toggle)");
             }
         }
 
@@ -252,6 +274,9 @@ namespace WordDrop
             _musicSource.playOnAwake = false;
             _musicSource.loop        = true;
             _musicSource.priority    = 64;   // behind SFX (default 128)
+            // Dedicated source for stoppable rumble (earthquake meltdown wind-up).
+            _rumbleSource = gameObject.AddComponent<AudioSource>();
+            _rumbleSource.playOnAwake = false;
 
             // Load saved prefs
             _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.80f);
@@ -279,6 +304,7 @@ namespace WordDrop
             _source.outputAudioMixerGroup        = _sfxGroup;
             _pitchedSource.outputAudioMixerGroup = _sfxGroup;
             _musicSource.outputAudioMixerGroup   = _musicGroup;
+            _rumbleSource.outputAudioMixerGroup  = _sfxGroup;
 
             ApplyMixerLevels();
 
@@ -331,16 +357,25 @@ namespace WordDrop
             _personalBest    = Resources.Load<AudioClip>("SFX/personal_best");
             _goldSpawn       = Resources.Load<AudioClip>("SFX/gold_spawn");
 
-            // Music tracks — drop the audio file at
-            // Assets/Resources/Music/survival_loop.{mp3,ogg,wav} to wire.
-            // If not present, Resources.Load returns null and PlaySurvivalMusic
-            // becomes a quiet no-op (logs a one-time warning).
-            _survivalMusic   = Resources.Load<AudioClip>("Music/survival_loop");
-            _survivalMusic2  = Resources.Load<AudioClip>("Music/survival_loop_2");
-            _menuMusic       = Resources.Load<AudioClip>("Music/menu_loop");
+            // Music tracks (2026-05-16): folder-based pools. Each folder loads
+            // every AudioClip inside via Resources.LoadAll. Add/remove MP3s
+            // without touching code.
+            //
+            //   Resources/Music/Gameplay/  → 11 survival tracks
+            //   Resources/Music/Menu/      → 5 menu tracks (main_menu = signature)
+            //   Resources/Music/Victory/   → 3 victory tracks (Skybound = canonical)
+            _survivalMusicPool = Resources.LoadAll<AudioClip>("Music/Gameplay");
+            _menuMusicPool     = Resources.LoadAll<AudioClip>("Music/Menu");
+            _victoryMusicPool  = Resources.LoadAll<AudioClip>("Music/Victory");
+
+            // Cache the signature/canonical tracks for priority playback.
+            // Names must match the file basenames in their respective folders.
+            _menuSignatureClip   = FindClipByName(_menuMusicPool,    "main_menu");
+            _victorySkyboundClip = FindClipByName(_victoryMusicPool, "Skybound_Victory");
 
             // New SFX (April 7)
             _chainRumble     = Resources.Load<AudioClip>("SFX/chain_rumble");
+            _earthquake      = Resources.Load<AudioClip>("SFX/earthquake");
             _deepImpactVariants = new[] {
                 Resources.Load<AudioClip>("SFX/deep_impact"),
             };
@@ -399,6 +434,12 @@ namespace WordDrop
                 Resources.Load<AudioClip>("SFX/card_drop_hand_alt3"),
                 Resources.Load<AudioClip>("SFX/card_drop_hand_alt4"),
                 Resources.Load<AudioClip>("SFX/card_drop_hand_alt5"),
+            };
+
+            _matchLineVariants = new[] {
+                Resources.Load<AudioClip>("SFX/matchline6"),
+                Resources.Load<AudioClip>("SFX/matchline7"),
+                Resources.Load<AudioClip>("SFX/matchline8"),
             };
 
             // Analyze boom clips to find lead-in offset (time before the main hit)
@@ -525,9 +566,23 @@ namespace WordDrop
             Play(PickRandom(_tileSelect, _tileSelectAlt), 0.5f);
         }
 
-        public void PlayWordScored()
+        public void PlayWordScored(int cascadeStep = 0)
         {
-            Play(PickRandom(_wordScored, _wordScoredAlt), 0.8f);
+            // Shares the same burst counter as PlayMatchLine so the chime and
+            // pop climb the same chord together rather than diverging. Each
+            // call within MATCH_LINE_BURST_WINDOW pitches up one semitone.
+            float now = Time.unscaledTime;
+            if (now - _matchLineBurstLastTime > MATCH_LINE_BURST_WINDOW)
+                _matchLineBurstStep = 0;
+            else
+                _matchLineBurstStep++;
+            _matchLineBurstLastTime = now;
+
+            int effectiveStep = Mathf.Max(cascadeStep, _matchLineBurstStep);
+            int clampedStep = Mathf.Clamp(effectiveStep, 0, 12);
+            float pitch = Mathf.Pow(2f, clampedStep / 12f);
+            Debug.Log($"[PitchDebug] PlayWordScored cascadeStep={cascadeStep} burstStep={_matchLineBurstStep} effective={effectiveStep} pitch={pitch:F3}");
+            Play(PickRandom(_wordScored, _wordScoredAlt), 0.8f, pitch);
         }
 
         public void PlayTilePrimed()
@@ -581,14 +636,14 @@ namespace WordDrop
             }
             else
             {
-                // Tier 4: massive layered boom — bass + mid + crisp punch + sub-rumble.
+                // Tier 4: massive layered boom — natural pitch (Spencer wanted
+                // the original pitch for meltdown, not pitched-down). Layered
+                // volume gives weight without losing the clip's natural bite.
                 volume = 1.0f;
-                pitch = 0.8f;
+                pitch = 1.0f;
                 Play(_detonation, volume, pitch);
-                Play(_detonationAlt, volume * 0.7f, pitch * 0.85f);
-                // Extra low rumble layer
-                Play(_detonation, 0.5f, 0.4f);
-                // Crisp punch layer on top — restores the bite lost to pitch-down.
+                Play(_detonationAlt, volume * 0.7f, pitch);
+                // Crisp punch layer on top.
                 Play(_detonation, 1.0f, 1.0f);
                 Play(_detonationAlt, 0.95f, 1.0f);
             }
@@ -728,20 +783,18 @@ namespace WordDrop
         public void PlaySurvivalMusic()
         {
             if (_musicSource == null) return;
-            if (_survivalMusic == null)
+            if (_survivalMusicPool == null || _survivalMusicPool.Length == 0)
             {
                 if (!_warnedMissingSurvivalMusic)
                 {
-                    Debug.LogWarning("[GameAudio] No survival music clip found at Resources/Music/survival_loop. " +
-                                     "Drop an .mp3/.ogg/.wav there to enable Survival BGM.");
+                    Debug.LogWarning("[GameAudio] No survival music clips found at Resources/Music/Gameplay/. " +
+                                     "Drop .mp3/.ogg/.wav files there to enable Survival BGM.");
                     _warnedMissingSurvivalMusic = true;
                 }
                 return;
             }
-            // Idempotent across both tracks — if either survival clip is
-            // already playing, leave it running.
-            if (_musicSource.isPlaying
-                && (_musicSource.clip == _survivalMusic || _musicSource.clip == _survivalMusic2))
+            // Idempotent — if any survival pool clip is already playing, leave it.
+            if (_musicSource.isPlaying && IsClipInPool(_musicSource.clip, _survivalMusicPool))
                 return;
 
             if (_musicSequenceRoutine != null)
@@ -750,43 +803,49 @@ namespace WordDrop
                 _musicSequenceRoutine = null;
             }
 
-            // Track 1 plays once (loop=false) iff a track 2 is queued; otherwise
-            // it loops by itself the way it always did.
-            _musicSource.clip   = _survivalMusic;
-            _musicSource.loop   = (_survivalMusic2 == null);
+            // Random pick from the pool — Candy-Crush-style rotation.
+            // Each track plays once (loop=false), then SurvivalMusicSequence
+            // picks a fresh random track from the pool indefinitely.
+            _musicSource.clip = PickRandomClip(_survivalMusicPool, exclude: null);
+            _musicSource.loop = false;
             _musicSource.Play();
 
-            if (_survivalMusic2 != null)
-                _musicSequenceRoutine = StartCoroutine(SurvivalMusicSequence());
+            // Always start rotation coroutine — even with 1 track it'll re-pick
+            // the same one when it ends, giving consistent loop behavior.
+            _musicSequenceRoutine = StartCoroutine(SurvivalMusicSequence());
         }
 
         /// <summary>
-        /// Watches track 1 — once it finishes naturally, switches the music
-        /// source to track 2 (looping). External Stop cancels this coroutine
-        /// before the switch can happen.
+        /// Survival music rotation. When the current track ends, picks a new
+        /// random clip from _survivalMusicPool (avoiding immediate repeat of
+        /// the same track when the pool has 2+ entries) and plays it. Runs
+        /// indefinitely until StopMusic / scene change / pool emptied.
+        /// 2026-05-16: upgraded from 2-track alternation to N-track pool.
         /// </summary>
         private System.Collections.IEnumerator SurvivalMusicSequence()
         {
-            // Wait until track 1 is no longer playing on this source. Either
-            // it finished naturally (then we switch) or StopMusic cancels us.
-            while (_musicSource != null
-                   && _musicSource.clip == _survivalMusic
-                   && _musicSource.isPlaying)
+            while (_musicSource != null)
             {
-                yield return null;
+                // Wait for the current track to finish (or be stopped externally).
+                while (_musicSource != null && _musicSource.isPlaying)
+                {
+                    yield return null;
+                }
+
+                // Bail if state shifted under us (StopMusic, scene change, pool emptied).
+                if (_musicSource == null || _survivalMusicPool == null || _survivalMusicPool.Length == 0)
+                {
+                    _musicSequenceRoutine = null;
+                    yield break;
+                }
+
+                // Pick a fresh random clip, avoiding immediate repeat when possible.
+                AudioClip nextClip = PickRandomClip(_survivalMusicPool, exclude: _musicSource.clip);
+                _musicSource.clip = nextClip;
+                _musicSource.loop = false;
+                _musicSource.Play();
             }
 
-            // Bail if state shifted under us (StopMusic, scene change, etc.)
-            if (_musicSource == null || _survivalMusic2 == null
-                || _musicSource.clip != _survivalMusic)
-            {
-                _musicSequenceRoutine = null;
-                yield break;
-            }
-
-            _musicSource.clip   = _survivalMusic2;
-            _musicSource.loop   = true;
-            _musicSource.Play();
             _musicSequenceRoutine = null;
         }
 
@@ -796,15 +855,22 @@ namespace WordDrop
         /// restart the track. Cancels any in-flight survival sequence so the
         /// post-survival return-to-menu lands on the menu loop cleanly.
         /// </summary>
+        // Menu signature/variety mix. 2026-05-16: 80% chance to play the
+        // "main_menu" signature, 20% chance to pick a random alternate
+        // from the rest of the menu pool. Keeps brand identity strong with
+        // occasional variety. Tune MENU_SIGNATURE_BIAS (0..1) to taste.
+        private const float MENU_SIGNATURE_BIAS = 0.80f;
+
         public void PlayMenuMusic()
         {
             if (_musicSource == null) return;
-            if (_menuMusic == null)
+            if (_menuMusicPool == null || _menuMusicPool.Length == 0)
             {
-                Debug.LogWarning("[GameAudio] No menu music clip at Resources/Music/menu_loop.");
+                Debug.LogWarning("[GameAudio] No menu music clips at Resources/Music/Menu/.");
                 return;
             }
-            if (_musicSource.isPlaying && _musicSource.clip == _menuMusic) return;
+            // Idempotent — if any menu pool clip is already playing, leave it.
+            if (_musicSource.isPlaying && IsClipInPool(_musicSource.clip, _menuMusicPool)) return;
 
             if (_musicSequenceRoutine != null)
             {
@@ -812,8 +878,51 @@ namespace WordDrop
                 _musicSequenceRoutine = null;
             }
 
-            _musicSource.clip   = _menuMusic;
-            _musicSource.loop   = true;
+            // Signature-priority pick: usually play main_menu, occasionally rotate.
+            AudioClip chosen;
+            if (_menuSignatureClip != null && Random.value < MENU_SIGNATURE_BIAS)
+            {
+                chosen = _menuSignatureClip;
+            }
+            else
+            {
+                chosen = PickRandomClip(_menuMusicPool, exclude: null);
+            }
+
+            _musicSource.clip = chosen;
+            _musicSource.loop = true; // menu music loops the chosen track for the menu session
+            _musicSource.Play();
+        }
+
+        /// <summary>
+        /// Plays victory/end-of-session music. Canonical pick is Skybound_Victory
+        /// (marked as the chosen one). Falls back to a random pool pick if Skybound
+        /// is missing. Plays ONCE (no loop) — fire when the score panel flies up
+        /// after game-over and you want the player's session-summary moment.
+        /// 2026-05-16.
+        /// </summary>
+        public void PlayVictoryMusic()
+        {
+            if (_musicSource == null) return;
+            if (_victoryMusicPool == null || _victoryMusicPool.Length == 0)
+            {
+                Debug.LogWarning("[GameAudio] No victory music clips at Resources/Music/Victory/.");
+                return;
+            }
+
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
+
+            // Canonical pick = Skybound. Fallback = first pool clip.
+            AudioClip chosen = _victorySkyboundClip != null
+                ? _victorySkyboundClip
+                : _victoryMusicPool[0];
+
+            _musicSource.clip = chosen;
+            _musicSource.loop = false; // fires once, doesn't loop
             _musicSource.Play();
         }
 
@@ -902,9 +1011,46 @@ namespace WordDrop
         }
 
         /// <summary>Deep sub rumble for chain detonations and Meltdown.</summary>
-        public void PlayChainRumble()
+        public void PlayChainRumble(float volume = 0.9f)
         {
-            Play(_chainRumble, 0.9f);
+            Play(_chainRumble, volume);
+        }
+
+        /// <summary>
+        /// LOUD layered version for the start of meltdown — fires the rumble
+        /// 3× simultaneously so PlayOneShot's per-call ~1.0 cap stacks into
+        /// genuinely-loud output (Unity sums simultaneous PlayOneShots).
+        /// </summary>
+        public void PlayChainRumbleLayered()
+        {
+            if (_chainRumble == null) return;
+            Play(_chainRumble, 1f);
+            Play(_chainRumble, 1f);
+            Play(_chainRumble, 1f);
+        }
+
+        /// <summary>
+        /// Earthquake rumble for the meltdown windup — plays on a dedicated
+        /// AudioSource so it can be stopped programmatically when the
+        /// detonation bang fires (so the rumble cuts off cleanly at impact).
+        /// </summary>
+        public void PlayEarthquake(float volume = 1f)
+        {
+            if (_earthquake == null || _rumbleSource == null || _muted) return;
+            _rumbleSource.clip   = _earthquake;
+            _rumbleSource.volume = _volume * volume;
+            _rumbleSource.loop   = false;
+            _rumbleSource.Play();
+        }
+
+        /// <summary>
+        /// Stops the earthquake rumble. Call at the explosion-impact frame so
+        /// the rumble cuts cleanly into the detonation bang.
+        /// </summary>
+        public void StopEarthquake()
+        {
+            if (_rumbleSource != null && _rumbleSource.isPlaying)
+                _rumbleSource.Stop();
         }
 
         /// <summary>Heavy explosion — random from 3 variations. For big detonations.</summary>
@@ -1001,6 +1147,43 @@ namespace WordDrop
             Play(PickRandom(_wordMatchVariants), 0.6f);
         }
 
+        /// <summary>Tier-1 pop SFX — randomized matchline6/7/8. Used by the
+        /// Candy-Crush-style PlayTier1Pop sequence instead of PlayDetonation.
+        /// Volume mult 1.0 (full unity gain) so the pop reads punchy against
+        /// the rest of the SFX mix. Routes through _source → _sfxGroup so any
+        /// AudioMixer ducking on the SFX bus applies identically to other SFX.</summary>
+        // Burst-counter for chord climb. Reset on a quiet gap so the chord
+        // restarts at root pitch on the next event burst.
+        private static int _matchLineBurstStep = 0;
+        private static float _matchLineBurstLastTime = -10f;
+        private const float MATCH_LINE_BURST_WINDOW = 0.50f; // 500ms gap = reset chord
+
+        public void PlayMatchLine(int cascadeStep = 0)
+        {
+            // Chord-climb pitch escalation. Uses MAX of (incoming cascadeStep,
+            // burst-counter step) so:
+            //   - Sequential cascade chains (where cascadeStep increments per
+            //     chain depth) still climb based on chainStep.
+            //   - Parallel detonations (multiple primed words triggered together,
+            //     all firing at the same chainStep) ALSO climb via the burst
+            //     counter — each consecutive pop within MATCH_LINE_BURST_WINDOW
+            //     gets pitched one extra semitone. Solves the "3 pops at same
+            //     pitch" perceptual bug.
+            // Caps at 2× (octave = 12 semitones).
+            float now = Time.unscaledTime;
+            if (now - _matchLineBurstLastTime > MATCH_LINE_BURST_WINDOW)
+                _matchLineBurstStep = 0;
+            else
+                _matchLineBurstStep++;
+            _matchLineBurstLastTime = now;
+
+            int effectiveStep = Mathf.Max(cascadeStep, _matchLineBurstStep);
+            int clampedStep = Mathf.Clamp(effectiveStep, 0, 12);
+            float pitch = Mathf.Pow(2f, clampedStep / 12f);
+            Debug.Log($"[PitchDebug] PlayMatchLine cascadeStep={cascadeStep} burstStep={_matchLineBurstStep} effective={effectiveStep} pitch={pitch:F3}");
+            Play(PickRandom(_matchLineVariants), 1.0f, pitch);
+        }
+
         /// <summary>Organic button click — for standard UI buttons.</summary>
         public void PlayButtonClick()
         {
@@ -1081,6 +1264,54 @@ namespace WordDrop
                 PlayDeepImpact();
                 PlayChainRumble();
             }
+        }
+
+        // ── Music pool helpers (2026-05-16) ───────────────────────────────────
+
+        /// <summary>
+        /// Pick a random clip from the pool. If exclude is non-null and the pool
+        /// has 2+ entries, avoids picking the same clip as exclude (so two-in-a-row
+        /// repetition is dodged for variety). Returns null only if pool is empty.
+        /// </summary>
+        private static AudioClip PickRandomClip(AudioClip[] pool, AudioClip exclude)
+        {
+            if (pool == null || pool.Length == 0) return null;
+            if (pool.Length == 1) return pool[0];
+            if (exclude == null) return pool[Random.Range(0, pool.Length)];
+
+            // Pool of 2+ — pick a different one than exclude up to 4 tries
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                AudioClip pick = pool[Random.Range(0, pool.Length)];
+                if (pick != exclude) return pick;
+            }
+            // Last resort: return whatever we got
+            return pool[Random.Range(0, pool.Length)];
+        }
+
+        /// <summary>True iff clip is one of the entries in pool. O(N), N is small.</summary>
+        private static bool IsClipInPool(AudioClip clip, AudioClip[] pool)
+        {
+            if (clip == null || pool == null) return false;
+            for (int i = 0; i < pool.Length; i++)
+                if (pool[i] == clip) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Find a clip in the pool by its asset name (case-insensitive). Returns
+        /// null if not found. Used to cache signature/canonical tracks.
+        /// </summary>
+        private static AudioClip FindClipByName(AudioClip[] pool, string name)
+        {
+            if (pool == null || string.IsNullOrEmpty(name)) return null;
+            for (int i = 0; i < pool.Length; i++)
+            {
+                if (pool[i] != null
+                    && string.Equals(pool[i].name, name, System.StringComparison.OrdinalIgnoreCase))
+                    return pool[i];
+            }
+            return null;
         }
     }
 }

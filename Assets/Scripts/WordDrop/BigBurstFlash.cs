@@ -159,13 +159,18 @@ namespace WordDrop
         public void Play(Vector3 worldPos, float targetLengthUnits, float targetThicknessUnits,
                          bool vertical = false, Color? tint = null)
         {
-            // Beam spawn — gated by _sprite presence so a missing big_burst_sweep
-            // texture doesn't kill the radial layer too.
-            if (_sprite != null)
-            PlayBeam(worldPos, targetLengthUnits, targetThicknessUnits, vertical, tint);
+            // 2026-05-16: BigBurst sweep beam globally disabled per Spencer's request.
+            // Detonations now do plain pop animations without the sweep. Test menu
+            // can still force-fire via FX_BigBurstFlashCascadeTest if needed for
+            // visual debugging. To restore for normal play, flip FX_BigBurstFlash
+            // default back to true (it's already false now) AND remove this guard.
+            if (!WordDropFX.FX_BigBurstFlash && !WordDropFX.FX_BigBurstFlashCascadeTest)
+                return;
 
-            if (_radialSprite != null)
-            PlayRadial(worldPos, targetLengthUnits, targetThicknessUnits);
+            // Beam-only mode (Spencer 2026-05-01) — light_rays radial removed
+            // per request. The sweep beam is the entire visual now.
+            if (_sprite != null)
+                PlayBeam(worldPos, targetLengthUnits, targetThicknessUnits, vertical, tint);
         }
 
         private void PlayBeam(Vector3 worldPos, float targetLengthUnits, float targetThicknessUnits,

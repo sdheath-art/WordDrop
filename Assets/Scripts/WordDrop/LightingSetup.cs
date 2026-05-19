@@ -101,7 +101,10 @@ namespace WordDrop
             _globalLight = lightGO.AddComponent<Light2D>();
             _globalLight.lightType = Light2D.LightType.Global;
             _globalLight.color = new Color(1f, 1f, 1f, 1f);
-            _globalLight.intensity = 1f;
+            // 0.85 (was 1.0) — caps lit-sprite output safely below the bloom
+            // threshold so regular tiles can't accidentally cross it via
+            // light × sprite multiplication. Idle scene reads cleaner.
+            _globalLight.intensity = 0.85f;
             _globalLight.blendStyleIndex = 0;
 
             // Target ALL sorting layers
@@ -131,17 +134,17 @@ namespace WordDrop
             // build. Keeping the stack minimal so normal colors render as painted;
             // bloom still catches HDR values (primed=1.8, gold=2.0, flash=1.6).
             var bloom = profile.Add<UnityEngine.Rendering.Universal.Bloom>(true);
-            // Phase 11h second hotfix — burst was whiting out the whole
-            // screen with the previous values stacking on radial 4.5× + beam
-            // 4× HDR. Threshold stays HDR-only; intensity + scatter dialed
-            // down to keep the "lit" character without blowout (still softer
-            // than the original 0.3 scatter / 0.8 intensity baseline).
-            //   threshold 1.05: HDR-only gate (anything ≤1.0 SDR does NOT bloom)
-            //   intensity 0.7:  moderate amplification (was 1.0 — too hot)
-            //   scatter   0.55: narrower spread (was 0.7 — bled across screen)
-            bloom.threshold.value = 1.05f;
-            bloom.intensity.value = 0.7f;
-            bloom.scatter.value   = 0.40f;
+            // Conservative mobile bloom — minimal amplification, HDR-only
+            // gate. Authored HDR content (TileFragments at 1.4, orb tints
+            // at 1.20+, primed tints) still catches bloom but won't blow
+            // out into halos that bleed across the screen.
+            //   threshold 1.30: needs solid HDR push to bloom (was 1.20)
+            //   intensity 0.20: very gentle amplification (was 0.35)
+            //   scatter   0.30: tight halo spread (unchanged)
+            bloom.threshold.value = 1.30f;
+            bloom.intensity.value = 0.20f;
+            bloom.scatter.value   = 0.30f;
+            Debug.Log($"[LightingSetup] Bloom configured: threshold={bloom.threshold.value} intensity={bloom.intensity.value} scatter={bloom.scatter.value}");
 
             // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
             // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams

@@ -466,7 +466,7 @@ namespace WordDrop
         private bool  _holdTriggered = false;
         private int   _swapConfirmIndex = -1; // -1 = no confirmation pending
         private GameObject _swapLabel;        // "SWAP?" floating label
-        // _rewriteLabel removed — rewrite is now triggered by board long-press
+        // _rewriteLabel removed — rewrite is now triggered by board tap
 
         // ── Rewrite mode state ──────────────────────────────────────────
         private const float REWRITE_TIMEOUT = 5f; // auto-cancel after 5s to prevent pause abuse
@@ -515,18 +515,6 @@ namespace WordDrop
 
 //                 Debug.Log($"[HandManager] Rewrite target shifted up → ({_rewriteTargetCol},{_rewriteTargetRow})");
             }
-
-            // Also update board hold tracking if player is mid-long-press
-            if (_boardHoldCell.x >= 0 && _boardHoldCell.y >= 0)
-            {
-                _boardHoldCell = new Vector2Int(_boardHoldCell.x, _boardHoldCell.y + 1);
-                if (_boardHoldCell.y >= RulesEngine.ROWS)
-                {
-                    _boardHoldCell = new Vector2Int(-1, -1);
-                    _boardHoldTimer = 0f;
-                    _boardHoldTriggered = false;
-                }
-            }
         }
         public  bool IsRewriteModeActive => _rewriteModeActive;
         private int  _rewriteMatchRewriteCount = 0; // debug: total rewrites this match
@@ -548,10 +536,6 @@ namespace WordDrop
         private bool  _wildExpiryPaused = false;
         private float _wildExpiryPauseStarted = -1f;
 
-        // ── Board long-press tracking for rewrite ──
-        private Vector2Int _boardHoldCell = new Vector2Int(-1, -1);
-        private float _boardHoldTimer = 0f;
-        private bool  _boardHoldTriggered = false;
         private Coroutine _rewritePulseCoroutine;
 
         // ── Swap Tile confirmation popup ──
@@ -560,7 +544,7 @@ namespace WordDrop
         private GameObject _swapTileYesLabel;
         private GameObject _swapTileNoLabel;
 
-        // (bag button triggers hand swap directly, board rewrite is long-press on board)
+        // (bag button triggers hand swap directly, board rewrite is a tap on a board tile)
 
         private void Update()
         {
@@ -610,18 +594,7 @@ namespace WordDrop
                 return;
             }
 
-            // Board long-press for rewrite (runs in Idle only, blocked during rising row)
             bool risingRowActive = SurvivalManager.Instance != null && SurvivalManager.Instance.IsRisingRow;
-            if (_boardHoldCell.x >= 0 && mouseHeld && !_boardHoldTriggered && !_rewriteModeActive
-                && _inputMode == InputMode.Idle && !risingRowActive)
-            {
-                _boardHoldTimer += Time.deltaTime;
-                if (_boardHoldTimer >= LONG_PRESS_TIME)
-                {
-                    _boardHoldTriggered = true;
-                    TryEnterRewriteMode(_boardHoldCell.x, _boardHoldCell.y);
-                }
-            }
 
             // Rewrite mode timeout — auto-cancel to prevent indefinite pause
             if (_rewriteModeActive)
@@ -640,13 +613,6 @@ namespace WordDrop
                 // ── IDLE ────────────────────────────────────────────────
                 case InputMode.Idle:
                 {
-                    if (mouseUp)
-                    {
-                        _boardHoldCell = new Vector2Int(-1, -1);
-                        _boardHoldTimer = 0f;
-                        _boardHoldTriggered = false;
-                    }
-
                     if (!mouseDown) break;
 
                     // Modal states first
@@ -723,13 +689,11 @@ namespace WordDrop
                     if (_selectedIndex >= 0 && worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f)
                         _selectedIndex = -1;
 
-                    // Start rewrite hold tracking
+                    // Tap on board → enter rewrite mode immediately (blocked during rising row)
                     Vector2Int boardCell = _grid.WorldToCell(worldPos);
-                    if (boardCell.x >= 0 && boardCell.y >= 0)
+                    if (boardCell.x >= 0 && boardCell.y >= 0 && !risingRowActive)
                     {
-                        _boardHoldCell = boardCell;
-                        _boardHoldTimer = 0f;
-                        _boardHoldTriggered = false;
+                        TryEnterRewriteMode(boardCell.x, boardCell.y);
                     }
 
                     break;
@@ -860,7 +824,8 @@ namespace WordDrop
                                 float targetX = GetCardX(i);
                                 if (Mathf.Abs(worldPos.x - targetX) < cardSpacing * 0.4f)
                                 {
-                                    GameAudio.Instance?.PlayReorderTick();
+                                    // PlayReorderTick removed 2026-05-15 — tick sound on hand
+                                    // tile reorder felt noisy. Re-add if you want it back.
                                     SwapCardPositions(_touchCardIndex, i);
                                     _touchCardIndex = i;
                                     _selectedIndex = i;
@@ -1117,7 +1082,8 @@ namespace WordDrop
                 if (Mathf.Abs(worldPos.x - targetX) < cardSpacing * 0.4f)
                 {
                     // Swap dragged card with this position
-                    GameAudio.Instance?.PlayReorderTick();
+                    // PlayReorderTick removed 2026-05-15 — tick sound on hand
+                    // tile reorder felt noisy. Re-add if you want it back.
                     SwapCardPositions(_dragIndex, i);
                     _dragIndex = i; // Now tracking the new index
                     _dragStartX = worldPos.x;
@@ -1347,7 +1313,7 @@ namespace WordDrop
         // ── Rewrite Tile ─────────────────────────────────────────────────────
 
         /// <summary>
-        /// Called when a board tile is long-pressed. Validates it's a valid
+        /// Called when a board tile is tapped. Validates it's a valid
         /// rewrite target and enters rewrite mode if so.
         /// </summary>
         private void TryEnterRewriteMode(int col, int row)
@@ -1403,12 +1369,13 @@ namespace WordDrop
             _rewriteTargetRow = row;
             _rewriteTimeoutTimer = REWRITE_TIMEOUT;
             GameAudio.Instance?.PlayTileSelect();
-            HapticsManager.Strong(); // haptic feedback so player knows edit mode is active
+            HapticsManager.EditConfirm(); // 0.30/0.75 — crisp UI feel, much lighter than old Strong()
 
             // Pulse the target tile
             Tile targetTile = _grid.GetTile(col, row);
             if (targetTile != null)
             {
+                targetTile.SetRewriteTargetSprite(true);
                 targetTile.Highlight(true, REWRITE_HIGHLIGHT_COLOR);
                 if (_rewritePulseCoroutine != null) StopCoroutine(_rewritePulseCoroutine);
                 _rewritePulseCoroutine = StartCoroutine(RewritePulseCoroutine(targetTile));
@@ -1612,14 +1579,32 @@ namespace WordDrop
                 int playerIdx = MatchController.PLAYER_HUMAN;
                 var justPrimedIds = new HashSet<int>();
 
+                // Mirror DoScoreAndPrime's cluster-bonus logic: when multiple
+                // words score in one swap, each gets a chainStep boost equal
+                // to (count - 1). Without this, swap multi-word scores
+                // collapse to flat per-word values.
+                int swapClusterChainStep = Mathf.Max(0, allNew.Count - 1);
                 for (int i = 0; i < allNew.Count; i++)
                 {
                     var match = allNew[i];
-                    match.Score = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                    // Apply the same scoring pipeline drops/rewrites use —
+                    // chain multiplier, echo bonus, gold tile multiplier.
+                    // Previously: match.Score = RulesEngine.CalculateWordScore(...)
+                    // skipped all of this, leaving gold tiles reusable + echo
+                    // streaks unrewarded on swap-created words.
+                    int baseScore = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                    float chainMult = (swapClusterChainStep > 0)
+                        ? 1f + Mathf.Min(swapClusterChainStep, RulesEngine.CHAIN_DEPTH_SCALE_CAP) * 0.5f
+                        : 1f;
+                    int chainBoosted = Mathf.RoundToInt(baseScore * chainMult);
+                    int echoBonus = rules.ConsumeEchoBonus(match.Word, playerIdx);
+                    bool isGoldWord = rules.HasGoldTile(match);
+                    int bonusMult = rules.ConsumeGoldAndGetMultiplier(match);
+                    match.Score = (chainBoosted + echoBonus) * bonusMult;
                     rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
 
                     int fuse = rules.GetFuseLengthPublic(match.Word.Length);
-                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score);
+                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord);
                     justPrimedIds.Add(primedId);
 
                     // Visual: primed glow + particles
@@ -1655,6 +1640,19 @@ namespace WordDrop
                     // Survival rewrite meter
                     if (MatchController.Instance != null)
                         MatchController.Instance.SurvivalWordScored();
+
+                    // Survival long-word reward (5+/6+/7+) — was previously
+                    // only called from the AI bridge path with a PLAYER_HUMAN
+                    // gate that the AI bridge never satisfies, leaving 5+
+                    // letter rewards unreachable. Survival is solo-only so
+                    // SurvivalManager.IsSurvivalMode is the right gate.
+                    if (SurvivalManager.IsSurvivalMode
+                        && GameVisualBridge.Instance != null
+                        && !string.IsNullOrEmpty(match.Word))
+                    {
+                        GameVisualBridge.Instance.TriggerSurvivalLongWordReward(
+                            match.Word, scoredTiles, isPlayer: true);
+                    }
                 }
                 GameAudio.Instance?.PlayTilePrimed();
 
@@ -1757,13 +1755,14 @@ namespace WordDrop
                                         if (t != null) dyingTiles.Add(t);
                                     }
 
-                                    HapticsManager.Strong();
+                                    // Pre-explosion HapticsManager.Strong() removed — haptics
+                                    // now owned by WordDropFX.PlayExplosion (single source).
 
                                     // Tiered explosion (handles sound + visuals)
                                     if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                                     {
-                                        if (step.ChainDepth >= 2)
-                                            yield return StartCoroutine(WordDropFX.HitStop(0.04f));
+                                        // Hitstop removed for cascades (2026-05-15) — cascades
+                                        // pop instantly on impact, no time-freeze pause.
                                         // Flash fires AFTER hitstop, immediately before
                                         // PlayExplosion, so timeScale=0 doesn't freeze the
                                         // tween during the pause and the flash plays in sync
@@ -1778,14 +1777,19 @@ namespace WordDrop
                                     if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
                                         SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
 
+                                    Vector3 swapCenter = Vector3.zero;
+                                    if (dyingTiles.Count > 0)
+                                    {
+                                        foreach (var t in dyingTiles)
+                                            if (t != null) swapCenter += t.transform.position;
+                                        swapCenter /= Mathf.Max(1, dyingTiles.Count);
+                                    }
                                     if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dyingTiles.Count > 0)
                                     {
-                                        Vector3 center = Vector3.zero;
-                                        foreach (var t in dyingTiles)
-                                            if (t != null) center += t.transform.position;
-                                        center /= Mathf.Max(1, dyingTiles.Count);
-                                        BonusPopup.Instance.ShowDetonation("", step.DetonationBonus, center, step.ChainDepth);
+                                        BonusPopup.Instance.ShowDetonation("", step.DetonationBonus, swapCenter, step.ChainDepth);
                                     }
+                                    // Refill rewards (swap/edit/wild) — was missing on this path.
+                                    ApplyDetonationRefillRewards(step, swapCenter, 0);
                                 }
                                 swapScore = step.TotalScore;
                                 break;
@@ -1975,10 +1979,25 @@ namespace WordDrop
                 var registry = rules.PrimedRegistry;
                 int globalTurn = rules.GlobalTurn;
 
+                // Mirror DoScoreAndPrime's cluster-bonus logic — see comment in
+                // BoardSwapTurnSequence above. Same scoring pipeline applied here
+                // so this swap entry doesn't diverge from the other.
+                int swapClusterChainStep2 = Mathf.Max(0, allNew.Count - 1);
                 for (int i = 0; i < allNew.Count; i++)
                 {
                     var match = allNew[i];
-                    match.Score = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                    // Proper scoring pipeline (chain + echo + gold) instead
+                    // of raw CalculateWordScore. See BoardSwapTurnSequence
+                    // above for full rationale.
+                    int baseScore = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                    float chainMult = (swapClusterChainStep2 > 0)
+                        ? 1f + Mathf.Min(swapClusterChainStep2, RulesEngine.CHAIN_DEPTH_SCALE_CAP) * 0.5f
+                        : 1f;
+                    int chainBoosted = Mathf.RoundToInt(baseScore * chainMult);
+                    int echoBonus = rules.ConsumeEchoBonus(match.Word, playerIdx);
+                    bool isGoldWord2 = rules.HasGoldTile(match);
+                    int bonusMult = rules.ConsumeGoldAndGetMultiplier(match);
+                    match.Score = (chainBoosted + echoBonus) * bonusMult;
                     rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
 
                     // Check if this new word overlaps or is adjacent to existing primed words → trigger
@@ -2005,9 +2024,11 @@ namespace WordDrop
                         }
                     }
 
-                    // Prime the word (human-owned)
+                    // Prime the word (human-owned). Pass isGoldWord2 so the
+                    // primed registry records gold status — without it,
+                    // detonation bonuses on gold-primed words underscore.
                     int fuse = rules.GetFuseLengthPublic(match.Word.Length);
-                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score);
+                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord2);
                     justPrimedIds.Add(primedId);
 
                     // Visual: apply primed glow
@@ -2112,12 +2133,13 @@ namespace WordDrop
                                     if (t != null) dyingTiles.Add(t);
                                 }
 
-                                // Haptic + hitstop
-                                HapticsManager.Strong();
-                                if (dyingTiles.Count > 0)
+                                // Haptic + hitstop — pre-explosion HapticsManager.Strong()
+                                // removed; haptics now owned by WordDropFX.PlayExplosion.
+                                // Hitstop now fires ONLY on initial detonation step (2026-05-15)
+                                // — cascades pop instantly with no time-freeze.
+                                if (dyingTiles.Count > 0 && step.ChainDepth == 0)
                                 {
-                                    float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
-                                    yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                                    yield return StartCoroutine(WordDropFX.HitStop(0.05f));
                                 }
 
                                 // Flash after hitstop so timeScale=0 doesn't freeze its tween.
@@ -2133,14 +2155,19 @@ namespace WordDrop
                                     SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
 
                                 // Show detonation score
+                                Vector3 swapResCenter = Vector3.zero;
+                                if (dyingTiles.Count > 0)
+                                {
+                                    foreach (var t in dyingTiles)
+                                        if (t != null) swapResCenter += t.transform.position;
+                                    swapResCenter /= Mathf.Max(1, dyingTiles.Count);
+                                }
                                 if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dyingTiles.Count > 0)
                                 {
-                                    Vector3 center = Vector3.zero;
-                                    foreach (var t in dyingTiles)
-                                        if (t != null) center += t.transform.position;
-                                    center /= Mathf.Max(1, dyingTiles.Count);
-                                    BonusPopup.Instance.Show($"+{step.DetonationBonus}", new Color(1f, 0.5f, 0.1f), center);
+                                    BonusPopup.Instance.Show($"+{step.DetonationBonus}", new Color(1f, 0.5f, 0.1f), swapResCenter);
                                 }
+                                // Refill rewards — was missing on this path.
+                                ApplyDetonationRefillRewards(step, swapResCenter, 0);
 
 //                                 Debug.Log($"[SwapResolution] Exploded {step.ExplodedCells.Count} tiles, bonus={step.DetonationBonus}");
                             }
@@ -2207,6 +2234,7 @@ namespace WordDrop
                 Tile targetTile = _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow);
                 if (targetTile != null)
                 {
+                    targetTile.SetRewriteTargetSprite(false);
                     targetTile.Highlight(false);
                     targetTile.ResetVisuals();
                 }
@@ -2290,6 +2318,60 @@ namespace WordDrop
                 ? new List<RulesWordMatch>(step.TriggerWords) : null;
             _pendingBurstChainDepth  = step.ChainDepth;
             _pendingBurstLongestWord = step.LongestWordLength;
+
+            // Mirror to WordDropFX side-channel so the meltdown windup in
+            // WordDropFX.PlayExplosion can filter per-tile FX (heat overlay,
+            // primed glow orb, perlin shake, magic explosive prefab) to ONLY
+            // word tiles — junk/collateral splash tiles stay still during
+            // the windup and only explode at the impact moment with everyone
+            // else. Each entry is one word.
+            if (WordDropFX._pendingCascadeWords == null)
+                WordDropFX._pendingCascadeWords = new List<List<Tile>>();
+            for (int t = 0; t < step.Triggers.Count; t++)
+            {
+                var trig = step.Triggers[t];
+                if (trig.TriggeredCells == null || trig.TriggeredCells.Count == 0) continue;
+                var primedTiles = new List<Tile>();
+                for (int c = 0; c < trig.TriggeredCells.Count; c++)
+                {
+                    Tile tile = null;
+                    try { tile = _grid.GetTile(trig.TriggeredCells[c].x, trig.TriggeredCells[c].y); }
+                    catch { /* ignore */ }
+                    if (tile != null) primedTiles.Add(tile);
+                }
+                if (primedTiles.Count > 0)
+                    WordDropFX._pendingCascadeWords.Add(primedTiles);
+            }
+            if (step.TriggerWords != null)
+            {
+                for (int w = 0; w < step.TriggerWords.Count; w++)
+                {
+                    var tw = step.TriggerWords[w];
+                    if (tw.Cells == null || tw.Cells.Count == 0) continue;
+                    var twTiles = new List<Tile>();
+                    for (int c = 0; c < tw.Cells.Count; c++)
+                    {
+                        Tile tile = null;
+                        try { tile = _grid.GetTile(tw.Cells[c].x, tw.Cells[c].y); }
+                        catch { /* ignore */ }
+                        if (tile != null) twTiles.Add(tile);
+                    }
+                    if (twTiles.Count > 0)
+                        WordDropFX._pendingCascadeWords.Add(twTiles);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Coroutine wrapper that defers FirePerWordBurst by a delay. Used by
+        /// meltdown explosion paths so the BigBurst sweep + sparkle stack
+        /// land at the actual impact moment (post WordDropFX meltdown windup),
+        /// not 1.7s before tiles destruct.
+        /// </summary>
+        private IEnumerator DelayedFirePerWordBurst(float delay)
+        {
+            yield return WaitCache.Get(delay);
+            FirePerWordBurst();
         }
 
         /// <summary>
@@ -2311,13 +2393,15 @@ namespace WordDrop
             if (_grid == null) { _pendingBurstTriggers = null; _pendingBurstTriggerWords = null; return; }
             if (_pendingBurstTriggers == null || _pendingBurstTriggers.Count == 0) return;
 
-            // Loosened gate — chainDepth >= 1 means "this is a chain continuation"
-            // (the 2nd+ detonation in a chain reaction), so any chain reaction fires
-            // the sweep on its continuation step. Word/cluster thresholds dropped
-            // so big first detonations also qualify without being freakishly rare.
-            bool bigMoment = _pendingBurstChainDepth >= 1
-                          || _pendingBurstLongestWord >= 5
-                          || _pendingBurstTriggers.Count >= 2;
+            // 2026-05-15 (v2): BigBurst beam fires ONLY on the initial detonation
+            // step (chainDepth == 0), never on cascade steps. Before this fix,
+            // deep cascades reaching chainDepth 4+ would fire the beam alone
+            // while the cascade visual stayed simple Tier1Pop — visual mismatch.
+            // Within the initial step, the beam only fires for impressive events
+            // (long word or many triggers), keeping it rare and meaningful.
+            bool bigMoment = _pendingBurstChainDepth == 0
+                          && (_pendingBurstLongestWord >= 7
+                              || _pendingBurstTriggers.Count >= 4);
             Debug.Log($"[BigBurst] bigMoment={bigMoment} — chainDepth={_pendingBurstChainDepth} " +
                       $"longestWord={_pendingBurstLongestWord} triggers={_pendingBurstTriggers.Count}");
             if (!bigMoment)
@@ -2527,6 +2611,52 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Apply detonation refill rewards (Survival-only): swap-refill,
+        /// edit-refill, wild-refill counts from RulesEngine.DoExplode, plus
+        /// stone-clear popup. Extracted so primary, swap, and rewrite
+        /// detonation paths all use the same logic — previously the rewrite
+        /// and both swap detonations dropped these counts on the floor,
+        /// meaning blowing up refill tiles in those paths gave no refund
+        /// and no wild injection.
+        /// </summary>
+        private void ApplyDetonationRefillRewards(RulesEngine.StepResult step, Vector3 center, int stoneDying)
+        {
+            if (!SurvivalManager.IsSurvivalMode || MatchController.Instance == null || step == null) return;
+            float popY = 0.8f;
+            if (step.SwapRefillCount > 0)
+            {
+                for (int sr = 0; sr < step.SwapRefillCount; sr++)
+                    MatchController.Instance.RefundSwapResource();
+                if (BonusPopup.Instance != null)
+                    BonusPopup.Instance.Show($"SWAP +{step.SwapRefillCount}", new Color(0.85f, 0.60f, 0.10f, 1f), center + Vector3.up * popY, 1.2f);
+                GameAudio.Instance?.PlayScorePowerup();
+                popY += 0.5f;
+            }
+            if (step.EditRefillCount > 0)
+            {
+                for (int er = 0; er < step.EditRefillCount; er++)
+                    MatchController.Instance.RefundSwapCharge(MatchController.PLAYER_HUMAN);
+                if (BonusPopup.Instance != null)
+                    BonusPopup.Instance.Show($"EDIT +{step.EditRefillCount}", new Color(0.0f, 0.85f, 0.9f, 1f), center + Vector3.up * popY, 1.2f);
+                GameAudio.Instance?.PlayScorePowerup();
+                popY += 0.5f;
+            }
+            // Stone clear popup
+            if (stoneDying > 0 && BonusPopup.Instance != null)
+            {
+                BonusPopup.Instance.Show($"STONE x{stoneDying}", new Color(0.6f, 0.55f, 0.65f, 1f), center + Vector3.up * popY, 1.1f);
+                popY += 0.5f;
+            }
+            if (step.WildRefillCount > 0)
+            {
+                // Phase C: inject one wild into the player's hand via the
+                // pending-wild queue. The next DrawSlot fills that slot as a
+                // wild. Gated by per-resolution cap and max-1-in-hand invariant.
+                TryInjectWildReward(center + Vector3.up * popY);
+            }
+        }
+
+        /// <summary>
         /// Queue a wild injection as a chain-reward. Gated by the per-resolution cap
         /// and by PlayerHand's max-one-wild invariant. Fires popup + SFX on success.
         /// </summary>
@@ -2624,7 +2754,7 @@ namespace WordDrop
             // Stop pulse and clear highlight
             if (_rewritePulseCoroutine != null) { StopCoroutine(_rewritePulseCoroutine); _rewritePulseCoroutine = null; }
             Tile targetTile = _grid.GetTile(col, row);
-            if (targetTile != null) { targetTile.Highlight(false); targetTile.ResetVisuals(); }
+            if (targetTile != null) { targetTile.SetRewriteTargetSprite(false); targetTile.Highlight(false); targetTile.ResetVisuals(); }
 
             _rewriteModeActive = false;
             _rewriteTargetCol = -1;
@@ -2790,7 +2920,13 @@ namespace WordDrop
                                 {
                                     MatchController.Instance.LastTurnWord = sw.Word;
                                     MatchController.Instance.LastTurnShownScore = sw.FinalScore;
-                                    if (LastWordDisplay.Instance != null && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
+                                    // Skip the immediate ShowWord if a detonation is coming —
+                                    // base score (e.g. HEM +8) gets overwritten by final score
+                                    // (HEM +large) once cascades finish. CompleteDropBookkeeping
+                                    // fires ShowWord ONCE with the final tally.
+                                    if (!rwDetonationComing
+                                        && LastWordDisplay.Instance != null
+                                        && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
                                         LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
                                 }
 
@@ -2807,6 +2943,17 @@ namespace WordDrop
                                 Color hlColor = new Color(0.9f, 0.2f, 0.8f, 1f);
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(tiles, hlColor, wordIndex);
+
+                                // Survival long-word reward (5+/6+/7+) — see
+                                // BoardSwapTurnSequence comment. Solo-only,
+                                // so SurvivalManager.IsSurvivalMode gates it.
+                                if (SurvivalManager.IsSurvivalMode
+                                    && GameVisualBridge.Instance != null
+                                    && !string.IsNullOrEmpty(sw.Word))
+                                {
+                                    GameVisualBridge.Instance.TriggerSurvivalLongWordReward(
+                                        sw.Word, tiles, isPlayer: true);
+                                }
 
                                 GameAudio.Instance?.PlayTilePrimed();
                                 HapticsManager.Light();
@@ -2906,12 +3053,15 @@ namespace WordDrop
                                 _rwDeferredScoredWords = null;
                             }
 
-                            // Haptic feedback — strong impact on detonation explosion (rewrite path)
-                            HapticsManager.Strong();
+                            // Pre-explosion HapticsManager.Strong() removed (rewrite path) —
+                            // haptics now owned by WordDropFX.PlayExplosion (single source).
 
                             // Named Meltdown — build-up + stamp BEFORE explosion (rewrite path)
+                            // 2026-05-15: gated to step.ChainDepth == 0 (initial detonation only).
+                            // Cascade steps no longer fire CHAIN REACTION / MELTDOWN / AFTERSHOCK
+                            // intros — they get the simple pop + pitched-audio treatment instead.
                             bool rwMeltdownActive = false;
-                            if (MeltdownManager.Instance != null)
+                            if (step.ChainDepth == 0 && MeltdownManager.Instance != null)
                             {
                                 int rwPlayer = MatchController.Instance != null ? MatchController.Instance.CurrentPlayer : 0;
                                 bool rwLastTurn = MatchController.Instance != null
@@ -2925,15 +3075,26 @@ namespace WordDrop
                                 }
                             }
 
-                            // Hitstop — only if meltdown didn't already freeze
-                            if (!rwMeltdownActive && dyingTiles.Count > 0)
+                            // Hitstop — only on initial detonation step, never on cascades
+                            // (2026-05-15). Cascades pop instantly with no time-freeze pause.
+                            if (!rwMeltdownActive && dyingTiles.Count > 0 && step.ChainDepth == 0)
                             {
-                                float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
-                                yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                                yield return StartCoroutine(WordDropFX.HitStop(0.05f));
                             }
 
                             // Flash after hitstop so timeScale=0 doesn't freeze its tween.
-                            FirePerWordBurst();
+                            // For meltdown, delay BigBurst by the WordDropFX meltdown
+                            // windup duration so it fires at impact (matches primary path).
+                            if (rwMeltdownActive)
+                            {
+                                StartCoroutine(DelayedFirePerWordBurst(
+                                    FlipbookExplosion.MELTDOWN_BLAST_PEAK_AT_REAL_SPEED
+                                    / FlipbookExplosion.MELTDOWN_PREFAB_SPEED));
+                            }
+                            else
+                            {
+                                FirePerWordBurst();
+                            }
                             FireTileFlashBoxes(dyingTiles);
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                             {
@@ -2947,6 +3108,16 @@ namespace WordDrop
                             if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                                 && step.ExplodedCells != null)
                                 SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
+
+                            // Refill rewards (swap/edit/wild) — was missing on rewrite path.
+                            Vector3 rwCenterRefill = Vector3.zero;
+                            if (dyingTiles.Count > 0)
+                            {
+                                foreach (var t in dyingTiles)
+                                    if (t != null) rwCenterRefill += t.transform.position;
+                                rwCenterRefill /= Mathf.Max(1, dyingTiles.Count);
+                            }
+                            ApplyDetonationRefillRewards(step, rwCenterRefill, 0);
 
                             // Meltdown outro — fade stamp after chain played out (rewrite path)
                             if (rwMeltdownActive && MeltdownManager.Instance != null)
@@ -3630,9 +3801,15 @@ namespace WordDrop
 
                 float elapsed = 0f;
                 float duration = (spawnY - targetPos.y) / 54f;
+                // Feel-pass 2026-05-16: cap per-frame dt to 1/30s. This loop
+                // runs right after a WaitCache yield, so the resume frame's
+                // Time.deltaTime can spike to 50-100ms (GC, scene warmup) and
+                // skip half the ~110ms drop animation. Steady-state frames at
+                // ~16ms are unaffected. Fix mirrors Tile.FallCoroutine.
+                const float MAX_DT = 1f / 30f;
                 while (elapsed < duration && droppedTile != null)
                 {
-                    elapsed += Time.deltaTime;
+                    elapsed += Mathf.Min(Time.deltaTime, MAX_DT);
                     float t = Mathf.Clamp01(elapsed / duration);
                     droppedTile.transform.position = new Vector3(targetPos.x, Mathf.Lerp(spawnY, targetPos.y, t * t), targetPos.z);
 
@@ -3715,7 +3892,14 @@ namespace WordDrop
                                 {
                                     MatchController.Instance.LastTurnWord = sw.Word;
                                     MatchController.Instance.LastTurnShownScore = sw.FinalScore;
-                                    if (LastWordDisplay.Instance != null && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
+                                    // Skip the immediate ShowWord if a detonation is
+                                    // coming — base score (e.g. RAD +10) gets overwritten
+                                    // by final score (RAD +86) once chains finish, which
+                                    // reads as a flicker. CompleteDropBookkeeping fires
+                                    // ShowWord ONCE with the final tally.
+                                    if (!detonationComing
+                                        && LastWordDisplay.Instance != null
+                                        && sw.PlayerIndex == MatchController.PLAYER_HUMAN)
                                         LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
                                 }
 
@@ -3761,6 +3945,18 @@ namespace WordDrop
                                 // Survival rewrite meter: 2 words → +1 rewrite
                                 if (MatchController.Instance != null)
                                     MatchController.Instance.SurvivalWordScored();
+
+                                // Survival long-word reward (5+/6+/7+) — solo-only.
+                                // Was unreachable for the human player because the
+                                // only call site lived in the AI bridge with a
+                                // PLAYER_HUMAN gate the AI bridge never satisfies.
+                                if (SurvivalManager.IsSurvivalMode
+                                    && GameVisualBridge.Instance != null
+                                    && !string.IsNullOrEmpty(sw.Word))
+                                {
+                                    GameVisualBridge.Instance.TriggerSurvivalLongWordReward(
+                                        sw.Word, scoredTiles, isPlayer: true);
+                                }
                             }
                         }
                         break;
@@ -3813,8 +4009,8 @@ namespace WordDrop
                                         if (t != null) trigTiles.Add(t);
                                     }
 
-                                // Haptic feedback — medium pulse on primed tile trigger
-                                HapticsManager.Medium();
+                                // Haptic feedback — primed tile trigger (matches word-scored pop)
+                                HapticsManager.WordScored();
                             }
                         }
                         break;
@@ -3848,12 +4044,15 @@ namespace WordDrop
                                 if (dying[d] != null) center += dying[d].transform.position;
                             center /= Mathf.Max(1, dying.Count);
 
-                            // Haptic feedback — strong impact on detonation explosion
-                            HapticsManager.Strong();
+                            // Pre-explosion HapticsManager.Strong() removed —
+                            // haptics now owned by WordDropFX.PlayExplosion (single source).
 
                             // Named Meltdown — build-up + stamp BEFORE explosion
+                            // 2026-05-15: gated to step.ChainDepth == 0 (initial detonation only).
+                            // Cascade steps no longer fire CHAIN REACTION / MELTDOWN / AFTERSHOCK
+                            // intros — they get the simple pop + pitched-audio treatment instead.
                             bool meltdownActive = false;
-                            if (MeltdownManager.Instance != null)
+                            if (step.ChainDepth == 0 && MeltdownManager.Instance != null)
                             {
                                 int mPlayer = MatchController.Instance != null ? MatchController.Instance.CurrentPlayer : 0;
                                 bool mLastTurn = MatchController.Instance != null
@@ -3867,17 +4066,27 @@ namespace WordDrop
                                 }
                             }
 
-                            // Hitstop — only if meltdown didn't already freeze
-                            if (!meltdownActive && dying.Count > 0)
+                            // Hitstop — only on initial detonation step, never on cascades
+                            // (2026-05-15). Cascades pop instantly with no time-freeze pause.
+                            if (!meltdownActive && dying.Count > 0 && step.ChainDepth == 0)
                             {
-                                float hitStopDur = step.ChainDepth >= 2 ? 0.08f : 0.05f;
-                                yield return StartCoroutine(WordDropFX.HitStop(hitStopDur));
+                                yield return StartCoroutine(WordDropFX.HitStop(0.05f));
                             }
 
                             // Flash fires AFTER hitstop so timeScale=0 doesn't freeze the
-                            // tween during the pause. Plays in sync with PlayExplosion
-                            // below, matching Candy Crush's "bang + wash" sequence.
-                            FirePerWordBurst();
+                            // tween during the pause. For meltdown, delay BigBurst by the
+                            // WordDropFX meltdown windup duration (~1.7s) so the screen
+                            // sweep lands AT impact, not before the tile destruction.
+                            if (meltdownActive)
+                            {
+                                StartCoroutine(DelayedFirePerWordBurst(
+                                    FlipbookExplosion.MELTDOWN_BLAST_PEAK_AT_REAL_SPEED
+                                    / FlipbookExplosion.MELTDOWN_PREFAB_SPEED));
+                            }
+                            else
+                            {
+                                FirePerWordBurst();
+                            }
                             FireTileFlashBoxes(dying);
 
                             // Tiered explosion (handles sound + visuals)
@@ -3917,42 +4126,7 @@ namespace WordDrop
                             yield return WaitCache.Get(0.08f);
 
                             // Collect refills from detonated special tiles
-                            if (SurvivalManager.IsSurvivalMode && MatchController.Instance != null)
-                            {
-                                float popY = 0.8f;
-                                if (step.SwapRefillCount > 0)
-                                {
-                                    for (int sr = 0; sr < step.SwapRefillCount; sr++)
-                                        MatchController.Instance.RefundSwapResource();
-                                    if (BonusPopup.Instance != null)
-                                        BonusPopup.Instance.Show($"SWAP +{step.SwapRefillCount}", new Color(0.85f, 0.60f, 0.10f, 1f), center + Vector3.up * popY, 1.2f);
-                                    GameAudio.Instance?.PlayScorePowerup();
-                                    popY += 0.5f;
-                                }
-                                if (step.EditRefillCount > 0)
-                                {
-                                    for (int er = 0; er < step.EditRefillCount; er++)
-                                        MatchController.Instance.RefundSwapCharge(MatchController.PLAYER_HUMAN);
-                                    if (BonusPopup.Instance != null)
-                                        BonusPopup.Instance.Show($"EDIT +{step.EditRefillCount}", new Color(0.0f, 0.85f, 0.9f, 1f), center + Vector3.up * popY, 1.2f);
-                                    GameAudio.Instance?.PlayScorePowerup();
-                                    popY += 0.5f;
-                                }
-                                // Stone clear popup
-                                if (stoneDying > 0 && BonusPopup.Instance != null)
-                                {
-                                    BonusPopup.Instance.Show($"STONE x{stoneDying}", new Color(0.6f, 0.55f, 0.65f, 1f), center + Vector3.up * popY, 1.1f);
-                                    popY += 0.5f;
-                                }
-
-                                if (step.WildRefillCount > 0)
-                                {
-                                    // Phase C: inject one wild into the player's hand via the
-                                    // pending-wild queue. The next DrawSlot fills that slot as a
-                                    // wild. Gated by per-resolution cap and max-1-in-hand invariant.
-                                    TryInjectWildReward(center + Vector3.up * popY);
-                                }
-                            }
+                            ApplyDetonationRefillRewards(step, center, stoneDying);
 
                             // Meltdown outro — fade stamp after chain played out
                             if (meltdownActive && MeltdownManager.Instance != null)
@@ -4510,8 +4684,8 @@ namespace WordDrop
             int border  = Mathf.Max(3, texSize / 16);
 
             // Try loading hand-drawn sprites
-            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/test_tile");
-            Sprite loadedSelected = Resources.Load<Sprite>("Tiles/selected_test@2x");
+            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/white_tile2@2x");
+            Sprite loadedSelected = Resources.Load<Sprite>("Tiles/green_tile2@2x");
             Sprite loadedSwap     = Resources.Load<Sprite>("Tiles/swap_tile");
 
             if (loadedNormal != null)
@@ -4590,7 +4764,9 @@ namespace WordDrop
                 // Letter text — TMP, matches board tiles exactly
                 GameObject textGO = new GameObject("CardLetter");
                 textGO.transform.SetParent(cardGO.transform, false);
-                textGO.transform.localPosition = new Vector3(0f, nativeSize * 0.04f, -0.1f);
+                // Slight downward offset (-0.025) compensates for TMP font-metric
+                // centering. Matches the board tile letter positioning.
+                textGO.transform.localPosition = new Vector3(0f, -nativeSize * 0.025f, -0.1f);
 
                 var tm = textGO.AddComponent<TMPro.TextMeshPro>();
                 TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
@@ -4609,7 +4785,7 @@ namespace WordDrop
                 // Point value — TMP, matches board tiles exactly
                 GameObject ptsGO = new GameObject("CardPoints");
                 ptsGO.transform.SetParent(cardGO.transform, false);
-                ptsGO.transform.localPosition = new Vector3(nativeSize * 0.22f, -nativeSize * 0.22f, -0.1f);
+                ptsGO.transform.localPosition = new Vector3(nativeSize * 0.25f, -nativeSize * 0.25f, -0.1f);
 
                 var ptsTm = ptsGO.AddComponent<TMPro.TextMeshPro>();
                 if (tileFont != null) ptsTm.font = tileFont;
@@ -5286,10 +5462,11 @@ namespace WordDrop
 
             float invScale = 1f / Mathf.Max(scale, 0.01f);
 
-            // Letter text (child of tile)
+            // Letter text (child of tile) — slight downward offset to compensate
+            // for TMP font-metric centering (matches board tile letter positioning).
             GameObject textGO = new GameObject("NextLetter");
             textGO.transform.SetParent(_nextTilePreview.transform, false);
-            textGO.transform.localPosition = new Vector3(0f, nativeSize * 0.04f, -0.2f);
+            textGO.transform.localPosition = new Vector3(0f, -nativeSize * 0.025f, -0.2f);
 
             var tm = textGO.AddComponent<TMPro.TextMeshPro>();
             TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();

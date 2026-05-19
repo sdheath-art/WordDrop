@@ -72,6 +72,7 @@ namespace WordDrop
         // Daily mode elements
         private TextMeshProUGUI _dailyStreakText;
         private GameObject _shareButton;
+        private GameObject _playAgainButton;
 
         // Elements for stagger animation
         private GameObject[] _staggerElements;
@@ -204,6 +205,7 @@ namespace WordDrop
             GameObject btnGO = MakeButton(_panel.transform, "PlayAgain",
                 new Vector2(0.15f, 0.02f), new Vector2(0.85f, 0.16f),
                 "PLAY AGAIN", playFS, BTN_COLOR, OnPlayAgainClicked);
+            _playAgainButton = btnGO;
             stagger.Add(btnGO);
 
             _staggerElements = stagger.ToArray();
@@ -248,6 +250,11 @@ namespace WordDrop
 
         private void ShowPanel()
         {
+            // Fire victory music (Skybound canonical) as the score panel begins
+            // to fly up. 2026-05-16 — replaces the silent transition that used
+            // to occur here; the panel reveal now lands on a swelling track.
+            GameAudio.Instance?.PlayVictoryMusic();
+
             bool isBlitz = BlitzManager.IsBlitzMode;
             bool isDaily = DailyDropManager.IsDailyMode;
 
@@ -514,6 +521,31 @@ namespace WordDrop
                     });
                 _bestScoreText.transform.DOPunchRotation(Vector3.forward * 8f, 0.4f, 12, 0.5f);
             }
+
+            // Candy-Crush style cartoon idle bounce on the PLAY AGAIN button —
+            // continuous gentle pulse signals "tap me" without being demanding.
+            // Loops until the panel hides or the button is clicked.
+            StartPlayAgainPulse();
+        }
+
+        private void StartPlayAgainPulse()
+        {
+            if (_playAgainButton == null) return;
+            Transform t = _playAgainButton.transform;
+            t.DOKill();
+            t.localScale = Vector3.one;
+            // 1.0 → 1.07 → 1.0 over 1.4s, infinite yoyo with smooth InOutSine.
+            // Pulse is intentionally subtle — not screaming, just breathing.
+            t.DOScale(1.07f, 0.7f)
+                .SetEase(Ease.InOutSine)
+                .SetLoops(-1, LoopType.Yoyo);
+        }
+
+        private void StopPlayAgainPulse()
+        {
+            if (_playAgainButton == null) return;
+            _playAgainButton.transform.DOKill();
+            _playAgainButton.transform.localScale = Vector3.one;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -522,6 +554,21 @@ namespace WordDrop
 
         private void OnPlayAgainClicked()
         {
+            StopPlayAgainPulse();
+
+            // Press-squash on the button so the tap feels physical, not a
+            // dead input. Quick squash → pop → settle, matches Candy Crush
+            // button-press feel. Runs alongside the HideAnimation slide-out.
+            if (_playAgainButton != null)
+            {
+                Transform t = _playAgainButton.transform;
+                t.DOKill();
+                Sequence pressSeq = DOTween.Sequence();
+                pressSeq.Append(t.DOScale(0.92f, 0.06f).SetEase(Ease.OutQuad));
+                pressSeq.Append(t.DOScale(1.06f, 0.10f).SetEase(Ease.OutBack, 4f));
+                pressSeq.Append(t.DOScale(1f, 0.08f).SetEase(Ease.OutQuad));
+            }
+
             // If daily mode, go back to menu (can't replay daily)
             if (DailyDropManager.IsDailyMode)
             {

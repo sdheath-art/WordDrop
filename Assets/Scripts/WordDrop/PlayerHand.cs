@@ -422,6 +422,37 @@ namespace WordDrop
 
             int vowelsInHand = CountVowelsExcluding(slotIndex);
 
+            // ── VOWEL-FLOOR PRIORITY ─────────────────────────────────────────────
+            // When the hand is below the vowel floor (i.e., 0 vowels in Survival)
+            // and this is the last-chance slot to get a vowel, prioritize a vowel
+            // draw BEFORE any other governance layer. Up to N bag attempts —
+            // if no vowel comes out, fall through to the normal layers. No
+            // synthesized fallback: the NEXT preview must always reflect a real
+            // bag draw, otherwise the cached letter and the bag desync and the
+            // preview lies to the player.
+            //
+            // For PreCacheNext (slotIndex = -1) the hand is always full so
+            // unfilled = 0 and this gate fires whenever vowelsInHand < FLOOR —
+            // exactly the "next-in-line after NEXT is dealt" slot the player
+            // expects to be biased toward a vowel when they're tapped out.
+            if (vowelsInHand < VOWEL_FLOOR)
+            {
+                int unfilled = 0;
+                for (int i = Mathf.Max(0, slotIndex); i < HAND_SIZE; i++)
+                    if (_slots[i] == '\0') unfilled++;
+
+                if (VOWEL_FLOOR - vowelsInHand >= unfilled)
+                {
+                    for (int a = 0; a < VOWEL_DRAW_ATTEMPTS; a++)
+                    {
+                        char drawn = bag.DrawLetter();
+                        if (IsVowel(drawn) && CountLetter(drawn) < MAX_SAME_LETTER)
+                            return drawn;
+                    }
+                    // No vowel found — fall through. Bag stays in sync with preview.
+                }
+            }
+
             // ── SURVIVAL LAYER: Board-aware draw as DEFAULT behavior ────────────
             // Skipped entirely under NoAssistMode — raw bag draws only.
             if (SurvivalManager.IsSurvivalMode && !SurvivalManager.NoAssistMode)
@@ -476,30 +507,8 @@ namespace WordDrop
             }
 
             // ── LAYER 2: Hand-aware refill ──────────────────────────────────────
-
-            // 2a. Vowel floor — only force a vowel when hand has ZERO vowels
-            //     and remaining unfilled slots can't naturally provide one
-            if (vowelsInHand < VOWEL_FLOOR)
-            {
-                int unfilled = 0;
-                for (int i = Mathf.Max(0, slotIndex); i < HAND_SIZE; i++)
-                    if (_slots[i] == '\0') unfilled++;
-
-                // Only force if this is the last chance to get a vowel
-                if (VOWEL_FLOOR - vowelsInHand >= unfilled)
-                {
-                    for (int a = 0; a < VOWEL_DRAW_ATTEMPTS; a++)
-                    {
-                        char drawn = bag.DrawLetter();
-                        if (IsVowel(drawn) && CountLetter(drawn) < MAX_SAME_LETTER)
-                            return drawn;
-                    }
-                    // Hard fallback: pick a vowel we don't have
-                    for (int v = 0; v < VOWELS.Length; v++)
-                        if (CountLetter(VOWELS[v]) < MAX_SAME_LETTER)
-                            return VOWELS[v];
-                }
-            }
+            // (Vowel floor moved to top of GovernedDraw so it pre-empts the
+            // Survival board-assist layer when the hand is tapped out of vowels.)
 
             // 2b. Calculate hand state
             int playability    = CalcPlayabilityExcluding(slotIndex);
@@ -546,8 +555,8 @@ namespace WordDrop
         private void PostDrawEnforce()
         {
             // Low-utility enforcement REMOVED — was corrupting existing hand cards.
-            // GovernedDraw already blocks low-utility letters during draw.
-            // Vowel floor is handled inline in DrawSlot (only modifies the just-drawn slot).
+            // GovernedDraw already blocks low-utility letters during draw, and
+            // the vowel-floor priority pass runs at the top of GovernedDraw.
         }
 
         // ══════════════════════════════════════════════════════════════════════════

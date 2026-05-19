@@ -177,7 +177,12 @@ namespace WordDrop
         {
             if (tiles == null || tiles.Count == 0) return;
 
-            float punch = SCORE_POP_STRENGTH + chainStep * 0.05f;
+            // Feel-pass 2026-05-16: cap punch at 0.18 (1.18× peak).
+            // Was uncapped — chain 6 reached 0.42 (1.42×), bigger than the
+            // detonation pop (1.30×) and broke hierarchy. Word-scored is
+            // the smaller celebration; detonation is the big one. Chain 0-1
+            // values are unchanged; chain 2+ gets clamped to 1.18×.
+            float punch = Mathf.Min(SCORE_POP_STRENGTH + chainStep * 0.05f, 0.18f);
 
             // Staggered fuse-lit flash across tiles — each tile pops in sequence
             for (int i = 0; i < tiles.Count; i++)
@@ -190,7 +195,11 @@ namespace WordDrop
                 tile.SetSortingOrder(15);
 
                 // Stagger: each tile flashes white slightly after the previous
-                float delay = i * 0.06f;
+                // Feel-pass 2026-05-16: 0.06 → 0.03 (matches TILE_STAGGER_DELAY
+                // constant). On 5-letter words this halves total stagger from
+                // 300ms → 150ms, so the last tile pops while the first is
+                // still mid-animation — feels like a wave, not a queue.
+                float delay = i * TILE_STAGGER_DELAY;
                 int idx = i;
                 SpriteRenderer sr = tile.GetComponent<SpriteRenderer>();
 
@@ -222,7 +231,9 @@ namespace WordDrop
             }
 
             // Sound + particles + screen shake + neighbor ripple on word scored
-            GameAudio.Instance?.PlayWordScored();
+            // Pass chainStep so the chime pitches up alongside the pop — both
+            // sounds rise together in the chord climb. Bug fix 2026-05-16.
+            GameAudio.Instance?.PlayWordScored(chainStep);
             if (tiles.Count > 0 && tiles[0] != null)
             {
                 Vector3 center = Vector3.zero;
@@ -230,7 +241,11 @@ namespace WordDrop
                 center /= Mathf.Max(1, tiles.Count);
                 GameParticles.Instance?.PlayWordScored(center, tiles.Count * 3);
             }
-            PlayBoardShake(-1);
+            // Feel-pass 2026-05-16: gate board shake to bigger payoffs only
+            // (spec: reserve visible shake for top ~20% of events). Routine
+            // 3-4 letter matches on chainStep 0 no longer shake the board.
+            if (tiles.Count >= 5 || chainStep >= 1)
+                PlayBoardShake(-1);
             PlayNeighborRipple(tiles, chainStep);
         }
 
@@ -360,16 +375,18 @@ namespace WordDrop
 
         // ═══════════════════════════════════════════════════════════════════════════
 
-        public void PlayDetonation(List<Tile> tiles, int chainStep)
+        public void PlayDetonation(List<Tile> tiles, int chainStep, bool suppressAudio = false)
         {
             if (tiles == null || tiles.Count == 0) return;
-            GameAudio.Instance?.PlayDetonation(chainStep);
+            // Audio is suppressed during meltdown so the bang lands at the
+            // tile-disappear moment instead of at the start of the squeeze.
+            if (!suppressAudio) GameAudio.Instance?.PlayDetonation(chainStep);
 
-            Vector3 center = Vector3.zero;
-            foreach (var tile in tiles)
-                if (tile != null) center += tile.transform.position;
-            center /= Mathf.Max(1, tiles.Count);
-            GameParticles.Instance?.PlayDetonation(center, chainStep);
+            // Cluster-center orange burst (GameParticles.PlayDetonation) removed
+            // 2026-04-30 — fired _burstSystem + _chainSystem orange flares that
+            // were visible during meltdowns as orange leafy petals at the
+            // cluster center. Per-tile shatter + sparkle spray + the prefab's
+            // own halo carry the impact now.
 
             foreach (var tile in tiles)
             {
@@ -386,8 +403,12 @@ namespace WordDrop
                 });
                 seq.Append(t.DOScale(orig * 1.3f, DETONATE_POP_DUR * 0.4f)
                     .SetEase(DG.Tweening.Ease.OutBack, 4f));
+                // Feel-pass 2026-05-16: OutElastic → OutQuad on return.
+                // Cartoony 1.30× peak preserved; the elastic wobble after the
+                // peak was reading as "rubber UI" instead of "solid magical
+                // snap." OutQuad lands the tile clean, no oscillation.
                 seq.Append(t.DOScale(orig, DETONATE_POP_DUR * 0.8f)
-                    .SetEase(DG.Tweening.Ease.OutElastic, 0.5f, 0.3f));
+                    .SetEase(DG.Tweening.Ease.OutQuad));
             }
         }
 
@@ -402,6 +423,509 @@ namespace WordDrop
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
+        // TIER-1 CANDY-CRUSH-STYLE POP — single-tile orchestrated burst
+        // (squeeze → bubble + tile fade → fragments → sparkle → cleanup).
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Side-channel for the just-scored words — set by upstream WordsScored
+        /// handlers (GameVisualBridge / HandManager). Each list is ONE word's
+        /// tiles (e.g. one entry for "GAL", another for "DIM", etc.).
+        /// ExplosionCoroutine reads this in the cascade branch so:
+        ///   - The pink-primed preamble only applies to trigger word tiles
+        ///     (not collateral row/column tiles caught in the blast).
+        ///   - BigBurstFlash fires ONCE PER WORD, each centered on that
+        ///     specific word's tile cluster — not one mega-burst at the
+        ///     centroid of all detonating tiles.
+        /// Cleared after consumption.
+        /// </summary>
+        public static List<List<Tile>> _pendingCascadeWords;
+
+        /// <summary>
+        /// Plays the new Candy-Crush-style "tier 1 pop" orchestrated sequence
+        /// on a single tile. Each step null-checks its prerequisite and
+        /// continues on missing instances. Hides the tile at the end —
+        /// caller (test menu / future gameplay wire-in) is responsible for
+        /// restoring or destroying it.
+        /// </summary>
+        /// <summary>
+        /// Per-word haptic for tier-1 detonations. Fires at t=120ms+offset
+        /// (synced to fragment-fire / shatter peak in Tier1PopCoroutine).
+        /// Offset accounts for cascade preamble (~0.20s) so the haptic still
+        /// lands at the shatter, not 200ms before it. Escalates by chainStep:
+        ///   chainStep 0 → Light
+        ///   chainStep 1+ → Medium
+        /// </summary>
+        private IEnumerator Tier1PopHaptic(int chainStep, float offset = 0f)
+        {
+            yield return WaitCache.Get(0.12f + offset);
+            // Initial word pop = WordScored; cascade pop = CascadePop. Both
+            // currently map to the same Emphasis values (0.45/0.55) since
+            // audio pitch escalation carries the chain feel, not the haptic.
+            if (chainStep >= 1) HapticsManager.CascadePop();
+            else                HapticsManager.WordScored();
+        }
+
+        /// <summary>
+        /// Fires the matchline pop SFX after a delay. Used by the cascade
+        /// path so the audio syncs with the squeeze (which starts after the
+        /// pink-color preamble), not with the start of the preamble.
+        /// </summary>
+        private IEnumerator DelayedMatchLine(float delay)
+        {
+            yield return WaitCache.Get(delay);
+            GameAudio.Instance?.PlayMatchLine();
+        }
+
+        /// <summary>
+        /// Fires ONE BigBurstFlash sweep beam PER WORD in the cascade — each
+        /// centered on its own tile cluster and oriented by that word's
+        /// bounding box (vertical if y-range > x-range). When 3-4 words
+        /// detonate together (e.g. cascade chain), 3-4 beams fire in sync,
+        /// each correctly aligned with its own word. Replaces the previous
+        /// single-beam-at-cluster-centroid logic which mis-aligned beams
+        /// across multi-word detonations.
+        /// </summary>
+        private IEnumerator DelayedCascadeBurstPerWord(List<List<Tile>> cascadeWords, int chainStep, float delay)
+        {
+            yield return WaitCache.Get(delay);
+            if (BigBurstFlash.Instance == null || cascadeWords == null) yield break;
+
+            Camera cam = Camera.main;
+            float halfH = cam != null ? cam.orthographicSize : 5f;
+            float halfW = cam != null ? halfH * cam.aspect : 9f;
+            float thickness = 1.0f;
+            Color tint = chainStep >= 3
+                ? new Color(1.4f, 0.7f, 0.2f, 1f)
+                : new Color(1.2f, 0.95f, 0.5f, 1f);
+
+            for (int wi = 0; wi < cascadeWords.Count; wi++)
+            {
+                var wordTiles = cascadeWords[wi];
+                if (wordTiles == null || wordTiles.Count == 0) continue;
+
+                Vector3 minPos = Vector3.zero;
+                Vector3 maxPos = Vector3.zero;
+                Vector3 sumPos = Vector3.zero;
+                int liveCount = 0;
+                for (int ti = 0; ti < wordTiles.Count; ti++)
+                {
+                    if (wordTiles[ti] == null) continue;
+                    Vector3 p = wordTiles[ti].transform.position;
+                    if (liveCount == 0) { minPos = p; maxPos = p; }
+                    else
+                    {
+                        if (p.x < minPos.x) minPos.x = p.x;
+                        if (p.y < minPos.y) minPos.y = p.y;
+                        if (p.x > maxPos.x) maxPos.x = p.x;
+                        if (p.y > maxPos.y) maxPos.y = p.y;
+                    }
+                    sumPos += p;
+                    liveCount++;
+                }
+                if (liveCount == 0) continue;
+
+                Vector3 center = sumPos / liveCount;
+                bool vertical = (maxPos.y - minPos.y) > (maxPos.x - minPos.x);
+                float length = vertical ? halfH * 2.2f : halfW * 2.2f;
+                BigBurstFlash.Instance.Play(center, length, thickness, vertical, tint);
+            }
+        }
+
+        /// <summary>
+        /// Fires the detonation boom SFX after a delay. Used by the cascade
+        /// pop path so the bigger boom syncs with the shatter peak instead
+        /// of leading the visual.
+        /// </summary>
+        private IEnumerator DelayedDetonationAudio(int chainDepth, float delay)
+        {
+            yield return WaitCache.Get(delay);
+            GameAudio.Instance?.PlayDetonation(chainDepth);
+        }
+
+        public Coroutine PlayTier1Pop(Tile tile) => PlayTier1Pop(tile, suppressAudio: false, isCascade: false, startDelay: 0f);
+
+        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio) => PlayTier1Pop(tile, suppressAudio, isCascade: false, startDelay: 0f);
+
+        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade) => PlayTier1Pop(tile, suppressAudio, isCascade, startDelay: 0f);
+
+        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade, float startDelay)
+            => PlayTier1Pop(tile, suppressAudio, isCascade, startDelay, instantPop: false);
+
+        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop)
+        {
+            if (tile == null) return null;
+            // Route through revert toggle. Legacy = 2026-05-03 squeeze→fade.
+            // New = 2026-05-04 CC-reference shrink-to-nothing.
+            if (FX_UseLegacyTier1Pop)
+                return StartCoroutine(Tier1PopCoroutine_Legacy20260504(tile, suppressAudio, isCascade, startDelay));
+            return StartCoroutine(Tier1PopCoroutine(tile, suppressAudio, isCascade, startDelay, instantPop));
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // LEGACY Tier1Pop (2026-05-03) — squeeze 0.85× then alpha fade.
+        // Kept verbatim behind FX_UseLegacyTier1Pop for one-flip revert. Do NOT
+        // edit this method — it's the rollback target. If both implementations
+        // need parallel changes, edit only Tier1PopCoroutine and accept the
+        // legacy frozen behavior on revert.
+        // ═══════════════════════════════════════════════════════════════════════════
+        private IEnumerator Tier1PopCoroutine_Legacy20260504(Tile tile, bool suppressAudio, bool isCascade, float startDelay)
+        {
+            if (tile == null) yield break;
+            // Start delay — used by cascade detonations on the non-trigger
+            // tiles ("collateral" tiles in the same row/column as the trigger
+            // word) so they shatter synced with the trigger word's pop after
+            // its preamble, instead of exploding 200ms early.
+            if (startDelay > 0f)
+            {
+                yield return WaitCache.Get(startDelay);
+                if (tile == null) yield break;
+            }
+
+            Transform xform = tile.transform;
+            Vector3 origScale = xform.localScale;
+            Vector3 tilePos = xform.position;
+            SpriteRenderer tileSR = tile.GetComponent<SpriteRenderer>();
+            Color tileColor = tileSR != null ? tileSR.color : Color.white;
+            // Capture the tile's CURRENT sprite before any state clears
+            // (ClearPrimedGlow swaps the sprite to s_spriteNormal at
+            // Tile.cs:1294). Restored right before TileFragments.Shatter so
+            // each shrapnel fragment renders the original primed-pink-coral
+            // / scored-green / etc. texture, not the cream fallback.
+            Sprite originalSprite = tileSR != null ? tileSR.sprite : null;
+
+            // ANIMATION RHYTHM — Candy-Crush squeeze→punch→shatter cycle:
+            //   t=0–50ms     squeeze (anticipation):  origScale → 0.85× (OutQuad)
+            //   t=50–120ms   punch (release):         0.85× → 1.15× (OutBack overshoot)
+            //   t=120ms      shatter peak:            fragments fire from punched-up tile
+            //   t=120–200ms  collapse:                tile DOFade with InCubic ease
+            //
+            // OutBack on the pop-up is the key gesture — anticipation → release
+            // with overshoot is what gives CC its "snap." All layers use easing,
+            // no linear lerps anywhere in the chain.
+
+            // t=0 — squeeze + matchline SFX + overlay square halo. Tile scale
+            // sequence runs as a DOTween chain so the punch-up follows the
+            // squeeze with no gap.
+            if (!suppressAudio) GameAudio.Instance?.PlayMatchLine();
+            // ── Lock the tile's color for the pop sequence ──
+            // FOUR things can actively write sr.color/scale every frame:
+            //   - Primed pulse coroutine (Tile.cs:1006) — color + scale
+            //   - Gold pulse coroutine (Tile.cs:829) — color (Lerp to GOLD_HIGH)
+            //   - Flash coroutine (Tile.cs:1131) — color toward settleColor
+            //   - DOTween tweens on the SpriteRenderer (e.g. PlayWordScored
+            //     at WordDropFX.cs:201-205 starts a 0.15s color tween that's
+            //     still in flight when the explosion fires shortly after)
+            // Without halting all four, our preserved-color write gets
+            // overwritten on the next frame (primed pink → gold pulse takes
+            // over → reads as orange; player-flash green → settle to white).
+            //
+            // Order:
+            //   1. Capture preserved color. Primed tiles → tile.GlowColor
+            //      (saturated _primedGlowColor, not the lerped snapshot).
+            //   2. Stop primed pulse via ClearPrimedGlow (also resets state).
+            //      Stop gold pulse + flash coroutine via StopVisualPulses.
+            //      Kill any DOTween tweens on transform AND sr.
+            //   3. Lock sr.color to preservedColor. From here only DOFade
+            //      (alpha-only) modifies the color until shatter.
+            // Two distinct colors needed for primed tiles:
+            //   - preservedColor (tile display during squeeze→pop): pulse-mid
+            //     lerp matches what the player saw mid-pulse on the tile.
+            //   - debrisColor (TileFragments tint at t=120ms): texture color
+            //     sampled from primed_test@2x.png. Per Spencer, debris should
+            //     match the natural pre-pop tile color, NOT the lighter
+            //     scaled-down color visible during the pop animation.
+            Color preservedColor = tileColor;
+            Color debrisColor    = tileColor;
+            if (isCascade)
+            {
+                // Gravity-formed cascade word — force the primed pink visual
+                // (sprite + tint) regardless of any other tile state. The
+                // preamble below will pulse through pink → flash → squeeze.
+                preservedColor = Tile.PRIMED_TILE_TINT;
+                debrisColor    = Tile.PRIMED_TILE_TINT;
+                if (tileSR != null && Tile.PrimedSprite != null)
+                {
+                    tileSR.sprite = Tile.PrimedSprite;
+                    originalSprite = Tile.PrimedSprite;
+                }
+            }
+            else if (tile.HasPermanentGlow)
+            {
+                Color glow = tile.GlowColor;
+                glow.a = 1f;
+                preservedColor = Color.Lerp(Color.white, glow, 0.40f);
+                debrisColor    = Tile.PRIMED_TILE_TINT;
+            }
+            else if (tile.WasInScoredWord)
+            {
+                // Sticky WasInScoredWord catches early-stagger tiles whose
+                // PlayWordScored OnComplete already reverted the sprite back
+                // to normal before detonation kicked in. Re-apply the scored
+                // sprite so the green texture is under the HDR green tint.
+                preservedColor = Tile.SCORED_TILE_TINT;
+                debrisColor    = Tile.SCORED_TILE_TINT;
+                if (!tile.IsShowingScoredSprite) tile.SetScoredSprite(true);
+            }
+            if (tile.HasPermanentGlow) tile.ClearPrimedGlow();
+            tile.StopVisualPulses();
+            xform.DOKill();
+            if (tileSR != null) tileSR.DOKill();
+            if (tileSR != null) tileSR.color = preservedColor;
+            tileColor = debrisColor; // downstream Shatter tints debris to debrisColor (texture color for primed, HDR green for scored)
+
+            // ── Cascade preamble ──────────────────────────────────────────────
+            // For gravity-formed cascade words: hold on the primed pink color
+            // for ~120ms, then a brief brightened-pink flash (NOT pure white,
+            // which blows the pink out via bloom), then back to base pink for
+            // the squeeze. Visual-only — no SetPrimedGlow / engine state.
+            if (isCascade && tileSR != null)
+            {
+                yield return WaitCache.Get(0.12f);
+                if (tile == null) yield break;
+                // Brighter pink — multiply each channel by 1.25 so bloom catches
+                // the pulse without washing the color out to white.
+                tileSR.color = new Color(
+                    preservedColor.r * 1.25f,
+                    preservedColor.g * 1.25f,
+                    preservedColor.b * 1.25f,
+                    1f);
+                yield return WaitCache.Get(0.08f);
+                if (tile == null) yield break;
+                tileSR.color = preservedColor; // back to base pink for the squeeze
+            }
+
+            // Squeeze ONLY — tile shrinks to 0.85× and holds there until the
+            // fragments fire at t=120ms. No scale-up / overshoot. Mimics CC's
+            // pattern where the candy shrinks, then explodes.
+            xform.DOScale(origScale * 0.85f, 0.05f).SetEase(Ease.OutQuad);
+            if (FlipbookExplosion.Instance != null)
+            {
+                float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                Color squareTint = new Color(
+                    tileColor.r * 1.6f,
+                    tileColor.g * 1.6f,
+                    tileColor.b * 1.6f,
+                    1f);
+                FlipbookExplosion.Instance.PlayPopOverlaySquare(tilePos, cellSize, 0.20f, squareTint);
+            }
+
+            // t=50ms — bubble fires at the punch start so its overshoot
+            // syncs with the tile pop-up.
+            yield return WaitCache.Get(0.05f);
+            if (tile == null) yield break;
+            if (FlipbookExplosion.Instance != null)
+                FlipbookExplosion.Instance.PlayBubble(tilePos, tileColor, 1.0f, 0.12f);
+
+            // t=120ms — punch peak: fragments fire from the punched-up tile,
+            // tile fades with InCubic so it lingers visible during the shatter
+            // then accelerates to zero (no flat linear fade).
+            yield return WaitCache.Get(0.07f); // 50 + 70 = 120
+            if (tile == null) yield break;
+            // Lock sr.color AND sr.sprite to their pre-pop captured values
+            // before TileFragments.Shatter samples them. Without these writes:
+            //   - FlashBorderCoroutine has had ~120ms to drift sr.color back
+            //     toward white → debris tints white.
+            //   - ClearPrimedGlow / SetScoredSprite(false) callbacks may have
+            //     swapped sr.sprite back to the cream s_spriteNormal → Path-B
+            //     fragments render the cream texture instead of the primed
+            //     pink-coral / scored green that the player saw.
+            if (tileSR != null)
+            {
+                tileSR.color = tileColor;
+                if (originalSprite != null) tileSR.sprite = originalSprite;
+            }
+            if (TileFragments.Instance != null)
+                TileFragments.Instance.Shatter(tile, 1.2f);
+            if (tileSR != null)
+                tileSR.DOFade(0f, 0.08f).SetEase(Ease.InCubic);
+
+            // t=140ms — sparkle spray on top of the chunks
+            yield return WaitCache.Get(0.02f); // 120 + 20 = 140
+            if (tile == null) yield break;
+            if (SparkleSpray.Instance != null)
+                SparkleSpray.Instance.Play(tile.transform.position, intensity: 0.4f);
+
+            // t=200ms — tile fade complete; hide it BEFORE the caller's
+            // grid.RemoveTiles + gravity runs (caller picks up at t=250ms).
+            // Otherwise newly-dropped tiles render on top of the still-active
+            // popping tile. Bubble/fragments/sparkles continue independently
+            // — the visual carries from those layers, not from the tile.
+            yield return WaitCache.Get(0.06f); // 140 + 60 = 200
+            if (tile == null) yield break;
+            tile.gameObject.SetActive(false);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // NEW Tier1Pop (2026-05-04) — CC-reference "shrink to nothing" gesture
+        // ═══════════════════════════════════════════════════════════════════════════
+        // Reference: Spencer's CC capture frames showed:
+        //   1. Tile lights up (bright glint) BEFORE any movement
+        //   2. Tile scales down continuously to ~10% (not held at 0.85×)
+        //   3. Bubble appears and scales up while tile is in late shrink
+        //   4. Shrapnel + sparkles fire INSIDE the bubble at peak
+        //
+        // Timeline (~280ms total, non-cascade):
+        //   t=0      capture color/sprite, brighten color × 1.5 (light-up flash)
+        //   t=80     PlayMatchLine, color reverts, scale tween starts
+        //   t=80-260 scale 1.0 → 0.10 over 180ms (Ease.InCubic)
+        //   t=140    bubble@2x spawns (OutBack, peak alpha 0.45)
+        //   t=260    tile.SetActive(false), TileFragments.Shatter, SparkleSpray
+        //
+        // Cascade-mode prepends the existing 200ms pink-pulse preamble before
+        // the light-up phase. All color/sprite/HasPermanentGlow/WasInScoredWord
+        // preservation is identical to the legacy coroutine.
+        // ═══════════════════════════════════════════════════════════════════════════
+        private IEnumerator Tier1PopCoroutine(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop = false)
+        {
+            if (tile == null) yield break;
+            if (startDelay > 0f)
+            {
+                yield return WaitCache.Get(startDelay);
+                if (tile == null) yield break;
+            }
+
+            Transform xform = tile.transform;
+            Vector3 origScale = xform.localScale;
+            Vector3 tilePos = xform.position;
+            SpriteRenderer tileSR = tile.GetComponent<SpriteRenderer>();
+            Color tileColor = tileSR != null ? tileSR.color : Color.white;
+            Sprite originalSprite = tileSR != null ? tileSR.sprite : null;
+
+            // ── Color/sprite preservation (identical to legacy) ──
+            Color preservedColor = tileColor;
+            Color debrisColor    = tileColor;
+            if (isCascade)
+            {
+                preservedColor = Tile.PRIMED_TILE_TINT;
+                debrisColor    = Tile.PRIMED_TILE_TINT;
+                if (tileSR != null && Tile.PrimedSprite != null)
+                {
+                    tileSR.sprite = Tile.PrimedSprite;
+                    originalSprite = Tile.PrimedSprite;
+                }
+            }
+            else if (tile.HasPermanentGlow)
+            {
+                Color glow = tile.GlowColor;
+                glow.a = 1f;
+                preservedColor = Color.Lerp(Color.white, glow, 0.40f);
+                debrisColor    = Tile.PRIMED_TILE_TINT;
+            }
+            else if (tile.WasInScoredWord)
+            {
+                preservedColor = Tile.SCORED_TILE_TINT;
+                debrisColor    = Tile.SCORED_TILE_TINT;
+                if (!tile.IsShowingScoredSprite) tile.SetScoredSprite(true);
+            }
+            if (tile.HasPermanentGlow) tile.ClearPrimedGlow();
+            tile.StopVisualPulses();
+            xform.DOKill();
+            if (tileSR != null) tileSR.DOKill();
+            if (tileSR != null) tileSR.color = preservedColor;
+            tileColor = debrisColor;
+
+            // ── Cascade preamble (unchanged from legacy) ──
+            // Pink pulse before the light-up + shrink kicks in. Cascade words
+            // get a longer pre-pop window so the player sees them prime up.
+            if (isCascade && tileSR != null)
+            {
+                yield return WaitCache.Get(0.12f);
+                if (tile == null) yield break;
+                tileSR.color = new Color(
+                    preservedColor.r * 1.25f,
+                    preservedColor.g * 1.25f,
+                    preservedColor.b * 1.25f,
+                    1f);
+                yield return WaitCache.Get(0.08f);
+                if (tile == null) yield break;
+                tileSR.color = preservedColor;
+            }
+
+            // ── t=0–80ms: LIGHT-UP brighten (no scale change) ──
+            // Brighten the tile's tint to read as a "glint" before the shrink.
+            // Cascade preamble already brightened so this layer is visually
+            // redundant during cascades; non-cascade pops get the full glint.
+            // instantPop (2026-05-15): cascade tiles skip the light-up entirely
+            // so they pop IMMEDIATELY on impact with no held moment.
+            if (!isCascade && !instantPop && tileSR != null)
+            {
+                tileSR.color = new Color(
+                    Mathf.Min(preservedColor.r * 1.5f, 1.5f),
+                    Mathf.Min(preservedColor.g * 1.5f, 1.5f),
+                    Mathf.Min(preservedColor.b * 1.5f, 1.5f),
+                    1f);
+            }
+
+            // Subtle overlay aura during the light-up phase — same as legacy
+            // but at a slightly lower alpha so the tile glint reads first.
+            // Skip for instantPop so the cascade pop has no pre-flash visual lag.
+            if (!instantPop && FlipbookExplosion.Instance != null)
+            {
+                float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                Color squareTint = new Color(
+                    tileColor.r * 1.6f,
+                    tileColor.g * 1.6f,
+                    tileColor.b * 1.6f,
+                    1f);
+                FlipbookExplosion.Instance.PlayPopOverlaySquare(tilePos, cellSize, 0.26f, squareTint);
+            }
+
+            // Light-up phase wait — gated on instantPop so cascades pop
+            // immediately without the 80ms "held moment" feel.
+            if (!instantPop)
+            {
+                yield return WaitCache.Get(0.08f);
+                if (tile == null) yield break;
+            }
+
+            // ── t=80ms: pop sound + revert color + start continuous shrink ──
+            // OutQuart for the shrink — fast at start, settles slow at end.
+            // Math: at 60ms into the 180ms tween (when bubble fires), OutQuart
+            // puts the tile at ~28% scale, which matches the bubble's
+            // startScale (0.30×cellSize) so the bubble appears at the same
+            // size as the now-shrunk tile and expands from there.
+            // InCubic was wrong here — it kept the tile at ~97% scale at the
+            // bubble entry frame, so the bubble appeared underneath a still-
+            // full-sized tile (Spencer's Image #75 reference).
+            if (!suppressAudio) GameAudio.Instance?.PlayMatchLine();
+            if (tileSR != null) tileSR.color = preservedColor;
+            xform.DOScale(origScale * 0.10f, 0.18f).SetEase(Ease.OutQuart);
+
+            // ── t=140ms: tile is at ~28% scale (smallest readable point) ──
+            // This is the "explode" moment. Tile hides, bubble appears at the
+            // same small size, debris fires, sparks fire — all at once. From
+            // here on, bubble expands + debris flies out + sparks twinkle in
+            // parallel. Matches CC where the candy "becomes" the bubble while
+            // shrapnel and sparkles burst out simultaneously.
+            yield return WaitCache.Get(0.06f);
+            if (tile == null) yield break;
+
+            // Lock sr.color + sr.sprite + scale + position before Shatter samples.
+            // Drift from background coroutines or a stale/pooled transform could
+            // otherwise tint debris white, revert sprite to cream, undersize
+            // fragments (since tile is currently at ~28% scale), or misposition
+            // them. Tile hides on the next line so these writes are invisible.
+            if (tileSR != null)
+            {
+                tileSR.color = tileColor;
+                if (originalSprite != null) tileSR.sprite = originalSprite;
+            }
+            xform.DOKill();
+            xform.localScale = origScale;
+            xform.position = tilePos;
+
+            if (FlipbookExplosion.Instance != null)
+                FlipbookExplosion.Instance.PlayBubble(tilePos, tileColor, 1.0f, 0.12f);
+            if (TileFragments.Instance != null)
+                TileFragments.Instance.Shatter(tile, 1.2f);
+            if (SparkleSpray.Instance != null)
+                SparkleSpray.Instance.Play(tilePos, intensity: 0.4f);
+
+            tile.gameObject.SetActive(false);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
         // FX LAYER TOGGLES (Phase 11j tuning — flip to A/B individual layers)
         // ═══════════════════════════════════════════════════════════════════════════
         // BASELINE: all OFF. Flip ONE to true at a time, recompile (Unity hot-
@@ -412,20 +936,28 @@ namespace WordDrop
         public static bool FX_MeltdownPrefab    = true;  // AllIn1 Magic Explosive Spell on each tile (meltdown only)
         public static bool FX_TileFlash         = false; // white/yellow flash on each tile pre-dissolve
         public static bool FX_DetonationAudio   = false; // tiered detonation SFX (PlayDetonation)
-        public static bool FX_FlipbookFrames    = false; // 16-frame explosion_flipbook sprite-sheet animation per tile
-        public static bool FX_FlipbookGlow      = false; // bubble@2x scale-up halo per tile (sits behind the flipbook)
+        public static bool FX_FlipbookGlow      = false; // bubble@2x scale-up halo per tile
         public static bool FX_TileFragments     = false; // shattered tile pieces per tile
         public static bool FX_SparkleParticles  = false; // PlayPrimed + PlayWordScored sparkles (tier 2+)
         public static bool FX_BoardShake        = false; // camera shake + hand-card shake + neighbor ripple
-        public static bool FX_Confetti          = false; // tier-4 confetti burst at cluster center
         public static bool FX_Haptics           = false; // phone vibration
-        public static bool FX_BigBurstFlash     = false; // screen-spanning beam + radial halo (per-word, HandManager)
+        public static bool FX_BigBurstFlash     = false; // 2026-05-16: globally disabled per Spencer. Detonations are pop-only now. Flip true to restore sweep beam.
+        public static bool FX_BigBurstFlashCascadeTest = false; // test override — force-fires the meltdown beam during a cascade simulation, set by FXTestMenu
         public static bool FX_TileFlashBox      = false; // bright box overlay per tile (HandManager.FireTileFlashBoxes)
         public static bool FX_SparkleSpray      = false; // HDR sparkle stars from FirePerWordBurst (HandManager)
         public static bool FX_SparkleLine       = false; // GameParticles.PlaySparkleLine — flare_star sparkles along blast line
-        public static bool FX_MeltdownIntroFlash = false; // MeltdownManager IntroCoroutine white screen flash + title slam visuals
+        public static bool FX_MeltdownIntroFlash = true;  // MeltdownManager IntroCoroutine white screen flash + title slam visuals
+
+        // Tier1Pop revert toggle (2026-05-04). New default uses the CC-reference
+        // shrink-to-nothing gesture: light-up brighten → continuous scale 1.0→0.10
+        // (InCubic) → bubble overlap on the late shrink → shatter inside bubble.
+        // Flip to TRUE to fall back to the legacy 2026-05-03 coroutine
+        // (squeeze 0.85× then alpha fade) if the new behavior breaks something.
+        public static bool FX_UseLegacyTier1Pop = false;
         public static bool FX_TileHeatOverlay   = false; // AllIn1 charge-up swirl overlay on each detonating tile during meltdown wind-up
-        public static bool FX_MeltdownTilePunch = false; // squeeze → pop → settle scale sequence on each tile during meltdown wind-up
+        public static bool FX_PrimedGlowOrb     = false; // soft-circle round halo overlay on each detonating tile during meltdown wind-up (Candy-Crush color-bomb style)
+        public static bool FX_MeltdownTilePunch = true;  // tile shrink-to-nothing during meltdown wind-up — tiles flash white then scale to 10% so the spell prefab carries the visual
+        public static bool FX_MeltdownWindupShake = true;  // continuous camera shake ramping subtle → assertive over the meltdown windup, paired with earthquake SFX
 
         private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
         {
@@ -449,12 +981,43 @@ namespace WordDrop
                 FlipbookExplosion.MELTDOWN_BLAST_PEAK_AT_REAL_SPEED
                 / FlipbookExplosion.MELTDOWN_PREFAB_SPEED;
             bool meltdownActive = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
+
+            // Junk filter for meltdown windup — only WORD tiles (scored
+            // trigger words + primed words being detonated, populated
+            // upstream into _pendingCascadeWords by HandManager.CacheBurstTriggers
+            // and GameVisualBridge.WordsScored/TriggersFound) get the per-
+            // tile windup FX (magic explosive prefab, heat overlay, primed
+            // glow orb, tile punch, perlin shake). Junk/collateral splash
+            // tiles stay still until the impact moment, then shatter with
+            // everyone else in the per-tile shatter loop further down.
+            // If no per-word info is available (test menu, edge cases),
+            // fall back to applying FX to every tile (legacy behaviour).
+            HashSet<Tile> meltdownWordTiles = null;
+            if (meltdownActive && _pendingCascadeWords != null && _pendingCascadeWords.Count > 0)
+            {
+                meltdownWordTiles = new HashSet<Tile>();
+                for (int wi = 0; wi < _pendingCascadeWords.Count; wi++)
+                {
+                    var w = _pendingCascadeWords[wi];
+                    if (w == null) continue;
+                    for (int ti = 0; ti < w.Count; ti++)
+                        if (w[ti] != null) meltdownWordTiles.Add(w[ti]);
+                }
+            }
+
             if (FX_MeltdownPrefab && meltdownActive && FlipbookExplosion.Instance != null)
             {
-                Debug.Log("[FX] MeltdownPrefab: FIRED");
+                Debug.Log($"[FX] MeltdownPrefab: FIRED (wordTilesOnly={meltdownWordTiles != null}, wordCount={(meltdownWordTiles == null ? -1 : meltdownWordTiles.Count)})");
+
+                // Earthquake rumble at the very start of the meltdown —
+                // plays on a dedicated AudioSource so we can cut it off
+                // cleanly when the detonation bang fires at tile-disappear.
+                GameAudio.Instance?.PlayEarthquake(1f);
+
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
+                    if (meltdownWordTiles != null && !meltdownWordTiles.Contains(tiles[i])) continue;
                     FlipbookExplosion.Instance.PlayMeltdown(tiles[i].transform.position);
                 }
 
@@ -465,7 +1028,59 @@ namespace WordDrop
                 if (FX_MeltdownTilePunch)
                 {
                     Debug.Log("[FX] MeltdownTilePunch: FIRED");
-                    PlayDetonation(tiles, chainStep);
+                    // Junk filter — punch only the word tiles, not collateral.
+                    List<Tile> punchTiles = tiles;
+                    if (meltdownWordTiles != null)
+                    {
+                        punchTiles = new List<Tile>();
+                        for (int i = 0; i < tiles.Count; i++)
+                            if (tiles[i] != null && meltdownWordTiles.Contains(tiles[i]))
+                                punchTiles.Add(tiles[i]);
+                    }
+                    // Tile shrink-to-nothing during windup — replaces the old
+                    // squeeze→pop→settle pulse. Tiles flash white at start,
+                    // then scale rapidly to ~10% (OutQuart, 200ms) and HOLD
+                    // there through the rest of the windup so the orb +
+                    // heat overlay + perlin shake carry the visual while the
+                    // tiles themselves visibly disappear into the meltdown.
+                    // Matches Tier1Pop's "shrink progressively to nothing"
+                    // gesture per Spencer 2026-05-05.
+                    //
+                    // IMPORTANT: do NOT call Tile.FlashHighlight here — its
+                    // FlashBorderCoroutine writes transform.localScale every
+                    // frame and hard-resets to origScale at the end, which
+                    // clobbers the shrink. Manual color flash via DOColor on
+                    // the sprite renderer instead (same pattern Tier1Pop uses).
+                    foreach (var pt in punchTiles)
+                    {
+                        if (pt == null) continue;
+                        Transform pxform = pt.transform;
+                        SpriteRenderer pSR = pt.GetComponent<SpriteRenderer>();
+
+                        // Stop every scale writer on this tile BEFORE starting
+                        // the shrink. PrimedPulseLoop is the one that broke
+                        // the original shrink — it writes transform.localScale
+                        // every frame on primed tiles and only yields when
+                        // _flashCoroutine != null, so the DOScale below got
+                        // continuously overwritten. ClearPrimedGlow stops the
+                        // primed-pulse coroutine and resets scale to base.
+                        if (pt.HasPermanentGlow) pt.ClearPrimedGlow();
+                        pt.StopVisualPulses();
+                        pxform.DOKill();
+                        if (pSR != null) pSR.DOKill();
+
+                        Vector3 origPunchScale = pxform.localScale;
+
+                        if (pSR != null)
+                        {
+                            Color startColor = pSR.color;
+                            pSR.color = Color.white;
+                            pSR.DOColor(startColor, 0.25f).SetEase(DG.Tweening.Ease.OutQuad);
+                        }
+
+                        pxform.DOScale(Vector3.zero, 0.20f)
+                            .SetEase(DG.Tweening.Ease.OutQuart);
+                    }
                 }
                 else { Debug.Log("[FX] MeltdownTilePunch: SKIPPED"); }
 
@@ -478,21 +1093,83 @@ namespace WordDrop
                     for (int i = 0; i < tiles.Count; i++)
                     {
                         if (tiles[i] == null) continue;
+                        if (meltdownWordTiles != null && !meltdownWordTiles.Contains(tiles[i])) continue;
                         FlipbookExplosion.Instance.PlayTileHeatOverlay(
                             tiles[i].transform.position, cellSize, MELTDOWN_WINDUP_DELAY);
                     }
                 }
                 else { Debug.Log("[FX] TileHeatOverlay: SKIPPED"); }
 
+                // Candy-Crush-color-bomb-style primed glow orb per tile —
+                // soft-circle additive halo on top of each tile that overlays
+                // through the ENTIRE animation (windup + explosion + dissolve)
+                // so the glow stays visible front-and-center the whole time.
+                if (FX_PrimedGlowOrb)
+                {
+                    Debug.Log("[FX] PrimedGlowOrb: FIRED");
+                    float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                    // Long max duration as a safety cap; the orb will exit
+                    // earlier when its tile becomes inactive (shatter hides it).
+                    float orbDuration = MELTDOWN_WINDUP_DELAY + 1.0f;
+                    for (int i = 0; i < tiles.Count; i++)
+                    {
+                        if (tiles[i] == null) continue;
+                        if (meltdownWordTiles != null && !meltdownWordTiles.Contains(tiles[i])) continue;
+                        FlipbookExplosion.Instance.PlayPrimedGlowOrb(
+                            tiles[i].transform.position, cellSize, orbDuration, tiles[i].transform);
+                    }
+                }
+                else { Debug.Log("[FX] PrimedGlowOrb: SKIPPED"); }
+
+                // Violent Perlin-noise shake on each tile for the entire
+                // windup — magnitude ramps subtle→violent so tension builds
+                // into the explosion. Each tile shakes with its own seed so
+                // they jitter independently, not in sync.
+                Debug.Log("[FX] MeltdownShake: FIRED");
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    if (tiles[i] == null) continue;
+                    if (meltdownWordTiles != null && !meltdownWordTiles.Contains(tiles[i])) continue;
+                    tiles[i].PlayMeltdownShake(MELTDOWN_WINDUP_DELAY);
+                }
+
+                // Continuous rumble haptic during the windup, with amplitude
+                // ramping from very soft → full target. Builds tension into
+                // the explosion exactly like the visual Perlin shake does.
+                StartCoroutine(MeltdownRumbleBuildup(
+                    duration: MELTDOWN_WINDUP_DELAY,
+                    startLevel: 0.10f,
+                    endLevel: 0.40f,
+                    frequency: 0.20f));
+
+                // Visual counterpart to the rumble haptic — camera shake that
+                // ramps subtle → assertive over the windup, syncing with the
+                // earthquake SFX so the screen physically trembles into the
+                // explosion. Snaps the camera home on completion so the
+                // impact PlayBoardShake takes over cleanly.
+                if (FX_MeltdownWindupShake)
+                {
+                    Debug.Log("[FX] MeltdownWindupShake: FIRED");
+                    StartCoroutine(MeltdownWindupShake(
+                        duration: MELTDOWN_WINDUP_DELAY,
+                        startMag: 0.015f,
+                        endMag: 0.10f));
+                }
+                else { Debug.Log("[FX] MeltdownWindupShake: SKIPPED"); }
+
                 yield return WaitCache.Get(MELTDOWN_WINDUP_DELAY);
             }
             else { Debug.Log($"[FX] MeltdownPrefab: SKIPPED (toggle={FX_MeltdownPrefab}, meltdownActive={meltdownActive})"); }
 
-            // Determine tier by tiles exploded + chain depth
+            // Determine tier by tiles exploded + chain depth.
+            // Thresholds widened 2026-05-01: most typical word matches (3-7
+            // tile clusters with no cascade) now hit tier 1 (CC-style pop).
+            // Tier 2 reserved for medium clusters (8-11 tiles), tier 3 for
+            // large clusters or 2nd cascades, tier 4 for meltdown territory.
             int tier;
             if (chainStep >= 3 || tileCount >= 15) tier = 4;
-            else if (chainStep >= 2 || tileCount >= 9) tier = 3;
-            else if (tileCount >= 5) tier = 2;
+            else if (chainStep >= 2 || tileCount >= 12) tier = 3;
+            else if (tileCount >= 8) tier = 2;
             else tier = 1;
 
             Debug.Log($"[VFX] Explosion tier={tier} tiles={tileCount} chain={chainStep}");
@@ -501,10 +1178,68 @@ namespace WordDrop
             if (FX_Haptics) { Debug.Log("[FX] Haptics: FIRED"); HapticsManager.Explosion(tier); }
             else { Debug.Log("[FX] Haptics: SKIPPED"); }
 
+            // ── Tier-1 Candy-Crush-style pop branch ───────────────────────────
+            // Replaces the generic stack for tier-1 detonations only. Each tile
+            // gets a per-tile orchestrated pop (squeeze → bubble + tile fade →
+            // fragments → sparkle). Audio fires once for the whole word
+            // (suppressAudio:true on per-tile pops, then PlayMatchLine here).
+            //   - Skipped during meltdown (meltdown's tier-4 stack handles it)
+            //   - Yields ~250ms — long enough for the bubble/fragments to read
+            //     before the caller (HandManager / GameVisualBridge) advances
+            //     to grid.RemoveTiles. The PlayTier1Pop coroutines continue
+            //     running independently and finish hiding tiles at t=350ms;
+            //     null checks inside Tier1PopCoroutine make them bail safely
+            //     if the gameplay path destroys the tile sooner.
+            // Gravity-formed cascade detonations (chainStep >= 2) ALWAYS use the
+            // tier-1 pop path — Spencer wants one cascade animation regardless
+            // of cluster size, with a "primed pink → flash → squeeze" preamble.
+            // This overrides the tier 2/3 generic stack that would normally
+            // fire for big cascade clusters.
+            bool isCascadePop = chainStep >= 2 && !meltdownActive;
+            if ((tier == 1 && !meltdownActive) || isCascadePop)
+            {
+                Debug.Log($"[FX] Tier1Pop: FIRED (cascade={isCascadePop}, chain={chainStep}, tiles={tileCount})");
+                // Snapshot + clear the trigger-word side channel up-front so
+                // it can't leak into any later explosion this resolution step.
+                List<List<Tile>> cascadeWords = _pendingCascadeWords;
+                _pendingCascadeWords = null;
+
+                // Always pass chainStep so pitch escalation works at EVERY
+                // chain depth, not just chainStep >= 2. Bug fix 2026-05-16:
+                // the else branch was calling PlayMatchLine() with no args,
+                // so chain depth 1 played at base pitch instead of +1 semitone.
+                // chainStep 0 → pitch 1.0 (base) is correct (Mathf.Pow handles it).
+                GameAudio.Instance?.PlayMatchLine(chainStep);
+                // (Previous code distinguished cascade-trigger-word tiles from
+                // collateral tiles to apply a pink primed preamble only to the
+                // former. That distinction is no longer needed since cascades
+                // now use the same simple Tier 1 pop as initial word pops.)
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    if (tiles[i] == null) continue;
+                    // Cascades use the simple Tier 1 pop with instantPop=true
+                    // (added 2026-05-15) — no 80ms light-up wait. Cascades
+                    // pop IMMEDIATELY on impact. Pitch escalation on the audio
+                    // side carries the chain feel.
+                    // Only fire on cascade steps; non-cascade tier-1 events
+                    // (initial player word) still hit this branch but go through
+                    // the path with isCascadePop=false (handled by the else
+                    // branch flow above — non-cascade tier-1 takes this loop
+                    // but instantPop only applies to chainStep >= 2).
+                    bool tileInstantPop = isCascadePop;
+                    PlayTier1Pop(tiles[i], suppressAudio: true, isCascade: false, startDelay: 0f, instantPop: tileInstantPop);
+                }
+                // Per-word haptic synced to the shatter peak (~t=120ms in
+                // PlayTier1Pop). Cascade no longer needs the +0.20s preamble offset.
+                StartCoroutine(Tier1PopHaptic(chainStep, 0f));
+                yield return WaitCache.Get(0.25f);
+                yield break;
+            }
+
             // All tiers: flash → dissolve → particles → shake
             // NO DOScale or DORotate — dissolve handles the visual death.
             // Tiers differ by: flash color, particle count, shake strength,
-            // dissolve speed, and whether screen flash / confetti fires.
+            // dissolve speed, and whether screen flash fires.
 
             // ── Tier-specific parameters ──
             float dissolveDur;
@@ -512,7 +1247,6 @@ namespace WordDrop
             Color flashColor;
             bool screenFlash;
             bool boardShake;
-            bool confetti;
 
             switch (tier)
             {
@@ -522,7 +1256,6 @@ namespace WordDrop
                     flashColor = Color.white;
                     screenFlash = false;
                     boardShake = false;
-                    confetti = false;
                     break;
                 case 2: // Burst — screen flash + shake
                     dissolveDur = 0.22f;
@@ -530,36 +1263,45 @@ namespace WordDrop
                     flashColor = new Color(1f, 0.95f, 0.7f, 1f);
                     screenFlash = true;
                     boardShake = true;
-                    confetti = false;
                     break;
                 case 3: // Blast — heavy shake + more particles
-                    // Phase 11+ — slower hold for big chain-reactions so the
-                    // particles + shake + screen flash land as a discrete moment
-                    // instead of blurring into the next cascade layer.
                     dissolveDur = 0.45f;
                     particlesPerTile = mobile ? 12 : 20;
                     flashColor = new Color(1f, 0.85f, 0.3f, 1f);
                     screenFlash = true;
                     boardShake = true;
-                    confetti = false;
                     break;
                 default: // Chain Bomb — everything
-                    // Phase 11+ — biggest tier slows down the most. Confetti +
-                    // meltdown particles get a full visible beat before the
-                    // chain proceeds.
                     dissolveDur = 0.60f;
                     particlesPerTile = mobile ? 14 : 24;
                     flashColor = new Color(1f, 0.7f, 0.15f, 1f);
                     screenFlash = true;
                     boardShake = true;
-                    confetti = true;
                     break;
             }
 
+            // ── Cascade detection ──
+            // chainStep >= 1 && !meltdownActive == real-game cascade detonation
+            // (a word formed via gravity-falling letters after a prior detonation).
+            // Cascades fire the SAME FX stack as the test menu's
+            // "Cascade Word + BigBurst" buttons — TileFlash, TileFragments,
+            // SparkleSpray, SparkleParticles, FlipbookGlow, BoardShake,
+            // BigBurstFlash, plus the meltdown-grade bang + mega-impact haptic.
+            bool isCascade = chainStep >= 1 && !meltdownActive;
+            // chainStep == 0 && !meltdownActive == initial player-triggered
+            // detonation. Gets the BARE MINIMUM (tier-scaled audio, fragments,
+            // light shake) — no TileFlash, no FlipbookGlow halos, no
+            // SparkleParticles starbursts, no MegaImpact haptic. Those layers
+            // stack into visual noise when fired on every tier 2/3 word.
+            bool isInitial = chainStep == 0 && !meltdownActive;
+
             // ── Flash all tiles ──
-            if (FX_TileFlash)
+            // Fires unconditionally during meltdown OR cascade (matches the
+            // TileFragments pattern) so each tile flashes right before the
+            // explosion regardless of the FX_TileFlash toggle.
+            if (FX_TileFlash || meltdownActive || isCascade)
             {
-                Debug.Log("[FX] TileFlash: FIRED");
+                Debug.Log($"[FX] TileFlash: FIRED (toggle={FX_TileFlash}, meltdown={meltdownActive}, cascade={isCascade})");
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
@@ -567,33 +1309,39 @@ namespace WordDrop
                     tiles[i].FlashHighlight(flashColor);
                 }
             }
-            else { Debug.Log("[FX] TileFlash: SKIPPED"); }
+
+            // BigBurst per-word is handled by HandManager.FlushPendingTriggerEffects
+            // (fires per primed word AND per trigger word, gated by
+            // FX_BigBurstFlash which now defaults to true). The duplicate
+            // single-beam logic that used to live here was removed to avoid
+            // double-firing.
+            // _pendingCascadeWords side channel is no longer consumed here —
+            // clear it so it doesn't leak between resolution steps.
+            _pendingCascadeWords = null;
 
             // ── Screen flash DISABLED 2026-04-29 — colored prefabs now provide impact reading.
             //    Re-enable only if Spencer wants white-wash back for hero events. Gate to
             //    meltdown-grade chains, not tier-2+. ──
             // if (screenFlash) PlayScreenFlash(tier - 1);
-            if (FX_DetonationAudio)
-            {
-                Debug.Log("[FX] DetonationAudio: FIRED");
-                GameAudio.Instance?.PlayDetonation(tier - 1);
-            }
-            else { Debug.Log("[FX] DetonationAudio: SKIPPED"); }
+            // DetonationAudio is now fired inside the per-tile shatter loop
+            // (right at SetActive(false)) so the bang lands EXACTLY when the
+            // tiles disappear — instead of ~50ms early like it was here.
+            // See the per-tile loop further down.
 
             // ── Flipbook explosion per tile ──
             // (Meltdown prefab — if any — was spawned at the top of the
-            // coroutine before the wind-up yield.) Play() fires two layers
-            // internally — the 16-frame sprite-sheet animation and the
-            // bubble@2x glow halo — each gated by its own FX_Flipbook* flag.
-            // Skip the loop entirely if both layers are off.
-            if ((FX_FlipbookFrames || FX_FlipbookGlow) && FlipbookExplosion.Instance != null)
+            // coroutine before the wind-up yield.) Play() now fires only the
+            // bubble@2x glow halo — the orange shrapnel sprite sheet was retired.
+            // SUPPRESSED during meltdown — the prefab + orb halo carry the
+            // visual; the bubble glow stacks on top and reads as redundant.
+            if ((FX_FlipbookGlow || isCascade) && !meltdownActive && FlipbookExplosion.Instance != null)
             {
-                Debug.Log($"[FX] FlipbookFrames: {(FX_FlipbookFrames ? "FIRED" : "SKIPPED")}, FlipbookGlow: {(FX_FlipbookGlow ? "FIRED" : "SKIPPED")}");
+                Debug.Log("[FX] FlipbookGlow: FIRED");
                 for (int i = 0; i < tiles.Count; i++)
                     if (tiles[i] != null)
                         FlipbookExplosion.Instance.Play(tiles[i].transform.position, tier);
             }
-            else { Debug.Log("[FX] FlipbookFrames: SKIPPED, FlipbookGlow: SKIPPED"); }
+            else { Debug.Log("[FX] FlipbookGlow: SKIPPED"); }
 
             // ── Shatter + particles + sparkles ──
             for (int i = 0; i < tiles.Count; i++)
@@ -605,16 +1353,35 @@ namespace WordDrop
                 // so the tiles visibly shatter at the blast peak regardless
                 // of the global FX_TileFragments toggle (which still gates
                 // non-meltdown detonations).
-                bool fragsThisShot = (FX_TileFragments || meltdownActive) && TileFragments.Instance != null;
+                bool fragsThisShot = (FX_TileFragments || meltdownActive || isCascade || isInitial) && TileFragments.Instance != null;
                 if (fragsThisShot)
                 {
                     if (i == 0) Debug.Log($"[FX] TileFragments: FIRED (toggle={FX_TileFragments}, meltdown={meltdownActive})");
+                    // Restore scale to Vector3.one before Shatter samples it.
+                    // During meltdown the windup shrinks tiles to 0.10×; without
+                    // this restore, fragments would inherit the shrunken scale
+                    // and come out tiny. DOKill cancels the shrink tween so the
+                    // assignment sticks.
+                    tiles[i].transform.DOKill();
+                    tiles[i].transform.localScale = Vector3.one;
                     TileFragments.Instance.Shatter(tiles[i]);
                 }
                 else if (i == 0) { Debug.Log("[FX] TileFragments: SKIPPED"); }
 
+                // Per-tile sparkle spray layer — sits over the chunks so each
+                // shatter point also emits sparkle stars. Always fires during
+                // meltdown (matches TileFragments pattern); otherwise gated by
+                // FX_SparkleSpray toggle.
+                bool sparkleSprayThisShot = (FX_SparkleSpray || meltdownActive || isCascade) && SparkleSpray.Instance != null;
+                if (sparkleSprayThisShot)
+                {
+                    if (i == 0) Debug.Log($"[FX] SparkleSpray (per-tile): FIRED (toggle={FX_SparkleSpray}, meltdown={meltdownActive})");
+                    SparkleSpray.Instance.Play(pos, intensity: 0.55f);
+                }
+                else if (i == 0) { Debug.Log("[FX] SparkleSpray (per-tile): SKIPPED"); }
+
                 // Sparkle stars + glow (tier 2+)
-                if (FX_SparkleParticles && tier >= 2 && GameParticles.Instance != null)
+                if ((FX_SparkleParticles || isCascade) && tier >= 2 && GameParticles.Instance != null)
                 {
                     if (i == 0) Debug.Log("[FX] SparkleParticles: FIRED");
                     GameParticles.Instance.PlayPrimed(pos);
@@ -623,36 +1390,67 @@ namespace WordDrop
                 }
                 else if (i == 0) { Debug.Log($"[FX] SparkleParticles: SKIPPED (toggle={FX_SparkleParticles}, tier={tier})"); }
 
+                // Detonation audio fires once (on the first tile) at the
+                // exact frame the tile disappears, so the bang is synced to
+                // the visual shatter rather than firing ~50ms early. Fires
+                // unconditionally during meltdown (matches TileFragments
+                // pattern); otherwise gated by FX_DetonationAudio.
+                if (i == 0 && (FX_DetonationAudio || meltdownActive || isCascade || isInitial))
+                {
+                    Debug.Log($"[FX] DetonationAudio: FIRED at tile-disappear (toggle={FX_DetonationAudio}, meltdown={meltdownActive}, cascade={isCascade}, initial={isInitial})");
+                    if (meltdownActive)
+                    {
+                        // Cut the earthquake rumble exactly when the bang fires
+                        // so the meltdown's audio sequence reads as: rumble →
+                        // hard cut → BANG (no muddy overlap).
+                        GameAudio.Instance?.StopEarthquake();
+                        GameAudio.Instance?.PlayDetonation(tier - 1);
+                        HapticsManager.RumbleStop();
+                        HapticsManager.MeltdownHit(); // hero moment — 0.85/0.50
+                    }
+                    else
+                    {
+                        // Tier 1/2/3 detonation — tier-scaled bang + haptic.
+                        // Applies to BOTH initial player-drop detonations AND
+                        // primed-word-triggered detonations (chainStep == 1).
+                        // True cascades (chainStep >= 2) take the Tier1Pop path
+                        // earlier and never reach this code, so no special-case
+                        // cascade audio override is needed here. Removing the
+                        // previous `else if (isCascade) PlayDetonation(3)` branch
+                        // — that was forcing tier-4 boom audio on tier-2/3 visuals,
+                        // causing the audio/visual mismatch (2026-05-15 fix).
+                        GameAudio.Instance?.PlayDetonation(tier - 1);
+                        HapticsManager.Explosion(tier);
+                    }
+                }
+
+                // Reset color BEFORE hiding — kills the in-flight FlashHighlight
+                // coroutine and restores the baseline tint (preserving special
+                // tints like gold/stone). Otherwise the coroutine stops on
+                // SetActive(false) before reaching its cleanup, and the tile
+                // re-activates stuck on the orange flash color.
+                tiles[i].ResetVisuals();
+
                 // Hide tile — flipbook + fragments cover the visual
                 tiles[i].gameObject.SetActive(false);
             }
 
             // ── Shake (tier 2+) ──
-            if (FX_BoardShake && boardShake)
+            if ((FX_BoardShake || meltdownActive || isCascade || isInitial) && boardShake)
             {
-                Debug.Log("[FX] BoardShake: FIRED");
+                Debug.Log($"[FX] BoardShake: FIRED (toggle={FX_BoardShake}, meltdown={meltdownActive}, cascade={isCascade}, initial={isInitial})");
                 PlayBoardShake(tier - 1, tileCount);
                 if (tier >= 3) ShakeHandCards(tier - 1, tileCount);
                 if (tier >= 4) PlayNeighborRipple(tiles, chainStep);
             }
             else { Debug.Log($"[FX] BoardShake: SKIPPED (toggle={FX_BoardShake}, boardShake={boardShake})"); }
 
-            // ── Confetti (tier 4) ──
-            if (FX_Confetti && confetti)
-            {
-                Debug.Log("[FX] Confetti: FIRED");
-                Vector3 center = Vector3.zero;
-                int count = 0;
-                for (int i = 0; i < tiles.Count; i++)
-                    if (tiles[i] != null) { center += tiles[i].transform.position; count++; }
-                if (count > 0)
-                {
-                    center /= count;
-                    GameParticles.Instance?.PlayDetonation(center, chainStep);
-                    GameParticles.Instance?.PlayMeltdown(center);
-                }
-            }
-            else { Debug.Log($"[FX] Confetti: SKIPPED (toggle={FX_Confetti}, confetti={confetti})"); }
+            // ── Confetti (tier 4) — REMOVED 2026-04-30 ──
+            // The orange-ball confetti+burst (GameParticles.PlayDetonation +
+            // PlayMeltdown) was firing on tier-4 meltdowns and reading as
+            // visual noise on top of the chunks + sparkle spray + meltdown
+            // prefab. Per-tile TileFragments + SparkleSpray now carry the
+            // particle layer, so this center-cluster blast is gone.
 
             yield return WaitCache.Get(dissolveDur + 0.03f);
         }
@@ -671,6 +1469,94 @@ namespace WordDrop
         {
             float alpha = Mathf.Min(FLASH_BASE_ALPHA + chainStep * FLASH_PER_CHAIN, FLASH_MAX_ALPHA);
             StartCoroutine(ScreenFlashCoroutine(alpha));
+        }
+
+        /// <summary>
+        /// Continuous rumble with amplitude ramp from startLevel → endLevel
+        /// over the duration. Uses an ease-in curve (t²) so the rumble is
+        /// nearly imperceptible at first and grows into peak intensity at
+        /// the explosion frame.
+        /// </summary>
+        /// <summary>
+        /// Continuous Perlin-noise camera shake with magnitude ramping
+        /// startMag → endMag over the duration via t² ease-in. Pairs with
+        /// MeltdownRumbleBuildup so the screen visually trembles into the
+        /// explosion alongside the earthquake SFX and haptic rumble. Snaps
+        /// camera back to CAMERA_HOME on completion so the impact
+        /// PlayBoardShake can take over without fighting this coroutine.
+        /// </summary>
+        private IEnumerator MeltdownWindupShake(float duration, float startMag, float endMag)
+        {
+            Camera cam = Camera.main;
+            if (cam == null) yield break;
+            Transform t = cam.transform;
+
+            t.DOKill();
+            Vector3 home = CAMERA_HOME;
+            float seedX = Random.Range(0f, 1000f);
+            float seedY = Random.Range(0f, 1000f);
+            const float noiseSpeed = 28f;
+
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float p = Mathf.Clamp01(elapsed / duration);
+                float mag = Mathf.Lerp(startMag, endMag, p * p);
+
+                float n = Time.time * noiseSpeed;
+                float nx = (Mathf.PerlinNoise(seedX + n, 0f) - 0.5f) * 2f;
+                float ny = (Mathf.PerlinNoise(0f, seedY + n) - 0.5f) * 2f;
+
+                t.position = home + new Vector3(nx * mag, ny * mag, 0f);
+                yield return null;
+            }
+
+            t.position = home;
+        }
+
+        private IEnumerator MeltdownRumbleBuildup(float duration, float startLevel, float endLevel, float frequency)
+        {
+            // Start the underlying rumble at full base amplitude — clipLevel
+            // does the actual scaling. PlayConstant resets clipLevel to 1.0
+            // so we must set our starting level immediately after.
+            HapticsManager.Rumble(1f, frequency, duration);
+            HapticsManager.SetRumbleLevel(startLevel);
+
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / duration);
+                float level = Mathf.Lerp(startLevel, endLevel, t * t); // ease-in
+                HapticsManager.SetRumbleLevel(level);
+                yield return null;
+            }
+        }
+
+        /// <summary>
+        /// (Legacy — superseded by MeltdownRumbleBuildup.)
+        /// Haptic pulses during the meltdown windup — frequency and intensity
+        /// ramp up so the player feels tension build, mirroring the visual
+        /// shake which also builds magnitude over time.
+        /// </summary>
+        private IEnumerator MeltdownWindupHaptics(float duration)
+        {
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                float t = elapsed / duration;
+                // Interval shrinks from 0.30s at start → 0.05s at end (faster pulses).
+                float interval = Mathf.Lerp(0.30f, 0.05f, t * t);
+
+                // Intensity ramps up: Light → Medium → Strong over the windup.
+                if (t < 0.40f)        HapticsManager.Light();
+                else if (t < 0.75f)   HapticsManager.Medium();
+                else                  HapticsManager.Strong();
+
+                yield return WaitCache.Get(interval);
+                elapsed += interval;
+            }
         }
 
         private IEnumerator ScreenFlashCoroutine(float peakAlpha)
@@ -744,7 +1630,12 @@ namespace WordDrop
                 // solo ≈ 0.29×.
                 float tileMult = 1f + (tileCount - 1) * 0.18f; // each extra tile adds 18%
                 mag = Mathf.Min((0.22f + chainStep * 0.14f) * tileMult, 1.20f);
-                dur = Mathf.Min(0.18f + chainStep * 0.05f + tileCount * 0.018f, 0.55f);
+                // Feel-pass 2026-05-16: duration formula tightened — was
+                // 0.18 + 0.05*chain + 0.018*tiles capped at 0.55s (3x over
+                // RM/CC spec of 120-180ms even for big shakes). Now 0.11 +
+                // 0.025*chain + 0.006*tiles capped at 0.20s. Magnitude
+                // unchanged so big payoffs still feel big — just shorter.
+                dur = Mathf.Min(0.11f + chainStep * 0.025f + tileCount * 0.006f, 0.20f);
                 vibrato = Mathf.Min(14 + chainStep * 5 + tileCount * 2, 48);
             }
 

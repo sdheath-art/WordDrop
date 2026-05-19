@@ -760,7 +760,16 @@ namespace WordDrop
             if (_appPaused) return;
 
             _elapsedTime += Time.deltaTime;
-            _riseTimerSeconds += Time.deltaTime;
+
+            // Bonus Mode pause (2026-05-15): freeze the rising-row timer while
+            // the player is in the 5-move bonus round. Drops in bonus mode are
+            // "free" (no move-counter tick, no stage-budget consumption) and
+            // the rising row pressure should pause too — otherwise the bonus
+            // round feels rushed when it's supposed to be a flow-state breather.
+            // _elapsedTime keeps counting (session timer + auto-drop grace).
+            bool inBonusMode = BonusMode.Instance != null && BonusMode.Instance.IsActive;
+            if (!inBonusMode)
+                _riseTimerSeconds += Time.deltaTime;
 
             // Post-clear boost time falloff
             if (_postClearBoostDrops > 0)
@@ -807,11 +816,11 @@ namespace WordDrop
             }
 
             // Rising row: time-based (Phase 11b). Timer counts wall-clock
-            // seconds (advanced above, frozen when _appPaused or resolution
-            // is in flight). When it crosses CurrentSecondsPerRise and the
-            // board isn't mid-animation, a rise fires + timer resets. Move
-            // counter is kept vestigially for analytics compat.
-            if (_riseTimerSeconds >= CurrentSecondsPerRise)
+            // seconds (advanced above, frozen when _appPaused, in bonus mode,
+            // or resolution is in flight). When it crosses CurrentSecondsPerRise
+            // and the board isn't mid-animation, a rise fires + timer resets.
+            // Move counter is kept vestigially for analytics compat.
+            if (!inBonusMode && _riseTimerSeconds >= CurrentSecondsPerRise)
             {
                 if (!IsBoardAnimating())
                 {

@@ -46,7 +46,7 @@ namespace WordDrop
         public static readonly Color PLAYER_GLOW = PRIMED_GLOW;
         public static readonly Color AI_GLOW     = PRIMED_GLOW;
 
-        private const float FALL_DURATION     = 0.30f;   // snappier drop (Candy Crush ~0.25-0.3s)
+        private const float FALL_DURATION     = 0.22f;   // feel-pass 2026-05-16: 0.30 → 0.22 (RM-snappier)
         private const float BOUNCE_OVERSHOOT  = 0.12f;  // visible overshoot
         private const float BOUNCE_SETTLE_DUR = 0.06f;  // quick snap back
 
@@ -157,6 +157,11 @@ namespace WordDrop
 
             // Pool reuse: wild flag does not survive, caller must re-SetWild if needed.
             _isWild    = false;
+            // Clear sticky scored-word flags too — see ResetForPool comment.
+            _isShowingScoredSprite = false;
+            _wasInScoredWord       = false;
+            // Reset localPosition — see ResetForPool comment.
+            transform.localPosition = Vector3.zero;
             Letter     = letter;
             Col        = col;
             Row        = row;
@@ -176,7 +181,7 @@ namespace WordDrop
             _currentBorderColor = TILE_BORDER_NORMAL;
             ApplyBorderColor(TILE_BORDER_NORMAL);
 
-            float displaySize = cellSize * 0.93f;
+            float displaySize = cellSize * 0.92f;
             float nativeSize = _spriteRenderer != null && _spriteRenderer.sprite != null
                 ? _spriteRenderer.sprite.bounds.size.x : 1f;
             float scale = displaySize / nativeSize;
@@ -212,6 +217,18 @@ namespace WordDrop
             IsAnimating = false;
             IsDissolving = false;
             _hasPreviewHighlight = false;
+            // Clear sticky scored-word flags so a recycled tile doesn't carry
+            // a prior turn's "I was in a scored word" memory into its next life.
+            // (WordDropFX.Tier1PopCoroutine reads WasInScoredWord to decide
+            // whether to apply the green-scored sprite/tint on detonation —
+            // without this clear, K and U from a prior turn light up green
+            // when caught in collateral splash damage on a later word.)
+            _isShowingScoredSprite = false;
+            _wasInScoredWord = false;
+            // Reset localPosition in case MeltdownShakeCoroutine was interrupted
+            // mid-shake and never restored its baseLocalPos at line 1190.
+            Debug.Log($"[Tile] ResetForPool localPos: {transform.localPosition} → Vector3.zero");
+            transform.localPosition = Vector3.zero;
             if (_dissolveMatInstance != null)
             {
                 Destroy(_dissolveMatInstance);
@@ -259,7 +276,7 @@ namespace WordDrop
             // Skip lit material for now — debug: does the tile render without it?
             // LightingSetup.Instance?.ApplyLitMaterial(_spriteRenderer);
 
-            float displaySize = cellSize * 0.93f;
+            float displaySize = cellSize * 0.92f;
             // Use actual sprite bounds for sizing (works with both procedural and hand-drawn sprites)
             float nativeSize = _spriteRenderer.sprite != null
                 ? _spriteRenderer.sprite.bounds.size.x
@@ -272,8 +289,11 @@ namespace WordDrop
             // ── Main letter — TextMeshPro with subtle grounding shadow ──
             GameObject letterGO = new GameObject("TileLetter");
             letterGO.transform.SetParent(transform, false);
-            // Offset letter to sit on the face of the 2.5D tile (above the bevel)
-            letterGO.transform.localPosition = new Vector3(0f, nativeSize * 0.04f, -0.1f);
+            // Small downward offset (-0.025) to compensate for TMP's font-metric
+            // centering — without this, the visual weight of the letter sits in
+            // the upper half of the tile. This pushes the visual center to match
+            // the geometric center.
+            letterGO.transform.localPosition = new Vector3(0f, -nativeSize * 0.025f, -0.1f);
 
             _letterTMP = letterGO.AddComponent<TextMeshPro>();
             // Load Fredoka Bold TMP font
@@ -296,8 +316,10 @@ namespace WordDrop
             // ── Point value — quieter, no shadow ──
             GameObject pointGO = new GameObject("TilePoints");
             pointGO.transform.SetParent(transform, false);
-            // Offset point number to sit on the face (same bevel adjustment as letter)
-            pointGO.transform.localPosition = new Vector3(nativeSize * 0.22f, -nativeSize * 0.22f, -0.1f);
+            // Slight push toward the corner (was 0.22, then 0.28 was too aggressive
+            // and made subscripts touch the tile edge). 0.25 gives breathing room
+            // from the letter without crowding the tile boundary.
+            pointGO.transform.localPosition = new Vector3(nativeSize * 0.25f, -nativeSize * 0.25f, -0.1f);
 
             _pointTMP = pointGO.AddComponent<TextMeshPro>();
             if (tileFont != null) _pointTMP.font = tileFont;
@@ -585,7 +607,10 @@ namespace WordDrop
             }
 
             Vector3 start = transform.position;
-            float dur = Mathf.Max(duration, 0.20f);
+            // Feel-pass 2026-05-16: floor lowered from 0.20s → 0.12s so short
+            // single-cell falls feel snappier (RM/CC reference). Long cascades
+            // still get their full duration from the caller.
+            float dur = Mathf.Max(duration, 0.12f);
             float elapsed = 0f;
 
             // Mechanical: constant-speed linear (conveyor/piston feel)
@@ -720,13 +745,22 @@ namespace WordDrop
                     _letterTMP.color = new Color(0.15f, 0.1f, 0f, 1f);
                 if (_pointTMP != null)
                     _pointTMP.color = new Color(0.3f, 0.2f, 0f, 0.8f);
-                // Start pulsing
-                if (_goldPulseCoroutine != null) StopCoroutine(_goldPulseCoroutine);
-                _goldPulseCoroutine = StartCoroutine(GoldPulseLoop());
+                if (_goldPulseCoroutine != null)
+                {
+                    StopCoroutine(_goldPulseCoroutine);
+                    _goldPulseCoroutine = null;
+                }
+                // Swap sprite to golden_tile@2x (natural gold artwork) instead of
+                // tinting the white tile yellow. Color stays white so the sprite
+                // renders at its own designed color.
+                _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                _spriteRenderer.color = Color.white;
             }
             else if (!gold && _spriteRenderer != null)
             {
                 if (_goldPulseCoroutine != null) { StopCoroutine(_goldPulseCoroutine); _goldPulseCoroutine = null; }
+                // Restore normal sprite + default color/letter tints
+                _spriteRenderer.sprite = s_spriteNormal;
                 _spriteRenderer.color = Color.white;
                 if (_letterTMP != null)
                     _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
@@ -912,6 +946,13 @@ namespace WordDrop
             if (!_isHighlighted)
                 ApplyBorderColor(glowColor);
 
+            // Force the primed sprite swap immediately, regardless of highlight
+            // state or coroutine lifecycle. Without this, gold tiles entering
+            // primed state didn't show their glow visual until a later frame
+            // (Spencer reported 2026-05-19: had to drop another letter first).
+            if (_spriteRenderer != null && s_spriteGold != null)
+                _spriteRenderer.sprite = s_spriteGold;
+
             // Start subtle primed idle animation
             if (_primedPulseCoroutine == null)
                 _primedPulseCoroutine = StartCoroutine(PrimedPulseLoop());
@@ -998,7 +1039,7 @@ namespace WordDrop
             // Cache base scale
             float spriteNativeSize = (_spriteRenderer != null && _spriteRenderer.sprite != null)
                 ? _spriteRenderer.sprite.bounds.size.x : Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512) / 100f;
-            float baseScale = (_cellSize * 0.93f) / spriteNativeSize;
+            float baseScale = (_cellSize * 0.92f) / spriteNativeSize;
 
             // Set the heat-appropriate border sprite immediately
             ApplyHeatSprite();
@@ -1139,6 +1180,48 @@ namespace WordDrop
             _flashCoroutine = StartCoroutine(FlashBorderCoroutine(color));
         }
 
+        private Coroutine _meltdownShakeRoutine;
+
+        /// <summary>
+        /// Violent Perlin-noise position jitter for the meltdown windup —
+        /// builds tension before the explosion. Magnitude ramps from subtle
+        /// at start to violent at the end, mimicking a charging-up effect.
+        /// Restores original localPosition when complete.
+        /// </summary>
+        public void PlayMeltdownShake(float duration)
+        {
+            if (_meltdownShakeRoutine != null) StopCoroutine(_meltdownShakeRoutine);
+            _meltdownShakeRoutine = StartCoroutine(MeltdownShakeCoroutine(duration));
+        }
+
+        private System.Collections.IEnumerator MeltdownShakeCoroutine(float duration)
+        {
+            Vector3 baseLocalPos = transform.localPosition;
+            // Per-tile noise seed so tiles shake independently, not in sync.
+            float seedX = Random.value * 100f;
+            float seedY = Random.value * 100f + 50f;
+            const float NOISE_SPEED = 35f;     // Hz of jitter — high for "violent"
+            const float MAGNITUDE_START = 0.005f;
+            const float MAGNITUDE_PEAK  = 0.07f; // ~10% of a tile width
+
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = elapsed / duration;
+                // Ease-in curve — magnitude builds tension into the explosion.
+                float magnitude = Mathf.Lerp(MAGNITUDE_START, MAGNITUDE_PEAK, t * t);
+                float nx = Mathf.PerlinNoise(seedX, elapsed * NOISE_SPEED) * 2f - 1f;
+                float ny = Mathf.PerlinNoise(seedY, elapsed * NOISE_SPEED) * 2f - 1f;
+                transform.localPosition = baseLocalPos + new Vector3(nx, ny, 0f) * magnitude;
+                yield return null;
+            }
+
+            transform.localPosition = baseLocalPos;
+            _meltdownShakeRoutine = null;
+        }
+
+
         /// <summary>Force-reset visuals — call to unstick any interrupted flash or sorting boost.</summary>
         public void ResetVisuals()
         {
@@ -1217,6 +1300,28 @@ namespace WordDrop
             _flashCoroutine = null;
         }
 
+        /// <summary>
+        /// Halt the gold-pulse and flash-highlight coroutines (NOT the primed
+        /// pulse — use ClearPrimedGlow for that). Caller must write the
+        /// desired color to _spriteRenderer.color afterward, otherwise the
+        /// tile keeps whatever color it happened to be at when the pulse
+        /// stopped. Used by WordDropFX.Tier1PopCoroutine to lock the tile's
+        /// preserved color through the squeeze→punch→shatter sequence.
+        /// </summary>
+        public void StopVisualPulses()
+        {
+            if (_goldPulseCoroutine != null)
+            {
+                StopCoroutine(_goldPulseCoroutine);
+                _goldPulseCoroutine = null;
+            }
+            if (_flashCoroutine != null)
+            {
+                StopCoroutine(_flashCoroutine);
+                _flashCoroutine = null;
+            }
+        }
+
         public void ClearPrimedGlow()
         {
             _hasPrimedGlow      = false;
@@ -1245,13 +1350,17 @@ namespace WordDrop
                     _spriteRenderer.color = WILD_REFILL_TINT;
                 else if (!_isGoldBonus)
                     _spriteRenderer.color = Color.white;
-                _spriteRenderer.sprite = s_spriteNormal;
+                // Restore appropriate sprite based on tile state.
+                // Gold-bonus tiles return to their gold sprite, not white.
+                _spriteRenderer.sprite = _isGoldBonus
+                    ? (s_spriteGolden ?? s_spriteNormal)
+                    : s_spriteNormal;
             }
 
             // Reset scale to correct base
             float sprNative = (_spriteRenderer != null && _spriteRenderer.sprite != null)
                 ? _spriteRenderer.sprite.bounds.size.x : Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512) / 100f;
-            float correctScale = (_cellSize * 0.93f) / sprNative;
+            float correctScale = (_cellSize * 0.92f) / sprNative;
             transform.localScale = new Vector3(correctScale, correctScale, 1f);
 
             _heatLevel = 0;
@@ -1287,12 +1396,15 @@ namespace WordDrop
             if (!_hasPreviewHighlight) return;
             _hasPreviewHighlight = false;
 
-            // Swap back to normal sprite
+            // Swap back to appropriate sprite (priority: primed > gold > normal)
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.sprite = _hasPrimedGlow
-                    ? (s_spriteGold ?? s_spriteNormal)
-                    : s_spriteNormal;
+                if (_hasPrimedGlow)
+                    _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                else if (_isGoldBonus)
+                    _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                else
+                    _spriteRenderer.sprite = s_spriteNormal;
                 _spriteRenderer.color = Color.white;
             }
             ApplyBorderColor(_savedBorderBeforePreview);
@@ -1324,10 +1436,162 @@ namespace WordDrop
             Highlight(on, TILE_BORDER_GOLD);
         }
 
+        /// <summary>
+        /// HDR-boosted color sampled from the actual scored-tile texture
+        /// (Resources/Tiles/selected_test@2x.png). The green is in the
+        /// texture itself (sr.color stays white during the scored state),
+        /// so consumers needing "the visible color of a scored tile" — e.g.
+        /// WordDropFX.Tier1PopCoroutine for debris tint — should use this.
+        /// Sampled once on first access and cached. Multiplied by HDR_BOOST
+        /// so the green channel crosses the bloom threshold.
+        /// </summary>
+        /// <summary>
+        /// Average color sampled from the primed-tile texture
+        /// (Resources/Tiles/primed_test@2x.png), HDR-boosted so bloom catches
+        /// debris tinted with this color. Used by WordDropFX.Tier1PopCoroutine
+        /// for debris tint on primed tiles — debris should match the texture
+        /// color the player saw before the explosion, not the lerped pulse-
+        /// mid color used during the pop animation. Sampled once on first
+        /// access and cached.
+        /// </summary>
+        public static Color PRIMED_TILE_TINT
+        {
+            get
+            {
+                if (!s_primedTintSampled)
+                {
+                    s_primedTintCached = SamplePrimedTileTint();
+                    s_primedTintSampled = true;
+                }
+                return s_primedTintCached;
+            }
+        }
+        private static bool s_primedTintSampled;
+        private static Color s_primedTintCached = new Color(0.95f, 0.50f, 0.55f, 1f); // fallback
+
+        private static Color SamplePrimedTileTint()
+        {
+            const float HDR_BOOST = 1.55f;
+            Sprite sp = s_spriteGold ?? Resources.Load<Sprite>("Tiles/primed_test@2x");
+            if (sp == null || sp.texture == null || !sp.texture.isReadable)
+                return new Color(0.95f * HDR_BOOST, 0.50f * HDR_BOOST, 0.55f * HDR_BOOST, 1f);
+
+            Texture2D tex = sp.texture;
+            Rect rect = sp.textureRect;
+            float rSum = 0f, gSum = 0f, bSum = 0f;
+            int n = 0;
+            const int GRID = 5;
+            for (int gy = 0; gy < GRID; gy++)
+            for (int gx = 0; gx < GRID; gx++)
+            {
+                float u = 0.2f + (gx / (float)(GRID - 1)) * 0.6f;
+                float v = 0.2f + (gy / (float)(GRID - 1)) * 0.6f;
+                int px = Mathf.RoundToInt(rect.x + rect.width  * u);
+                int py = Mathf.RoundToInt(rect.y + rect.height * v);
+                Color c = tex.GetPixel(px, py);
+                if (c.a > 0.5f)
+                {
+                    rSum += c.r;
+                    gSum += c.g;
+                    bSum += c.b;
+                    n++;
+                }
+            }
+            if (n == 0) return new Color(0.95f * HDR_BOOST, 0.50f * HDR_BOOST, 0.55f * HDR_BOOST, 1f);
+            return new Color(
+                (rSum / n) * HDR_BOOST,
+                (gSum / n) * HDR_BOOST,
+                (bSum / n) * HDR_BOOST,
+                1f);
+        }
+
+        /// <summary>
+        /// Public accessor for the primed-tile sprite (Resources/Tiles/primed_test@2x.png).
+        /// Used by WordDropFX.Tier1PopCoroutine to swap a cascade-formed word's
+        /// sprite to the pink-coral primed texture during the cascade preamble
+        /// (lit-up-as-primed beat before the explosion). Falls back to lazy
+        /// Resources.Load if the sprite cache hasn't built yet.
+        /// </summary>
+        public static Sprite PrimedSprite =>
+            s_spriteGold ?? Resources.Load<Sprite>("Tiles/primed_test@2x");
+
+        public static Color SCORED_TILE_TINT
+        {
+            get
+            {
+                if (!s_scoredTintSampled)
+                {
+                    s_scoredTintCached = SampleScoredTileTint();
+                    s_scoredTintSampled = true;
+                }
+                return s_scoredTintCached;
+            }
+        }
+        private static bool s_scoredTintSampled;
+        private static Color s_scoredTintCached = new Color(0.65f, 1.55f, 0.80f, 1f); // fallback if sample fails
+
+        private static Color SampleScoredTileTint()
+        {
+            const float HDR_BOOST = 1.55f;
+            // s_spriteScored is normally populated by BuildSpriteCache (an
+            // instance method called from Tile.Initialise). If it hasn't
+            // fired yet — e.g. SCORED_TILE_TINT is queried before any tile
+            // initialises — load directly from Resources so sampling can
+            // proceed regardless of init order.
+            Sprite sp = s_spriteScored ?? Resources.Load<Sprite>("Tiles/green_tile2@2x");
+            if (sp == null || sp.texture == null || !sp.texture.isReadable)
+                return new Color(0.65f, 1.55f, 0.80f, 1f);
+
+            Texture2D tex = sp.texture;
+            Rect rect = sp.textureRect;
+            // Sample a 5×5 grid in the central 60% of the sprite, average
+            // non-transparent pixels. Edges are skipped to avoid border/
+            // anti-aliasing pixels biasing the average.
+            float rSum = 0f, gSum = 0f, bSum = 0f;
+            int n = 0;
+            const int GRID = 5;
+            for (int gy = 0; gy < GRID; gy++)
+            for (int gx = 0; gx < GRID; gx++)
+            {
+                float u = 0.2f + (gx / (float)(GRID - 1)) * 0.6f;
+                float v = 0.2f + (gy / (float)(GRID - 1)) * 0.6f;
+                int px = Mathf.RoundToInt(rect.x + rect.width  * u);
+                int py = Mathf.RoundToInt(rect.y + rect.height * v);
+                Color c = tex.GetPixel(px, py);
+                if (c.a > 0.5f)
+                {
+                    rSum += c.r;
+                    gSum += c.g;
+                    bSum += c.b;
+                    n++;
+                }
+            }
+            if (n == 0) return new Color(0.65f, 1.55f, 0.80f, 1f);
+            return new Color(
+                (rSum / n) * HDR_BOOST,
+                (gSum / n) * HDR_BOOST,
+                (bSum / n) * HDR_BOOST,
+                1f);
+        }
+
+        private bool _isShowingScoredSprite;
+        public bool IsShowingScoredSprite => _isShowingScoredSprite;
+
+        // Sticky "was-scored" flag — set true when SetScoredSprite(true) fires
+        // and NEVER cleared by SetScoredSprite(false). Lets WordDropFX.Tier1Pop
+        // detect tiles that were part of a recently-scored word even if
+        // PlayWordScored's staggered OnComplete already reverted the sprite
+        // back to normal before detonation kicks in. Cleared on
+        // gameObject.SetActive(false) so pooled tiles start fresh.
+        private bool _wasInScoredWord;
+        public bool WasInScoredWord => _wasInScoredWord;
+
         /// <summary>Swap sprite to scored look (tile_selected2) and back.</summary>
         public void SetScoredSprite(bool scored)
         {
             if (_spriteRenderer == null) return;
+            _isShowingScoredSprite = scored;
+            if (scored) _wasInScoredWord = true;
             if (scored)
             {
                 _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
@@ -1335,10 +1599,44 @@ namespace WordDrop
             }
             else
             {
-                _spriteRenderer.sprite = _hasPrimedGlow
-                    ? (s_spriteGold ?? s_spriteNormal)
-                    : s_spriteNormal;
+                // Priority: primed > gold > normal
+                if (_hasPrimedGlow)
+                    _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                else if (_isGoldBonus)
+                    _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                else
+                    _spriteRenderer.sprite = s_spriteNormal;
                 _spriteRenderer.color = Color.white;
+            }
+        }
+
+        /// <summary>Reset the sticky scored-word flag (called when tile is recycled).</summary>
+        public void ClearScoredWordFlag() { _wasInScoredWord = false; }
+
+        /// <summary>Swap sprite to cyan when this tile is the rewrite/edit target,
+        /// restore normal sprite when cleared. The cyan color tint applied via
+        /// Highlight() + RewritePulseCoroutine still modulates this sprite —
+        /// pulse goes from subtle cyan-tile to saturated HDR cyan + bloom.</summary>
+        public void SetRewriteTargetSprite(bool active)
+        {
+            if (_spriteRenderer == null) return;
+            Debug.Log($"[CyanDebug] SetRewriteTargetSprite({active}) — s_spriteCyan null? {s_spriteCyan == null}");
+            if (active)
+            {
+                _spriteRenderer.sprite = s_spriteCyan ?? s_spriteNormal;
+            }
+            else
+            {
+                // Restore based on current tile state.
+                // Priority: scored > primed > gold > normal
+                if (_isShowingScoredSprite)
+                    _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
+                else if (_hasPrimedGlow)
+                    _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                else if (_isGoldBonus)
+                    _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                else
+                    _spriteRenderer.sprite = s_spriteNormal;
             }
         }
 
@@ -1411,6 +1709,10 @@ namespace WordDrop
 
         // AI tile sprite — loaded from Resources alongside the others
         private static Sprite s_spriteAI;
+        // Cyan tile sprite — shown when this tile is the rewrite target
+        private static Sprite s_spriteCyan;
+        // Golden tile sprite — shown when this tile is a 2x gold bonus tile
+        private static Sprite s_spriteGolden;
 
         private void BuildSpriteCache()
         {
@@ -1420,11 +1722,14 @@ namespace WordDrop
             int border  = Mathf.Max(3, texSize / 12);
 
             // Try loading hand-drawn sprites from Resources/Tiles
-            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/test_tile");
-            Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/primed_test@2x");
+            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/white_tile2@2x");
+            Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/pink_tile@2x");
             Sprite loadedAI     = Resources.Load<Sprite>("Tiles/ai_tile");
 
-            Sprite loadedScored = Resources.Load<Sprite>("Tiles/selected_test@2x");
+            Sprite loadedScored = Resources.Load<Sprite>("Tiles/green_tile2@2x");
+            Sprite loadedCyan   = Resources.Load<Sprite>("Tiles/cyan_tile@2x");
+            Sprite loadedGolden = Resources.Load<Sprite>("Tiles/golden_tile2@2x");
+            Debug.Log($"[CyanDebug] cyan_tile@2x loaded? {loadedCyan != null} (name: {(loadedCyan != null ? loadedCyan.name : "NULL")})");
 
             if (loadedNormal != null)
             {
@@ -1433,6 +1738,8 @@ namespace WordDrop
                 s_spriteThick     = loadedNormal;
                 s_spriteAI        = loadedAI ?? loadedNormal;
                 s_spriteScored    = loadedScored ?? loadedNormal;
+                s_spriteCyan      = loadedCyan ?? loadedNormal;
+                s_spriteGolden    = loadedGolden ?? loadedNormal;
 
                 // Primed states all use the primed sprite (code handles flash/pulse)
                 s_spriteGold      = loadedPrimed ?? loadedNormal;
@@ -1456,6 +1763,8 @@ namespace WordDrop
                 s_spriteHeat3 = TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, PRIMED_GLOW, border + 7);
                 s_spriteWhiteThick= TileRenderer.CreateRoundedRect(texSize, texSize, radius, TILE_FILL_COLOR, Color.white, border + 3);
                 s_spriteAI        = s_spriteNormal;
+                s_spriteCyan      = s_spriteNormal;
+                s_spriteGolden    = s_spriteNormal;
 //                 Debug.Log("[Tile] Fallback: procedural sprite cache built.");
             }
 
@@ -1535,9 +1844,14 @@ namespace WordDrop
             Vector3 overshootTarget = target + Vector3.down * (_cellSize * BOUNCE_OVERSHOOT);
             float   elapsed         = 0f;
 
+            // Feel-pass 2026-05-16: cap per-frame dt to 1/30s so a cold-start
+            // Time.deltaTime spike (typical after scene load / GC pause) can't
+            // skip half the animation. Steady-state frames at ~16ms unaffected.
+            const float MAX_DT = 1f / 30f;
+
             while (elapsed < FALL_DURATION)
             {
-                elapsed += Time.deltaTime;
+                elapsed += Mathf.Min(Time.deltaTime, MAX_DT);
                 float t      = Mathf.Clamp01(elapsed / FALL_DURATION);
                 float easedT = t * t;
                 transform.position = Vector3.LerpUnclamped(start, overshootTarget, easedT);
@@ -1557,7 +1871,7 @@ namespace WordDrop
             elapsed = 0f;
             while (elapsed < settleDur)
             {
-                elapsed += Time.deltaTime;
+                elapsed += Mathf.Min(Time.deltaTime, MAX_DT);
                 float t = Mathf.Clamp01(elapsed / settleDur);
                 transform.position = Vector3.Lerp(overshootTarget, target, t);
                 yield return null;

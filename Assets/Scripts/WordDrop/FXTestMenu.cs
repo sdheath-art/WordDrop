@@ -84,10 +84,6 @@ namespace WordDrop
                 FireMeltdownPrefab();
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flipbook Frames @ center", _btnStyle))
-                FireFlipbookFrames();
-            innerY += BTN_H + GAP;
-
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flipbook Glow (bubble@2x) @ center", _btnStyle))
                 FireFlipbookGlow();
             innerY += BTN_H + GAP;
@@ -130,6 +126,10 @@ namespace WordDrop
                 FireFakeDetonation(chainStep: 0, fakeTileCount: 3, forceMeltdown: false);
             innerY += BTN_H + GAP;
 
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 1 Pop (CC-style)", _btnStyle))
+                FireTier1Pop();
+            innerY += BTN_H + GAP;
+
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 2 (6 tiles)", _btnStyle))
                 FireFakeDetonation(chainStep: 1, fakeTileCount: 6, forceMeltdown: false);
             innerY += BTN_H + GAP;
@@ -164,6 +164,14 @@ namespace WordDrop
                 DetonateRealBoardTiles(count: 12, chainStep: 3, forceMeltdown: true);
             innerY += BTN_H + GAP;
 
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Cascade Word + BigBurst (horizontal)", _btnStyle))
+                FireCascadeWordBigBurst(vertical: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Cascade Word + BigBurst (vertical)", _btnStyle))
+                FireCascadeWordBigBurst(vertical: true);
+            innerY += BTN_H + GAP;
+
             innerY += 14;
 
             // ── Layer toggles ────────────────────────────────────────────────────
@@ -173,8 +181,9 @@ namespace WordDrop
             innerY = ToggleRow(innerY, "Meltdown Prefab",        ref WordDropFX.FX_MeltdownPrefab);
             innerY = ToggleRow(innerY, "Meltdown Intro Flash",   ref WordDropFX.FX_MeltdownIntroFlash);
             innerY = ToggleRow(innerY, "Tile Heat Overlay",      ref WordDropFX.FX_TileHeatOverlay);
+            innerY = ToggleRow(innerY, "Primed Glow Orb",        ref WordDropFX.FX_PrimedGlowOrb);
             innerY = ToggleRow(innerY, "Meltdown Tile Punch",    ref WordDropFX.FX_MeltdownTilePunch);
-            innerY = ToggleRow(innerY, "Flipbook Frames",        ref WordDropFX.FX_FlipbookFrames);
+            innerY = ToggleRow(innerY, "Meltdown Windup Shake",  ref WordDropFX.FX_MeltdownWindupShake);
             innerY = ToggleRow(innerY, "Flipbook Glow",          ref WordDropFX.FX_FlipbookGlow);
             innerY = ToggleRow(innerY, "Tile Flash",             ref WordDropFX.FX_TileFlash);
             innerY = ToggleRow(innerY, "Tile Fragments",         ref WordDropFX.FX_TileFragments);
@@ -184,7 +193,6 @@ namespace WordDrop
             innerY = ToggleRow(innerY, "Sparkle Line",           ref WordDropFX.FX_SparkleLine);
             innerY = ToggleRow(innerY, "Big Burst Flash",        ref WordDropFX.FX_BigBurstFlash);
             innerY = ToggleRow(innerY, "Board Shake",            ref WordDropFX.FX_BoardShake);
-            innerY = ToggleRow(innerY, "Confetti",               ref WordDropFX.FX_Confetti);
             innerY = ToggleRow(innerY, "Detonation Audio",       ref WordDropFX.FX_DetonationAudio);
             innerY = ToggleRow(innerY, "Haptics",                ref WordDropFX.FX_Haptics);
 
@@ -211,8 +219,9 @@ namespace WordDrop
             WordDropFX.FX_MeltdownPrefab     = v;
             WordDropFX.FX_MeltdownIntroFlash = v;
             WordDropFX.FX_TileHeatOverlay    = v;
+            WordDropFX.FX_PrimedGlowOrb      = v;
             WordDropFX.FX_MeltdownTilePunch  = v;
-            WordDropFX.FX_FlipbookFrames     = v;
+            WordDropFX.FX_MeltdownWindupShake = v;
             WordDropFX.FX_FlipbookGlow       = v;
             WordDropFX.FX_TileFlash          = v;
             WordDropFX.FX_TileFragments      = v;
@@ -222,7 +231,6 @@ namespace WordDrop
             WordDropFX.FX_SparkleLine        = v;
             WordDropFX.FX_BigBurstFlash      = v;
             WordDropFX.FX_BoardShake         = v;
-            WordDropFX.FX_Confetti           = v;
             WordDropFX.FX_DetonationAudio    = v;
             WordDropFX.FX_Haptics            = v;
         }
@@ -242,27 +250,12 @@ namespace WordDrop
             FlipbookExplosion.Instance.PlayMeltdown(ScreenCenterWorld());
         }
 
-        private void FireFlipbookFrames()
-        {
-            // Force-bypass the toggle so the button always shows its layer.
-            bool savedFrames = WordDropFX.FX_FlipbookFrames;
-            bool savedGlow   = WordDropFX.FX_FlipbookGlow;
-            WordDropFX.FX_FlipbookFrames = true;
-            WordDropFX.FX_FlipbookGlow   = false;
-            FlipbookExplosion.Instance?.Play(ScreenCenterWorld(), tier: 3);
-            WordDropFX.FX_FlipbookFrames = savedFrames;
-            WordDropFX.FX_FlipbookGlow   = savedGlow;
-        }
-
         private void FireFlipbookGlow()
         {
-            bool savedFrames = WordDropFX.FX_FlipbookFrames;
-            bool savedGlow   = WordDropFX.FX_FlipbookGlow;
-            WordDropFX.FX_FlipbookFrames = false;
-            WordDropFX.FX_FlipbookGlow   = true;
+            bool savedGlow = WordDropFX.FX_FlipbookGlow;
+            WordDropFX.FX_FlipbookGlow = true;
             FlipbookExplosion.Instance?.Play(ScreenCenterWorld(), tier: 3);
-            WordDropFX.FX_FlipbookFrames = savedFrames;
-            WordDropFX.FX_FlipbookGlow   = savedGlow;
+            WordDropFX.FX_FlipbookGlow = savedGlow;
         }
 
         private void FireBigBurst(bool vertical)
@@ -328,6 +321,127 @@ namespace WordDrop
                 WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
         }
 
+        /// <summary>
+        /// Picks a row/column of real board tiles, force-enables the standard
+        /// detonation FX + the BigBurst override, and fires PlayExplosion
+        /// with chainStep=2 to simulate a cascade word detonation. Uses real
+        /// tiles so the flash/fragments/sparkles actually show on visible
+        /// sprites.
+        /// </summary>
+        private void FireCascadeWordBigBurst(bool vertical)
+        {
+            if (WordDropFX.Instance == null || GridManager.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] WordDropFX or GridManager missing");
+                return;
+            }
+
+            // Find the row/column with the MOST active tiles (3-min, no upper cap).
+            // Lenient — a sparse board still gets a usable line for the test.
+            const int MIN_TILES = 3;
+            var tiles = new List<Tile>();
+
+            if (vertical)
+            {
+                for (int col = 0; col < RulesEngine.COLS; col++)
+                {
+                    var colTiles = new List<Tile>();
+                    for (int row = 0; row < RulesEngine.ROWS; row++)
+                    {
+                        var t = GridManager.Instance.GetTile(col, row);
+                        if (t != null && t.gameObject.activeSelf) colTiles.Add(t);
+                    }
+                    if (colTiles.Count > tiles.Count) tiles = colTiles;
+                }
+            }
+            else
+            {
+                for (int row = 0; row < RulesEngine.ROWS; row++)
+                {
+                    var rowTiles = new List<Tile>();
+                    for (int col = 0; col < RulesEngine.COLS; col++)
+                    {
+                        var t = GridManager.Instance.GetTile(col, row);
+                        if (t != null && t.gameObject.activeSelf) rowTiles.Add(t);
+                    }
+                    if (rowTiles.Count > tiles.Count) tiles = rowTiles;
+                }
+            }
+
+            if (tiles.Count < MIN_TILES)
+            {
+                Debug.LogWarning($"[FXTest] Cascade word — best {(vertical ? "column" : "row")} has only {tiles.Count} active tiles (need {MIN_TILES}+); drop a few more on the board.");
+                return;
+            }
+            Debug.Log($"[FXTest] Cascade word — using {tiles.Count} tiles in best {(vertical ? "column" : "row")}");
+
+            StartCoroutine(CascadeWordBigBurstCoroutine(tiles, tiles.Count));
+        }
+
+        private IEnumerator CascadeWordBigBurstCoroutine(List<Tile> tiles, int wordLen)
+        {
+            // Save current toggle states so the test fire doesn't permanently
+            // change the user's selections.
+            bool savedBigBurst        = WordDropFX.FX_BigBurstFlashCascadeTest;
+            bool savedTileFlash       = WordDropFX.FX_TileFlash;
+            bool savedTileFragments   = WordDropFX.FX_TileFragments;
+            bool savedSparkleSpray    = WordDropFX.FX_SparkleSpray;
+            bool savedDetonationAudio = WordDropFX.FX_DetonationAudio;
+            bool savedSparkleParticles = WordDropFX.FX_SparkleParticles;
+            bool savedFlipbookGlow    = WordDropFX.FX_FlipbookGlow;
+            bool savedBoardShake      = WordDropFX.FX_BoardShake;
+
+            // Force the standard detonation FX layers ON so the test shows
+            // what a real cascade word detonation will look like — not just
+            // the BigBurst beam in isolation.
+            WordDropFX.FX_BigBurstFlashCascadeTest = true;
+            WordDropFX.FX_TileFlash       = true;
+            WordDropFX.FX_TileFragments   = true;
+            WordDropFX.FX_SparkleSpray    = true;
+            WordDropFX.FX_DetonationAudio = true;
+            WordDropFX.FX_SparkleParticles = true;
+            WordDropFX.FX_FlipbookGlow    = true;
+            WordDropFX.FX_BoardShake      = true;
+            Debug.Log("[FXTest] Cascade word test — forcing standard detonation FX ON");
+
+            // Cache positions + scales so we can restore tiles after PlayExplosion
+            // hides them (otherwise the board permanently loses these tiles).
+            var positions = new List<Vector3>(tiles.Count);
+            var scales    = new List<Vector3>(tiles.Count);
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                positions.Add(tiles[i].transform.position);
+                scales.Add(tiles[i].transform.localScale);
+            }
+
+            yield return WordDropFX.Instance.PlayExplosion(tiles, chainStep: 2, wordLength: wordLen);
+
+            // Hold a beat so any tail FX (fragments fade, sparkle fly-out,
+            // beam fade) finish before restoring tiles + toggle state.
+            yield return new WaitForSeconds(0.8f);
+
+            // Restore the tiles — re-activate, kill any leftover tweens, snap
+            // position + scale back to their pre-explosion values.
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                if (tiles[i] == null) continue;
+                tiles[i].gameObject.SetActive(true);
+                tiles[i].transform.DOKill();
+                tiles[i].transform.position    = positions[i];
+                tiles[i].transform.localScale  = scales[i];
+                tiles[i].transform.localRotation = Quaternion.identity;
+            }
+
+            WordDropFX.FX_BigBurstFlashCascadeTest = savedBigBurst;
+            WordDropFX.FX_TileFlash       = savedTileFlash;
+            WordDropFX.FX_TileFragments   = savedTileFragments;
+            WordDropFX.FX_SparkleSpray    = savedSparkleSpray;
+            WordDropFX.FX_DetonationAudio = savedDetonationAudio;
+            WordDropFX.FX_SparkleParticles = savedSparkleParticles;
+            WordDropFX.FX_FlipbookGlow    = savedFlipbookGlow;
+            WordDropFX.FX_BoardShake      = savedBoardShake;
+        }
+
         private void FireMeltdownIntroOnly()
         {
             if (MeltdownManager.Instance == null) { Debug.LogWarning("[FXTest] MeltdownManager missing"); return; }
@@ -386,6 +500,62 @@ namespace WordDrop
             StartCoroutine(RealDetonationCoroutine(tiles, chainStep, forceMeltdown));
         }
 
+        // ── Tier-1 Candy-Crush-style pop test fire ───────────────────────────
+        // Picks a single live tile from the board, plays the new
+        // PlayTier1Pop orchestrated sequence on it, then restores the tile
+        // (re-activate, snap localScale + position + alpha) so RulesEngine
+        // / MatchController state stays clean.
+        private void FireTier1Pop()
+        {
+            if (WordDropFX.Instance == null || GridManager.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] WordDropFX or GridManager missing");
+                return;
+            }
+
+            Tile target = null;
+            for (int row = 0; row < RulesEngine.ROWS && target == null; row++)
+                for (int col = 0; col < RulesEngine.COLS && target == null; col++)
+                {
+                    Tile t = GridManager.Instance.GetTile(col, row);
+                    if (t != null && t.gameObject.activeSelf) target = t;
+                }
+
+            if (target == null)
+            {
+                Debug.LogWarning("[FXTest] Tier 1 Pop — no live tiles on the board; drop a few first.");
+                return;
+            }
+
+            StartCoroutine(Tier1PopRestoreCoroutine(target));
+        }
+
+        private IEnumerator Tier1PopRestoreCoroutine(Tile tile)
+        {
+            // Cache pre-pop state BEFORE PlayTier1Pop mutates scale/alpha/visibility.
+            Vector3 origPos = tile.transform.position;
+            Vector3 origScale = tile.transform.localScale;
+            SpriteRenderer sr = tile.GetComponent<SpriteRenderer>();
+            Color origColor = sr != null ? sr.color : Color.white;
+
+            WordDropFX.Instance.PlayTier1Pop(tile);
+
+            // Hold long enough for the full sequence (~350ms) plus a tail
+            // for fragments / sparkle to clear before restoring.
+            yield return new WaitForSeconds(0.5f);
+
+            if (tile == null) yield break;
+
+            // Restore: kill any leftover tweens, snap transform back, re-show.
+            tile.transform.DOKill();
+            if (sr != null) sr.DOKill();
+            tile.gameObject.SetActive(true);
+            tile.transform.position    = origPos;
+            tile.transform.localScale  = origScale;
+            tile.transform.localRotation = Quaternion.identity;
+            if (sr != null) sr.color = new Color(origColor.r, origColor.g, origColor.b, 1f);
+        }
+
         private IEnumerator RealDetonationCoroutine(List<Tile> tiles, int chainStep, bool forceMeltdown)
         {
             FieldInfo isPlayingField = forceMeltdown
@@ -400,12 +570,16 @@ namespace WordDrop
             bool savedMeltdownPrefab    = WordDropFX.FX_MeltdownPrefab;
             bool savedTileHeatOverlay   = WordDropFX.FX_TileHeatOverlay;
             bool savedMeltdownTilePunch = WordDropFX.FX_MeltdownTilePunch;
+            bool savedPrimedGlowOrb     = WordDropFX.FX_PrimedGlowOrb;
+            bool savedMeltdownWindupShake = WordDropFX.FX_MeltdownWindupShake;
             if (forceMeltdown)
             {
                 WordDropFX.FX_MeltdownPrefab    = true;
                 WordDropFX.FX_TileHeatOverlay   = true;
                 WordDropFX.FX_MeltdownTilePunch = true;
-                Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay + FX_MeltdownTilePunch ON for the duration of this test fire");
+                WordDropFX.FX_PrimedGlowOrb     = true;
+                WordDropFX.FX_MeltdownWindupShake = true;
+                Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay + FX_MeltdownTilePunch + FX_PrimedGlowOrb + FX_MeltdownWindupShake ON for the duration of this test fire");
             }
 
             // Cache positions AND scales so we can re-place tiles after
@@ -449,6 +623,8 @@ namespace WordDrop
                 WordDropFX.FX_MeltdownPrefab    = savedMeltdownPrefab;
                 WordDropFX.FX_TileHeatOverlay   = savedTileHeatOverlay;
                 WordDropFX.FX_MeltdownTilePunch = savedMeltdownTilePunch;
+                WordDropFX.FX_PrimedGlowOrb     = savedPrimedGlowOrb;
+                WordDropFX.FX_MeltdownWindupShake = savedMeltdownWindupShake;
             }
         }
 
