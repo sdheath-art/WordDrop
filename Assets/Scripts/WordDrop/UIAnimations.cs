@@ -408,6 +408,172 @@ namespace WordDrop
         }
 
         // ═══════════════════════════════════════════════════════════════════════
+        // DropInWithBounce — panel drops from above, lands with damped bounce
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // Canonical "modal arrives" animation. Panel starts off-screen above its
+        // rest position, falls down, overshoots PAST the rest by a small dip,
+        // rebounds back up past rest by an even smaller amount, then settles at
+        // rest. Same beat as the TopOutPanel — extracted 2026-05-29 so every
+        // modal in the game uses the same landing feel.
+        //
+        // The panel must already be anchored such that its REST position
+        // matches the current anchoredPosition — DropInWithBounce reads this
+        // as the target and animates relative to it.
+
+        public const float DROP_OFFSCREEN_OFFSET   = 1200f;
+        public const float DROP_DIP_BELOW          = 40f;
+        public const float DROP_REBOUND_UP         = 14f;
+        public const float DROP_PHASE_DROP_DUR     = 0.20f;
+        public const float DROP_PHASE_REBOUND_DUR  = 0.12f;
+        public const float DROP_PHASE_SETTLE_DUR   = 0.11f;
+        public const float DROP_TOTAL_DUR          = DROP_PHASE_DROP_DUR + DROP_PHASE_REBOUND_DUR + DROP_PHASE_SETTLE_DUR;
+
+        /// <summary>
+        /// Drops a RectTransform from above its current anchoredPosition and
+        /// lands with a damped bounce (dip past rest, rebound up, settle).
+        /// <paramref name="speedMult"/> = 1.0 uses canonical durations; > 1.0
+        /// is FASTER (e.g. 1.5 = 50% faster, durations divided). Reduced-
+        /// motion: falls back to PopIn (scale-up with overshoot).
+        /// </summary>
+        public static Sequence DropInWithBounce(RectTransform rt, Action onArrive = null, float speedMult = 1f)
+        {
+            if (rt == null) { onArrive?.Invoke(); return null; }
+            rt.DOKill(false);
+
+            if (ReducedMotion)
+            {
+                var cg = rt.GetComponent<CanvasGroup>();
+                if (cg != null) FadeIn(cg, onArrive);
+                else            PopIn(rt, Overshoot.Medium, onArrive);
+                return null;
+            }
+
+            float dropDur    = DROP_PHASE_DROP_DUR    / speedMult;
+            float reboundDur = DROP_PHASE_REBOUND_DUR / speedMult;
+            float settleDur  = DROP_PHASE_SETTLE_DUR  / speedMult;
+
+            float restY = rt.anchoredPosition.y;
+            float aboveY = restY + DROP_OFFSCREEN_OFFSET;
+            rt.anchoredPosition = new Vector2(rt.anchoredPosition.x, aboveY);
+
+            Sequence seq = DOTween.Sequence();
+            seq.Append(rt.DOAnchorPosY(restY - DROP_DIP_BELOW,  dropDur).SetEase(Ease.OutQuad));
+            seq.Append(rt.DOAnchorPosY(restY + DROP_REBOUND_UP, reboundDur).SetEase(Ease.OutQuad));
+            seq.Append(rt.DOAnchorPosY(restY,                   settleDur).SetEase(Ease.OutQuad));
+            if (onArrive != null) seq.OnComplete(() => onArrive());
+            return seq;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // ExitDown — panel exits straight down off-screen with anticipation
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // Canonical "modal leaves" animation. Pairs with DropInWithBounce.
+        // Uses InBack so the panel briefly anticipates UP before dropping
+        // away — gives the dismiss a little punch instead of a soft slide.
+
+        public const float EXIT_DOWN_DURATION  = 0.35f;
+        public const float EXIT_DOWN_OVERSHOOT = 1.4f;
+
+        /// <summary>
+        /// Drops a RectTransform off-screen below its current anchoredPosition
+        /// with an InBack anticipation. Reduced-motion: falls back to PopOut
+        /// (scale-to-zero collapse).
+        /// </summary>
+        public static Tweener ExitDown(RectTransform rt, Action onComplete = null, float speedMult = 1f)
+        {
+            if (rt == null) { onComplete?.Invoke(); return null; }
+            rt.DOKill(false);
+
+            if (ReducedMotion)
+            {
+                PopOut(rt, onComplete);
+                return null;
+            }
+
+            // SetRelative so the -DROP_OFFSCREEN_OFFSET offset is applied to
+            // whatever Y position the panel has when the tween STARTS — not
+            // when this method is called. Matters when the tween is nested
+            // inside a Sequence and other tweens move the panel between
+            // construction and tween-start.
+            Tweener t = rt.DOAnchorPosY(-DROP_OFFSCREEN_OFFSET, EXIT_DOWN_DURATION / speedMult)
+                .SetEase(Ease.InBack, EXIT_DOWN_OVERSHOOT)
+                .SetRelative(true);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        /// <summary>
+        /// Lifts a RectTransform off-screen ABOVE its current anchoredPosition
+        /// with an InBack anticipation (briefly dips down before launching up).
+        /// Mirror of ExitDown — for modals that "leave the way they came in"
+        /// (stage clear, level complete, etc). Reduced-motion: falls back to
+        /// PopOut.
+        /// </summary>
+        public static Tweener ExitUp(RectTransform rt, Action onComplete = null, float speedMult = 1f)
+        {
+            if (rt == null) { onComplete?.Invoke(); return null; }
+            rt.DOKill(false);
+
+            if (ReducedMotion)
+            {
+                PopOut(rt, onComplete);
+                return null;
+            }
+
+            // SetRelative — see ExitDown for rationale.
+            Tweener t = rt.DOAnchorPosY(DROP_OFFSCREEN_OFFSET, EXIT_DOWN_DURATION / speedMult)
+                .SetEase(Ease.InBack, EXIT_DOWN_OVERSHOOT)
+                .SetRelative(true);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // NewTilePop — scale curve shared by row-rise + hand-deal
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // Single "soft sprout" curve applied wherever a new tile/card arrives:
+        // the row-rise new bottom row, the initial hand deal, the single-card
+        // refill after a swap. Authoring the curve in one place means any
+        // tuning of feel (amplitude, period, easing, baseline duration) propa-
+        // gates to every arrival moment in the game.
+        //
+        // The CURVE IDENTITY is shared. The TEMPO is per-call-site via the
+        // speedMult arg — speedMult=1.0 = canonical 0.85s baseline (row-rise),
+        // higher values shorten the duration proportionally for snappier sites
+        // (hand reveals).
+
+        public const float NEW_TILE_POP_DURATION  = 0.85f;
+        public const float NEW_TILE_POP_AMPLITUDE = 0.45f;
+        public const float NEW_TILE_POP_PERIOD    = 0.30f;
+
+        /// <summary>
+        /// Pops a transform to <paramref name="targetScale"/> using the
+        /// canonical soft OutElastic sprout. Caller MUST set the start scale
+        /// (typically <c>Vector3.zero</c>) before calling.
+        /// <paramref name="speedMult"/> &gt; 1 = faster (duration divided).
+        /// Reduced motion: snaps to target with no animation.
+        /// </summary>
+        public static Tweener NewTilePop(Transform target, Vector3 targetScale, float speedMult = 1f, Action onComplete = null)
+        {
+            if (target == null) { onComplete?.Invoke(); return null; }
+
+            if (ReducedMotion)
+            {
+                target.localScale = targetScale;
+                onComplete?.Invoke();
+                return null;
+            }
+
+            Tweener t = target.DOScale(targetScale, NEW_TILE_POP_DURATION / Mathf.Max(0.0001f, speedMult))
+                .SetEase(Ease.OutElastic, NEW_TILE_POP_AMPLITUDE, NEW_TILE_POP_PERIOD);
+            if (onComplete != null) t.OnComplete(() => onComplete());
+            return t;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
         // 12. ConfettiBurst — particle pop, 1.5s envelope
         // ═══════════════════════════════════════════════════════════════════════
 

@@ -116,6 +116,30 @@ namespace WordDrop
                 WordDropFX.Instance?.PlayBoardShake(1, 5);
             innerY += BTN_H + GAP;
 
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Cascade Pops (3x climb)", _btnStyle))
+                FireCascadePops();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Stage Clear Modal — Show", _btnStyle))
+                FireStageClearShow();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Stage Clear Modal — Hide", _btnStyle))
+                FireStageClearHide();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Top Out Panel (drop / dwell / exit)", _btnStyle))
+                FireTopOutPanel();
+            innerY += BTN_H + GAP;
+
+            // ── MVP P5 turn-based playtest toggle ────────────────────────────────
+            string riseLabel = SurvivalManager.RisePerMoveDebug
+                ? "Rise-Per-Move:  ON  (turn-based)"
+                : "Rise-Per-Move:  OFF (time-based)";
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), riseLabel, _btnStyle))
+                SurvivalManager.RisePerMoveDebug = !SurvivalManager.RisePerMoveDebug;
+            innerY += BTN_H + GAP;
+
             innerY += 14;
 
             // ── Forced full-stack detonations ────────────────────────────────────
@@ -144,6 +168,14 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown Intro Only (text + flash)", _btnStyle))
                 FireMeltdownIntroOnly();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown FULL SEQUENCE (intro + hold + outro)", _btnStyle))
+                FireMeltdownFullSequence();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown BLAST ONLY (skip windup)", _btnStyle))
+                FireMeltdownBlastOnly();
             innerY += BTN_H + GAP;
 
             innerY += 8;
@@ -291,6 +323,57 @@ namespace WordDrop
         private void FireConfetti()
         {
             GameParticles.Instance?.PlayMeltdown(ScreenCenterWorld());
+        }
+
+        private void FireTopOutPanel()
+        {
+            if (TopOutPanel.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] TopOutPanel.Instance missing — not bootstrapped?");
+                return;
+            }
+            TopOutPanel.Instance.SetText("TOP OUT!");
+            TopOutPanel.Instance.Show();
+        }
+
+        private void FireStageClearShow()
+        {
+            if (StageClearModal.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] StageClearModal.Instance missing.");
+                return;
+            }
+            StageClearModal.Instance.ShowForDebug();
+        }
+
+        private void FireStageClearHide()
+        {
+            if (StageClearModal.Instance == null) return;
+            StageClearModal.Instance.DismissForDebug();
+        }
+
+        private void FireCascadePops()
+        {
+            if (GameAudio.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] GameAudio.Instance missing.");
+                return;
+            }
+            StartCoroutine(CascadePopsCoroutine());
+        }
+
+        private System.Collections.IEnumerator CascadePopsCoroutine()
+        {
+            // 3 pops in rapid succession to exercise the cascade pitch climb.
+            // Each call within MATCH_LINE_BURST_WINDOW (500ms) increments the
+            // burst counter → the matchline pop pitches up 2 semitones each.
+            // Uses PlayMatchLine (matchline6/7/8 — the cascade tile-pop chime)
+            // not PlayWordScored (word-scored chord — sounds similar to prime).
+            for (int i = 0; i < 3; i++)
+            {
+                GameAudio.Instance.PlayMatchLine(i);
+                yield return new WaitForSeconds(0.18f);
+            }
         }
 
         // ── Forced full-stack detonation ─────────────────────────────────────────
@@ -446,6 +529,163 @@ namespace WordDrop
         {
             if (MeltdownManager.Instance == null) { Debug.LogWarning("[FXTest] MeltdownManager missing"); return; }
             StartCoroutine(MeltdownIntroOnlyCoroutine());
+        }
+
+        /// <summary>
+        /// Plays the TRUE meltdown moment: intro title stamp + tier-4 explosion
+        /// + outro fade, all stacked together. Matches the documented sequence
+        /// in MeltdownManager.cs lines 24-26 (intro before explosion → explosion
+        /// while title visible → outro after). Re-added 2026-05-30 per Spencer
+        /// — the meltdown mechanic isn't currently wired into gameplay, but
+        /// this button keeps the animation iterable from the FXTestMenu.
+        /// </summary>
+        private void FireMeltdownFullSequence()
+        {
+            if (MeltdownManager.Instance == null) { Debug.LogWarning("[FXTest] MeltdownManager missing"); return; }
+            if (WordDropFX.Instance == null)      { Debug.LogWarning("[FXTest] WordDropFX missing"); return; }
+            StartCoroutine(MeltdownFullSequenceCoroutine());
+        }
+
+        private IEnumerator MeltdownFullSequenceCoroutine()
+        {
+            // Flip all meltdown-gated FX flags ON for the duration so the
+            // sequence reads correctly even if Spencer toggled some off.
+            bool savedPrefab     = WordDropFX.FX_MeltdownPrefab;
+            bool savedIntroFlash = WordDropFX.FX_MeltdownIntroFlash;
+            bool savedTilePunch  = WordDropFX.FX_MeltdownTilePunch;
+            bool savedWindup     = WordDropFX.FX_MeltdownWindupShake;
+            WordDropFX.FX_MeltdownPrefab      = true;
+            WordDropFX.FX_MeltdownIntroFlash  = true;
+            WordDropFX.FX_MeltdownTilePunch   = true;
+            WordDropFX.FX_MeltdownWindupShake = true;
+
+            // Build fake tiles for the explosion — same dummy-tile pattern as
+            // FireFakeDetonation. PlayExplosion's per-tile loops iterate over
+            // them; missing components short-circuit cleanly.
+            const int FAKE_TILE_COUNT = 15;
+            const float SPACING = 0.7f;
+            var fakeTiles = new List<Tile>();
+            Vector3 center = ScreenCenterWorld();
+            for (int i = 0; i < FAKE_TILE_COUNT; i++)
+            {
+                var go = new GameObject($"FXTest_MeltdownTile_{i}");
+                go.transform.position = new Vector3(
+                    center.x + (i - FAKE_TILE_COUNT * 0.5f + 0.5f) * SPACING,
+                    center.y, 0f);
+                fakeTiles.Add(go.AddComponent<Tile>());
+                Destroy(go, 6f); // safety cleanup
+            }
+
+            // 1. Intro — title stamp appears, screen flash, MeltdownManager
+            //    flips its _isPlaying flag so PlayExplosion's meltdown gate
+            //    inside ExplosionCoroutine fires the prefab + tile punch.
+            //    chainDepth=4 lands on "MELTDOWN" tier (5+ = AFTERSHOCK,
+            //    2-3 = CHAIN REACTION).
+            Coroutine intro = MeltdownManager.Instance.TryMeltdownIntro(
+                chainDepth: 4, triggerCount: 8, detonationBonus: 200, isLastTurn: false);
+            if (intro != null) yield return intro;
+
+            // 2. Explosion stacked WHILE the title stamp is still on screen —
+            //    this is the actual "meltdown moment." chainStep=3 = tier 4.
+            WordDropFX.Instance.PlayExplosion(fakeTiles, chainStep: 3, wordLength: FAKE_TILE_COUNT);
+
+            // 3. Hold so the explosion's full lifecycle (pops, fragments,
+            //    bigburst, shake) plays out under the title stamp before
+            //    the outro fades it.
+            yield return new WaitForSeconds(1.6f);
+
+            // 4. Outro — title fades, MeltdownManager clears _isPlaying so
+            //    subsequent re-fires aren't blocked by the IsActive guard.
+            MeltdownManager.Instance.TryMeltdownOutro();
+
+            WordDropFX.FX_MeltdownPrefab      = savedPrefab;
+            WordDropFX.FX_MeltdownIntroFlash  = savedIntroFlash;
+            WordDropFX.FX_MeltdownTilePunch   = savedTilePunch;
+            WordDropFX.FX_MeltdownWindupShake = savedWindup;
+        }
+
+        /// <summary>
+        /// Plays JUST the climactic blast moment of the meltdown — no intro
+        /// title, no flash, no windup, no earthquake rumble. The Magic
+        /// Explosive Spell prefab is spawned per tile but fast-forwarded via
+        /// ParticleSystem.Simulate past its ~1.7s windup so it spawns
+        /// VISIBLE at its blast peak. Tier-4 pops + fragments + detonation
+        /// sound fire simultaneously (meltdownActive stays false so
+        /// PlayExplosion takes the non-meltdown path with no internal
+        /// windup wait). The "test the climax as a standalone animation"
+        /// button per Spencer's 2026-05-30 ask.
+        /// </summary>
+        private void FireMeltdownBlastOnly()
+        {
+            if (WordDropFX.Instance == null) { Debug.LogWarning("[FXTest] WordDropFX missing"); return; }
+            StartCoroutine(MeltdownBlastOnlyCoroutine());
+        }
+
+        private IEnumerator MeltdownBlastOnlyCoroutine()
+        {
+            // Build fake tiles in a horizontal row at screen center.
+            const int FAKE_TILE_COUNT = 15;
+            const float SPACING = 0.7f;
+            var fakeTiles = new List<Tile>();
+            Vector3 center = ScreenCenterWorld();
+            for (int i = 0; i < FAKE_TILE_COUNT; i++)
+            {
+                var go = new GameObject($"FXTest_BlastTile_{i}");
+                go.transform.position = new Vector3(
+                    center.x + (i - FAKE_TILE_COUNT * 0.5f + 0.5f) * SPACING,
+                    center.y, 0f);
+                fakeTiles.Add(go.AddComponent<Tile>());
+                Destroy(go, 6f);
+            }
+
+            // Spawn the Magic Explosive Spell prefab per tile, fast-forwarded
+            // past its windup via ParticleSystem.Simulate so it appears
+            // already at its blast peak.
+            GameObject magicPrefab = Resources.Load<GameObject>("Prefabs/FX/Magic Explosive Spell");
+            if (magicPrefab != null)
+            {
+                float fastForwardTime =
+                    FlipbookExplosion.MELTDOWN_BLAST_PEAK_AT_REAL_SPEED
+                    / FlipbookExplosion.MELTDOWN_PREFAB_SPEED;
+
+                for (int i = 0; i < fakeTiles.Count; i++)
+                {
+                    if (fakeTiles[i] == null) continue;
+                    GameObject inst = Instantiate(magicPrefab, fakeTiles[i].transform.position, Quaternion.identity);
+
+                    // Strip AllIn1 demo shakers — they reference an AllIn1Shaker
+                    // singleton that doesn't exist in our scene and would error.
+                    // Same cleanup FlipbookExplosion.PlayMeltdown does.
+                    var demoShakers = inst.GetComponentsInChildren<AllIn1VfxToolkit.Demo.Scripts.AllIn1DoShake>(true);
+                    for (int s = 0; s < demoShakers.Length; s++)
+                        if (demoShakers[s] != null) Destroy(demoShakers[s]);
+
+                    // Fast-forward all ParticleSystems past the windup so they
+                    // become visible AT the blast peak. Simulate(time, false,
+                    // true) advances each system by `time` seconds with restart.
+                    // Then Play() to resume natural playback from that point.
+                    var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
+                    for (int j = 0; j < systems.Length; j++)
+                    {
+                        var ps = systems[j];
+                        if (ps == null) continue;
+                        var main = ps.main;
+                        main.playOnAwake = false;
+                        ps.Simulate(fastForwardTime, false, true);
+                        ps.Play(false);
+                    }
+
+                    Destroy(inst, 3f);
+                }
+            }
+
+            // Fire tier-4 pops + fragments + BigBurst + detonation audio
+            // immediately. _isPlaying stays FALSE so PlayExplosion takes the
+            // non-meltdown path (no prefab spawn since we did it manually
+            // above, no 1.7s WINDUP_DELAY wait, no earthquake rumble).
+            WordDropFX.Instance.PlayExplosion(fakeTiles, chainStep: 3, wordLength: FAKE_TILE_COUNT);
+
+            yield return new WaitForSeconds(2.5f);
         }
 
         private IEnumerator MeltdownIntroOnlyCoroutine()

@@ -103,7 +103,7 @@ namespace WordDrop
             CanvasScaler scaler = canvasGO.AddComponent<CanvasScaler>();
             scaler.uiScaleMode         = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(540f, 960f);
-            scaler.matchWidthOrHeight  = 1f; // height-based like RTT
+            scaler.matchWidthOrHeight  = 0.5f; // 50/50 split — matches StageClearModal / TopOutPanel for visual consistency across all stage-related panels (was 1.0 height-based, RTT-era)
 
             canvasGO.AddComponent<GraphicRaycaster>();
 
@@ -127,7 +127,11 @@ namespace WordDrop
             _panelRT.anchorMax = new Vector2(0.5f, 0.5f);
             _panelRT.pivot     = new Vector2(0.5f, 0.5f);
             var cfg = UIConfig.Instance;
-            _panelRT.sizeDelta = cfg != null ? cfg.gameOverPanelSize : new Vector2(460f, 420f);
+            // Match StageClearModal's panel footprint for cross-modal consistency
+            // (88% width × 58% height of the 540×960 reference canvas, centered).
+            // Hardcoded — overrides cfg.gameOverPanelSize for visual consistency
+            // across all stage-related panels.
+            _panelRT.sizeDelta = new Vector2(475f, 557f);
             _panelHomePos = Vector2.zero;
 
             // Panel background with rounded corners
@@ -250,10 +254,11 @@ namespace WordDrop
 
         private void ShowPanel()
         {
-            // Fire victory music (Skybound canonical) as the score panel begins
-            // to fly up. 2026-05-16 — replaces the silent transition that used
-            // to occur here; the panel reveal now lands on a swelling track.
-            GameAudio.Instance?.PlayVictoryMusic();
+            // Music intentionally NOT swapped here (per Spencer 2026-05-21).
+            // Gameplay BGM continues from before the top-out through this
+            // game-over screen until the player taps Play Again. Previously
+            // this called PlayVictoryMusic (Skybound) — disabled for the
+            // "music never breaks" flow.
 
             bool isBlitz = BlitzManager.IsBlitzMode;
             bool isDaily = DailyDropManager.IsDailyMode;
@@ -310,7 +315,13 @@ namespace WordDrop
                     ? MatchController.Instance.GetPlayerTurns(MatchController.PLAYER_HUMAN) : 0;
 
                 string timeStr = FormatSurvivalTime(timeSurvived);
-                bool survNewBest = HighScoreManager.Submit(playerScore, "survival");
+                // SurvivalManager.FinalizeGameOver has already done the Submit and
+                // stashed the boolean. Read it instead of re-submitting (which would
+                // return false on the second call and lose the new-best signal).
+                bool survNewBest = SurvivalManager.Instance != null
+                    && (SurvivalManager.Instance.WasNewBestScore || SurvivalManager.Instance.WasNewBestStage);
+                bool newBestStage = SurvivalManager.Instance != null && SurvivalManager.Instance.WasNewBestStage;
+                bool newBestScore = SurvivalManager.Instance != null && SurvivalManager.Instance.WasNewBestScore;
                 int survBest = HighScoreManager.GetBest("survival");
 
                 TMP_FontAsset displayFont = GameFont.GetDisplayTMP();
@@ -348,7 +359,14 @@ namespace WordDrop
                     _turnsPlayedText.text = "";
                 if (_bestScoreText != null)
                 {
-                    _bestScoreText.text = survNewBest ? "NEW BEST!" : $"Best: {survBest}";
+                    // Codex rule: be specific about which dimension was broken.
+                    // Vague "NEW BEST!" is weaker than explicit feedback.
+                    string pbMsg;
+                    if (newBestStage && newBestScore) pbMsg = $"🏆 NEW PERSONAL BEST!  (+{SurvivalManager.PB_BONUS_COINS}¢)";
+                    else if (newBestStage)            pbMsg = $"🏆 NEW BEST STAGE!  (+{SurvivalManager.PB_BONUS_COINS}¢)";
+                    else if (newBestScore)            pbMsg = $"🏆 NEW BEST SCORE!  (+{SurvivalManager.PB_BONUS_COINS}¢)";
+                    else                              pbMsg = $"Best: {survBest}";
+                    _bestScoreText.text  = pbMsg;
                     _bestScoreText.color = survNewBest ? GOLD : TEXT_DIM;
                 }
                 if (_dailyStreakText != null) _dailyStreakText.gameObject.SetActive(false);
@@ -447,36 +465,42 @@ namespace WordDrop
 
         private IEnumerator ShowAnimation()
         {
-            // Start panel off-screen below
-            _panelRT.anchoredPosition = _panelHomePos + new Vector2(0, -SLIDE_OFFSET_Y);
-            _panel.transform.localScale = Vector3.one;
+            // Matches StageClearModal's entrance staging — panel scale-pops at
+            // home position (no slide-from-bottom), backdrop fades in first,
+            // children cascade in via alpha fade after the pop settles. Spencer
+            // preferred this feel over the legacy slide-up + per-element scale-
+            // pop pattern (2026-05-21).
+            _panelRT.anchoredPosition = _panelHomePos;
+            _panel.transform.localScale = Vector3.zero;
 
-            // Fade overlay
+            // Fade overlay (backdrop). Starts immediately, lands before the
+            // panel pop completes — Playrix-style backdrop-before-panel staging.
             Image overlayImg = _overlay.GetComponent<Image>();
             if (overlayImg != null)
-                overlayImg.DOFade(0.75f, SHOW_DURATION * 1.2f);
+                overlayImg.DOFade(0.75f, 0.12f).SetEase(Ease.OutQuad);
 
-            // Hide stagger elements initially
+            // Reset stagger elements: alpha 0, scale 1 (no scale-up — matches
+            // StageClearModal's alpha-only cascade).
             foreach (var el in _staggerElements)
             {
                 if (el == null) continue;
                 CanvasGroup cg = el.GetComponent<CanvasGroup>();
                 if (cg == null) cg = el.AddComponent<CanvasGroup>();
                 cg.alpha = 0f;
-                el.transform.localScale = Vector3.one * 0.7f;
+                el.transform.localScale = Vector3.one;
             }
 
-            // Slide panel in from bottom with OutBack overshoot
-            _panelRT.DOAnchorPos(_panelHomePos, SHOW_DURATION)
-                .SetEase(Ease.OutBack, 3f);
+            // Two-phase scale pop: 0 → 1.18 (OutCubic punchy growth) → 1.0
+            // (OutBack 2.0 gentle bouncy settle). Same shape as StageClearModal.
+            Sequence pop = DOTween.Sequence();
+            pop.Append(_panel.transform.DOScale(1.18f, 0.16f).SetEase(Ease.OutCubic));
+            pop.Append(_panel.transform.DOScale(1.0f, 0.14f).SetEase(Ease.OutBack, 2.0f));
 
-            // Punch scale on arrival
-            _panel.transform.DOPunchScale(Vector3.one * 0.1f, 0.2f, 10, 0.5f)
-                .SetDelay(0.08f);
+            // Wait for the panel to fully settle before children start fading
+            // in (~300ms total pop + a small gap).
+            yield return new WaitForSeconds(0.32f);
 
-            yield return new WaitForSeconds(SHOW_DURATION * 0.6f);
-
-            // Stagger in each element
+            // Stagger in each element — alpha fade only (no scale-up).
             for (int i = 0; i < _staggerElements.Length; i++)
             {
                 var el = _staggerElements[i];
@@ -484,14 +508,7 @@ namespace WordDrop
 
                 CanvasGroup cg = el.GetComponent<CanvasGroup>();
                 if (cg != null)
-                    DOTween.To(() => cg.alpha, a => cg.alpha = a, 1f, 0.2f)
-                        .SetEase(Ease.OutQuad);
-
-                el.transform.DOScale(Vector3.one, 0.25f)
-                    .SetEase(Ease.OutBack, 1.5f);
-
-                el.transform.DOPunchScale(Vector3.one * 0.08f, 0.15f, 8, 0.5f)
-                    .SetDelay(0.12f);
+                    cg.DOFade(1f, 0.18f).SetEase(Ease.OutQuad);
 
                 yield return new WaitForSeconds(STAGGER_DELAY);
             }
@@ -578,6 +595,7 @@ namespace WordDrop
                 return;
             }
 
+            // MVP: no hearts gate. Hearts dropped from Survival 2026-05-22.
             AnalyticsManager.ButtonTap("play_again");
             StartCoroutine(HideAnimation());
         }
@@ -615,11 +633,10 @@ namespace WordDrop
 
         private IEnumerator HideAnimation()
         {
-            // Slide panel down with InBack
-            _panelRT.DOAnchorPos(_panelHomePos + new Vector2(0, -SLIDE_OFFSET_Y), HIDE_DURATION)
-                .SetEase(Ease.InBack, 1.5f);
+            // Scale-down PopOut to match StageClearModal's dismiss feel
+            // (InBack collapse rather than slide-to-bottom).
+            UIAnimations.PopOut(_panel.transform);
 
-            // Fade overlay out
             Image overlayImg = _overlay.GetComponent<Image>();
             if (overlayImg != null)
                 overlayImg.DOFade(0f, HIDE_DURATION);
@@ -634,8 +651,7 @@ namespace WordDrop
 
         private IEnumerator HideAnimationToMenu()
         {
-            _panelRT.DOAnchorPos(_panelHomePos + new Vector2(0, -SLIDE_OFFSET_Y), HIDE_DURATION)
-                .SetEase(Ease.InBack, 1.5f);
+            UIAnimations.PopOut(_panel.transform);
 
             Image overlayImg = _overlay.GetComponent<Image>();
             if (overlayImg != null)

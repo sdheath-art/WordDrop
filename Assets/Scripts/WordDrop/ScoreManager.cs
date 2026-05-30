@@ -166,6 +166,23 @@ namespace WordDrop
 
             if (HUDManager.Instance != null)
                 HUDManager.Instance.SetScore(PlayerScore);
+
+            // Survival stage-clear must fire on ANY PlayerScore change, not
+            // only the player-drop path (CompleteDropBookkeeping → NotifyScoreDelta).
+            // Bug repro (2026-05-21): player at 586/600 used board-swap that scored
+            // +25 → PlayerScore=611, crossing target. CheckStageClear was never
+            // called because board-swap scoring (HandManager.cs:1716/1824/2218)
+            // and Survival clear-bonus (SurvivalManager.cs:575/587) call AddScore
+            // directly without firing NotifyScoreDelta. Modal "waited for next
+            // drop" because NotifyDropCommitted on the next player drop was the
+            // first thing to re-evaluate the target. Hooking the check here
+            // covers EVERY score-add path, including future ones.
+            if (pts > 0
+                && SurvivalManager.IsSurvivalMode
+                && SurvivalManager.Instance != null)
+            {
+                SurvivalManager.Instance.CheckStageClear();
+            }
         }
 
         /// <summary>Adds points to the AI's running total.</summary>

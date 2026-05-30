@@ -27,7 +27,7 @@ namespace WordDrop
         /// menu must NOT land the player on LevelSelect — daily is a main-menu
         /// feature.
         /// </summary>
-        public enum ReturnContext { LevelSelect, MainMenu, DailyFlow }
+        public enum ReturnContext { LevelSelect, MainMenu, DailyFlow, Survival }
 
         private ReturnContext _returnContext = ReturnContext.LevelSelect;
 
@@ -341,8 +341,9 @@ namespace WordDrop
                 {
                     case ReturnContext.MainMenu:
                     case ReturnContext.DailyFlow:
-                        // MainMenu + DailyFlow both land on MenuUI today. DailyFlow is
-                        // carved out so Phase 10's dedicated daily screen (if added)
+                    case ReturnContext.Survival:
+                        // MainMenu + DailyFlow + Survival all land on MenuUI today.
+                        // Carved out so a future dedicated daily/Survival screen
                         // can route differently without breaking MainMenu callers.
                         if (MenuUI.Instance != null) MenuUI.Instance.SetVisible(true);
                         break;

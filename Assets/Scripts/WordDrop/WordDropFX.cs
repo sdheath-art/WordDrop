@@ -297,6 +297,9 @@ namespace WordDrop
         /// </summary>
         public void PlayFuseTrace(List<PrimedTriggeredEvent> triggers, GridManager grid)
         {
+            // Defensive early-return: belt + suspenders so even if a path
+            // forgets to check FX_FuseTrace, no lines are drawn while disabled.
+            if (!FX_FuseTrace) return;
             if (triggers == null || grid == null) return;
 
             // Collect direct trigger tile positions and chain trigger tile positions
@@ -943,6 +946,7 @@ namespace WordDrop
         public static bool FX_Haptics           = false; // phone vibration
         public static bool FX_BigBurstFlash     = false; // 2026-05-16: globally disabled per Spencer. Detonations are pop-only now. Flip true to restore sweep beam.
         public static bool FX_BigBurstFlashCascadeTest = false; // test override — force-fires the meltdown beam during a cascade simulation, set by FXTestMenu
+        public static bool FX_FuseTrace         = false; // 2026-05-19: globally disabled per Spencer. Orange chain-connection lines were added by a past session without his consent. Flip true to restore.
         public static bool FX_TileFlashBox      = false; // bright box overlay per tile (HandManager.FireTileFlashBoxes)
         public static bool FX_SparkleSpray      = false; // HDR sparkle stars from FirePerWordBurst (HandManager)
         public static bool FX_SparkleLine       = false; // GameParticles.PlaySparkleLine — flare_star sparkles along blast line
@@ -1217,21 +1221,23 @@ namespace WordDrop
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
-                    // Cascades use the simple Tier 1 pop with instantPop=true
-                    // (added 2026-05-15) — no 80ms light-up wait. Cascades
-                    // pop IMMEDIATELY on impact. Pitch escalation on the audio
-                    // side carries the chain feel.
-                    // Only fire on cascade steps; non-cascade tier-1 events
-                    // (initial player word) still hit this branch but go through
-                    // the path with isCascadePop=false (handled by the else
-                    // branch flow above — non-cascade tier-1 takes this loop
-                    // but instantPop only applies to chainStep >= 2).
+                    // Cascades use instantPop=true (no preamble) — initial pops
+                    // keep the 80ms light-up flash because it provides visual
+                    // feedback during the 50ms hitstop window, masking the
+                    // pause and making the initial detonation feel instant.
                     bool tileInstantPop = isCascadePop;
                     PlayTier1Pop(tiles[i], suppressAudio: true, isCascade: false, startDelay: 0f, instantPop: tileInstantPop);
                 }
-                // Per-word haptic synced to the shatter peak (~t=120ms in
-                // PlayTier1Pop). Cascade no longer needs the +0.20s preamble offset.
-                StartCoroutine(Tier1PopHaptic(chainStep, 0f));
+                // Per-word haptic — sync to the visual pop moment:
+                //   - Initial pops have an 80ms light-up preamble, so the
+                //     visual peak (bubble spawn) is at ~t=140ms → haptic at
+                //     t=120ms is well-synced.
+                //   - Cascade pops use instantPop=true (no preamble), so the
+                //     visual peak shifts to ~t=60ms → haptic needs -80ms
+                //     offset to land at t=40ms, in sync with the visual.
+                // Without this offset, cascade haptics felt 60ms late.
+                float hapticOffset = isCascadePop ? -0.08f : 0f;
+                StartCoroutine(Tier1PopHaptic(chainStep, hapticOffset));
                 yield return WaitCache.Get(0.25f);
                 yield break;
             }

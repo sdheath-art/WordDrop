@@ -120,7 +120,7 @@ namespace WordDrop
         // A 1.0). Eyedropper swatch from the Inspector Color picker —
         // saturated violet that sits on the hand-tray hue family but
         // reads more purple than navy.
-        public Color hudBarBgColor      = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f);
+        public Color hudBarBgColor      = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 — held at original while Spencer reworks HUD look in Photoshop
 
         [Header("HUD — Player Score")]
         public Vector2 hudPlayerLabelAnchorMin = new Vector2(0.10f, 0.35f);

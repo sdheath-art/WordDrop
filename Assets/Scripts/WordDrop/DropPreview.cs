@@ -23,6 +23,7 @@ namespace WordDrop
         private int  _previewCol = -1;
         private int  _previewRow = -1;
         private bool _previewActive = false;
+        private bool _isWild = false;
 
         // ── Cached simulation results ───────────────────────────────────────────
         private List<RulesWordMatch> _previewWords;
@@ -59,13 +60,16 @@ namespace WordDrop
         /// Update the preview for a given tile + column. Only recalculates if
         /// the letter or column actually changed.
         /// </summary>
-        public void UpdatePreview(char letter, int col)
+        public void UpdatePreview(char letter, int col) => UpdatePreview(letter, col, false);
+
+        public void UpdatePreview(char letter, int col, bool isWild)
         {
             if (letter == '\0' || col < 0)
             {
                 ClearPreview();
                 return;
             }
+            _isWild = isWild;
 
             // Skip recalculation if nothing changed
             if (_previewActive && letter == _previewLetter && col == _previewCol)
@@ -197,8 +201,9 @@ namespace WordDrop
             _ghostTile.transform.position = pos;
             _ghostTile.SetActive(true);
 
-            // Use the selected (green) tile sprite if available, fallback to procedural
-            Sprite selectedSprite = Resources.Load<Sprite>("Tiles/green_tile2@2x");
+            // Wild ghost uses wild2@2x (blank iridescent), non-wild uses green_tile2.
+            string spritePath = _isWild ? "Tiles/wild2@2x" : "Tiles/green_tile2@2x";
+            Sprite selectedSprite = Resources.Load<Sprite>(spritePath);
             if (selectedSprite != null)
             {
                 _ghostSR.sprite = selectedSprite;
@@ -235,14 +240,18 @@ namespace WordDrop
                 var font = GameFont.GetTMP();
                 if (font != null) _ghostLetterTMP.font = font;
             }
-            _ghostLetterTMP.text = letter.ToString();
+            // For wild tiles, suppress letter text (wild2 sprite is blank, no "*"/"?")
+            _ghostLetterTMP.text = _isWild ? "" : letter.ToString();
             _ghostLetterTMP.fontSize = 5.5f; // matches board tile font size
             _ghostLetterTMP.fontStyle = TMPro.FontStyles.Normal;
             _ghostLetterTMP.color = new Color(0.15f, 0.15f, 0.18f, 0.35f);
             _ghostLetterTMP.rectTransform.sizeDelta = new Vector2(2f, 2f);
             float sprNative = (_ghostSR.sprite != null) ? _ghostSR.sprite.bounds.size.x : cellSize;
             float invScale = 1f / Mathf.Max(_ghostTile.transform.localScale.x, 0.01f);
-            _ghostLetterTMP.rectTransform.localPosition = new Vector3(0f, sprNative * 0.04f, -0.1f);
+            // Centered on tile (no bevel offset — the ghost tile has no point
+            // subscript so the letter sits at true center, matching the
+            // centered treatment on board/hand tiles).
+            _ghostLetterTMP.rectTransform.localPosition = new Vector3(0f, 0f, -0.1f);
             _ghostLetterTMP.rectTransform.localScale = new Vector3(invScale, invScale, 1f);
         }
 

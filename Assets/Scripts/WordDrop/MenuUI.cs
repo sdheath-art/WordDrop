@@ -126,8 +126,9 @@ namespace WordDrop
         /// transitions to Playing; MatchController.StartMatch does the rest
         /// (new TileBag, fill hands, SurvivalManager.StartSurvival init).
         ///
-        /// No hearts gate — Survival is the primary game mode, freely
-        /// replayable. No tutorial gate — onboarding lives inside the mode.
+        /// MVP: no hearts gate. Hearts were dropped from Survival (2026-05-22)
+        /// after Claude+Codex review — coin-bypass made hearts decorative; Daily
+        /// Survival Modifier carries retention instead. Coins gate continues.
         /// </summary>
         private void OnSurvivalClicked()
         {
@@ -211,17 +212,8 @@ namespace WordDrop
                 return;
             }
 
-            // Life gate BEFORE save-streak. Out of hearts = daily unplayable today
-            // regardless, so don't pitch save-streak only to have them save + break
-            // tomorrow. Resolve hearts first; save-streak surfaces on next tap.
-            if (HeartsManager.Current <= 0)
-            {
-                AnalyticsManager.ButtonTap("daily_no_hearts");
-                SetVisible(false);
-                if (HeartWaitModal.Instance != null)
-                    HeartWaitModal.Instance.SetVisible(true, HeartWaitModal.ReturnContext.DailyFlow);
-                return;
-            }
+            // MVP: no hearts gate (hearts dropped from Survival 2026-05-22). Daily
+            // is now free-play participation — same UTC seed for everyone.
 
             if (DailyDropManager.CanSaveStreak() && SaveStreakModal.Instance != null)
             {
@@ -230,52 +222,40 @@ namespace WordDrop
                 return;
             }
 
-            BeginDailyLevel();
+            BeginDailySurvival();
         }
 
         /// <summary>
-        /// Loads today's daily level and routes through LevelController (Phase 8).
-        /// Exposed separately so SaveStreakModal can continue into the level after
-        /// restoring the streak, and the debug menu's RESET DAILY can re-trigger.
+        /// MVP P3.5: launch today's Daily Seeded Survival. Same UTC seed for all
+        /// players → deterministic letter bag (TileBag's seeded path) + deterministic
+        /// gameplay random (SurvivalRng auto-seeded by SurvivalManager.StartSurvival
+        /// when DailyDropManager.IsDailyMode is true).
+        ///
+        /// Exposed separately so SaveStreakModal can continue into the run after
+        /// restoring the streak, and the debug menu can re-trigger.
+        ///
+        /// Note: the old Level-mode-based Daily Drop (BeginDailyLevel) was deprecated
+        /// with the Survival pivot. This is its Survival-mode replacement.
         /// </summary>
-        public void BeginDailyLevel()
+        public void BeginDailySurvival()
         {
-            int levelId = DailyDropManager.GetDailyLevelId();
-            LevelData data = LevelLoader.Load(levelId);
-            if (data == null)
-            {
-                Debug.LogError($"[MenuUI] Daily level {levelId} failed to load — aborting.");
-                return;
-            }
-            var (ok, reason) = LevelValidator.Validate(data);
-            if (!ok)
-            {
-                Debug.LogError($"[MenuUI] Daily level {levelId} invalid: {reason}");
-                return;
-            }
-
-            if (!HeartsManager.Consume())
-            {
-                SetVisible(false);
-                if (HeartWaitModal.Instance != null)
-                    HeartWaitModal.Instance.SetVisible(true, HeartWaitModal.ReturnContext.DailyFlow);
-                return;
-            }
-
-            SurvivalManager.IsSurvivalMode = false;
             BlitzManager.IsBlitzMode = false;
             DailyDropManager.IsDailyMode = true;
-            GameManager.CurrentMode = GameMode.Level;
+            SurvivalManager.IsSurvivalMode = true;
+            GameManager.CurrentMode = GameMode.Survival;
 
-            LevelController.Instance.StartLevel(data);
-            LevelProgressManager.IncrementAttempts(levelId);
+            int seed = DailyDropManager.GetDailySeed();
 
             AnalyticsManager.ButtonTap("daily_start");
             AnalyticsManager.ScreenView("playing_daily");
             AnalyticsManager.Log("daily_start",
-                "level_id", levelId,
+                "seed", seed,
                 "puzzle_number", DailyDropManager.GetPuzzleNumber(),
                 "streak_before", DailyDropManager.GetStreak());
+
+            SetVisible(false);
+            if (GameManager.Instance != null)
+                GameManager.Instance.TransitionTo(GameState.Playing);
 
             SetVisible(false);
             if (GameManager.Instance != null)

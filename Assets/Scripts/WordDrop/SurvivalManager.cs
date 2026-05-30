@@ -21,6 +21,12 @@ namespace WordDrop
             set => _isSurvivalMode = value;
         }
 
+        /// <summary>Debug toggle: when true, every player drop fires a rising row
+        /// immediately and the time-based rise clock is suppressed. Lets the player
+        /// playtest pressure cadence one move at a time. Toggle via FXTestMenu.
+        /// Not persisted — session-only. Default ON for current playtest pass.</summary>
+        public static bool RisePerMoveDebug { get; set; } = true;
+
         // ── Resource drop tuning (only special tiles — no normal letter drops) ──
         public const float AUTO_DROP_INTERVAL_START = 45f;   // rare — almost a minute between drops
         public const float AUTO_DROP_INTERVAL_FLOOR = 25f;
@@ -43,7 +49,7 @@ namespace WordDrop
         public const int MOVES_PER_RISE_FLOOR = 1;
 
         // Stage-aware seconds-per-rise. S1 relaxed (20s) → S11+ frantic (6s).
-        public const float SECONDS_PER_RISE_FLOOR = 6f;
+        public const float SECONDS_PER_RISE_FLOOR = 7f;
 
         // ── Stage chip targets (Balatro-shape, endless escalating) ────────────────
         // Each stage has a chip target; hit it in the stage's move budget or the
@@ -70,7 +76,7 @@ namespace WordDrop
         // Minimum rows of letters at stage start — if a big chain cleared the
         // board, fire rising rows until this minimum is met. Prevents the
         // anti-feel "clear the stage, now stare at empty board" moment.
-        public const int   STAGE_START_MIN_ROWS = 4;
+        public const int   STAGE_START_MIN_ROWS = 2;
         // Max target — prevents int overflow in deep endless runs.
         // At growth=1.5× per stage, 500 * 1.5^40 ≈ 2e9 (near int.MaxValue).
         // Plateau at 100M so stages 30+ stay achievable-but-absurd.
@@ -92,6 +98,10 @@ namespace WordDrop
         // ── Top-out mode ─────────────────────────────────────────────────────────
         // Strict: game over when ANY tile reaches the top row
         // Lenient: game over only when ALL columns are full (no place to drop)
+        //   PLUS the overflow trigger from RisingRowManager (rise pushes tiles off the top)
+        // MVP P5 (2026-05-23): switched default to Lenient. Tiles can reach the top row
+        // without instant death — game over only fires when a rising row tries to push
+        // tiles BEYOND the top (real overflow) or when every column is jammed full.
         public enum TopOutMode { Strict, Lenient }
         [SerializeField] public TopOutMode topOutMode = TopOutMode.Lenient;
 
@@ -133,6 +143,7 @@ namespace WordDrop
         private float _elapsedTime;          // kept for HUD/debrief stats, not for difficulty
         private float _autoDropTimer;
         private int   _movesSinceLastRise;   // vestigial (Phase 11b) — NotifyDropCommitted still increments, but rises fire off _riseTimerSeconds now
+        private int   _turnsSinceLastTurnRise;   // turn-based mode (RisePerMoveDebug): counts player turns since last rise to gate cadence per stage
         private float _riseTimerSeconds;     // Phase 11b: time-based rising rows; resets on rise fire, stage advance, StartSurvival
         private bool  _appPaused;            // Phase 11b: OnApplicationPause(true) sets this, Update skips timer accumulation while true
         private int   _movesPlayed;          // lifetime move count — drives stage + debrief
@@ -143,6 +154,9 @@ namespace WordDrop
         private bool  _isAutoDropping;   // prevents re-entrant auto-drops
         private bool  _isRisingRow;      // prevents re-entrant rising rows
         public  bool  IsRisingRow => _isRisingRow;
+        private bool  _pendingEditDroughtRebate;  // drought rebate: scored-while-tapped → forced edit refill on next auto-drop
+        private bool  _isOverlayPaused;  // stage-clear modal (and future overlays) freeze rising-row + auto-drop timers
+        public  bool  IsOverlayPaused => _isOverlayPaused;
         private int   _lastStage = 1;    // track for stage-up signal
         private float _tileRepairTimer;  // periodic blank tile repair
 
@@ -183,6 +197,13 @@ namespace WordDrop
             return STAGE_MOVES_FLOOR;                       // S11+: 8 (plateau)
         }
 
+        /// <summary>
+        /// Onboarding ramp for turn-based rises (RisePerMoveDebug = true). Stages 1-4
+        /// rise every 2 turns to let new players get a feel for the board. Stages 5+
+        /// rise every turn (full pressure).
+        /// </summary>
+        public static int GetTurnsPerRiseForStage(int stage) => stage <= 4 ? 2 : 1;
+
         /// <summary>Current stage target.</summary>
         public int CurrentStageTarget => ComputeStageTarget(_currentStageIndex);
         /// <summary>Current stage move budget.</summary>
@@ -216,8 +237,46 @@ namespace WordDrop
         /// <summary>Debrief: target the player needed to hit at run end.</summary>
         public int LastStageTarget => _lastStageTarget;
 
-        /// <summary>Fires when the player hits a stage's chip target. Int = stage cleared.</summary>
-        public System.Action<int> OnStageCleared;
+        /// <summary>
+        /// v1.5 placeholder for a roguelite modifier offer presented at stage clear.
+        /// Defined as an opaque type now so the StageClearContext.Offers field has
+        /// a proper signature without committing to implementation. v1.5 will
+        /// flesh this out with Id/DisplayName/Description/Icon/Apply hooks.
+        /// </summary>
+        public class StageRewardOffer { }
+
+        /// <summary>
+        /// Snapshot of a stage's state at the moment it was cleared. Captured BEFORE
+        /// stage advancement so subscribers see the cleared stage's data, not the
+        /// next stage's. Subscribers should treat payload fields as the source of
+        /// truth for cleared-stage info — reading SurvivalManager.Instance state
+        /// inside a handler returns stage N+1 because advancement already ran.
+        /// Future-aware: `Offers` is reserved for v1.5 roguelite modifier choices
+        /// (null/empty in v1; populated by reward system in v1.5).
+        /// </summary>
+        public struct StageClearContext
+        {
+            public int ClearedStage;
+            public int TargetScore;
+            public int StageScore;
+            public int MovesUsed;
+            public int MovesBudget;
+            public int RisesFired;
+            public float Occupancy;        // 0..1, board fill at moment of clear
+            public int CoinsEarned;        // MVP P1: skill-tied via overshoot formula
+            public System.Collections.Generic.IReadOnlyList<StageRewardOffer> Offers; // v1.5 placeholder (null in v1)
+        }
+
+        // MVP P1 overshoot coin formula: coinsEarned = clamp(5 + overshoot/5, 10, 60)
+        // overshoot = StageScore - TargetScore on clinching move. Floor of 10 protects
+        // letter-luck variance, cap of 60 prevents one-stage farming.
+        public const int COIN_BASE        = 5;
+        public const int COIN_SCALAR      = 5;   // larger = flatter curve
+        public const int COIN_FLOOR       = 10;
+        public const int COIN_CAP_PER_STAGE = 60;
+
+        /// <summary>Fires when the player hits a stage's chip target. Carries cleared stage snapshot.</summary>
+        public System.Action<StageClearContext> OnStageCleared;
         /// <summary>Fires when the player fails a stage (move budget exhausted, target missed).</summary>
         public System.Action<int> OnStageFailed;
 
@@ -244,6 +303,38 @@ namespace WordDrop
             // Clear-check — if this drop crossed the target, the stage advances.
             CheckStageClear();
 
+            // Debug toggle: per-move rises. Fires a rise after every human drop
+            // resolves. NotifyDropCommitted is invoked from CompleteDropBookkeeping
+            // while MatchController.IsProcessing is still true (word scoring,
+            // detonations, gravity), so we defer the rise via a wait-coroutine
+            // until processing clears.
+            Debug.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused}");
+            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused)
+            {
+                // Onboarding ramp: stages 1-4 rise every 2 turns, stages 5+ every turn.
+                _turnsSinceLastTurnRise++;
+                int turnsPerRise = GetTurnsPerRiseForStage(_currentStageIndex);
+                if (_turnsSinceLastTurnRise < turnsPerRise)
+                {
+                    Debug.Log($"[RisePerMove] holding rise — stage {_currentStageIndex}, turn {_turnsSinceLastTurnRise}/{turnsPerRise}");
+                }
+                else
+                {
+                    _turnsSinceLastTurnRise = 0;
+                    // Glade Stillness: consume a rise-skip charge if active; suppress this turn's rise.
+                    if (ConsumeGladeRiseIfActive())
+                    {
+                        Debug.Log("[RisePerMove] rise suppressed by Glade Stillness");
+                    }
+                    else
+                    {
+                        Debug.Log($"[RisePerMove] scheduling rise (stage {_currentStageIndex}, cadence {turnsPerRise})");
+                        _riseTimerSeconds = 0f;
+                        StartCoroutine(WaitAndExecuteRise());
+                    }
+                }
+            }
+
             // Phase 11b+: stage-move-budget fail is REMOVED for time-based
             // Survival. Rising rows are now the sole pressure source — death
             // comes from topout, not from running out of an invisible move
@@ -259,72 +350,152 @@ namespace WordDrop
         /// CurrentStageScore is derived from PlayerScore so we don't need the
         /// points argument — kept for backwards compat with existing callers.
         /// </summary>
+        /// <summary>
+        /// Freeze (true) or thaw (false) the rising-row + post-clear-boost + auto-drop
+        /// timers. Used by full-screen overlays like StageClearModal that should pause
+        /// Survival's time-driven systems while the player views the overlay. Does NOT
+        /// touch HandManager input — overlay owners gate input separately.
+        /// </summary>
+        public void SetOverlayPaused(bool paused)
+        {
+            _isOverlayPaused = paused;
+        }
+
         public void NotifyScoreDelta(int pointsAdded = 0)
         {
+            // Drought rebate: when player scores a word while at 0 edits, queue the
+            // next auto-drop to be an edit refill. Single-use flag — consumed by
+            // the next auto-drop. Rewards good play at rock-bottom without breaking
+            // the panic-button economy (only triggers at literal 0).
+            if (pointsAdded > 0 && !_pendingEditDroughtRebate)
+            {
+                var mc = MatchController.Instance;
+                if (mc != null && mc.GetRewritesRemaining(MatchController.PLAYER_HUMAN) <= 0)
+                {
+                    _pendingEditDroughtRebate = true;
+                }
+            }
+
             CheckStageClear();
         }
 
         /// <summary>
         /// Checks whether the current stage's chip target has been hit. If so,
-        /// fires OnStageCleared and advances to the next stage. Idempotent —
-        /// the _currentStageCleared guard ensures it only fires once per stage.
+        /// fires OnStageCleared and advances to the next stage. Loops while the
+        /// score still exceeds the next stage's target — a single big cascade
+        /// can carry the player past multiple stage thresholds in one drop, and
+        /// each crossing fires its own event so the modal queue can sequence
+        /// them. The MAX_STAGE_CLEARS_PER_CALL cap is a safety net against
+        /// runaway loops (e.g. a Score == int.MaxValue corruption).
+        /// Idempotent within a stage — the _currentStageCleared guard prevents
+        /// double-fire after AdvanceToNextStage resets it.
         /// </summary>
         public void CheckStageClear()
         {
-            if (_currentStageCleared) return;
-            if (CurrentStageScore < CurrentStageTarget) return;
-
-            // Capture everything we need BEFORE mutating state or calling handlers,
-            // so an event-handler exception can't leave us stuck in a half-advanced
-            // state (the earlier bug: _currentStageCleared=true but _currentStageIndex
-            // didn't increment → CheckStageClear early-returns forever, stage stuck).
-            int clearedStage    = _currentStageIndex;
-            int clearedTarget   = CurrentStageTarget;
-            int clearedScore    = CurrentStageScore;
-            int clearedMoves    = _currentStageMovesUsed;
-            int clearedBudget   = CurrentStageMoveBudget;
-            int clearedRises    = _risesInCurrentStage;
-            float occupancy     = RulesEngine.Instance != null ? RulesEngine.Instance.GetBoardOccupancy() : 0f;
-
-            // Advance stage state FIRST — before any external callbacks — so that
-            // even if the event handler blows up, state machine is consistent.
-            _currentStageCleared = true;
-            _stagesCleared++;
-            AdvanceToNextStage();
-
-            Debug.Log($"[Stage] CLEARED stage {clearedStage}: target {clearedTarget}, scored {clearedScore}, moves {clearedMoves}/{clearedBudget}, rises {clearedRises}");
-
-            // Safe to fire analytics now — state is already advanced
-            try
+            // Cap chosen generously — a realistic multi-stage cascade clears
+            // 1-3 thresholds at once; 32 handles pathological scores without
+            // bounding legitimate play. Loop is O(stages) and each iteration is
+            // cheap (one event invocation + state advance).
+            const int MAX_STAGE_CLEARS_PER_CALL = 32;
+            int safety = 0;
+            while (safety < MAX_STAGE_CLEARS_PER_CALL)
             {
-                AnalyticsManager.Log("stage_clear",
-                    "stage", clearedStage,
-                    "target", clearedTarget,
-                    "score", clearedScore,
-                    "moves_used", clearedMoves,
-                    "moves_budget", clearedBudget,
-                    "rises_fired", clearedRises,
-                    "occupancy", Mathf.RoundToInt(occupancy * 100f));
-            }
-            catch (System.Exception ex) { Debug.LogError($"[Stage] Analytics log threw: {ex.Message}"); }
+                if (_currentStageCleared) return;
+                if (CurrentStageScore < CurrentStageTarget) return;
+                safety++;
 
-            // Finally, fire the subscribed handler. Wrap in try/catch so a handler
-            // bug cannot prevent the stage-advance that already happened above.
-            try { OnStageCleared?.Invoke(clearedStage); }
-            catch (System.Exception ex) { Debug.LogError($"[Stage] OnStageCleared handler threw: {ex}"); }
+                // Capture everything we need BEFORE mutating state or calling handlers,
+                // so an event-handler exception can't leave us stuck in a half-advanced
+                // state (the earlier bug: _currentStageCleared=true but _currentStageIndex
+                // didn't increment → CheckStageClear early-returns forever, stage stuck).
+                int clearedStage    = _currentStageIndex;
+                int clearedTarget   = CurrentStageTarget;
+                int clearedScore    = CurrentStageScore;
+                int clearedMoves    = _currentStageMovesUsed;
+                int clearedBudget   = CurrentStageMoveBudget;
+                int clearedRises    = _risesInCurrentStage;
+                float occupancy     = RulesEngine.Instance != null ? RulesEngine.Instance.GetBoardOccupancy() : 0f;
+
+                int overshoot = Mathf.Max(0, clearedScore - clearedTarget);
+                int coinsEarned = Mathf.Clamp(COIN_BASE + (overshoot / COIN_SCALAR), COIN_FLOOR, COIN_CAP_PER_STAGE);
+                CoinWallet.Add(coinsEarned);
+
+                // Advance stage state FIRST — before any external callbacks — so that
+                // even if the event handler blows up, state machine is consistent.
+                _currentStageCleared = true;
+                _stagesCleared++;
+                AdvanceToNextStage();
+
+                // MVP P4: refill booster charge on stage clear ("1 charge per stage").
+                BoosterManager.Instance?.RefillForStage();
+
+                Debug.Log($"[Stage] CLEARED stage {clearedStage}: target {clearedTarget}, scored {clearedScore}, overshoot {overshoot}, coins +{coinsEarned}, moves {clearedMoves}/{clearedBudget}, rises {clearedRises}");
+
+                // Safe to fire analytics now — state is already advanced
+                try
+                {
+                    AnalyticsManager.Log("stage_clear",
+                        "stage", clearedStage,
+                        "target", clearedTarget,
+                        "score", clearedScore,
+                        "overshoot", overshoot,
+                        "coins_earned", coinsEarned,
+                        "moves_used", clearedMoves,
+                        "moves_budget", clearedBudget,
+                        "rises_fired", clearedRises,
+                        "occupancy", Mathf.RoundToInt(occupancy * 100f));
+                }
+                catch (System.Exception ex) { Debug.LogError($"[Stage] Analytics log threw: {ex.Message}"); }
+
+                // Finally, fire the subscribed handler. Wrap in try/catch so a handler
+                // bug cannot prevent the stage-advance that already happened above.
+                // Payload is the cleared-stage snapshot (data already captured before
+                // AdvanceToNextStage ran, so subscribers see stage N, not stage N+1).
+                var ctx = new StageClearContext
+                {
+                    ClearedStage = clearedStage,
+                    TargetScore  = clearedTarget,
+                    StageScore   = clearedScore,
+                    MovesUsed    = clearedMoves,
+                    MovesBudget  = clearedBudget,
+                    RisesFired   = clearedRises,
+                    Occupancy    = occupancy,
+                    CoinsEarned  = coinsEarned,
+                    Offers       = null,
+                };
+                try { OnStageCleared?.Invoke(ctx); }
+                catch (System.Exception ex) { Debug.LogError($"[Stage] OnStageCleared handler threw: {ex}"); }
+
+                // Loop: if the same NotifyScoreDelta call's score also crossed
+                // the next stage's target, fire that event too. The modal
+                // subscriber queues each, presenting them in sequence.
+            }
+
+            // Only warn if there's ACTUALLY a pending clear that got capped —
+            // not just because we ran the loop the max number of times.
+            if (safety >= MAX_STAGE_CLEARS_PER_CALL
+                && !_currentStageCleared
+                && CurrentStageScore >= CurrentStageTarget)
+            {
+                Debug.LogWarning($"[Stage] CheckStageClear hit safety cap ({MAX_STAGE_CLEARS_PER_CALL}) with more clears pending. Score={CurrentStageScore} Target={CurrentStageTarget} — investigate score corruption or runaway loop.");
+            }
         }
 
         /// <summary>Internal stage transition. Snapshots new stage-start score
         /// and resets the rising-row counter so each stage starts with a full
-        /// rise window — no carry-over pressure from the previous stage's
-        /// last move. Also checks board state: if a big chain cleared out the
+        /// rise window. Also checks board state: if a big chain cleared out the
         /// board, schedules extra rises to bring it up to STAGE_START_MIN_ROWS
-        /// so the player isn't punished for skilled clearing.</summary>
+        /// so the player isn't punished for skilled clearing.
+        ///
+        /// MVP P5: NO score carry-over. Overshoot is rewarded via the overshoot
+        /// coin formula (max 60 coins per clear). Bringing carry-over back would
+        /// let a single huge word chain-clear multiple stages, which feels broken.</summary>
         private void AdvanceToNextStage()
         {
-            // Advance by the cleared target (not PlayerScore) so overflow from
-            // the triggering drop carries into the new stage's progress.
-            int justClearedTarget = CurrentStageTarget;
+            // Advance by the player's CURRENT score so the next stage starts
+            // at score 0 relative to its target. Excess from the clinching word
+            // does NOT carry forward.
+            int justClearedTarget = (ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : _stageStartScore) - _stageStartScore;
             _currentStageIndex++;
             _stageStartScore       += justClearedTarget;
             _currentStageMovesUsed = 0;
@@ -623,17 +794,17 @@ namespace WordDrop
                 float baseSeconds;
                 switch (stage)
                 {
-                    case 1:  baseSeconds = 20f; break;
-                    case 2:  baseSeconds = 18f; break;
-                    case 3:  baseSeconds = 16f; break;
-                    case 4:  baseSeconds = 14f; break;
-                    case 5:  baseSeconds = 12f; break;
-                    case 6:  baseSeconds = 11f; break;
-                    case 7:  baseSeconds = 10f; break;
-                    case 8:  baseSeconds =  9f; break;
-                    case 9:  baseSeconds =  8f; break;
-                    case 10: baseSeconds =  7f; break;
-                    default: baseSeconds =  6f; break;   // S11+ frantic floor
+                    case 1:  baseSeconds = 24f; break;
+                    case 2:  baseSeconds = 22f; break;
+                    case 3:  baseSeconds = 19f; break;
+                    case 4:  baseSeconds = 17f; break;
+                    case 5:  baseSeconds = 14f; break;
+                    case 6:  baseSeconds = 13f; break;
+                    case 7:  baseSeconds = 12f; break;
+                    case 8:  baseSeconds = 11f; break;
+                    case 9:  baseSeconds = 10f; break;
+                    case 10: baseSeconds =  9f; break;
+                    default: baseSeconds =  7f; break;   // S11+ frantic floor
                 }
 
                 if (!NoAssistMode && RulesEngine.Instance != null)
@@ -643,8 +814,29 @@ namespace WordDrop
                     else if (occupancy >= 0.70f)  baseSeconds += 1f;
                 }
 
+                // MVP P5: BOSS stages crank up the rise cadence by 30%. Stages 5,
+                // 10, 15, 20... are boss stages — faster rises + visual treatment
+                // signals the elevated stakes alongside the booster-choice reward.
+                if (IsBossStage(stage))
+                    baseSeconds *= 0.70f;
+
                 return Mathf.Max(baseSeconds, SECONDS_PER_RISE_FLOOR);
             }
+        }
+
+        /// <summary>MVP P5: stage N is a boss stage if N > 0 AND N is a multiple of 5
+        /// (5, 10, 15, 20...). Stage 1 is NOT a boss (intro pick gets its own modal
+        /// without the boss difficulty boost).</summary>
+        public static bool IsBossStage(int stageIndex)
+        {
+            return stageIndex >= 5 && stageIndex % 5 == 0;
+        }
+
+        /// <summary>MVP P5: a choice modal fires after stages 1, 5, 10, 15, 20...
+        /// Stage 1 = intro pick. Stage 5+ = boss-pick combo.</summary>
+        public static bool IsChoiceStage(int stageIndex)
+        {
+            return stageIndex == 1 || IsBossStage(stageIndex);
         }
 
         /// <summary>Seconds remaining until the next rising row fires. HUD reads this.</summary>
@@ -757,7 +949,9 @@ namespace WordDrop
             // counting while the player is away. Unity clamps Time.deltaTime
             // via Time.maximumDeltaTime on resume, but an explicit freeze is
             // safer + more predictable.
-            if (_appPaused) return;
+            // Overlay pause (stage-clear modal, etc.) uses the same gate — any
+            // full-screen UI that should freeze gameplay timers sets this.
+            if (_appPaused || _isOverlayPaused) return;
 
             _elapsedTime += Time.deltaTime;
 
@@ -768,7 +962,10 @@ namespace WordDrop
             // round feels rushed when it's supposed to be a flow-state breather.
             // _elapsedTime keeps counting (session timer + auto-drop grace).
             bool inBonusMode = BonusMode.Instance != null && BonusMode.Instance.IsActive;
-            if (!inBonusMode)
+            // Debug toggle: per-move rises suppresses the time-based clock entirely.
+            // (Glade Stillness rise-skips are consumed in the rise-firing path,
+            // not by stalling the clock — same code works for both rise modes.)
+            if (!inBonusMode && !RisePerMoveDebug)
                 _riseTimerSeconds += Time.deltaTime;
 
             // Post-clear boost time falloff
@@ -826,21 +1023,27 @@ namespace WordDrop
                 {
                     _riseTimerSeconds = 0f;
                     _movesSinceLastRise = 0;   // keep compat field consistent
-                    NotifyRiseFired();
-                    StartCoroutine(ExecuteRisingRow());
+                    // Glade Stillness: consume a rise-skip charge if active; suppress this rise.
+                    if (ConsumeGladeRiseIfActive()) { /* rise suppressed */ }
+                    else
+                    {
+                        NotifyRiseFired();
+                        StartCoroutine(ExecuteRisingRow());
+                    }
                 }
                 // else: timer stays past threshold, retries next frame
             }
 
             // Stage-up detection — fires on AdvanceToNextStage via the chip-target
-            // system, not via move-count thresholds. When _currentStageIndex
-            // advances, show the stage-up effect.
+            // system. _lastStage is tracked here so any future per-frame logic
+            // can react to the transition (currently no-op — StageClearModal owns
+            // celebration via OnStageCleared subscription). The old "STAGE N"
+            // popup + PlayStageUp audio were removed when the modal landed —
+            // they showed the next stage's number while the modal still showed
+            // the cleared stage, causing UX confusion.
             if (_currentStageIndex > _lastStage)
             {
                 _lastStage = _currentStageIndex;
-                if (BonusPopup.Instance != null)
-                    BonusPopup.Instance.Show($"STAGE {_currentStageIndex}", new Color(1f, 0.84f, 0.42f, 1f), Vector3.up * 2f, 1.5f);
-                GameAudio.Instance?.PlayStageUp();
             }
 
             // Update HUD
@@ -855,6 +1058,7 @@ namespace WordDrop
             _elapsedTime            = 0f;
             _autoDropTimer          = 0f;
             _movesSinceLastRise     = 0;
+            _turnsSinceLastTurnRise = 0;    // onboarding ramp — fresh turn counter per run
             _riseTimerSeconds       = 0f;   // Phase 11b — fresh rise clock per run
             _appPaused              = false;
             _movesPlayed            = 0;
@@ -864,6 +1068,8 @@ namespace WordDrop
             _isGameOver             = false;
             _isAutoDropping         = false;
             _isRisingRow            = false;
+            _pendingEditDroughtRebate = false;
+            _isOverlayPaused        = false;
             _lastStage              = 1;
             _postClearBoostDrops    = 0;
             _postClearBoostTime     = 0f;
@@ -881,6 +1087,25 @@ namespace WordDrop
             _biggestWordScore       = 0;
             _stageStartRisesPending = 0;
 
+            // MVP P3 Path B: continue ladder resets on each new run.
+            _continuesInRun         = 0;
+            _continueOffered        = false;
+
+            // MVP P5: Glade Stillness rise-skip counter resets each run.
+            _glaedStillnessRisesRemaining = 0;
+
+            // MVP P3.5: seed gameplay RNG for Daily Seeded Survival; passthrough otherwise.
+            if (DailyDropManager.IsDailyMode)
+                SurvivalRng.SetSeed(DailyDropManager.GetDailySeed());
+            else
+                SurvivalRng.Reset();
+
+            // MVP P4: reset booster state. ActiveBooster gets granted by choice
+            // modal pick (P5); for now P4 dev-test path auto-grants via debug menu.
+            BoosterManager.Instance?.StartRun();
+            // MVP P5: reset switch-rescue counter for the new run.
+            BoosterChoiceModal.Instance?.ResetForNewRun();
+
             ChainMeter.Instance?.ResetForNewRun();
             BonusMode.Instance?.ResetForNewRun();
 
@@ -897,13 +1122,21 @@ namespace WordDrop
             BonusMode.Instance?.ResetForNewRun();
             ChainMeter.Instance?.ResetForNewRun();
 
-            // Phase 11+ — fade the BGM out when the run ends.
-            GameAudio.Instance?.StopMusic();
+            // Music intentionally NOT stopped on top-out (per Spencer 2026-05-21).
+            // Gameplay BGM keeps playing through the TopOutPanel + GameOverUI
+            // until the player taps Play Again, which restarts the run via
+            // StartSurvival (PlaySurvivalMusic is idempotent on the same pool).
 
             // Clear stage-event delegates so a recreated MatchController doesn't
             // inherit stale subscriptions from a destroyed one.
             OnStageCleared = null;
             OnStageFailed  = null;
+
+            // MVP P3.5: return RNG to passthrough so non-daily runs aren't bound by leftover seed.
+            SurvivalRng.Reset();
+
+            // MVP P4: wipe booster state at run end.
+            BoosterManager.Instance?.EndRun();
 //             Debug.Log($"[SurvivalManager] Survival ended — elapsed={_elapsedTime:F1}s drops={_totalAutoDrops}");
         }
 
@@ -962,6 +1195,8 @@ namespace WordDrop
                 Instance._isAutoDropping        = false;
                 Instance._lastStage             = 1;
                 Instance._isRisingRow           = false;
+                Instance._pendingEditDroughtRebate = false;
+                Instance._isOverlayPaused       = false;
 
                 // Reset stage chip-target state
                 Instance._currentStageIndex     = 1;
@@ -1042,7 +1277,14 @@ namespace WordDrop
             bool isEditRefill = false;
             bool isWildRefill = false;
 
-            if (!needsHelp)
+            // Drought rebate: if player scored a word while at 0 edits, force this
+            // auto-drop to be an edit refill (skip-chance bypassed). Single-use.
+            if (_pendingEditDroughtRebate)
+            {
+                _pendingEditDroughtRebate = false;
+                isEditRefill = true;
+            }
+            else if (!needsHelp)
             {
                 // Player is fine — skip most drops, only 20% chance of gold/wild
                 if (Random.value > 0.20f)
@@ -1205,24 +1447,52 @@ namespace WordDrop
         // RISING ROW
         // ══════════════════════════════════════════════════════════════════════════
 
+        /// <summary>Per-move debug rise: waits for the drop resolution chain
+        /// (word scoring, detonations, gravity) to clear before firing the rise.
+        /// Prevents the IsProcessing guard from cancelling our intended rise.</summary>
+        private IEnumerator WaitAndExecuteRise()
+        {
+            // Cap wait — if resolution somehow hangs, don't block forever.
+            const float MAX_WAIT_SECONDS = 8f;
+            float waited = 0f;
+            while (MatchController.Instance != null
+                   && MatchController.Instance.IsProcessing
+                   && waited < MAX_WAIT_SECONDS)
+            {
+                waited += Time.unscaledDeltaTime;
+                yield return null;
+            }
+            // Re-check guards (player might've topped out or modal opened during the wait).
+            if (_isRisingRow || _isAutoDropping || _isOverlayPaused || _isGameOver) yield break;
+            Debug.Log($"[RisePerMove] firing rise after {waited:F2}s wait");
+            yield return StartCoroutine(ExecuteRisingRow());
+        }
+
         private IEnumerator ExecuteRisingRow()
         {
             _isRisingRow = true;
+            bool isProcessing = MatchController.Instance != null && MatchController.Instance.IsProcessing;
+            bool isRewriting  = HandManager.Instance != null && HandManager.Instance.IsRewriteModeActive;
+            bool rmExists     = RisingRowManager.Instance != null;
+            Debug.Log($"[RisePerMove/Execute] isProcessing={isProcessing} isRewriting={isRewriting} rmExists={rmExists}");
 
             // If player is mid-drop or in rewrite mode, defer (rewrite auto-cancels after 5s)
-            if (MatchController.Instance != null && MatchController.Instance.IsProcessing)
+            if (isProcessing)
             {
+                Debug.Log("[RisePerMove/Execute] blocked: IsProcessing=true");
                 _isRisingRow = false;
                 yield break;
             }
-            if (HandManager.Instance != null && HandManager.Instance.IsRewriteModeActive)
+            if (isRewriting)
             {
+                Debug.Log("[RisePerMove/Execute] blocked: IsRewriteModeActive=true");
                 _isRisingRow = false;
                 yield break;
             }
 
-            if (RisingRowManager.Instance == null)
+            if (!rmExists)
             {
+                Debug.Log("[RisePerMove/Execute] blocked: RisingRowManager null");
                 _isRisingRow = false;
                 yield break;
             }
@@ -1277,30 +1547,246 @@ namespace WordDrop
         private void TriggerTopOut()
         {
             if (_isGameOver) return;
+            if (_continueOffered) return;  // Already mid-continue flow — don't re-fire
 
-            // Capture stage state for debrief — top-out is a secondary death
-            // condition, but the game-over screen still needs to know what
-            // stage/progress the player was at.
+            // Capture stage state for debrief.
             _lastStageReached   = _currentStageIndex;
             _lastStageTarget    = CurrentStageTarget;
             _lastStageShortfall = _currentStageCleared ? 0 : Mathf.Max(0, CurrentStageTarget - CurrentStageScore);
 
-            EmitRunEndAnalytics("topout");
+            _continueOffered = true;
 
-//             Debug.Log($"[SurvivalManager] TOP OUT! Stage={_currentStageIndex} Score={CurrentStageScore}/{CurrentStageTarget}");
-            StopSurvival();
-
-            // Tell MatchController the match is over
-            if (MatchController.Instance != null)
-                MatchController.Instance.ForceGameOver();
-
-            // Disable player input
+            // Disable player input immediately so the announcement panel
+            // can't be tapped through to anything underneath.
             if (HandManager.Instance != null)
                 HandManager.Instance.IsInteractable = false;
 
-            // Transition to game over
-            if (GameManager.Instance != null)
+            // Freeze rising rows / auto-drops during the announcement + continue offer.
+            SetOverlayPaused(true);
+
+            // Announce → Continue offer (if continues remain this run).
+            // Codex rule: max 2 save events per run. After 2nd save → forced game over.
+            void ShowContinueOrFinalize()
+            {
+                if (!CanOfferContinue)
+                {
+                    Debug.Log($"[Continue] Run continue cap reached ({_continuesInRun}/{MAX_CONTINUES_PER_RUN}) — forcing game over.");
+                    FinalizeGameOver();
+                    return;
+                }
+                if (ContinueModal.Instance != null)
+                {
+                    ContinueModal.Instance.Show(this);
+                }
+                else
+                {
+                    Debug.LogWarning("[SurvivalManager] ContinueModal missing — falling through to game over.");
+                    FinalizeGameOver();
+                }
+            }
+
+            if (TopOutPanel.Instance != null)
+            {
+                TopOutPanel.Instance.SetText("TOP OUT!");
+                TopOutPanel.Instance.Show(ShowContinueOrFinalize);
+            }
+            else
+            {
+                ShowContinueOrFinalize();
+            }
+        }
+
+        // MVP P3: continue flow
+        private bool _continueOffered;
+
+        // MVP P5: Glade Stillness booster — counter for "skip the next N rises."
+        // Works identically in turn-based mode (skip N turns of rises) and
+        // time-based mode (skip the next N scheduled clock rises). The counter
+        // is decremented on each suppressed rise attempt.
+        private int _glaedStillnessRisesRemaining;
+        public int GladeStillnessRisesRemaining => _glaedStillnessRisesRemaining;
+
+        /// <summary>Grant N rise-skips. Stacks via Max so re-firing Glade doesn't
+        /// reduce a longer existing pause. Caller passes the turn count (e.g., 2 for L1).</summary>
+        public void GrantGladeStillnessRises(int rises)
+        {
+            _glaedStillnessRisesRemaining = Mathf.Max(_glaedStillnessRisesRemaining, rises);
+        }
+
+        /// <summary>True if Glade is currently suppressing rises. Consumes one
+        /// charge as a side effect — call this exactly at the moment a rise
+        /// would otherwise fire.</summary>
+        public bool ConsumeGladeRiseIfActive()
+        {
+            if (_glaedStillnessRisesRemaining <= 0) return false;
+            _glaedStillnessRisesRemaining--;
+            Debug.Log($"[GladeStillness] Rise skipped. Remaining: {_glaedStillnessRisesRemaining}");
+            return true;
+        }
+
+        // MVP P3 Path B: continue ladder + cap. Codex rule — max 2 save events
+        // (ad or paid combined) per run, paid cost escalates 50→100, ad always free.
+        private int _continuesInRun;
+        public const int MAX_CONTINUES_PER_RUN = 2;
+        public const int CONTINUE_BASE_COST = 50;
+
+        /// <summary>Coin cost for the NEXT continue in this run. 50 → 100 then capped.
+        /// Reset on StartSurvival.</summary>
+        public int CurrentContinueCost
+        {
+            get
+            {
+                // 50 * 2^n for n=0,1 → 50, 100. Cap at 100 since we hard-cap continues at 2.
+                int scale = 1 << Mathf.Min(_continuesInRun, 1);
+                return CONTINUE_BASE_COST * scale;
+            }
+        }
+
+        /// <summary>True if the player has any continues remaining this run.</summary>
+        public bool CanOfferContinue => _continuesInRun < MAX_CONTINUES_PER_RUN;
+
+        public int ContinuesUsedThisRun => _continuesInRun;
+
+        /// <summary>Apply the "Continue" rescue: clears top 3 rows of tiles and
+        /// refills edits/swaps. Caller (ContinueModal) has already spent coins.
+        /// Resets the top-out latch so play resumes.</summary>
+        public MatchController.StageClearRefillSummary ApplyContinueRescue()
+        {
+            // 1) Clear top 3 rows of tiles (highest row indices in the board).
+            var toRemove = new System.Collections.Generic.List<Vector2Int>();
+            if (RulesEngine.Instance != null)
+            {
+                int rows = RulesEngine.ROWS;
+                int firstRowToClear = Mathf.Max(0, rows - 3);
+                for (int row = firstRowToClear; row < rows; row++)
+                {
+                    for (int col = 0; col < RulesEngine.COLS; col++)
+                    {
+                        if (RulesEngine.Instance.GetCell(col, row) != null)
+                            toRemove.Add(new Vector2Int(col, row));
+                    }
+                }
+                // Clear board-side state first so GridManager.RemoveTiles' grid
+                // view and RulesEngine's data view stay in sync.
+                for (int i = 0; i < toRemove.Count; i++)
+                    RulesEngine.Instance.ClearCell(toRemove[i].x, toRemove[i].y);
+            }
+            if (GridManager.Instance != null && toRemove.Count > 0)
+                GridManager.Instance.RemoveTiles(toRemove);
+
+            // 2) Refill edits + swaps using the existing stage-clear helper.
+            MatchController.StageClearRefillSummary summary = default;
+            if (MatchController.Instance != null)
+                summary = MatchController.Instance.RefillStageClearResources(MatchController.PLAYER_HUMAN);
+
+            // Increment continue counter — ad and coin paths both call this.
+            // Caller (ContinueModal) has already paid (coins or ad) before calling.
+            _continuesInRun++;
+
+            Debug.Log($"[Continue] Rescue applied: cleared {toRemove.Count} tiles, edits→{summary.RewritesAfter}, swaps→{summary.SwapsAfter}, continues_used={_continuesInRun}/{MAX_CONTINUES_PER_RUN}");
+            try
+            {
+                AnalyticsManager.Log("continue_accepted",
+                    "stage", _currentStageIndex,
+                    "tiles_cleared", toRemove.Count,
+                    "edits_after", summary.RewritesAfter,
+                    "swaps_after", summary.SwapsAfter,
+                    "continue_number", _continuesInRun);
+            }
+            catch (System.Exception ex) { Debug.LogError($"[Continue] Analytics log threw: {ex.Message}"); }
+
+            return summary;
+        }
+
+        /// <summary>Reset state so play resumes after a successful continue.
+        /// Pairs with ApplyContinueRescue — call after rescue is done.</summary>
+        public void ResumeFromContinue()
+        {
+            _continueOffered = false;
+            SetOverlayPaused(false);
+            if (HandManager.Instance != null)
+                HandManager.Instance.IsInteractable = true;
+        }
+
+        /// <summary>Player declined the continue offer. End run, route to game-over.
+        /// MVP: no heart cost (hearts dropped from Survival 2026-05-22 after
+        /// Claude+Codex review — coin-bypass made the heart system decorative).</summary>
+        public void DeclineContinue()
+        {
+            try
+            {
+                AnalyticsManager.Log("continue_declined",
+                    "stage", _currentStageIndex,
+                    "coin_balance", CoinWallet.Balance);
+            }
+            catch (System.Exception ex) { Debug.LogError($"[Continue] Analytics log threw: {ex.Message}"); }
+
+            FinalizeGameOver();
+        }
+
+        private void FinalizeGameOver()
+        {
+            // MVP P3 Path B: personal best tracking. Score best lives in
+            // HighScoreManager (already wired); stage best + total runs live in
+            // our own PlayerPrefs. Award +50 coins if EITHER bested (once per run).
+            int finalScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
+            int finalStage = _lastStageReached;
+
+            int priorBestStage = PlayerPrefs.GetInt(PB_BEST_STAGE_KEY, 0);
+            int priorTotalRuns = PlayerPrefs.GetInt(PB_TOTAL_RUNS_KEY, 0);
+
+            // HighScoreManager handles score-best persistence + returns true on improvement.
+            int priorBestScore = HighScoreManager.GetBest("survival");
+            bool newBestScore = HighScoreManager.Submit(finalScore, "survival");
+            bool newBestStage = finalStage > priorBestStage;
+            bool anyNewBest = newBestStage || newBestScore;
+
+            if (newBestStage) PlayerPrefs.SetInt(PB_BEST_STAGE_KEY, finalStage);
+            PlayerPrefs.SetInt(PB_TOTAL_RUNS_KEY, priorTotalRuns + 1);
+            PlayerPrefs.Save();
+
+            Debug.Log($"[PB] Compare → stage {finalStage} vs prior best {priorBestStage} → newStage={newBestStage} | score {finalScore} vs prior best {priorBestScore} → newScore={newBestScore} | run #{priorTotalRuns + 1}");
+
+            if (anyNewBest)
+            {
+                CoinWallet.Add(PB_BONUS_COINS);
+                Debug.Log($"[PB] NEW PERSONAL BEST — stage:{newBestStage} score:{newBestScore} (+{PB_BONUS_COINS} coins)");
+                try
+                {
+                    AnalyticsManager.Log("personal_best",
+                        "new_best_stage", newBestStage ? 1 : 0,
+                        "new_best_score", newBestScore ? 1 : 0,
+                        "final_stage", finalStage,
+                        "final_score", finalScore,
+                        "total_runs", priorTotalRuns + 1);
+                }
+                catch (System.Exception ex) { Debug.LogError($"[PB] Analytics threw: {ex.Message}"); }
+            }
+
+            _wasNewBestStage = newBestStage;
+            _wasNewBestScore = newBestScore;
+
+            EmitRunEndAnalytics("topout");
+            StopSurvival();
+            SetOverlayPaused(false);
+            _continueOffered = false;
+
+            if (MatchController.Instance != null)
+                MatchController.Instance.ForceGameOver();
+            else if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.GameOver);
         }
+
+        // MVP P3 Path B: personal best tracking constants + display flags.
+        // Score best is delegated to HighScoreManager.Submit("survival").
+        // Stage best + total runs tracked here in our own PlayerPrefs.
+        public const string PB_BEST_STAGE_KEY = "wd_best_stage";
+        public const string PB_TOTAL_RUNS_KEY = "wd_total_runs";
+        public const int    PB_BONUS_COINS    = 50;
+        private bool _wasNewBestStage;
+        private bool _wasNewBestScore;
+        /// <summary>Set during FinalizeGameOver; GameOverUI reads these to celebrate.</summary>
+        public bool WasNewBestStage => _wasNewBestStage;
+        public bool WasNewBestScore => _wasNewBestScore;
     }
 }

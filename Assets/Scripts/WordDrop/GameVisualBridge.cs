@@ -519,7 +519,36 @@ namespace WordDrop
                                         catch { /* ignore */ }
 
                                         if (tile != null)
+                                        {
+                                            // Wild-letter sync: if this tile is a wild whose letter
+                                            // was just committed by ResolveUncommittedWilds, push the
+                                            // resolved letter to the visual tile NOW so the green
+                                            // flash shows the actual letter (e.g. 'T' for an 'E'-row
+                                            // wild that took on 'T' to form 'STAR'). Without this,
+                                            // SyncToRulesState wouldn't propagate the letter until
+                                            // later in the resolution flow and the flash would
+                                            // display an empty wild tile.
+                                            var rulesCellDbg = RulesEngine.Instance != null
+                                                ? RulesEngine.Instance.GetCell(sw.Cells[c].x, sw.Cells[c].y)
+                                                : null;
+                                            // TEMP DEBUG: trace wild letter bug
+                                            Debug.Log($"[WildDebug] Scored tile at ({sw.Cells[c].x},{sw.Cells[c].y}) word='{sw.Word}' tile.IsWild={tile.IsWild} tile.Letter='{tile.Letter}' rulesCell.IsWild={(rulesCellDbg != null ? rulesCellDbg.IsWild.ToString() : "null")} rulesCell.Letter='{(rulesCellDbg != null ? rulesCellDbg.Letter.ToString() : "null")}'");
+                                            if (tile.IsWild)
+                                            {
+                                                if (rulesCellDbg != null
+                                                    && rulesCellDbg.Letter != '\0'
+                                                    && tile.Letter != rulesCellDbg.Letter)
+                                                {
+                                                    Debug.Log($"[WildDebug] Syncing wild letter: tile.Letter='{tile.Letter}' → rulesCell.Letter='{rulesCellDbg.Letter}'");
+                                                    tile.SetLetter(rulesCellDbg.Letter);
+                                                }
+                                                else
+                                                {
+                                                    Debug.Log($"[WildDebug] Sync condition NOT met. rulesCell={(rulesCellDbg == null ? "NULL" : "exists")} rulesCell.Letter='{(rulesCellDbg != null ? rulesCellDbg.Letter.ToString() : "n/a")}' tile.Letter='{tile.Letter}'");
+                                                }
+                                            }
                                             scoredTilesForFX.Add(tile);
+                                        }
                                         else
                                             Debug.LogWarning($"[GameVisualBridge]   No tile found at ({sw.Cells[c].x},{sw.Cells[c].y}) for word '{sw.Word}'");
                                     }
@@ -685,8 +714,9 @@ namespace WordDrop
                             // Haptic feedback — medium pulse on primed tile trigger
                             HapticsManager.Medium();
 
-                            // Fuse trace for chain triggers (visual connection lines)
-                            if (hasChainTriggers && WordDropFX.Instance != null)
+                            // Fuse trace for chain triggers (visual connection lines).
+                            // Gated by FX_FuseTrace (default off per Spencer 2026-05-19).
+                            if (WordDropFX.FX_FuseTrace && hasChainTriggers && WordDropFX.Instance != null)
                             {
                                 WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
                                 yield return WaitCache.Get(0.12f);

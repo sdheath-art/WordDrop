@@ -35,7 +35,7 @@ namespace WordDrop
             List<char> helpers = CollectHelperLetters();
             if (helpers.Count == 0) return '\0';
 
-            char picked = helpers[Random.Range(0, helpers.Count)];
+            char picked = helpers[SurvivalRng.Range(0, helpers.Count)];
             return picked;
         }
 

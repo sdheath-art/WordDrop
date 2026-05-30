@@ -13,8 +13,8 @@ namespace WordDrop
     ///
     /// Flow:
     ///   1. MenuUI.OnDailyClicked detects CanSaveStreak == true → shows this modal.
-    ///   2. WATCH AD → 3s stub → DailyDropManager.RestoreStreakWithAd() → MenuUI.BeginDailyLevel().
-    ///   3. SKIP → closes modal → MenuUI.BeginDailyLevel() runs anyway (streak resets
+    ///   2. WATCH AD → 3s stub → DailyDropManager.RestoreStreakWithAd() → MenuUI.BeginDailySurvival().
+    ///   3. SKIP → closes modal → MenuUI.BeginDailySurvival() runs anyway (streak resets
     ///      normally on MarkPlayedToday).
     ///
     /// Canvas sortingOrder = 150.
@@ -197,7 +197,7 @@ namespace WordDrop
             SetVisible(false, onHidden: () =>
             {
                 if (MenuUI.Instance != null)
-                    MenuUI.Instance.BeginDailyLevel();
+                    MenuUI.Instance.BeginDailySurvival();
             });
         }
 
@@ -208,7 +208,7 @@ namespace WordDrop
             SetVisible(false, onHidden: () =>
             {
                 if (MenuUI.Instance != null)
-                    MenuUI.Instance.BeginDailyLevel();
+                    MenuUI.Instance.BeginDailySurvival();
             });
         }
 

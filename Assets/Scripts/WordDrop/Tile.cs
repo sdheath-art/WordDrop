@@ -50,6 +50,18 @@ namespace WordDrop
         private const float BOUNCE_OVERSHOOT  = 0.12f;  // visible overshoot
         private const float BOUNCE_SETTLE_DUR = 0.06f;  // quick snap back
 
+        // Tile visual size as a fraction of cell pitch. Numerator (150) =
+        // tile size in PSD pixels. Denominator MUST match GridManager's
+        // PSD_CELL_PITCH so tile visual size stays a constant 150 PSD
+        // regardless of what pitch is set to.
+        //
+        // 2026-05-30: pitch bumped 165 → 168 for a hair more inter-tile gap
+        // without shrinking tiles. Denominator updated in lockstep. If you
+        // change PSD_CELL_PITCH in GridManager, update the denominator here
+        // too. (Long-term: refactor so tile size is decoupled from pitch
+        // entirely — for now, two-place coupled change.)
+        private const float TILE_DISPLAY_RATIO = 150f / 168f;
+
         // ---------------------------------------------------------------------------
         // Runtime state
         // ---------------------------------------------------------------------------
@@ -181,7 +193,11 @@ namespace WordDrop
             _currentBorderColor = TILE_BORDER_NORMAL;
             ApplyBorderColor(TILE_BORDER_NORMAL);
 
-            float displaySize = cellSize * 0.92f;
+            // 2026-05-28 (Path A, Phase 2): cell pitch = 165 PSD, visible
+            // tile = 150 PSD (= 0.909 of pitch), gap = 15 PSD between tiles.
+            // Margin inside the 1030 board = 20 PSD per side. Matches board
+            // tile to hand card size; spreads cells across full board width.
+            float displaySize = cellSize * TILE_DISPLAY_RATIO;
             float nativeSize = _spriteRenderer != null && _spriteRenderer.sprite != null
                 ? _spriteRenderer.sprite.bounds.size.x : 1f;
             float scale = displaySize / nativeSize;
@@ -276,7 +292,11 @@ namespace WordDrop
             // Skip lit material for now — debug: does the tile render without it?
             // LightingSetup.Instance?.ApplyLitMaterial(_spriteRenderer);
 
-            float displaySize = cellSize * 0.92f;
+            // 2026-05-28 (Path A, Phase 2): cell pitch = 165 PSD, visible
+            // tile = 150 PSD (= 0.909 of pitch), gap = 15 PSD between tiles.
+            // Margin inside the 1030 board = 20 PSD per side. Matches board
+            // tile to hand card size; spreads cells across full board width.
+            float displaySize = cellSize * TILE_DISPLAY_RATIO;
             // Use actual sprite bounds for sizing (works with both procedural and hand-drawn sprites)
             float nativeSize = _spriteRenderer.sprite != null
                 ? _spriteRenderer.sprite.bounds.size.x
@@ -289,11 +309,8 @@ namespace WordDrop
             // ── Main letter — TextMeshPro with subtle grounding shadow ──
             GameObject letterGO = new GameObject("TileLetter");
             letterGO.transform.SetParent(transform, false);
-            // Small downward offset (-0.025) to compensate for TMP's font-metric
-            // centering — without this, the visual weight of the letter sits in
-            // the upper half of the tile. This pushes the visual center to match
-            // the geometric center.
-            letterGO.transform.localPosition = new Vector3(0f, -nativeSize * 0.025f, -0.1f);
+            // Centered on tile face (true center, no offset).
+            letterGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
             _letterTMP = letterGO.AddComponent<TextMeshPro>();
             // Load Fredoka Bold TMP font
@@ -370,11 +387,11 @@ namespace WordDrop
             {
                 if (_isWild)
                 {
-                    // Uncommitted wild ('\0' or the WILD_CHAR sentinel) renders the
-                    // glyph; committed wild shows the resolved letter so the player
-                    // can read what it matched.
+                    // Board wild uses wild2@2x sprite (blank). Uncommitted = no text;
+                    // committed = chosen letter on top of blank wild sprite. No "?"
+                    // glyph anymore (was on legacy white tile, now redundant).
                     bool uncommitted = (letter == '\0' || letter == TileBag.WILD_CHAR);
-                    _letterTMP.text = uncommitted ? WILD_GLYPH : letter.ToString().ToUpper();
+                    _letterTMP.text = uncommitted ? "" : letter.ToString().ToUpper();
                     _letterTMP.color = WILD_LETTER_COLOR;
                 }
                 else
@@ -426,6 +443,25 @@ namespace WordDrop
             if (_isWild == active) return;
             _isWild = active;
             UpdateLetterDisplay(Letter);
+            // Swap sprite to wild2@2x (blank iridescent) on board when wild,
+            // or back to normal (or other state-appropriate sprite) when not.
+            if (_spriteRenderer != null)
+            {
+                if (active)
+                {
+                    _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
+                }
+                else
+                {
+                    // Restore to state-appropriate sprite (priority: primed > gold > normal)
+                    if (_hasPrimedGlow)
+                        _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                    else if (_isGoldBonus)
+                        _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                    else
+                        _spriteRenderer.sprite = s_spriteNormal;
+                }
+            }
             // Board-tile halo removed (per playtest) — hand card keeps the halo so
             // the wild reads as special before it's dropped, but once the wild is
             // on the board the purple "?" / resolved-letter color is enough. Hide
@@ -1039,7 +1075,7 @@ namespace WordDrop
             // Cache base scale
             float spriteNativeSize = (_spriteRenderer != null && _spriteRenderer.sprite != null)
                 ? _spriteRenderer.sprite.bounds.size.x : Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512) / 100f;
-            float baseScale = (_cellSize * 0.92f) / spriteNativeSize;
+            float baseScale = (_cellSize * TILE_DISPLAY_RATIO) / spriteNativeSize;
 
             // Set the heat-appropriate border sprite immediately
             ApplyHeatSprite();
@@ -1070,7 +1106,8 @@ namespace WordDrop
                     : Mathf.Clamp(_heatLevel, 0, 4);
 
                 // Heat 0: calm (1.2s), 1: brisk (0.8s), 2: fast (0.5s), 3: urgent (0.3s), 4: critical (0.18s)
-                float[] periods = { 1.2f, 0.8f, 0.5f, 0.3f, 0.18f };
+                // Slowed ~20% per Spencer (was 1.2/0.8/0.5/0.3/0.18). Same urgency curve, just less frenetic.
+                float[] periods = { 1.4f, 1.0f, 0.6f, 0.38f, 0.22f };
                 float period = periods[Mathf.Clamp(effectiveHeat, 0, 4)];
                 float cycle = Mathf.Repeat(baseTime, period) / period;
 
@@ -1360,7 +1397,7 @@ namespace WordDrop
             // Reset scale to correct base
             float sprNative = (_spriteRenderer != null && _spriteRenderer.sprite != null)
                 ? _spriteRenderer.sprite.bounds.size.x : Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512) / 100f;
-            float correctScale = (_cellSize * 0.92f) / sprNative;
+            float correctScale = (_cellSize * TILE_DISPLAY_RATIO) / sprNative;
             transform.localScale = new Vector3(correctScale, correctScale, 1f);
 
             _heatLevel = 0;
@@ -1396,13 +1433,17 @@ namespace WordDrop
             if (!_hasPreviewHighlight) return;
             _hasPreviewHighlight = false;
 
-            // Swap back to appropriate sprite (priority: primed > gold > normal)
+            // Swap back to appropriate sprite (canonical priority: scored > primed > gold > wild > normal)
             if (_spriteRenderer != null)
             {
-                if (_hasPrimedGlow)
+                if (_isShowingScoredSprite)
+                    _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
+                else if (_hasPrimedGlow)
                     _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
                 else if (_isGoldBonus)
                     _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                else if (_isWild)
+                    _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
                 else
                     _spriteRenderer.sprite = s_spriteNormal;
                 _spriteRenderer.color = Color.white;
@@ -1620,7 +1661,6 @@ namespace WordDrop
         public void SetRewriteTargetSprite(bool active)
         {
             if (_spriteRenderer == null) return;
-            Debug.Log($"[CyanDebug] SetRewriteTargetSprite({active}) — s_spriteCyan null? {s_spriteCyan == null}");
             if (active)
             {
                 _spriteRenderer.sprite = s_spriteCyan ?? s_spriteNormal;
@@ -1713,6 +1753,8 @@ namespace WordDrop
         private static Sprite s_spriteCyan;
         // Golden tile sprite — shown when this tile is a 2x gold bonus tile
         private static Sprite s_spriteGolden;
+        // Wild tile sprite — shown when this tile is a wild on the board (wild2@2x, blank)
+        private static Sprite s_spriteWild;
 
         private void BuildSpriteCache()
         {
@@ -1722,13 +1764,14 @@ namespace WordDrop
             int border  = Mathf.Max(3, texSize / 12);
 
             // Try loading hand-drawn sprites from Resources/Tiles
-            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/white_tile2@2x");
+            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/white5@2x");
             Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/pink_tile@2x");
             Sprite loadedAI     = Resources.Load<Sprite>("Tiles/ai_tile");
 
             Sprite loadedScored = Resources.Load<Sprite>("Tiles/green_tile2@2x");
             Sprite loadedCyan   = Resources.Load<Sprite>("Tiles/cyan_tile@2x");
             Sprite loadedGolden = Resources.Load<Sprite>("Tiles/golden_tile2@2x");
+            Sprite loadedWild   = Resources.Load<Sprite>("Tiles/wild2@2x");
             Debug.Log($"[CyanDebug] cyan_tile@2x loaded? {loadedCyan != null} (name: {(loadedCyan != null ? loadedCyan.name : "NULL")})");
 
             if (loadedNormal != null)
@@ -1740,6 +1783,7 @@ namespace WordDrop
                 s_spriteScored    = loadedScored ?? loadedNormal;
                 s_spriteCyan      = loadedCyan ?? loadedNormal;
                 s_spriteGolden    = loadedGolden ?? loadedNormal;
+                s_spriteWild      = loadedWild ?? loadedNormal;
 
                 // Primed states all use the primed sprite (code handles flash/pulse)
                 s_spriteGold      = loadedPrimed ?? loadedNormal;
@@ -1765,6 +1809,7 @@ namespace WordDrop
                 s_spriteAI        = s_spriteNormal;
                 s_spriteCyan      = s_spriteNormal;
                 s_spriteGolden    = s_spriteNormal;
+                s_spriteWild      = s_spriteNormal;
 //                 Debug.Log("[Tile] Fallback: procedural sprite cache built.");
             }
 
@@ -1976,10 +2021,8 @@ namespace WordDrop
         /// </summary>
         public void PlayGravitySquish()
         {
-            // Dust on gravity landings only — feels impactful, not routine
-            float halfCell = GridManager.Instance != null ? GridManager.Instance.CellSize * 0.44f : 0.3f;
-            var bottomPos = transform.position - new Vector3(0f, halfCell, 0f);
-            GameParticles.Instance?.PlayTileLand(bottomPos);
+            // 2026-05-28: landing dust puff removed — was too noisy with the
+            // new rising-row pop animation. Squish-only landing still fires.
             StartCoroutine(GravitySquishCoroutine());
         }
 

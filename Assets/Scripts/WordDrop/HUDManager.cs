@@ -38,6 +38,10 @@ namespace WordDrop
         // ── Turn / Swap / Rewrite counters ───────────────────────────────────────
 
         private TextMeshProUGUI _turnCounterText;
+        // 2026-05-28: progress bar replaces text readout in survival HUD.
+        private TextMeshProUGUI _stageLabelText;       // "S1", "S2", ...
+        private UnityEngine.UI.Image _stageProgressFill;
+        private RectTransform _stageProgressFillRT;
         private TextMeshProUGUI _swapCounterText;
         private TextMeshProUGUI _rewriteCounterText;
 
@@ -50,6 +54,11 @@ namespace WordDrop
         private TextMeshProUGUI _levelTargetText;
         private TextMeshProUGUI _levelMovesLabelText;
         private TextMeshProUGUI _levelMovesNumText;
+
+        // ── Coin counter (MVP P1) ────────────────────────────────────────────────
+        // Reads from CoinWallet.Balance. Lives in upper-right slot shared with
+        // AI/MOVES counters — Survival's HideAIScore() makes room for it.
+        private TextMeshProUGUI _coinCounterText;
 
         // ── Word-found overlay ────────────────────────────────────────────────────
 
@@ -83,7 +92,7 @@ namespace WordDrop
         private static readonly Color SWAP_COLOR      = new Color(0.63f, 0.53f, 0.75f, 0.8f); // light purple #A088C0
         private static readonly Color WORD_POPUP_P1   = new Color(1.00f, 0.84f, 0.42f, 1f);   // gold (match player)
         private static readonly Color WORD_POPUP_AI   = new Color(1.00f, 0.56f, 0.67f, 1f);   // pink (match AI)
-        private static readonly Color BAR_BG          = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 Spencer-picked; UIConfig overrides this at runtime
+        private static readonly Color BAR_BG          = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 — held at original while Spencer reworks HUD look in Photoshop. UIConfig overrides at runtime.
         private static readonly Color RESET_NORMAL    = new Color(0.18f, 0.18f, 0.23f, 1f);
         private static readonly Color RESET_HIGHLIGHT = new Color(0.32f, 0.32f, 0.40f, 1f);
         private static readonly Color RESET_PRESSED   = new Color(0.10f, 0.10f, 0.14f, 1f);
@@ -108,6 +117,13 @@ namespace WordDrop
                 LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
                 LevelController.Instance.OnLevelStarted += HandleLevelStarted;
             }
+            CoinWallet.OnBalanceChanged -= HandleCoinBalanceChanged;
+            CoinWallet.OnBalanceChanged += HandleCoinBalanceChanged;
+        }
+
+        private void HandleCoinBalanceChanged(int newBalance)
+        {
+            SetCoins(newBalance);
         }
 
         private void Start()
@@ -125,6 +141,7 @@ namespace WordDrop
         {
             if (LevelController.Instance != null)
                 LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
+            CoinWallet.OnBalanceChanged -= HandleCoinBalanceChanged;
         }
 
         // Per-level HUD element gating: SWAP / EDIT charge counters hide on
@@ -281,18 +298,80 @@ namespace WordDrop
                 _playerScoreNum.overflowMode = TMPro.TextOverflowModes.Overflow;
             }
 
-            // ── Center: Turn counter ─────────────────────────────────────────────
+            // ── Center: Stage label + progress bar ───────────────────────────────
+            // 2026-05-28: replaced "S1 204/400" text readout with a horizontal
+            // progress bar that fills as the player closes on the stage target.
+            // More visceral than numbers — players read fill % at a glance.
+            // The _turnCounterText is kept (zero-size, invisible) so legacy
+            // callers that set its .text don't NPE; the bar derives its fill
+            // from CurrentStageScore / CurrentStageTarget instead.
             _turnCounterText = MakeLabel(barGO.transform, "TurnCounter",
-                anchorMin: new Vector2(0.24f, 0.10f),
-                anchorMax: new Vector2(0.98f, 0.90f),
-                pivot:     new Vector2(0.5f, 0.5f),
+                anchorMin: new Vector2(0f, 0f),
+                anchorMax: new Vector2(0f, 0f),
+                pivot:     new Vector2(0f, 0f),
                 offMin:    Vector2.zero, offMax: Vector2.zero,
                 text:      "",
-                size:      18,
+                size:      1,
                 style:     FontStyle.Bold,
-                color:     new Color(0.97f, 0.95f, 0.92f, 0.9f),
+                color:     new Color(0f, 0f, 0f, 0f),
                 align:     TextAnchor.MiddleCenter);
-            if (heavyFont != null) _turnCounterText.font = heavyFont;
+            _turnCounterText.gameObject.SetActive(false);
+
+            // 2026-05-28 v3: bar widened so progress is visible at low fill.
+            //   Score:  0.08 → 0.22  (existing left)
+            //   S1:     0.23 → 0.29  (compact, just before bar)
+            //   Bar:    0.30 → 0.70  (centered on 0.50, 40% wide — was 24%)
+            //   Coins:  0.72+ (existing right)
+            _stageLabelText = MakeLabel(barGO.transform, "StageLabel",
+                anchorMin: new Vector2(0.23f, 0.10f),
+                anchorMax: new Vector2(0.29f, 0.90f),
+                pivot:     new Vector2(0.5f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "S1",
+                size:      20,
+                style:     FontStyle.Bold,
+                color:     new Color(0.65f, 0.92f, 0.98f, 1f),
+                align:     TextAnchor.MiddleCenter);
+            if (heavyFont != null) _stageLabelText.font = heavyFont;
+
+            // Bar background: pill-shaped, narrow + thin. Both BG and fill
+            // use the SAME rounded-pill sprite (radius = h/2). Fill is a
+            // child of BG sized via its right anchor (anchorMax.x =
+            // stageScore/stageTarget). Both ends of the fill stay curved
+            // because the sprite itself is a pill — looks like a smaller
+            // pill growing inside the bigger one. No Mask needed.
+            Sprite pillSprite = TileRenderer.CreateSolidRoundedRect(200, 60, 30, Color.white);
+
+            var bgGO = new GameObject("StageProgressBG",
+                typeof(RectTransform), typeof(Image));
+            bgGO.transform.SetParent(barGO.transform, false);
+            var bgRT = bgGO.GetComponent<RectTransform>();
+            bgRT.anchorMin = new Vector2(0.30f, 0.41f);
+            bgRT.anchorMax = new Vector2(0.70f, 0.59f);
+            bgRT.offsetMin = Vector2.zero;
+            bgRT.offsetMax = Vector2.zero;
+            var bgImg = bgGO.GetComponent<Image>();
+            bgImg.sprite = pillSprite;
+            bgImg.color = new Color(0.10f, 0.12f, 0.22f, 0.92f);
+            bgImg.raycastTarget = false;
+
+            // Fill: child of BG, anchored to BG's left edge. anchorMax.x is
+            // driven by the score ratio so the fill grows from left to right.
+            // Starts at 0 (empty pill).
+            var fillGO = new GameObject("StageProgressFill",
+                typeof(RectTransform), typeof(Image));
+            fillGO.transform.SetParent(bgGO.transform, false);
+            var fillRT = fillGO.GetComponent<RectTransform>();
+            fillRT.anchorMin = new Vector2(0f, 0f);
+            fillRT.anchorMax = new Vector2(0f, 1f); // width = 0 at start (empty)
+            fillRT.pivot     = new Vector2(0f, 0.5f);
+            fillRT.offsetMin = Vector2.zero;
+            fillRT.offsetMax = Vector2.zero;
+            _stageProgressFill = fillGO.GetComponent<Image>();
+            _stageProgressFill.sprite = pillSprite;
+            _stageProgressFill.color = new Color(0.40f, 0.90f, 0.95f, 1f);
+            _stageProgressFill.raycastTarget = false;
+            _stageProgressFillRT = fillRT;
 
             // ── Right: AI score ──────────────────────────────────────────────────
             _aiScoreText = MakeLabel(barGO.transform, "AILabel",
@@ -362,6 +441,23 @@ namespace WordDrop
             if (_levelTargetText != null) _levelTargetText.gameObject.SetActive(false);
             if (_levelMovesLabelText != null) _levelMovesLabelText.gameObject.SetActive(false);
             if (_levelMovesNumText != null) _levelMovesNumText.gameObject.SetActive(false);
+
+            // ── Coin counter (MVP P1) — upper-right, gold ────────────────────────
+            // Uses the same right-side slot as AI/MOVES. Visible by default;
+            // hidden in modes that explicitly need the AI score visible.
+            _coinCounterText = MakeLabel(barGO.transform, "CoinCounter",
+                anchorMin: new Vector2(0.72f, 0.05f),
+                anchorMax: new Vector2(0.92f, 0.65f),
+                pivot:     new Vector2(1f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "● 0",
+                size:      28,
+                style:     FontStyle.Bold,
+                color:     PLAYER_COLOR,
+                align:     TextAnchor.MiddleRight);
+            if (heavyFont != null) _coinCounterText.font = heavyFont;
+            // Sync initial value from wallet so HUD reflects persistent balance on boot.
+            _coinCounterText.text = $"● {CoinWallet.Balance}";
 
             // ── Swaps + Rewrites — compact, under center ─────────────────────────
             Color swapCol = new Color(0.78f, 0.78f, 0.85f, 0.8f);
@@ -550,6 +646,37 @@ namespace WordDrop
         {
             if (_aiScoreText != null) _aiScoreText.gameObject.SetActive(false);
             if (_aiScoreNum  != null) _aiScoreNum.gameObject.SetActive(false);
+        }
+
+        /// <summary>MVP P1: update coin counter display with a small pop animation.
+        /// Wired automatically via CoinWallet.OnBalanceChanged.
+        ///
+        /// Uses DOPunchScale (NOT the player/AI score's coroutine-based punch) so
+        /// the animation is interruption-safe — DOPunchScale auto-restores scale
+        /// to its start value on Kill, and SetUpdate(true) runs on unscaled time
+        /// so a modal opening / time-scale shenanigans can't leave the counter
+        /// stuck mid-punch.</summary>
+        public void SetCoins(int balance)
+        {
+            if (_coinCounterText == null) return;
+            _coinCounterText.text = $"● {balance}";
+            var rt = _coinCounterText.rectTransform;
+            rt.DOKill();
+            rt.localScale = Vector3.one;
+            rt.localRotation = Quaternion.identity;
+            rt.DOPunchScale(Vector3.one * 0.25f, 0.30f, 1, 0.5f).SetUpdate(true);
+        }
+
+        /// <summary>Hide coin counter (e.g. modes that need the AI slot back).</summary>
+        public void HideCoins()
+        {
+            if (_coinCounterText != null) _coinCounterText.gameObject.SetActive(false);
+        }
+
+        /// <summary>Show coin counter (Survival default).</summary>
+        public void ShowCoins()
+        {
+            if (_coinCounterText != null) _coinCounterText.gameObject.SetActive(true);
         }
 
         /// <summary>Show AI score display (returning from Survival to Classic).</summary>
@@ -1290,28 +1417,20 @@ namespace WordDrop
             int   stageTarget    = sm.CurrentStageTarget;
             float riseSecondsLeft = sm.RisingRowSecondsRemaining;
 
-            // Charge counts — replacing the "N moves" readout per Phase 11b+
-            // feedback. Moves-left is still available for danger-color logic
-            // below (we want red when budget is near exhausted), but the
-            // visible text now shows remaining edits/swaps because those are
-            // the player-facing resources they actually manage.
-            int edits = 0;
-            int swaps = 0;
-            if (MatchController.Instance != null)
+            // 2026-05-28: stage progress is now a fill bar (more visceral than
+            // numbers). Fill driven by changing anchorMax.x on the fill RT —
+            // no Image.fillAmount/Mask voodoo. anchorMax.x=0 → empty pill;
+            // =1 → full pill. Both ends stay rounded since fill uses the same
+            // pill sprite as the BG.
+            if (_stageLabelText != null) _stageLabelText.text = $"S{stage}";
+            if (_stageProgressFillRT != null)
             {
-                edits = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
-                swaps = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
+                float fill = stageTarget > 0 ? (float)stageScore / stageTarget : 0f;
+                fill = Mathf.Clamp01(fill);
+                Vector2 am = _stageProgressFillRT.anchorMax;
+                am.x = fill;
+                _stageProgressFillRT.anchorMax = am;
             }
-            // Debug flag: "∞ edits" when unlimited-rewrites testing is on.
-            string editsLabel = MatchController.UnlimitedRewrites ? "∞" : edits.ToString();
-
-            // Primary HUD: stage progress + charge counts. The rise countdown
-            // text readout was pulled per Spencer — he can feel the pressure
-            // from the rising rows themselves without a numeric countdown.
-            // riseSecondsLeft is still consumed below for color-state logic
-            // (line color shifts red/amber as a rise approaches).
-            _turnCounterText.text =
-                $"S{stage} {stageScore}/{stageTarget}  |  {editsLabel} edits · {swaps} swaps";
 
             // Color logic — purely rise-timer driven now that move-budget
             // stage-fail has been removed. Pressure comes from rising rows.
@@ -1319,23 +1438,16 @@ namespace WordDrop
             //   rise imminent (≤2s)         → red
             //   rise soon (≤5s)             → amber
             //   otherwise                   → survival cyan
+            // Color drives both the progress bar fill and the stage label.
+            Color stageColor;
             bool cleared = sm.IsCurrentStageCleared;
-            if (cleared)
-            {
-                _turnCounterText.color = new Color(0.4f, 1f, 0.5f, 1f); // green
-            }
-            else if (riseSecondsLeft <= 2f)
-            {
-                _turnCounterText.color = TURN_DANGER; // red
-            }
-            else if (riseSecondsLeft <= 5f)
-            {
-                _turnCounterText.color = TURN_WARN; // amber
-            }
-            else
-            {
-                _turnCounterText.color = new Color(0.1f, 0.85f, 0.9f, 1f); // cyan
-            }
+            if (cleared)            stageColor = new Color(0.4f, 1f, 0.5f, 1f);    // green
+            else if (riseSecondsLeft <= 2f) stageColor = TURN_DANGER;               // red
+            else if (riseSecondsLeft <= 5f) stageColor = TURN_WARN;                 // amber
+            else                    stageColor = new Color(0.40f, 0.90f, 0.95f, 1f); // cyan
+
+            if (_stageLabelText    != null) _stageLabelText.color    = stageColor;
+            if (_stageProgressFill != null) _stageProgressFill.color = stageColor;
         }
 
         internal static Font GetFont()

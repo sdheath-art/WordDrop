@@ -102,11 +102,27 @@ namespace WordDrop
         private AudioClip[] _goldSpawnNewVariants;
         private AudioClip _sparkleWhoosh;
         private AudioClip _sparkleWhooshAlt;
+        private AudioClip _entry;   // modal entry SFX — stage clear, boss reward, etc.
+        private AudioClip _wood2;   // wooden thunk — TopOutPanel landing impact
+        // Continue button on stage clear modal — original floraphonic
+        // multi-pop split into two halves so the first pop fires on press-
+        // down and the second on release for a tactile click feel.
+        private AudioClip _multiPopPress;
+        private AudioClip _multiPopRelease;
+        // Settings button (gear icon on the booster HUD row) — otherpop
+        // split into press/release halves for the same tactile click feel.
+        private AudioClip _otherPopPress;
+        private AudioClip _otherPopRelease;
+        private AudioClip[] _bloopVariants;  // row-rise bloop pop — random pick across bloop/bloop2/3/4 for variety
         private AudioClip[] _whooshBigVariants;
         private AudioClip[] _whooshFastVariants;
         private AudioClip[] _cardDealVariants;
         private AudioClip[] _cardDropHandVariants;
         private AudioClip[] _matchLineVariants;
+        // Faint overlay clip — plays UNDER the standard match line on cascade
+        // pops 2+ (not on the first pop). Adds chord layering as the chain
+        // climbs without overpowering the base pop sound.
+        private AudioClip _matchLine13;
 
         private AudioSource _source;
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
@@ -159,14 +175,33 @@ namespace WordDrop
             return Mathf.Log10(Mathf.Clamp01(linear)) * 20f;
         }
 
+        private System.Collections.IEnumerator ReapplyMixerNextFrame()
+        {
+            yield return null;        // wait one frame for mixer to stabilize
+            yield return null;        // and another, just to be safe
+            ApplyMixerLevels();
+        }
+
         private void ApplyMixerLevels()
         {
             if (_mixer != null)
             {
-                _mixer.SetFloat("MusicVol", _musicMuted ? -80f : LinearToDb(_musicVolume));
+                // 2026-05-29: music attenuation moved from mixer.SetFloat
+                // to source.volume. Previously _musicSource.volume = 1f and
+                // the mixer handled attenuation via MusicVol param. Problem:
+                // at startup the AudioMixer's snapshot is still loading and
+                // SetFloat doesn't take effect for ~1-2 seconds, so music
+                // played at FULL source volume with no attenuation, then
+                // snapped to the saved level once the snapshot settled.
+                // Setting source.volume directly is immediate.
+                //
+                // Mixer's MusicVol still toggles mute (-80dB) so the
+                // DuckMusicBriefly snapshot transition keeps working.
+                _mixer.SetFloat("MusicVol", _musicMuted ? -80f : 0f);
                 _mixer.SetFloat("SFXVol",   _muted      ? -80f : LinearToDb(_volume));
                 _mixer.SetFloat("UIVol",    _uiMuted    ? -80f : LinearToDb(_uiVolume));
-                if (_musicSource != null) _musicSource.volume = 1f;
+                if (_musicSource != null)
+                    _musicSource.volume = _musicMuted ? 0f : _musicVolume;
                 return;
             }
             // Fallback path — mixer asset missing. Drive music attenuation on
@@ -203,6 +238,7 @@ namespace WordDrop
         private AudioClip[] _victoryMusicPool;    // Resources/Music/Victory/ — Skybound is canonical
         private AudioClip   _menuSignatureClip;   // cached "main_menu" track for signature-priority menu playback
         private AudioClip   _victorySkyboundClip; // cached "Skybound_Victory" for canonical victory
+        private AudioClip   _lastStageClearClip;  // for stage-clear rotation, avoid immediate-repeat across modal opens
         private Coroutine   _musicSequenceRoutine; // watches current track and rotates to a fresh random pick when it ends
 
         // Music layer volume + mute, persisted separately from SFX so a player
@@ -307,6 +343,12 @@ namespace WordDrop
             _rumbleSource.outputAudioMixerGroup  = _sfxGroup;
 
             ApplyMixerLevels();
+            // 2026-05-29: persistence bug fix — the AudioMixer can be mid-
+            // snapshot-transition when Awake's SetFloat fires, causing it
+            // to be overridden once the base snapshot settles. Re-applying
+            // after one frame catches this. Without it, saved music/SFX
+            // volumes were getting ignored on reboot.
+            StartCoroutine(ReapplyMixerNextFrame());
 
             // Load all clips
             _tileDrop        = Resources.Load<AudioClip>("SFX/tile_drop");
@@ -370,7 +412,10 @@ namespace WordDrop
 
             // Cache the signature/canonical tracks for priority playback.
             // Names must match the file basenames in their respective folders.
-            _menuSignatureClip   = FindClipByName(_menuMusicPool,    "main_menu");
+            // 2026-05-28: switched menu signature from "main_menu" to
+            // "Jewel_Parade__1" per Spencer. Filename uses double underscore
+            // between "Parade" and "1" — must match exactly.
+            _menuSignatureClip   = FindClipByName(_menuMusicPool,    "Jewel_Parade__1");
             _victorySkyboundClip = FindClipByName(_victoryMusicPool, "Skybound_Victory");
 
             // New SFX (April 7)
@@ -413,6 +458,18 @@ namespace WordDrop
             };
             _sparkleWhoosh   = Resources.Load<AudioClip>("SFX/sparkle_whoosh");
             _sparkleWhooshAlt = null; // removed — was silent
+            _entry           = Resources.Load<AudioClip>("SFX/entry");
+            _wood2           = Resources.Load<AudioClip>("SFX/wood2");
+            _multiPopPress   = Resources.Load<AudioClip>("SFX/multipop_press");
+            _multiPopRelease = Resources.Load<AudioClip>("SFX/multipop_release");
+            _otherPopPress   = Resources.Load<AudioClip>("SFX/otherpop_press");
+            _otherPopRelease = Resources.Load<AudioClip>("SFX/otherpop_release");
+            _bloopVariants = new[] {
+                Resources.Load<AudioClip>("SFX/bloop"),
+                Resources.Load<AudioClip>("SFX/bloop2"),
+                Resources.Load<AudioClip>("SFX/bloop3"),
+                Resources.Load<AudioClip>("SFX/bloop4"),
+            };
             _whooshBigVariants = new[] {
                 Resources.Load<AudioClip>("SFX/whoosh_big"),
                 Resources.Load<AudioClip>("SFX/whoosh_big_alt"),
@@ -441,6 +498,7 @@ namespace WordDrop
                 Resources.Load<AudioClip>("SFX/matchline7"),
                 Resources.Load<AudioClip>("SFX/matchline8"),
             };
+            _matchLine13 = Resources.Load<AudioClip>("SFX/matchline13");
 
             // Analyze boom clips to find lead-in offset (time before the main hit)
             AnalyzeBoomOffsets();
@@ -579,10 +637,13 @@ namespace WordDrop
             _matchLineBurstLastTime = now;
 
             int effectiveStep = Mathf.Max(cascadeStep, _matchLineBurstStep);
-            int clampedStep = Mathf.Clamp(effectiveStep, 0, 12);
-            float pitch = Mathf.Pow(2f, clampedStep / 12f);
-            Debug.Log($"[PitchDebug] PlayWordScored cascadeStep={cascadeStep} burstStep={_matchLineBurstStep} effective={effectiveStep} pitch={pitch:F3}");
-            Play(PickRandom(_wordScored, _wordScoredAlt), 0.8f, pitch);
+            int clampedStep = Mathf.Clamp(effectiveStep, 0, 8);
+            // 2 semitones per chain step — matches PlayMatchLine
+            float pitch = Mathf.Pow(2f, (clampedStep * 2) / 12f);
+            // 2026-05-29: volume reduced 0.8 → 0.55 — same anti-clipping
+            // rationale as PlayMatchLine. word_scored stacks with matchline
+            // pops during cascade chains.
+            Play(PickRandom(_wordScored, _wordScoredAlt), 0.55f, pitch);
         }
 
         public void PlayTilePrimed()
@@ -711,12 +772,37 @@ namespace WordDrop
             Play(clip, 0.6f);
         }
 
-        /// <summary>Deep rumble for rising rows — whoosh pitched down.</summary>
-        public void PlayRisingRow()
+        /// <summary>Rising-row pop sound — random pick from bloop / bloop2 /
+        /// bloop3 / bloop4 for variety across repeated row rises.
+        /// <paramref name="pitch"/> defaults to 1.0; the staggered hand deal
+        /// passes a per-card semitone climb so the deal sweeps up musically.</summary>
+        public void PlayRisingRow(float pitch = 1f)
         {
-            if (_whooshClips == null || _whooshClips.Length == 0) return;
-            var clip = _whooshClips[Random.Range(0, _whooshClips.Length)];
-            Play(clip, 0.8f, 0.6f); // low pitch = rumble feel
+            if (_bloopVariants == null || _bloopVariants.Length == 0) return;
+            Play(PickRandom(_bloopVariants), 1.0f, pitch);
+        }
+
+        /// <summary>
+        /// Canonical "tile/card arrives" sound — single source of truth for
+        /// every site where a new tile or hand card pops into existence.
+        /// Currently delegates to PlayRisingRow. SWAP THE BODY of this method
+        /// to change the arrival sound globally:
+        ///   • Row-rise new tiles (RisingRowManager)
+        ///   • Full hand deal at level start / post-turn (HandManager.StaggeredHandPopIn — passes a semitone-climbing pitch per card)
+        ///   • Bag-swap single-card refill (HandManager.SwapViaBagDrop)
+        ///
+        /// Per-tile-drop single-card refill (HandManager.CompleteDropBookkeeping)
+        /// is INTENTIONALLY SILENT — it shares the animation but not the audio
+        /// because the row-rise bloop doubles up with the other SFX firing on
+        /// the same frame. The pop animation still uses NewTilePop; only audio
+        /// diverges there.
+        ///
+        /// The <paramref name="pitch"/> arg is forwarded so the hand-deal
+        /// climb keeps working regardless of which clip lives underneath.
+        /// </summary>
+        public void PlayTileArrival(float pitch = 1f)
+        {
+            PlayRisingRow(pitch);
         }
 
         public void PlayGameOver()
@@ -855,11 +941,10 @@ namespace WordDrop
         /// restart the track. Cancels any in-flight survival sequence so the
         /// post-survival return-to-menu lands on the menu loop cleanly.
         /// </summary>
-        // Menu signature/variety mix. 2026-05-16: 80% chance to play the
-        // "main_menu" signature, 20% chance to pick a random alternate
-        // from the rest of the menu pool. Keeps brand identity strong with
-        // occasional variety. Tune MENU_SIGNATURE_BIAS (0..1) to taste.
-        private const float MENU_SIGNATURE_BIAS = 0.80f;
+        // 2026-05-28: bias raised 0.80 → 1.00 so Jewel_Parade__1 is the ONLY
+        // menu track (Spencer locked it as THE main menu song). Drop back to
+        // 0.80 if you want occasional variety from the rest of the pool.
+        private const float MENU_SIGNATURE_BIAS = 1.00f;
 
         public void PlayMenuMusic()
         {
@@ -923,6 +1008,38 @@ namespace WordDrop
 
             _musicSource.clip = chosen;
             _musicSource.loop = false; // fires once, doesn't loop
+            _musicSource.Play();
+        }
+
+        /// <summary>
+        /// Stage-clear celebration music. Picks a random clip from the victory
+        /// pool, avoiding immediate repeats across consecutive modal opens.
+        /// Distinct from PlayVictoryMusic (which is canonical-Skybound for the
+        /// end-of-run game-over screen) because stage clears fire many times
+        /// per run and need variety.
+        /// </summary>
+        public void PlayStageClearMusic()
+        {
+            if (_musicSource == null) return;
+            if (_victoryMusicPool == null || _victoryMusicPool.Length == 0)
+            {
+                Debug.LogWarning("[GameAudio] No stage-clear music clips at Resources/Music/Victory/.");
+                return;
+            }
+
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
+
+            // Pick a random clip, excluding the last one we played so the
+            // player doesn't hear the same celebration track twice in a row.
+            AudioClip chosen = PickRandomClip(_victoryMusicPool, exclude: _lastStageClearClip);
+            _lastStageClearClip = chosen;
+
+            _musicSource.clip = chosen;
+            _musicSource.loop = false; // fires once per stage clear, doesn't loop
             _musicSource.Play();
         }
 
@@ -1156,7 +1273,7 @@ namespace WordDrop
         // restarts at root pitch on the next event burst.
         private static int _matchLineBurstStep = 0;
         private static float _matchLineBurstLastTime = -10f;
-        private const float MATCH_LINE_BURST_WINDOW = 0.50f; // 500ms gap = reset chord
+        private const float MATCH_LINE_BURST_WINDOW = 0.50f; // 500ms: enough for parallel detonations, short enough to reset between turns
 
         public void PlayMatchLine(int cascadeStep = 0)
         {
@@ -1178,10 +1295,21 @@ namespace WordDrop
             _matchLineBurstLastTime = now;
 
             int effectiveStep = Mathf.Max(cascadeStep, _matchLineBurstStep);
-            int clampedStep = Mathf.Clamp(effectiveStep, 0, 12);
-            float pitch = Mathf.Pow(2f, clampedStep / 12f);
-            Debug.Log($"[PitchDebug] PlayMatchLine cascadeStep={cascadeStep} burstStep={_matchLineBurstStep} effective={effectiveStep} pitch={pitch:F3}");
-            Play(PickRandom(_matchLineVariants), 1.0f, pitch);
+            int clampedStep = Mathf.Clamp(effectiveStep, 0, 8); // cap at 8 (16 semitones = +octave-and-a-fourth)
+            // 2 semitones per chain step — clearly audible musical interval
+            // (was 1 semitone, too subtle for phone speakers per Spencer 2026-05-19)
+            float pitch = Mathf.Pow(2f, (clampedStep * 2) / 12f);
+            // 2026-05-29: volume reduced 1.0 → 0.65 to prevent polyphonic
+            // clipping during cascades. When matchline pop + matchline13
+            // underlay + PlayWordScored chord all sum at the master bus,
+            // pitched-up high-frequency content was distorting. Each
+            // individual sound is now well under 0dB so the sum stays
+            // under clipping.
+            Play(PickRandom(_matchLineVariants), 0.65f, pitch);
+            // Faint matchline13 underlay on cascade pops 2+. Volume 0.35 →
+            // 0.22 to further reduce the cumulative HF sum during chains.
+            if (effectiveStep > 0 && _matchLine13 != null)
+                Play(_matchLine13, 0.22f, pitch);
         }
 
         /// <summary>Organic button click — for standard UI buttons.</summary>
@@ -1217,7 +1345,11 @@ namespace WordDrop
         /// <summary>Magical sparkle whoosh — for special transitions or chain replay start.</summary>
         public void PlaySparkleWhoosh()
         {
-            Play(PickRandom(_sparkleWhoosh, _sparkleWhooshAlt), 0.7f);
+            // 2026-05-29: bumped 0.7 → 1.1 for the stage-clear sweep. The
+            // sparkle_whoosh clip's source recording is on the quiet side;
+            // the celebration moment needs the SFX to read clearly above
+            // the music + UI swoosh.
+            Play(PickRandom(_sparkleWhoosh, _sparkleWhooshAlt), 1.1f);
         }
 
         /// <summary>Big whoosh — for major menu transitions (game over panel, etc).</summary>
@@ -1226,10 +1358,75 @@ namespace WordDrop
             Play(PickRandom(_whooshBigVariants), 0.7f);
         }
 
+        /// <summary>Entry sting — for modal panels appearing (stage clear, boss reward).
+        /// Distinct from sparkle_whoosh and whoosh_big — gives modals a dedicated audio signature.</summary>
+        public void PlayEntry()
+        {
+            Play(_entry, 1.0f);
+        }
+
+        /// <summary>Wooden thunk — TopOutPanel landing impact. Plays alongside
+        /// the drop animation so the bounce reads as "panel hitting a wood surface".</summary>
+        public void PlayWood2()
+        {
+            Play(_wood2, 1.0f);
+        }
+
+        /// <summary>First pop of the Continue-button split clip — fires on
+        /// PointerDown for tactile press feel.</summary>
+        public void PlayMultiPopPress()
+        {
+            Play(_multiPopPress, 1.0f);
+        }
+
+        /// <summary>Second pop of the Continue-button split clip — fires on
+        /// pointer release / onClick for the "commit" beat after press.</summary>
+        public void PlayMultiPopRelease()
+        {
+            Play(_multiPopRelease, 1.0f);
+        }
+
         /// <summary>Fast whoosh — for smaller UI transitions (panels, popups).</summary>
         public void PlayWhooshFast()
         {
             Play(PickRandom(_whooshFastVariants), 0.6f);
+        }
+
+        /// <summary>
+        /// Whoosh that accompanies the bench+hand icons converging out of
+        /// existence when a menu opens. Currently whoosh_fast_alt (index 1
+        /// of _whooshFastVariants); swap here to change the collapse sound
+        /// globally. Pairs with PlayUIGroupExpand on the reverse animation.
+        /// </summary>
+        public void PlayUIGroupCollapse()
+        {
+            if (_whooshFastVariants == null || _whooshFastVariants.Length < 2) return;
+            Play(_whooshFastVariants[1], 0.6f);
+        }
+
+        /// <summary>
+        /// Whoosh that accompanies the bench+hand icons popping back into
+        /// existence when a menu closes. Currently whoosh_fast_alt2 (index
+        /// 2 of _whooshFastVariants). Pairs with PlayUIGroupCollapse.
+        /// </summary>
+        public void PlayUIGroupExpand()
+        {
+            if (_whooshFastVariants == null || _whooshFastVariants.Length < 3) return;
+            Play(_whooshFastVariants[2], 0.6f);
+        }
+
+        /// <summary>Settings-button press half — otherpop_press. Fires on
+        /// PointerDown of the gear icon for tactile click feel.</summary>
+        public void PlaySettingsPress()
+        {
+            Play(_otherPopPress, 1.0f);
+        }
+
+        /// <summary>Settings-button release half — otherpop_release. Fires
+        /// on pointer release / onClick, paired with PlaySettingsPress.</summary>
+        public void PlaySettingsRelease()
+        {
+            Play(_otherPopRelease, 1.0f);
         }
 
         /// <summary>Card deal sound — for individual card refills during gameplay.</summary>

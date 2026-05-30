@@ -198,12 +198,12 @@ namespace WordDrop
             int idx = WildSlotIndex;
             if (idx < 0) return;
             char[] vowels = VOWELS;
-            char pick = vowels[Random.Range(0, vowels.Length)];
+            char pick = vowels[SurvivalRng.Range(0, vowels.Length)];
             // Avoid duplicate collisions when possible
             for (int attempt = 0; attempt < 5; attempt++)
             {
                 if (CountLetter(pick) == 0) break;
-                pick = vowels[Random.Range(0, vowels.Length)];
+                pick = vowels[SurvivalRng.Range(0, vowels.Length)];
             }
             Debug.Log($"[WildExpiry] ExpireWildToVowel FIRED — slot {idx} → '{pick}'. _wildDropsElapsed was {_wildDropsElapsed}");
             _slots[idx] = pick;
@@ -462,7 +462,7 @@ namespace WordDrop
                 bool postClearBoosted = SurvivalManager.Instance != null && SurvivalManager.Instance.IsPostClearBoosted;
                 float chance = postClearBoosted ? 0.85f
                     : (_droughtTurns >= 2 ? SURVIVAL_BOARD_ASSIST_DROUGHT : SURVIVAL_BOARD_ASSIST_BASE);
-                if (Random.value < chance)
+                if (SurvivalRng.Value < chance)
                 {
                     char helper = DroughtAssist.GetHelperLetter();
                     if (helper != '\0' && CountLetter(helper) < MAX_SAME_LETTER)
@@ -491,7 +491,7 @@ namespace WordDrop
                 else if (effectiveDrought >= DROUGHT_TIER2)  chance = DROUGHT_CHANCE_T2;
                 else                                          chance = DROUGHT_CHANCE_T1;
 
-                if (Random.value < chance)
+                if (SurvivalRng.Value < chance)
                 {
                     char helper = DroughtAssist.GetHelperLetter();
                     if (helper != '\0' && CountLetter(helper) < MAX_SAME_LETTER)
@@ -531,7 +531,7 @@ namespace WordDrop
                 if (vowelsFull && IsVowel(drawn)) continue;
 
                 // If hand needs a connector, reject non-connectors (including vowels) sometimes
-                if (needsConnector && !IsConnector(drawn) && Random.value < 0.5f)
+                if (needsConnector && !IsConnector(drawn) && SurvivalRng.Value < 0.5f)
                     continue;
 
                 return drawn;

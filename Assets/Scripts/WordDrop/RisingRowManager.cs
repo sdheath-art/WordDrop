@@ -77,10 +77,13 @@ namespace WordDrop
                 yield break;
             }
 
-            // 1. Check for overflow based on top-out mode
-            bool overflow = SurvivalManager.Instance != null && SurvivalManager.Instance.topOutMode == SurvivalManager.TopOutMode.Strict
-                ? rules.HasAnyTileInTopRow()
-                : rules.HasTilesInTopRow();
+            // 1. Check for overflow. The shift pushes everything up by 1 — so if
+            // ANY column has a tile in the top row, it would get pushed beyond
+            // the board (off the top) = real overflow = game over. This is the
+            // semantic regardless of top-out mode. The Strict/Lenient distinction
+            // lives in WHEN ShouldTopOut is called: Strict checks every drop,
+            // Lenient checks only at rise time (here).
+            bool overflow = rules.HasAnyTileInTopRow();
             if (overflow)
             {
 //                 Debug.Log("[RisingRowManager] Board overflow! Tiles in top row would be pushed off.");
@@ -93,6 +96,12 @@ namespace WordDrop
             // overlays render against the new (shifted) board positions.
             // Player can re-trigger the preview by tapping/dragging again.
             DropPreview.Instance?.ClearPreview();
+
+            // Same for the idle hint — its tween is independently controlling
+            // tile Y positions, so a row rise would leave hint-highlighted
+            // tiles at stale positions. Use OnBoardChanged so the hint
+            // RESUMES after the rise (instead of waiting another 15s).
+            HintManager.Instance?.OnBoardChanged();
 
             TileBag bag = MatchController.Instance != null
                 ? MatchController.Instance.Bag
@@ -132,8 +141,10 @@ namespace WordDrop
             if (HandManager.Instance != null)
                 HandManager.Instance.OnBoardShiftedUp();
 
-            // 7. Play rising row sound
-            GameAudio.Instance?.PlayRisingRow();
+            // 7. Play tile-arrival sound (canonical for every "new tile/card
+            //    appears" moment — swap GameAudio.PlayTileArrival to change
+            //    the sound across all sites at once).
+            GameAudio.Instance?.PlayTileArrival();
             HapticsManager.RisingRow();
 
             // 8. Animate: shift existing visual tiles up, create new bottom row tiles

@@ -34,15 +34,23 @@ namespace WordDrop
         // Board width as fraction of screen width. Tile = fraction / COLS.
         // Target: 12-13% screen width per tile (Candy Crush / Royal Match benchmark).
         // 6 cols × 13% = 0.78. Survival gets a touch more (chunky, high-pressure feel).
-        private const float SURVIVAL_GRID_WIDTH_FRACTION  = 0.84f;
-        private const float DEFAULT_GRID_WIDTH_FRACTION   = 0.78f;
+        private const float SURVIVAL_GRID_WIDTH_FRACTION  = 0.882f;  // was 0.84 — +5% breathing room
+        private const float DEFAULT_GRID_WIDTH_FRACTION   = 0.819f;  // was 0.78 — +5% breathing room
         private const float SURVIVAL_GRID_TOP_MARGIN      = 0.30f; // push grid down — more room above for HUD, thumb-friendly
         private const float GRAVITY_FALL_SPEED            = 14f; // was 10 originally — slightly faster
 
         // Board: deep indigo hero object — darker and cooler than background
-        private static readonly Color FRAME_OUTER    = new Color(0.040f, 0.055f, 0.150f, 1f);  // very dark indigo outer edge
+        // 2026-05-30 candy-bright pivot: board panel is now Candy-Crush-style
+        // desaturated mid-tone purple-gray. The board acts as a STAGE that
+        // lets the saturated tile sprites pop — a light cream board would
+        // mute them, a dark moody board fights the warm background.
+        // FRAME_OUTER matches BOARD_INNER so the two-layer sprite reads as
+        // a SINGLE solid panel (no visible inner frame). Same pattern as the
+        // original dark-navy panel — just at a different value.
+        // See project_wordrop_visual_direction_2026_05_30.
+        private static readonly Color FRAME_OUTER    = new Color(0.45f, 0.40f, 0.50f, 1f);  // matches BOARD_INNER — single panel
         private static readonly Color FRAME_EDGE     = new Color(0.220f, 0.270f, 0.540f, 1f);  // brighter top lip — sculpted
-        private static readonly Color BOARD_INNER    = new Color(0.040f, 0.055f, 0.150f, 1f);  // matches FRAME_OUTER — single dark panel
+        private static readonly Color BOARD_INNER    = new Color(0.45f, 0.40f, 0.50f, 1f);  // Candy-Crush-style desaturated stage
 
         // Cells: readable against board — lighter face, dark inset border
         private static readonly Color CELL_FILL_COLOR   = new Color(0.150f, 0.190f, 0.410f, 1f);  // slightly brighter than board inner
@@ -170,11 +178,89 @@ namespace WordDrop
         // Layout calculation
         // ---------------------------------------------------------------------------
 
+        // ── PSD layout (canvas 1179×2556, iPhone 16/15 Pro) ──────────────────
+        // Camera ortho=10 (SceneBootstrap.cs:105) → worldH=20, so 1 PSD pixel
+        // = 20/2556 = 0.007825 world units. Mirrors helpers in HandManager.cs
+        // and BoosterHUDSlot.cs.
+        private const float PSD_CANVAS_W   = 1179f;
+        private const float PSD_CANVAS_H   = 2556f;
+        // 2026-05-29: board sized + cells anchored so bottom-row tiles sit
+        // cleanly inside the board's rounded bottom edge.
+        //   - Slightly wider (1030→1070) for horizontal corner margin
+        //   - Recentered (X=54.5) instead of 80
+        //   - Slightly taller (1346→1380) to give cells more room
+        //   - Moved up (Y=500→466) so the board BOTTOM stays at 1846 PSD
+        //     (preserves the 87 PSD drag distance to the hand pill at 1933)
+        //   - Cells anchored to board bottom with 30 PSD margin (see
+        //     CalculateLayout below) — top rows overflow the board top
+        //     but that's invisible in normal play.
+        // 2026-05-30: board grown twice. Originally 1070×1380. Now 1110×1420
+        // (+40 W, +40 H total). Each step adds +20 W (+10 per side) and +20 H
+        // (all to TOP since cells anchor to bottom). X recentered each time
+        // (canvas-center 589.5 - W/2 = 34.5). Y shifted up to keep bottom
+        // edge fixed (cells don't move). Outer side margin: 31 → 41 → 51 PSD.
+        private const float PSD_BOARD_X    = 34.5f;
+        private const float PSD_BOARD_Y    = 426f;
+        private const float PSD_BOARD_W    = 1110f;
+        private const float PSD_BOARD_H    = 1420f;
+        private const float PSD_BOARD_BOTTOM_MARGIN = 30f; // gap above board bottom for cells
+        // 2026-05-28 (Path A, Phase 2): cell pitch = 165 PSD (visible tile
+        // 150 + 15 px inter-tile gap). 6×165 = 990, leaving ~20 px margin on
+        // each side inside the 1030 board frame. Visible tile sized via the
+        // tile-fraction in Tile.cs (= 150/165 ≈ 0.909).
+        // 2026-05-30: pitch bumped 165 → 168 for a hair more inter-tile gap
+        // WITHOUT shrinking tiles. Outer board margin trims from 40 → 31 PSD
+        // per side; inter-tile gap grows 15 → 18 PSD. Tile visual size stays
+        // 150 PSD (Tile.cs TILE_DISPLAY_RATIO MUST stay in sync — currently
+        // 150f / 168f. If you change pitch, update Tile.cs to match.)
+        private const float PSD_CELL_PITCH = 168f;
+
+        private float PsdToWorld(float psdPx)
+        {
+            float halfH = _cam != null ? _cam.orthographicSize : 10f;
+            return psdPx * (2f * halfH / PSD_CANVAS_H);
+        }
+
+        private float PsdXToWorld(float xPsd)
+        {
+            return PsdToWorld(xPsd - PSD_CANVAS_W * 0.5f);
+        }
+
+        private float PsdYToWorld(float yPsd)
+        {
+            return PsdToWorld(PSD_CANVAS_H * 0.5f - yPsd);
+        }
+
         private void CalculateLayout()
         {
             float halfH = _cam.orthographicSize;
             float halfW = halfH * ((float)Screen.width / Screen.height);
             bool isSurvival = SurvivalManager.IsSurvivalMode;
+
+            // 2026-05-28 (Path A, Phase 2): Survival board pinned to exact PSD
+            // spec — tiles are 150 px, board is 1030×1346, centered at PSD
+            // (595, 1275). Other modes keep the auto-fit math below.
+            if (isSurvival)
+            {
+                CellSize = PsdToWorld(PSD_CELL_PITCH);
+                float psdCellAreaW = CellSize * COLS;
+                float psdCellAreaH = CellSize * ROWS;
+
+                // 2026-05-29: cells anchored to the BOARD BOTTOM (not the
+                // board center) so the visible bottom row always sits inside
+                // the rounded bottom edge. The cell stack extends upward; top
+                // rows may extend above the board top but those are usually
+                // empty (game ends before reaching the top row), so the
+                // overflow is invisible in normal play.
+                float cellAreaCenterX     = PsdXToWorld(PSD_BOARD_X + PSD_BOARD_W * 0.5f);
+                float cellAreaBottom_w    = PsdYToWorld(PSD_BOARD_Y + PSD_BOARD_H - PSD_BOARD_BOTTOM_MARGIN);
+
+                GridLeft   = cellAreaCenterX - psdCellAreaW * 0.5f;
+                GridRight  = cellAreaCenterX + psdCellAreaW * 0.5f;
+                GridBottom = cellAreaBottom_w;
+                GridTop    = cellAreaBottom_w + psdCellAreaH;
+                return;
+            }
 
             float widthFraction = isSurvival ? SURVIVAL_GRID_WIDTH_FRACTION : DEFAULT_GRID_WIDTH_FRACTION;
 
@@ -222,9 +308,13 @@ namespace WordDrop
             float gridAreaBottom = -halfH + bottomReserve;
 
             // Vertical fine-tune: positive = move board up, negative = down.
-            // Expressed as fraction of halfH. -0.10 = move board down 5% of screen height.
-            // The hand area anchors to GridBottom, so it shifts with the board.
-            const float BOARD_Y_OFFSET = -0.10f;
+            // Expressed as fraction of halfH. The hand area anchors to
+            // GridBottom (via GetCardRowY), so it shifts with the board.
+            // 2026-05-28 (Path A): raised from -0.10 → +0.05 (+0.15 halfH net,
+            // ≈ +7.5% screen height) to free bottom-screen real estate for the
+            // tools + booster rows. Massive empty space above the board in
+            // earlier screenshots indicated this was wasted vertical budget.
+            const float BOARD_Y_OFFSET = 0.05f;
             gridAreaBottom += halfH * BOARD_Y_OFFSET;
 
             GridLeft   = gridCenterX - gridWorldWidth  / 2f;
@@ -242,8 +332,21 @@ namespace WordDrop
             _gridRoot = new GameObject("GridRoot");
             _gridRoot.transform.SetParent(transform, false);
 
-            float bgPadding = CellSize * 0.16f;
-            CreateBackgroundPanel(bgPadding);
+            // 2026-05-28 (Path A, Phase 2): Survival board sprite is locked
+            // to exact PSD spec (1030×1346) so the painted frame matches
+            // Spencer's mock. Cells inside are 6×150 = 900 wide, leaving 65 px
+            // padding each side; height is ~tile-flush. Other modes keep the
+            // legacy 16%-of-cellSize uniform padding.
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                CreateBackgroundPanel(PsdToWorld(PSD_BOARD_W), PsdToWorld(PSD_BOARD_H));
+            }
+            else
+            {
+                float bgPadding = CellSize * 0.16f;
+                CreateBackgroundPanel((GridRight - GridLeft) + bgPadding * 2f,
+                                      (GridTop   - GridBottom) + bgPadding * 2f);
+            }
 
             int texSize = Mathf.Clamp(Mathf.RoundToInt(CellSize * 200f), 64, 512);
             int radius  = texSize / 6;   // slightly rounder corners
@@ -272,10 +375,8 @@ namespace WordDrop
             }
         }
 
-        private void CreateBackgroundPanel(float padding)
+        private void CreateBackgroundPanel(float bgW, float bgH)
         {
-            float bgW = (GridRight  - GridLeft)  + padding * 2f;
-            float bgH = (GridTop    - GridBottom) + padding * 2f;
 
             int bgTexW   = Mathf.Clamp(Mathf.RoundToInt(bgW * 150f), 64, 1024);
             int bgTexH   = Mathf.Clamp(Mathf.RoundToInt(bgH * 150f), 64, 1024);
@@ -298,16 +399,15 @@ namespace WordDrop
             bgSR.sprite       = bgSprite;
             bgSR.sortingOrder = 0;
 
-            // Custom background material (Phase 11+ aesthetic swap). Lives at
-            // Assets/Resources/FeelSnakeWhiteParticlesMaterial.mat so
-            // Resources.Load picks it up in the built player too, not just
-            // Editor. If missing, the default sprite material is used.
-            Material bgMat = Resources.Load<Material>("FeelSnakeWhiteParticlesMaterial");
-            if (bgMat != null)
-                bgSR.material = bgMat;
-            else
-                Debug.LogWarning("[GridManager] FeelSnakeWhiteParticlesMaterial not found in Resources — " +
-                                 "using default sprite material.");
+            // 2026-05-30 candy-bright pivot: custom material removed so the
+            // BOARD_INNER / FRAME_OUTER colors render cleanly (the material
+            // was overriding/multiplying the sprite color, blocking palette
+            // changes). The default sprite material is used instead. The
+            // .mat file is still on disk at Assets/Resources — re-enable by
+            // restoring the Resources.Load below if needed.
+            //
+            // Material bgMat = Resources.Load<Material>("FeelSnakeWhiteParticlesMaterial");
+            // if (bgMat != null) bgSR.material = bgMat;
 
             float nativeW = bgTexW / 100f;
             float nativeH = bgTexH / 100f;
@@ -323,6 +423,18 @@ namespace WordDrop
             float x = GridLeft   + (col + 0.5f) * CellSize;
             float y = GridBottom + (row + 0.5f) * CellSize;
             return new Vector3(x, y, 0f);
+        }
+
+        /// <summary>MVP P5 booster aim mode: convert a world-space position to
+        /// the grid cell beneath it. Returns false if the position is outside
+        /// the board bounds.</summary>
+        public bool WorldToCell(Vector3 worldPos, out int col, out int row)
+        {
+            col = Mathf.FloorToInt((worldPos.x - GridLeft) / CellSize);
+            row = Mathf.FloorToInt((worldPos.y - GridBottom) / CellSize);
+            if (col < 0 || col >= COLS) return false;
+            if (row < 0 || row >= ROWS) return false;
+            return true;
         }
 
         public Vector3 GetColumnSpawnPosition(int col)
@@ -445,6 +557,28 @@ namespace WordDrop
         {
             if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return null;
             return _tiles[col, row];
+        }
+
+        /// <summary>MVP P5: clear the tile reference + cell at (col, row) WITHOUT
+        /// destroying the Tile GameObject. Used by boosters that reposition tiles
+        /// (Wispwhirl shuffle). Caller is responsible for placing the tile back
+        /// somewhere with PlaceTileAt, or the reference is leaked.</summary>
+        public void ClearTileRefAt(int col, int row)
+        {
+            if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
+            _tiles[col, row] = null;
+            _cells[col, row] = null;
+        }
+
+        /// <summary>MVP P5: place an existing Tile reference at (col, row),
+        /// update its internal Col/Row tracking. Does NOT move the GameObject —
+        /// caller animates the move via DOTween or sets transform.position.</summary>
+        public void PlaceTileAt(int col, int row, Tile tile, CellData cellData = null)
+        {
+            if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
+            _tiles[col, row] = tile;
+            _cells[col, row] = cellData;
+            if (tile != null) tile.UpdateGridPosition(col, row);
         }
 
         /// <summary>
@@ -955,10 +1089,11 @@ namespace WordDrop
             Dictionary<Vector2Int, Vector2Int> shiftMoves,
             char[] newBottomLetters)
         {
-            const float RISE_DURATION = 0.25f;
+            // 2026-05-28: shift at 0.18s — completes BEFORE the new tile
+            // reaches its pop overshoot peak (~0.26s with period 0.30 at
+            // the longer 0.85s duration).
+            const float RISE_DURATION = 0.18f;
             const float RISE_SPEED = 1f / RISE_DURATION;
-
-            List<Tile> animatingTiles = new List<Tile>();
 
             // 1. Shift existing visual tiles up using the move dictionary
             //    Process in reverse row order (top first) to avoid overwriting
@@ -991,42 +1126,66 @@ namespace WordDrop
                     _tiles[newPos.x, newPos.y] = tile;
                     _cells[newPos.x, newPos.y] = cell;
 
-                    // Animate to new world position — mechanical shift, matches the
-                    // new-bottom rise so the whole event reads as one machine motion
+                    // 2026-05-29: existing-tile shift now has a subtle single
+                    // overshoot (OutBack, magnitude 0.15) instead of a linear
+                    // mechanical slide. Adds a hint of aliveness — each tile
+                    // lifts past its target then settles — without competing
+                    // with the new bottom row's OutElastic pop. Tuning:
+                    //   overshoot 0.0  = original linear (boring)
+                    //   overshoot 0.15 = barely-perceptible lift (current)
+                    //   overshoot 0.4  = noticeable lift (probably too much)
                     Vector3 targetPos = CellToWorld(newPos.x, newPos.y);
                     float dist = Vector3.Distance(tile.transform.position, targetPos);
                     if (dist > 0.01f)
                     {
                         float dur = RISE_DURATION;
-                        tile.AnimateGravityFall(targetPos, dur, 0f, mechanical: true);
-                        animatingTiles.Add(tile);
+                        tile.transform.DOKill();
+                        tile.transform.DOMove(targetPos, dur)
+                            .SetEase(Ease.OutBack, 0.15f);
                     }
                 }
             }
 
-            // 2. Create new tiles at row 0 — spawn below the grid and rise up
+            // 2. Spawn new bottom-row tiles SIMULTANEOUSLY with the existing-
+            // tiles shift — the row pushes up and the new tiles burst out of
+            // the bottom in the same moment. Reads as one event.
+            // 2026-05-28: switched from "spawn below, slide up" to "spawn at
+            // target, pop with OutElastic" — snappier sprout feel per
+            // Spencer's brief. Per his clarification: pop fires concurrently
+            // with the shift, not after.
             if (newBottomLetters != null)
             {
+                // Pop curve is now shared with the hand-deal pop via
+                // UIAnimations.NewTilePop — any tuning of the sprout feel
+                // (amplitude, period, easing, baseline duration) propagates
+                // to every "new tile/card arrives" moment in the game.
+                float POP_DURATION = UIAnimations.NEW_TILE_POP_DURATION;
+                List<Tween> popTweens = new List<Tween>();
+
                 for (int col = 0; col < COLS && col < newBottomLetters.Length; col++)
                 {
                     char letter = newBottomLetters[col];
-                    if (letter == '\0') continue; // intentional gap — no tile in this column
+                    if (letter == '\0') continue; // intentional gap
+
                     Vector3 targetPos = CellToWorld(col, 0);
-                    Vector3 spawnPos = new Vector3(targetPos.x, GridBottom - CellSize * 0.8f, targetPos.z);
 
                     Tile tile = CheckoutTile(letter, col, 0, CellSize, -1);
-                    tile.transform.position = spawnPos;
+                    tile.transform.position = targetPos;
+
+                    // Capture the natural scale CheckoutTile set, then collapse
+                    // to zero so the pop tween animates back to it.
+                    Vector3 finalScale = tile.transform.localScale;
+                    tile.transform.localScale = Vector3.zero;
 
                     _tiles[col, 0] = tile;
                     _cells[col, 0] = new CellData
                     {
                         Letter = letter,
-                        Col = col,
-                        Row = 0,
-                        Owner = TileOwner.Player // neutral tiles display as player style
+                        Col    = col,
+                        Row    = 0,
+                        Owner  = TileOwner.Player
                     };
 
-                    // Stone tile visual — check both the data layer AND the letter
                     bool isStone = (letter == '#');
                     if (!isStone && RulesEngine.Instance != null)
                     {
@@ -1037,48 +1196,77 @@ namespace WordDrop
                     if (isStone)
                     {
                         tile.SetStoneVisual(true);
-//                         Debug.Log($"[GridManager] Stone visual applied at ({col},0) letter='{letter}'");
                     }
                     else if (letter == '\0' || letter == '#')
                     {
-                        // Safety: should never reach here — log if we do
                         Debug.LogError($"[GridManager] BAD TILE at ({col},0): letter='{letter}' isStone={isStone}");
                     }
 
-                    // Gold bonus: only rising row tiles can become gold
                     if (!isStone && RulesEngine.Instance != null && RulesEngine.Instance.IsBonusCell(col, 0))
                         tile.SetGoldBonus(true);
 
-                    // Mechanical rise — linear, hard-stop. Machine pushing a row up,
-                    // not an organic drop. Uniform across columns (no stagger).
-                    tile.AnimateGravityFall(targetPos, RISE_DURATION, 0f, mechanical: true);
-                    animatingTiles.Add(tile);
-                }
-            }
+                    // Push the new tile BEHIND the row-above tiles during the
+                    // pop. As the row above shifts up, the growing tile
+                    // emerges from underneath it — reads as "the new row is
+                    // pushing the existing rows up because it's growing
+                    // beneath them" instead of materializing in empty space.
+                    //
+                    // Important: lower ALL the tile's renderers uniformly
+                    // (sprite body, shadow, letter, point) so the INTERNAL
+                    // sorting (shadow behind body, text in front of body)
+                    // is preserved while the whole stack drops behind the
+                    // row above. Was just SetSortingOrder(-5) before, which
+                    // only adjusted body+text — left the shadow (order 4) in
+                    // front of the body (-5), tinting the tile dark.
+                    Tile capturedTile = tile;
+                    // Offset just deep enough to drop BEHIND row-above tiles
+                    // (body sortingOrder=5) but stay ABOVE the board panel
+                    // (sortingOrder=0). With offset -3: body 5→2, shadow 4→1,
+                    // letter 6→3, points 6→3. Was -10 — pushed the tile
+                    // behind the board, making it invisible during the pop;
+                    // then sorting restore on complete read as a sudden
+                    // light-up flash.
+                    const int Z_OFFSET = 3;
 
-            // 3. Wait for all animations to complete
-            if (animatingTiles.Count > 0)
-            {
-//                 Debug.Log($"[GridManager] AnimateRiseRow — {animatingTiles.Count} tile(s) rising.");
-
-                int safety = 0;
-                bool anyAnimating = true;
-                while (anyAnimating && safety < 600)
-                {
-                    safety++;
-                    anyAnimating = false;
-                    for (int i = 0; i < animatingTiles.Count; i++)
+                    var caprSprites = capturedTile.GetComponentsInChildren<SpriteRenderer>(true);
+                    var caprTexts   = capturedTile.GetComponentsInChildren<TMPro.TextMeshPro>(true);
+                    int[] origSpriteOrders = new int[caprSprites.Length];
+                    int[] origTextOrders   = new int[caprTexts.Length];
+                    for (int s = 0; s < caprSprites.Length; s++)
                     {
-                        if (animatingTiles[i] != null && animatingTiles[i].IsAnimating)
-                        {
-                            anyAnimating = true;
-                            break;
-                        }
+                        origSpriteOrders[s] = caprSprites[s].sortingOrder;
+                        caprSprites[s].sortingOrder = origSpriteOrders[s] - Z_OFFSET;
                     }
-                    if (anyAnimating) yield return null;
+                    for (int t = 0; t < caprTexts.Length; t++)
+                    {
+                        origTextOrders[t] = caprTexts[t].sortingOrder;
+                        caprTexts[t].sortingOrder = origTextOrders[t] - Z_OFFSET;
+                    }
+
+                    // Curve identity (OutElastic + amplitude + period) lives
+                    // in UIAnimations.NewTilePop so it stays in sync with the
+                    // hand-deal pop. sortingOrder restore is per-site (hand
+                    // cards don't use this trick) so it's wrapped here.
+                    Tween popTween = UIAnimations.NewTilePop(
+                        tile.transform,
+                        finalScale,
+                        speedMult: 1f,
+                        onComplete: () => {
+                            if (capturedTile == null) return;
+                            for (int s = 0; s < caprSprites.Length; s++)
+                                if (caprSprites[s] != null)
+                                    caprSprites[s].sortingOrder = origSpriteOrders[s];
+                            for (int t = 0; t < caprTexts.Length; t++)
+                                if (caprTexts[t] != null)
+                                    caprTexts[t].sortingOrder = origTextOrders[t];
+                        });
+                    if (popTween != null) popTweens.Add(popTween);
                 }
 
-//                 Debug.Log("[GridManager] AnimateRiseRow — all tiles settled.");
+                // Total animation length = max(shift, pop). They run together
+                // so we just wait long enough for both to finish.
+                if (popTweens.Count > 0)
+                    yield return new WaitForSeconds(Mathf.Max(RISE_DURATION, POP_DURATION) + 0.05f);
             }
         }
 

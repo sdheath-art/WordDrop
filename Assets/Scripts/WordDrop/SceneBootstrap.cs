@@ -123,20 +123,26 @@ namespace WordDrop
             float halfH = _mainCamera.orthographicSize;
             float halfW = halfH * ((float)Screen.width / Screen.height);
 
-            // Vertical gradient background
-            Color bgTop    = new Color(0.220f, 0.370f, 0.920f, 1f); // slightly deeper blue
-            Color bgBottom = new Color(0.580f, 0.060f, 0.820f, 1f); // richer purple
+            // Vertical gradient background.
+            // 2026-05-30: PLACEHOLDER lavender — same hue family as the HUD
+            // purple (#391D78 / (0.2228, 0.1134, 0.4716)), just lighter
+            // values. Holds the visual together while Spencer reworks the
+            // final look in Photoshop. Earlier passes tried dark-blue
+            // (mystical), then warm peach (candy-bright) — neither final.
+            Color bgTop    = new Color(0.70f, 0.62f, 0.85f, 1f); // pale lavender (top of sky)
+            Color bgBottom = new Color(0.55f, 0.45f, 0.75f, 1f); // soft purple (toward the board)
             Sprite bgGrad = TileRenderer.CreateGradientRect(4, 128, bgBottom, bgTop);
             GameObject bgGO = new GameObject("BackgroundGradient");
             // NOT parented to camera — stays still while camera shakes
             SpriteRenderer bgSR = bgGO.AddComponent<SpriteRenderer>();
             bgSR.sprite = bgGrad;
             bgSR.sortingOrder = -10;
-            // Darken-tint the whole gradient (Spencer-picked #C6C6C6).
-            // Multiplies each channel by 0.7735 at render time — keeps the
-            // blue→purple feel but drops overall brightness so the board
-            // + HUD read stronger against the backdrop.
-            bgSR.color = new Color(0.7735f, 0.7735f, 0.7735f, 1f);
+            // Darken-tint removed. The 0.7735 multiplier was dimming the
+            // gradient 23% so the dark-blue background didn't overpower the
+            // HUD. With a warm/light gradient we WANT the brightness — the
+            // happy-wrapper feel depends on the background being the
+            // brightest layer on screen.
+            bgSR.color = Color.white;
             float bgNativeW = 4f / 100f;
             float bgNativeH = 128f / 100f;
             // 3x screen size — camera shake can't reveal the edges
@@ -250,6 +256,12 @@ namespace WordDrop
             new GameObject("LevelController").AddComponent<LevelController>();
             new GameObject("LevelSelectScreen").AddComponent<LevelSelectScreen>();
             new GameObject("LevelCompletedModal").AddComponent<LevelCompletedModal>();
+            new GameObject("StageClearModal").AddComponent<StageClearModal>();
+            new GameObject("TopOutPanel").AddComponent<TopOutPanel>();
+            new GameObject("BoosterManager").AddComponent<BoosterManager>();
+            new GameObject("BoosterHUDSlot").AddComponent<BoosterHUDSlot>();
+            new GameObject("BoosterChoiceModal").AddComponent<BoosterChoiceModal>();
+            new GameObject("ContinueModal").AddComponent<ContinueModal>();
             new GameObject("OutOfMovesModal").AddComponent<OutOfMovesModal>();
             new GameObject("HeartWaitModal").AddComponent<HeartWaitModal>();
             new GameObject("StarterPackModal").AddComponent<StarterPackModal>();

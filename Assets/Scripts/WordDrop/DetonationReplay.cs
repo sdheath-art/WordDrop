@@ -272,8 +272,8 @@ namespace WordDrop
         {
             if (step.Triggers == null) yield break;
 
-            // Fuse trace
-            if (WordDropFX.Instance != null)
+            // Fuse trace (gated by FX_FuseTrace, default off per Spencer 2026-05-19)
+            if (WordDropFX.FX_FuseTrace && WordDropFX.Instance != null)
                 WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
 
             yield return new WaitForSeconds(0.08f * REPLAY_SPEED_MULT);

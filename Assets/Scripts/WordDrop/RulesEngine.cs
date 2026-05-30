@@ -224,7 +224,8 @@ namespace WordDrop
         public List<Vector2Int> PlaceInitialBonusCells()
         {
             var positions = new List<Vector2Int>();
-            int count = Random.Range(1, 3); // 1 or 2 starting bonus cells (rarer = more exciting)
+            // MVP P3.5: SurvivalRng for gameplay-affecting random (Daily Seeded Survival).
+            int count = SurvivalRng.Range(1, 3); // 1 or 2 starting bonus cells (rarer = more exciting)
             var available = new List<Vector2Int>();
 
             // Scatter across the whole board — any cell can be gold
@@ -235,7 +236,7 @@ namespace WordDrop
 
             for (int i = 0; i < count && available.Count > 0; i++)
             {
-                int idx = Random.Range(0, available.Count);
+                int idx = SurvivalRng.Range(0, available.Count);
                 var pos = available[idx];
                 available.RemoveAt(idx);
                 _bonusCells[pos.x, pos.y] = true;
@@ -259,8 +260,9 @@ namespace WordDrop
         {
             var bonusCols = new List<int>();
 
+            // MVP P3.5: SurvivalRng for gameplay-affecting random (Daily Seeded Survival).
             // 40% chance to place a gold tile on a rising row (was 100% with 1-2 tiles)
-            if (Random.value > 0.40f)
+            if (SurvivalRng.Value > 0.40f)
             {
 //                 Debug.Log("[RulesEngine] Board Blessing: no bonus cell this rising row (60% skip chance).");
                 return bonusCols;
@@ -282,7 +284,7 @@ namespace WordDrop
 
             for (int i = 0; i < count && available.Count > 0; i++)
             {
-                int idx = Random.Range(0, available.Count);
+                int idx = SurvivalRng.Range(0, available.Count);
                 int col = available[idx];
                 available.RemoveAt(idx);
                 _bonusCells[col, 0] = true;
@@ -636,7 +638,7 @@ namespace WordDrop
                     if (stoneColumns.Contains(c)) continue;
                     int h = GetColumnHeight(c);
                     // If this column is 3+ rows taller than average, 50% chance to skip
-                    if (h >= avgHeight + 3 && Random.value < 0.50f)
+                    if (h >= avgHeight + 3 && SurvivalRng.Value < 0.50f)
                     {
                         skipCols.Add(c);
                     }
@@ -652,7 +654,7 @@ namespace WordDrop
                 if (!stoneColumns.Contains(c) && !skipCols.Contains(c)) colOrder.Add(c);
             for (int i = colOrder.Count - 1; i > 0; i--)
             {
-                int j = Random.Range(0, i + 1);
+                int j = SurvivalRng.Range(0, i + 1);
                 int tmp = colOrder[i]; colOrder[i] = colOrder[j]; colOrder[j] = tmp;
             }
 
@@ -661,7 +663,7 @@ namespace WordDrop
             foreach (int col in colOrder)
             {
                 if (helpersPlaced >= 4) break;
-                if (Random.value > 0.38f) continue; // EXPERIMENT: was 0.60 — revert if rows feel dead
+                if (SurvivalRng.Value > 0.38f) continue; // EXPERIMENT: was 0.60 — revert if rows feel dead
 
                 char helper = FindColumnHelperImproved(col);
                 if (helper != '\0' && !used.Contains(helper))
@@ -684,7 +686,7 @@ namespace WordDrop
                     picked = PickUnused(FERTILE_VOWELS, used);
                     vowelCount++;
                 }
-                else if (Random.value < 0.25f && vowelCount < 3)
+                else if (SurvivalRng.Value < 0.25f && vowelCount < 3)
                 {
                     picked = PickUnused(FERTILE_VOWELS, used);
                     vowelCount++;
@@ -832,6 +834,25 @@ namespace WordDrop
             foreach (var kv in letterCounts)
                 if (kv.Value > 1) score -= (kv.Value - 1);
 
+            // Vertical-stack penalty: discourage placing a letter in a column
+            // that already has the same letter stacked above. Over multiple
+            // rises this prevents 3-4 of the same letter (esp. vowels) from
+            // building up in a single column. Penalty scales with existing
+            // stack count, so adding a 2nd I costs 2, a 3rd costs 4, etc.
+            for (int col = 0; col < COLS; col++)
+            {
+                char newLetter = row[col];
+                if (newLetter == '\0' || newLetter == '#') continue;
+                int sameLetterInColumn = 0;
+                for (int r = 0; r < ROWS; r++)
+                {
+                    var cell = _board[col, r];
+                    if (cell != null && !cell.IsStone && cell.Letter == newLetter)
+                        sameLetterInColumn++;
+                }
+                if (sameLetterInColumn >= 1) score -= sameLetterInColumn * 2;
+            }
+
             // Dead columns: new letter with no existing tiles nearby
             for (int col = 0; col < COLS; col++)
             {
@@ -968,7 +989,7 @@ namespace WordDrop
             }
 
             if (candidates.Count == 0) return '\0';
-            return candidates[Random.Range(0, candidates.Count)];
+            return candidates[SurvivalRng.Range(0, candidates.Count)];
         }
 
         private static bool IsVowelChar(char c)
@@ -1143,11 +1164,11 @@ namespace WordDrop
             // Try to find an unused letter
             for (int attempt = 0; attempt < 10; attempt++)
             {
-                char c = pool[Random.Range(0, pool.Length)];
+                char c = pool[SurvivalRng.Range(0, pool.Length)];
                 if (!used.Contains(c)) return c;
             }
             // Fallback: just pick any
-            return pool[Random.Range(0, pool.Length)];
+            return pool[SurvivalRng.Range(0, pool.Length)];
         }
 
         public char[] FillBottomRow(TileBag bag)
@@ -1165,7 +1186,7 @@ namespace WordDrop
                 ? SurvivalManager.Instance.GetStoneChance() : 0f;
             var stoneColumns = new HashSet<int>();
             for (int col = 0; col < COLS; col++)
-                if (stoneColumns.Count < 2 && Random.value < stoneChance)
+                if (stoneColumns.Count < 2 && SurvivalRng.Value < stoneChance)
                     stoneColumns.Add(col);
 
             if (fertility)
@@ -1177,7 +1198,7 @@ namespace WordDrop
 
                 // Post-clear boost: generate more candidates for a better row
                 bool boosted = SurvivalManager.Instance != null && SurvivalManager.Instance.IsPostClearBoosted;
-                int numCandidates = boosted ? 16 : 8;
+                int numCandidates = boosted ? 24 : 12;
 
                 char[] bestRow = null;
                 int bestScore = -999;
@@ -1209,9 +1230,31 @@ namespace WordDrop
             }
             else
             {
-                // Classic mode: plain random draw
+                // Classic mode: plain random draw with light anti-stacking.
+                // Up to 3 retries per column if the drawn letter would create
+                // a vertical stack (same letter already in this column).
+                // Prevents 3-4 of the same letter accumulating in one column
+                // over multiple rises while keeping NoAssistMode's "raw RNG"
+                // character mostly intact.
                 for (int col = 0; col < COLS; col++)
-                    letters[col] = bag.DrawLetter();
+                {
+                    if (stoneColumns.Contains(col)) { letters[col] = '#'; continue; }
+
+                    char drawn = bag.DrawLetter();
+                    for (int retry = 0; retry < 3; retry++)
+                    {
+                        bool conflict = false;
+                        for (int r = 0; r < ROWS; r++)
+                        {
+                            var cell = _board[col, r];
+                            if (cell != null && !cell.IsStone && cell.Letter == drawn)
+                            { conflict = true; break; }
+                        }
+                        if (!conflict) break;
+                        drawn = bag.DrawLetter();
+                    }
+                    letters[col] = drawn;
+                }
 
 //                 Debug.Log($"[RulesEngine] FillBottomRow — {new string(letters)}");
             }
@@ -2072,6 +2115,10 @@ namespace WordDrop
         // ═══════════════════════════════════════════════════════════════════════════
         // GRAVITY — Compact columns downward in data layer (Job 4)
         // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>MVP P5: public surface so boosters can sync RulesEngine + GridManager
+        /// after destructive resolves. Internally delegates to ApplyGravityInData.</summary>
+        public Dictionary<Vector2Int, Vector2Int> ApplyGravityInDataPublic() => ApplyGravityInData();
 
         /// <summary>
         /// Compacts each column downward in the logical board data.
@@ -3504,6 +3551,24 @@ namespace WordDrop
                 // Fire event so listeners (tutorial, etc.) can react
                 OnWordScored?.Invoke(evt);
 
+                // 2026-05-28: Path A bugfix — this scoring path adds the word to
+                // the primed registry above (AddPrimedWord) but historically
+                // didn't fire OnWordPrimed, unlike the ProcessDrop path at
+                // line ~1691. Any listener relying on OnWordPrimed (e.g., the
+                // ZeroFloorRefund handler in MatchController) missed events
+                // formed through this step-resolver path. Adding the missing
+                // invoke to match the other path's contract.
+                var primedEvt = new WordPrimedEvent
+                {
+                    Word          = match.Word,
+                    Cells         = new List<Vector2Int>(match.Cells),
+                    PlayerIndex   = _stepPlayerIndex,
+                    PrimedOnTurn  = _globalTurn,
+                    ExpiresOnTurn = expiresOn,
+                    PrimedWordId  = primedId,
+                };
+                OnWordPrimed?.Invoke(primedEvt);
+
 //                 Debug.Log($"[RulesEngine] DoScoreAndPrime: '{match.Word}' base={baseScore}" +
 //                           (chainBonus > 0 ? $" +chain({chainBonus})" : "") +
 //                           $" = {finalScore} pts  [chain={_stepChainDepth}] primedId={primedId}");
@@ -4274,7 +4339,7 @@ namespace WordDrop
                 // Shuffle and pick up to maxSplash
                 for (int i = junkCandidates.Count - 1; i > 0; i--)
                 {
-                    int j = Random.Range(0, i + 1);
+                    int j = SurvivalRng.Range(0, i + 1);
                     var tmp = junkCandidates[i]; junkCandidates[i] = junkCandidates[j]; junkCandidates[j] = tmp;
                 }
 

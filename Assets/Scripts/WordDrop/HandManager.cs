@@ -26,7 +26,65 @@ namespace WordDrop
         // ── Constants ─────────────────────────────────────────────────────────────
 
         private static int  HAND_SIZE            => PlayerHand.HAND_SIZE;
-        private const float CARD_SIZE_FRACTION  = 0.85f;
+        // 2026-05-28 (Path A): reduced from 0.85 → 0.72 so hand tiles match
+        // the board tile size (~150px PSD target). Frees vertical space for the
+        // bottom booster row + NEXT to coexist without overlap. In Survival
+        // mode this is overridden by exact PSD-derived sizing — see helpers
+        // below and the survival branches of GetCardX/GetCardRowY/etc.
+        private const float CARD_SIZE_FRACTION  = 0.72f;
+
+        // ── PSD layout constants (canvas 1179×2556, iPhone 16/15 Pro) ─────────
+        // Mirrors values used by BoosterHUDSlot.cs. Camera orthographicSize is
+        // 10 (SceneBootstrap.cs:105), giving worldH=20. Conversion ratio is
+        // therefore 20/2556 = 0.007825 world units per PSD pixel.
+        //
+        // Used by survival-mode hand/tray/NEXT placement to pin every world-
+        // space element to exact PSD pixel anchors. Normalized values (e.g.
+        // 169.67 step) are slight tidy-ups of Spencer's PSD measurements where
+        // sub-pixel rounding produced uneven gaps.
+        // ──────────────────────────────────────────────────────────────────────
+        private const float PSD_CANVAS_W   = 1179f;
+        private const float PSD_CANVAS_H   = 2556f;
+        // Hand pill — rides 87 PSD below board bottom (drag-distance rule).
+        // Board Y=500 in GridManager → bottom 1846 → pill Y=1933.
+        private const float PSD_PILL_X     = 137f;
+        private const float PSD_PILL_Y     = 1933f;
+        private const float PSD_PILL_W     = 905f;
+        private const float PSD_PILL_H     = 200f;
+        // Hand cards (4 of them, normalized step)
+        private const float PSD_CARD_X0    = 171f;
+        private const float PSD_CARD_STEP  = 169.67f;
+        private const float PSD_CARD_Y     = 1958f;
+        private const float PSD_CARD_W     = 149f;
+        private const float PSD_CARD_H     = 151f;
+        // NEXT preview
+        private const float PSD_NEXT_X     = 898f;
+        private const float PSD_NEXT_Y     = 1999f;
+        private const float PSD_NEXT_W     = 108f;
+        private const float PSD_NEXT_H     = 109f;
+
+        /// <summary>
+        /// PSD pixel → world unit conversion. Depends on the live camera's
+        /// orthographicSize; recomputed each call so a camera resize (rare)
+        /// stays consistent.
+        /// </summary>
+        private float PsdToWorld(float psdPx)
+        {
+            float halfH = _cam != null ? _cam.orthographicSize : 10f;
+            return psdPx * (2f * halfH / PSD_CANVAS_H);
+        }
+
+        /// <summary>PSD X coord → world X (canvas center → world 0).</summary>
+        private float PsdXToWorld(float xPsd)
+        {
+            return PsdToWorld(xPsd - PSD_CANVAS_W * 0.5f);
+        }
+
+        /// <summary>PSD Y coord → world Y (canvas center → world 0, Y flipped).</summary>
+        private float PsdYToWorld(float yPsd)
+        {
+            return PsdToWorld(PSD_CANVAS_H * 0.5f - yPsd);
+        }
 
         // Card visual colors
         private static readonly Color CARD_FILL_NORMAL    = new Color(0.973f, 0.961f, 0.937f, 1f);    // warm cream #F8F5EF
@@ -59,6 +117,7 @@ namespace WordDrop
         private Sprite           _spriteSelected;
         private Sprite           _spriteSwap;
         private Sprite           _spriteSwapSelected;
+        private Sprite           _spriteWild;          // hand-card wild sprite (wild@2x — has ? baked in)
         // Wild halo — multicolor glow sprite placed behind the wild card so the
         // slot reads as "special" at a glance. One child GO per card, toggled
         // on/off via RefreshCardVisual based on IsWildSlot.
@@ -333,23 +392,194 @@ namespace WordDrop
             StartCoroutine(StaggeredHandPopIn());
         }
 
+        // Hand cards now run the canonical NewTilePop at speedMult=1.0 so
+        // they look IDENTICAL to row-rise new tiles. With an elastic curve,
+        // duration is part of the feel (trailing oscillations only read at
+        // the full 0.85s) — speeding it up made the hand look like a different
+        // animation. The total hand reveal is ~0.85s + (HAND_SIZE-1)*stagger.
+        private const float HAND_POP_SPEED_MULT = 1.0f;
+
         /// <summary>
-        /// Cartoony pop-in for each hand card. Scale 0 → base scale on
-        /// OutBack with overshoot 4.0 — punches well past 1.0 and settles
-        /// back, no linear segment. Stagger 0.06s per card, 0.22s tween,
-        /// PlayCardDeal sound on each pop.
+        /// Pop-in for each hand card. Curve identity (OutElastic sprout) is
+        /// shared with row-rise new tiles via UIAnimations.NewTilePop —
+        /// tuning the sprout feel in one place updates both call sites.
+        /// Audio: each card plays GameAudio.PlayTileArrival — the canonical
+        /// "new tile/card arrives" sound shared with the row-rise and all
+        /// single-card refill sites. Pitched up one semitone per card so the
+        /// full deal sweeps up musically (single-card refills pass pitch=1.0
+        /// so only the full deal has the climb). Stagger 0.06s per card.
         /// </summary>
         private IEnumerator StaggeredHandPopIn()
         {
             Vector3 baseScale = GetCardBaseScale();
+            // 2^(1/12) — one equal-tempered semitone. Multiplying pitch by
+            // this each step gives a chromatic climb (1 → 1.0595 → 1.1225 …).
+            const float SEMITONE_RATIO = 1.05946309f;
+            float pitch = 1f;
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
-                _cardObjects[i].transform
-                    .DOScale(baseScale, 0.22f)
-                    .SetEase(DG.Tweening.Ease.OutBack, 4.0f);
-                GameAudio.Instance?.PlayCardDeal();
+                UIAnimations.NewTilePop(
+                    _cardObjects[i].transform,
+                    baseScale,
+                    speedMult: HAND_POP_SPEED_MULT);
+                GameAudio.Instance?.PlayTileArrival(pitch);
+                pitch *= SEMITONE_RATIO;
                 yield return WaitCache.Get(0.06f);
+            }
+        }
+
+        // ── Group animation (Candy-Crush-style converge when a menu opens) ─────
+        //
+        // Mirrors BoosterHUDSlot.AnimateGroupOut/In — when the Settings modal
+        // opens, the hand TILES (cards + NEXT preview) converge horizontally
+        // to the hand center and scale out while the holder pill, divider,
+        // NEXT label, and NEXT socket stay put. Tiles return on close.
+
+        private const float HAND_GROUP_OUT_DUR   = 0.28f;
+        private const float HAND_GROUP_IN_DUR    = 0.32f;
+        private const float HAND_GROUP_OVERSHOOT = 1.7f;
+
+        private bool       _handRestCached;
+        private Vector3[]  _cardRestPositions;
+        private Vector3[]  _cardRestScales;
+        private Vector3[]  _cardShadowRestPositions;
+        private Vector3[]  _cardShadowRestScales;
+        private Vector3    _nextTileRestPosition;
+        private Vector3    _nextTileRestScale;
+        private float      _handCenterX;
+        private float      _handTilesT = 1f;
+        private Tween      _handTilesTween;
+
+        private void CacheHandTileRestIfNeeded()
+        {
+            if (_handRestCached) return;
+            _cardRestPositions        = new Vector3[HAND_SIZE];
+            _cardRestScales           = new Vector3[HAND_SIZE];
+            _cardShadowRestPositions  = new Vector3[HAND_SIZE];
+            _cardShadowRestScales     = new Vector3[HAND_SIZE];
+            // Group center X — midpoint of leftmost to rightmost ANIMATED
+            // element (cards + NEXT preview). Including NEXT in the center
+            // calc means NEXT and the leftmost card travel symmetric
+            // distances, so the whole group reads as one unit.
+            float leftX  = HAND_SIZE > 0 ? GetCardX(0) : 0f;
+            float rightX = HAND_SIZE > 0 ? GetCardX(HAND_SIZE - 1) : 0f;
+            if (_nextTilePreview != null)
+            {
+                float nx = _nextTilePreview.transform.position.x;
+                if (nx < leftX)  leftX  = nx;
+                if (nx > rightX) rightX = nx;
+            }
+            _handCenterX = (leftX + rightX) * 0.5f;
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] != null)
+                {
+                    _cardRestPositions[i] = _cardObjects[i].transform.position;
+                    _cardRestScales[i]    = _cardObjects[i].transform.localScale;
+                }
+                if (_cardShadows[i] != null)
+                {
+                    _cardShadowRestPositions[i] = _cardShadows[i].transform.position;
+                    _cardShadowRestScales[i]    = _cardShadows[i].transform.localScale;
+                }
+            }
+            if (_nextTilePreview != null)
+            {
+                _nextTileRestPosition = _nextTilePreview.transform.position;
+                _nextTileRestScale    = _nextTilePreview.transform.localScale;
+            }
+            _handRestCached = true;
+        }
+
+        /// <summary>
+        /// True group-scale animation for hand tiles: a single float tweens
+        /// 1→0, and every tile (cards + shadows + NEXT preview) lerps
+        /// position toward the group center and scale toward 0 in perfect
+        /// lockstep. Reads as one unified object zooming out to a point —
+        /// stage-clear-toss-style cartoon perspective. The hand HOLDER pill,
+        /// divider, NEXT label, and NEXT socket stay put.
+        /// </summary>
+        public void AnimateHandTilesOut(float speedMult = 1f)
+        {
+            CacheHandTileRestIfNeeded();
+            float dur = HAND_GROUP_OUT_DUR / Mathf.Max(0.001f, speedMult);
+
+            // Kill any in-flight per-tile tweens (residue from prior implementation).
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] != null) _cardObjects[i].transform.DOKill();
+                if (_cardShadows[i] != null) _cardShadows[i].transform.DOKill();
+            }
+            if (_nextTilePreview != null) _nextTilePreview.transform.DOKill();
+
+            _handTilesTween?.Kill();
+            _handTilesTween = DOTween.To(() => _handTilesT, v =>
+            {
+                _handTilesT = v;
+                ApplyHandTilesGroupTransform(v);
+            }, 0f, dur).SetEase(Ease.InBack, HAND_GROUP_OVERSHOOT);
+        }
+
+        /// <summary>
+        /// Reverse of AnimateHandTilesOut — group scale tweens 0→1 with
+        /// OutBack overshoot so the tiles pop back into place. No-op if
+        /// AnimateHandTilesOut never ran.
+        /// </summary>
+        public void AnimateHandTilesIn(float speedMult = 1f)
+        {
+            if (!_handRestCached) return;
+            float dur = HAND_GROUP_IN_DUR / Mathf.Max(0.001f, speedMult);
+
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] != null) _cardObjects[i].transform.DOKill();
+                if (_cardShadows[i] != null) _cardShadows[i].transform.DOKill();
+            }
+            if (_nextTilePreview != null) _nextTilePreview.transform.DOKill();
+
+            _handTilesTween?.Kill();
+            _handTilesTween = DOTween.To(() => _handTilesT, v =>
+            {
+                _handTilesT = v;
+                ApplyHandTilesGroupTransform(v);
+            }, 1f, dur).SetEase(Ease.OutBack, HAND_GROUP_OVERSHOOT);
+        }
+
+        private void ApplyHandTilesGroupTransform(float t)
+        {
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] != null)
+                {
+                    var tr = _cardObjects[i].transform;
+                    float deltaX = _cardRestPositions[i].x - _handCenterX;
+                    tr.position = new Vector3(
+                        _handCenterX + deltaX * t,
+                        _cardRestPositions[i].y,
+                        _cardRestPositions[i].z);
+                    tr.localScale = _cardRestScales[i] * t;
+                }
+                if (_cardShadows[i] != null)
+                {
+                    var str = _cardShadows[i].transform;
+                    float deltaX = _cardShadowRestPositions[i].x - _handCenterX;
+                    str.position = new Vector3(
+                        _handCenterX + deltaX * t,
+                        _cardShadowRestPositions[i].y,
+                        _cardShadowRestPositions[i].z);
+                    str.localScale = _cardShadowRestScales[i] * t;
+                }
+            }
+            if (_nextTilePreview != null)
+            {
+                var nt = _nextTilePreview.transform;
+                float deltaX = _nextTileRestPosition.x - _handCenterX;
+                nt.position = new Vector3(
+                    _handCenterX + deltaX * t,
+                    _nextTileRestPosition.y,
+                    _nextTileRestPosition.z);
+                nt.localScale = _nextTileRestScale * t;
             }
         }
 
@@ -583,8 +813,14 @@ namespace WordDrop
             // coroutine can unlock input AFTER FireComplete/FireFail fired, letting SHUFFLE/drag
             // still work while a terminal modal is on screen.
             bool levelLocked = LevelController.Instance != null && LevelController.Instance.IsInputLocked;
+            // Overlay pause gate (StageClearModal etc.) — block input while any
+            // full-screen overlay is freezing Survival timers. Independent of
+            // IsInteractable so the modal doesn't have to race with the hand
+            // coroutine's own state ownership.
+            bool overlayPaused = SurvivalManager.Instance != null && SurvivalManager.Instance.IsOverlayPaused;
             if (!IsInteractable ||
                 levelLocked ||
+                overlayPaused ||
                 (MatchController.Instance != null && MatchController.Instance.IsProcessing))
             {
                 if (DropPreview.Instance != null)
@@ -728,7 +964,9 @@ namespace WordDrop
                                 _lastCarryCol = -1; // reset so first column gets a tick
                                 RestoreAllCardSortOrder();
                                 BoostCardSortOrder(_touchCardIndex);
-                                GameAudio.Instance?.PlayTileSelect();
+                                // 2026-05-29: pickup SFX silenced — only drop
+                                // sound plays now (matches Wordscapes / WWF).
+                                // GameAudio.Instance?.PlayTileSelect();
 
                                 // Hide ALL shadows first, then show only the dragged card's
                                 for (int s = 0; s < HAND_SIZE; s++)
@@ -750,10 +988,10 @@ namespace WordDrop
                                         _cardShadows[_touchCardIndex].transform.localScale = GetCardBaseScale() * 1.06f;
                                     }
 
-                                    // Swap to selected sprite while dragging
+                                    // Swap to drag sprite (wild slots keep their wild sprite)
                                     SpriteRenderer dragSR = _cardObjects[_touchCardIndex].GetComponent<SpriteRenderer>();
-                                    if (dragSR != null && _spriteSelected != null)
-                                        dragSR.sprite = _spriteSelected;
+                                    if (dragSR != null)
+                                        dragSR.sprite = GetSlotDragSprite(_touchCardIndex);
                                 }
 
 //                                 Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
@@ -847,7 +1085,7 @@ namespace WordDrop
                                 _lastCarryCol = col;
                             }
                             if (DropPreview.Instance != null)
-                                DropPreview.Instance.UpdatePreview(letter, col);
+                                DropPreview.Instance.UpdatePreview(letter, col, IsWildSlotChecked(_touchCardIndex));
 
                             if (ColumnArrowManager.Instance != null)
                                 ColumnArrowManager.Instance.ShowArrows(true);
@@ -897,7 +1135,7 @@ namespace WordDrop
                             {
                                 _cardObjects[_touchCardIndex].transform.localScale = GetCardBaseScale();
                                 SpriteRenderer csr = _cardObjects[_touchCardIndex].GetComponent<SpriteRenderer>();
-                                if (csr != null) csr.sprite = _spriteNormal;
+                                if (csr != null) csr.sprite = GetSlotRestSprite(_touchCardIndex);
                             }
 
                             // Hide tutorial arrows on successful drop
@@ -945,8 +1183,8 @@ namespace WordDrop
                                 _cardObjects[cardIdx].transform.localScale = GetCardBaseScale() * 1.1f;
 
                                 SpriteRenderer dragSR = _cardObjects[cardIdx].GetComponent<SpriteRenderer>();
-                                if (dragSR != null && _spriteSelected != null)
-                                    dragSR.sprite = _spriteSelected;
+                                if (dragSR != null)
+                                    dragSR.sprite = GetSlotDragSprite(cardIdx);
                             }
 
 //                             Debug.Log($"[Input] Reordering → CarryToBoard: card={cardIdx}");
@@ -1000,9 +1238,9 @@ namespace WordDrop
             float baseY = GetCardRowY();
             _cardObjects[index].transform.position = new Vector3(GetCardX(index), baseY, -1f);
             _cardObjects[index].transform.localScale = GetCardBaseScale();
-            // Reset sprite back to normal
+            // Reset sprite back to rest state (wild slots return to wild sprite)
             SpriteRenderer csr = _cardObjects[index].GetComponent<SpriteRenderer>();
-            if (csr != null) csr.sprite = _spriteNormal;
+            if (csr != null) csr.sprite = GetSlotRestSprite(index);
             // Reset shadow to rest state
             if (index < HAND_SIZE && _cardShadows[index] != null)
             {
@@ -1259,12 +1497,16 @@ namespace WordDrop
                     _cardObjects[cardIndex].transform.localScale = Vector3.zero;
                     if (cardSR != null) cardSR.color = Color.white;
 
-                    // Deal animation: pop in from zero
+                    // Single-card refill after a bag swap. Routes through the
+                    // same UIAnimations.NewTilePop curve as the initial hand
+                    // deal and row-rise tiles so feel stays unified.
                     Vector3 restPos = new Vector3(GetCardX(cardIndex), GetCardRowY(), -1f);
                     _cardObjects[cardIndex].transform.position = restPos;
-                    _cardObjects[cardIndex].transform.DOScale(GetCardBaseScale(), 0.2f)
-                        .SetEase(DG.Tweening.Ease.OutBack, 2f);
-                    GameAudio.Instance?.PlayCardDeal();
+                    UIAnimations.NewTilePop(
+                        _cardObjects[cardIndex].transform,
+                        GetCardBaseScale(),
+                        speedMult: HAND_POP_SPEED_MULT);
+                    GameAudio.Instance?.PlayTileArrival();
                 }
 
                 RefreshAllCardVisuals();
@@ -1368,7 +1610,8 @@ namespace WordDrop
             _rewriteTargetCol = col;
             _rewriteTargetRow = row;
             _rewriteTimeoutTimer = REWRITE_TIMEOUT;
-            GameAudio.Instance?.PlayTileSelect();
+            // 2026-05-29: pickup SFX silenced — only drop sound plays now.
+            // GameAudio.Instance?.PlayTileSelect();
             HapticsManager.EditConfirm(); // 0.30/0.75 — crisp UI feel, much lighter than old Strong()
 
             // Pulse the target tile
@@ -1623,9 +1866,12 @@ namespace WordDrop
                         }
                     }
 
-                    // Word scored FX + popup
-                    if (WordDropFX.Instance != null)
-                        WordDropFX.Instance.PlayWordScored(scoredTiles, new Color(0.9f, 0.2f, 0.8f), i);
+                    // 2026-05-29: removed duplicate PlayWordScored call —
+                    // GameVisualBridge.cs:560 is the canonical word-presentation
+                    // path (per the MatchController.cs:670 comment). When the
+                    // edit/rewrite swap flow ran through here AND through
+                    // GameVisualBridge, the pop SFX fired twice. Haptics still
+                    // fire here since GameVisualBridge doesn't handle haptics.
                     HapticsManager.Light();
 
                     if (BonusPopup.Instance != null && scoredTiles.Count > 0)
@@ -3399,7 +3645,8 @@ namespace WordDrop
 
             // Tap different card → deselect old, select new
             _selectedIndex = index;
-            GameAudio.Instance?.PlayTileSelect();
+            // 2026-05-29: pickup SFX silenced — only drop sound plays now.
+            // GameAudio.Instance?.PlayTileSelect();
             RefreshAllCardVisuals();
             UpdateCardPositions();
 
@@ -3962,8 +4209,8 @@ namespace WordDrop
                         break;
 
                     case RulesEngine.ResolutionPhase.TriggersFound:
-                        // Fuse Trace for player path
-                        if (step.Triggers != null && WordDropFX.Instance != null)
+                        // Fuse Trace for player path (gated by FX_FuseTrace, default off per Spencer 2026-05-19)
+                        if (WordDropFX.FX_FuseTrace && step.Triggers != null && WordDropFX.Instance != null)
                             WordDropFX.Instance.PlayFuseTrace(step.Triggers, grid);
 
                         // Multi-trigger callout — "DOUBLE DETONATE" / "TRIPLE DETONATE"
@@ -4088,6 +4335,15 @@ namespace WordDrop
                                 FirePerWordBurst();
                             }
                             FireTileFlashBoxes(dying);
+
+                            // CC-style cascade pacing: insert a beat BEFORE each
+                            // CASCADE step (ChainDepth >= 2) so the player can
+                            // perceive each pop as its own event. The INITIAL
+                            // detonation fires at ChainDepth=1 and must NOT be
+                            // delayed (was previously delayed by accident,
+                            // making the first pop feel laggy).
+                            if (step.ChainDepth >= 2)
+                                yield return WaitCache.Get(0.10f);
 
                             // Tiered explosion (handles sound + visuals)
                             if (WordDropFX.Instance != null)
@@ -4295,11 +4551,24 @@ namespace WordDrop
                 _cardObjects[handSlot].SetActive(true);
                 _cardObjects[handSlot].transform.position = cardPos;
 
-                // Start slightly small, pop to full size
+                // Single-card refill after a tile drop. Uses the SAME curve
+                // as the row-rise new-tile pop and the initial hand deal —
+                // start scale zero, soft OutElastic sprout via
+                // UIAnimations.NewTilePop. Any tuning of NEW_TILE_POP_*
+                // constants propagates to every "new tile/card arrives"
+                // moment in the game.
                 Vector3 baseScale = GetCardBaseScale();
-                _cardObjects[handSlot].transform.localScale = baseScale * 0.5f;
-                _cardObjects[handSlot].transform.DOScale(baseScale, 0.15f)
-                    .SetEase(DG.Tweening.Ease.OutBack);
+                _cardObjects[handSlot].transform.localScale = Vector3.zero;
+                UIAnimations.NewTilePop(
+                    _cardObjects[handSlot].transform,
+                    baseScale,
+                    speedMult: HAND_POP_SPEED_MULT);
+                // No sound on this site (per-tile-drop refill) — the row-rise
+                // bloop here would double up with all the other tile-drop /
+                // detonation SFX firing in the same moment. Animation still
+                // shares the canonical NewTilePop curve; only the audio
+                // diverges. If you want this site audible again, call
+                // GameAudio.Instance?.PlayTileArrival() here.
 
                 if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
                 {
@@ -4646,11 +4915,14 @@ namespace WordDrop
 
             if (SurvivalManager.IsSurvivalMode)
             {
-                float actionRowY = GetActionRowY();
-                trayTop = cardY + _cardSize * 0.60f;
-                trayBottom = actionRowY - _cardSize * 0.48f;
-                trayH = trayTop - trayBottom;
-                trayW = (_grid.GridRight - _grid.GridLeft) + _grid.CellSize * 0.18f;
+                // 2026-05-28 (Path A, Phase 2): tray locked to exact PSD pill
+                // spec (W=905, H=200, X=137, Y=1966 in canvas 1179×2556).
+                // Center the tray on the canvas-derived position; size to
+                // match the PSD pill dimensions.
+                trayTop    = PsdYToWorld(PSD_PILL_Y);
+                trayBottom = PsdYToWorld(PSD_PILL_Y + PSD_PILL_H);
+                trayH      = trayTop - trayBottom;
+                trayW      = PsdToWorld(PSD_PILL_W);
             }
 
             int texW = Mathf.Clamp(Mathf.RoundToInt(trayW * 150f), 64, 1024);
@@ -4658,7 +4930,7 @@ namespace WordDrop
             int radius = Mathf.Min(texW, texH) / 8;
 
             // Same material family as board — slightly lighter than board outer
-            Color trayColor = new Color(0.085f, 0.105f, 0.260f, 0.60f); // darker, desaturated — distinct from purple bg
+            Color trayColor = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 — matches HUD bar. Held while Spencer reworks holder look in Photoshop. Solid alpha so warm bg doesn't bleed through.
             Sprite traySprite = TileRenderer.CreateSolidRoundedRect(texW, texH, radius, trayColor);
 
             _controlTray = new GameObject("ControlTray");
@@ -4677,16 +4949,22 @@ namespace WordDrop
         private void BuildCardSprites()
         {
             if (_grid == null) return;
-            _cardSize = _grid.CellSize * CARD_SIZE_FRACTION;
+            // 2026-05-28 (Path A, Phase 2): in Survival, card size is locked
+            // to PSD card width (149 px) via the world-unit conversion. In
+            // other modes (legacy 1v1, level), keep the cell-fraction sizing.
+            _cardSize = SurvivalManager.IsSurvivalMode
+                ? PsdToWorld(PSD_CARD_W)
+                : _grid.CellSize * CARD_SIZE_FRACTION;
 
             int texSize = Mathf.Clamp(Mathf.RoundToInt(_cardSize * 200f), 64, 512);
             int radius  = texSize / 7;
             int border  = Mathf.Max(3, texSize / 16);
 
             // Try loading hand-drawn sprites
-            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/white_tile2@2x");
+            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/white5@2x");
             Sprite loadedSelected = Resources.Load<Sprite>("Tiles/green_tile2@2x");
             Sprite loadedSwap     = Resources.Load<Sprite>("Tiles/swap_tile");
+            Sprite loadedWild     = Resources.Load<Sprite>("Tiles/wild@2x");
 
             if (loadedNormal != null)
             {
@@ -4694,6 +4972,7 @@ namespace WordDrop
                 _spriteSelected     = loadedSelected ?? loadedNormal;
                 _spriteSwap         = loadedSwap ?? loadedNormal;
                 _spriteSwapSelected = loadedSwap ?? loadedNormal; // swap+selected uses swap sprite
+                _spriteWild         = loadedWild ?? loadedNormal;
 //                 Debug.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
             }
 
@@ -4761,12 +5040,10 @@ namespace WordDrop
 
                 float invScale = 1f / Mathf.Max(scale, 0.01f);
 
-                // Letter text — TMP, matches board tiles exactly
+                // Letter text — TMP, matches board tiles exactly (true center)
                 GameObject textGO = new GameObject("CardLetter");
                 textGO.transform.SetParent(cardGO.transform, false);
-                // Slight downward offset (-0.025) compensates for TMP font-metric
-                // centering. Matches the board tile letter positioning.
-                textGO.transform.localPosition = new Vector3(0f, -nativeSize * 0.025f, -0.1f);
+                textGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
                 var tm = textGO.AddComponent<TMPro.TextMeshPro>();
                 TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
@@ -4835,6 +5112,14 @@ namespace WordDrop
                     _cardHalos[i]   = haloGO;
                     _cardHaloSRs[i] = haloSR;
                 }
+
+                // 2026-05-29: cards spawn INACTIVE so they don't flash at
+                // full size between BuildCardObjects and InitialiseHand's
+                // pop-in. InitialiseHand calls SetActive(true) right before
+                // scaling to 0 and running StaggeredHandPopIn. Without this,
+                // the cards were visible at rest scale for the brief gap
+                // between rebuild and the deal animation.
+                cardGO.SetActive(false);
             }
 
 //             Debug.Log($"[HandManager] Built {HAND_SIZE} card objects at Y={cardY:F2}");
@@ -5024,6 +5309,35 @@ namespace WordDrop
             UpdateNextTilePreview();
         }
 
+        /// <summary>
+        /// Returns the sprite this slot should show when at rest (no drag).
+        /// Wild slots use the wild sprite; everything else falls back to normal.
+        /// </summary>
+        private Sprite GetSlotRestSprite(int index)
+        {
+            if (IsWildSlotChecked(index)) return _spriteWild ?? _spriteNormal;
+            return _spriteNormal;
+        }
+
+        /// <summary>
+        /// Returns the sprite to show while a slot is being dragged.
+        /// Wild slots keep their wild sprite (with baked "?"); non-wild slots
+        /// switch to the green selected sprite for the drag feedback.
+        /// </summary>
+        private Sprite GetSlotDragSprite(int index)
+        {
+            if (IsWildSlotChecked(index)) return _spriteWild ?? _spriteNormal;
+            return _spriteSelected ?? _spriteNormal;
+        }
+
+        private bool IsWildSlotChecked(int index)
+        {
+            if (index < 0 || index >= HAND_SIZE) return false;
+            if (MatchController.Instance == null) return false;
+            var pHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+            return pHand != null && pHand.IsWildSlot(index);
+        }
+
         private void RefreshCardVisual(int index)
         {
             if (index < 0 || index >= HAND_SIZE) return;
@@ -5046,8 +5360,15 @@ namespace WordDrop
             if (_cardHalos[index] != null)
                 _cardHalos[index].SetActive(isWild);
 
-            // Choose sprite based on mode and selection
-            if (_swapModeActive)
+            // Choose sprite based on mode and selection.
+            // Wild slots use the wild@2x sprite (has "?" baked in), so the
+            // letter text overlay is suppressed below — the sprite itself is
+            // the visual.
+            if (isWild)
+            {
+                _cardSRs[index].sprite = _spriteWild ?? _spriteNormal;
+            }
+            else if (_swapModeActive)
             {
                 _cardSRs[index].sprite = isSelected ? _spriteSwapSelected : _spriteSwap;
             }
@@ -5064,9 +5385,9 @@ namespace WordDrop
             }
             else if (isWild)
             {
-                // Wild slot: ★ glyph in the wild color. No letter visible until it
-                // resolves on the board; hand-side is always "uncommitted".
-                _cardTexts[index].text  = WILD_CARD_GLYPH;
+                // Wild slot: "?" is baked into the wild@2x sprite — suppress
+                // text overlay so we don't double-render.
+                _cardTexts[index].text  = "";
                 _cardTexts[index].color = WILD_CARD_COLOR;
             }
             else if (_swapModeActive)
@@ -5119,6 +5440,13 @@ namespace WordDrop
         {
             if (_grid == null) return;
 
+            // 2026-05-28 (Path A): SHUFFLE button removed from MVP UI. The
+            // shuffle mechanic is now exposed as the "Jester Hat" booster
+            // (WispwhirlSingleRow, untargeted, full-board shuffle preserving
+            // primed tiles). Body kept dormant in case we ever bring back a
+            // dedicated hand-only shuffle for tutorial/onboarding.
+            return;
+#pragma warning disable CS0162 // unreachable code — intentional, see comment above
             float cardY = GetCardRowY();
             _shuffleButtonY = SurvivalManager.IsSurvivalMode
                 ? GetActionRowY()
@@ -5183,6 +5511,7 @@ namespace WordDrop
 
             MeshRenderer mr = textGO.GetComponent<MeshRenderer>();
             if (mr != null) mr.sortingOrder = 12;
+#pragma warning restore CS0162
         }
 
         private SpriteRenderer _shuffleFillSR;
@@ -5274,9 +5603,10 @@ namespace WordDrop
             char[] letters = hand.GetAllSlots();
             bool[] wilds   = hand.GetAllWildFlags();
             int activeSize = HAND_SIZE;
+            // MVP P3.5: SurvivalRng — hand shuffle is gameplay-affecting (same seed = same shuffled order).
             for (int i = activeSize - 1; i > 0; i--)
             {
-                int j = Random.Range(0, i + 1);
+                int j = SurvivalRng.Range(0, i + 1);
                 char tempC = letters[i]; letters[i] = letters[j]; letters[j] = tempC;
                 bool tempW = wilds[i];   wilds[i]   = wilds[j];   wilds[j]   = tempW;
             }
@@ -5378,13 +5708,13 @@ namespace WordDrop
 
         private float GetCardRowY()
         {
-            if (_grid == null) return -8f;
-            if (!SurvivalManager.IsSurvivalMode)
-                return _grid.GridBottom - _grid.CellSize * 0.9f;
+            // 2026-05-28 (Path A, Phase 2): Survival cards live at exact
+            // PSD-pixel Y. Card center Y (PSD) = PSD_CARD_Y + PSD_CARD_H/2.
+            if (SurvivalManager.IsSurvivalMode)
+                return PsdYToWorld(PSD_CARD_Y + PSD_CARD_H * 0.5f);
 
-            float boardGapY = _grid.GridBottom - _grid.CellSize * 0.55f;
-            float actionAnchoredY = GetActionRowY() + _cardSize * 1.15f;
-            return Mathf.Min(boardGapY, actionAnchoredY);
+            if (_grid == null) return -8f;
+            return _grid.GridBottom - _grid.CellSize * 0.9f;
         }
 
         private float GetActionRowY()
@@ -5398,16 +5728,30 @@ namespace WordDrop
             float safeBottom = 0f;
             if (Screen.safeArea.y > 0)
                 safeBottom = (Screen.safeArea.y / Screen.height) * halfH * 2f;
+            // 2026-05-28 (Path A): hand row is no longer anchored from screen
+            // bottom — GetCardRowY now uses GridBottom directly. This value
+            // (GetActionRowY) is only consulted for the inset's safe-area math.
+            // Keep small/sane: clamps where the bottom of the world-space UI
+            // strip would START if it existed, but it doesn't in Path A.
             float bottomInset = _cardSize * 0.50f + safeBottom;
             return -halfH + bottomInset;
         }
 
         private float GetCardX(int index)
         {
+            // 2026-05-28 (Path A, Phase 2): Survival cards live at exact
+            // PSD-pixel positions inside the hand pill. Card N center X (PSD) =
+            // PSD_CARD_X0 + N * PSD_CARD_STEP + PSD_CARD_W/2.
+            if (SurvivalManager.IsSurvivalMode)
+            {
+                float xPsdCenter = PSD_CARD_X0 + index * PSD_CARD_STEP + PSD_CARD_W * 0.5f;
+                return PsdXToWorld(xPsdCenter);
+            }
+
             if (_grid == null) return (index - 2f) * 1.5f;
 
             float gridWidth = _grid.GridRight - _grid.GridLeft;
-            float handWidth = gridWidth * 0.82f; // wider spread, fills more of board width
+            float handWidth = gridWidth * 0.82f;
             float step      = handWidth / HAND_SIZE;
             float startX    = -handWidth / 2f + step * 0.5f;
             return startX + index * step;
@@ -5419,19 +5763,41 @@ namespace WordDrop
         {
             if (_grid == null) return;
 
-            // Layout: action row sits below hand cards
-            // SHUFFLE is on the left, NEXT tile on the right
-            // Both centered vertically on the same row
-            float actionRowY = SurvivalManager.IsSurvivalMode ? GetActionRowY() : _shuffleButtonY;
-            float nextX = _shuffleButtonX + _cardSize * 2.5f;
-            float previewSize = _cardSize * 0.65f;
+            // 2026-05-28 (Path A): NEXT lives INSIDE the control-tray pill, on
+            // the right side, separated from the hand cards by a thin vertical
+            // divider. "NEXT" label sits ABOVE the small preview tile (not to
+            // the left as before). Matches Spencer's locked mockup.
+            bool survival = SurvivalManager.IsSurvivalMode;
+            float nextRowY = survival
+                ? GetCardRowY()
+                : (_shuffleButtonY != 0f ? _shuffleButtonY : GetCardRowY());
+
+            float nextX;
+            float nextY;
+            float previewSize;
+            if (survival)
+            {
+                // 2026-05-28 (Path A, Phase 2): NEXT locked to exact PSD spec
+                // (X=898, Y=2032, W=108, H=109). Slightly lower than card
+                // center (Y=1991) per Spencer's PSD — leaves room for the
+                // "NEXT" label above.
+                nextX       = PsdXToWorld(PSD_NEXT_X + PSD_NEXT_W * 0.5f);
+                nextY       = PsdYToWorld(PSD_NEXT_Y + PSD_NEXT_H * 0.5f);
+                previewSize = PsdToWorld(PSD_NEXT_W);
+            }
+            else
+            {
+                nextX       = GetCardX(HAND_SIZE - 1) + _cardSize * 1.25f;
+                nextY       = nextRowY;
+                previewSize = _cardSize * 0.65f;
+            }
 
             // No separate floating NEXT label — it goes on the tile itself (see below)
 
             // -- Socket/holder behind the next tile --
             _nextTileSocket = new GameObject("NextSocket");
             _nextTileSocket.transform.SetParent(transform, false);
-            _nextTileSocket.transform.position = new Vector3(nextX, actionRowY, -0.5f);
+            _nextTileSocket.transform.position = new Vector3(nextX, nextY, -0.5f);
             SpriteRenderer socketSR = _nextTileSocket.AddComponent<SpriteRenderer>();
             socketSR.sprite = _spriteNormal;
             socketSR.color = new Color(0.06f, 0.08f, 0.20f, 0.50f); // deep inset — matches board family
@@ -5445,7 +5811,7 @@ namespace WordDrop
             // -- Preview tile --
             _nextTilePreview = new GameObject("NextTilePreview");
             _nextTilePreview.transform.SetParent(transform, false);
-            _nextTilePreview.transform.position = new Vector3(nextX, actionRowY, -1f);
+            _nextTilePreview.transform.position = new Vector3(nextX, nextY, -1f);
 
             SpriteRenderer sr = _nextTilePreview.AddComponent<SpriteRenderer>();
             sr.sprite = _spriteNormal;
@@ -5462,11 +5828,10 @@ namespace WordDrop
 
             float invScale = 1f / Mathf.Max(scale, 0.01f);
 
-            // Letter text (child of tile) — slight downward offset to compensate
-            // for TMP font-metric centering (matches board tile letter positioning).
+            // Letter text (child of tile) — true center
             GameObject textGO = new GameObject("NextLetter");
             textGO.transform.SetParent(_nextTilePreview.transform, false);
-            textGO.transform.localPosition = new Vector3(0f, -nativeSize * 0.025f, -0.2f);
+            textGO.transform.localPosition = new Vector3(0f, 0f, -0.2f);
 
             var tm = textGO.AddComponent<TMPro.TextMeshPro>();
             TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
@@ -5486,16 +5851,18 @@ namespace WordDrop
             MeshRenderer mr = textGO.GetComponent<MeshRenderer>();
             if (mr != null) mr.sortingOrder = 15;
 
-            // "NEXT" label — to the left of the tile
-            float labelX = nextX - previewSize * 0.5f - _cardSize * 0.55f;
+            // 2026-05-28 (Path A): "NEXT" label sits ABOVE the preview tile.
+            // Anchored relative to the NEXT slot's actual Y (which in survival
+            // is PSD-derived and below the card row).
+            float labelY = nextY + previewSize * 0.5f + _cardSize * 0.20f;
             GameObject labelGO = new GameObject("NextLabel");
-            labelGO.transform.position = new Vector3(labelX, actionRowY, -1f);
+            labelGO.transform.position = new Vector3(nextX, labelY, -1f);
 
             var labelTmp = labelGO.AddComponent<TMPro.TextMeshPro>();
             var uiFont = GameFont.GetUITMP();
             if (uiFont != null) labelTmp.font = uiFont;
             labelTmp.text = "NEXT";
-            labelTmp.fontSize = 2.5f;
+            labelTmp.fontSize = 2.2f;
             labelTmp.fontStyle = TMPro.FontStyles.Bold;
             labelTmp.color = new Color(0.78f, 0.78f, 0.88f, 0.95f);
             labelTmp.alignment = TMPro.TextAlignmentOptions.Center;
@@ -5505,6 +5872,34 @@ namespace WordDrop
             labelTmp.overflowMode = TMPro.TextOverflowModes.Overflow;
             TMPHelper.ApplyEffects(labelTmp, labelTmp.color, TMPHelper.TextTier.HUD);
             _nextTileLabel = labelTmp;
+
+            // 2026-05-28 (Path A): Vertical divider line between the hand
+            // cards and the NEXT slot — Spencer's mockup explicitly shows
+            // this. Survival mode only (multiplayer/level mode keeps the
+            // looser old layout).
+            if (survival)
+            {
+                // Divider centered between last card right edge and NEXT slot
+                // left edge (PSD: card 4 right=829, NEXT left=898, mid=863.5).
+                float lastCardRight = GetCardX(HAND_SIZE - 1) + _cardSize * 0.5f;
+                float dividerX      = (lastCardRight + nextX - previewSize * 0.5f) * 0.5f;
+                float dividerH      = PsdToWorld(PSD_CARD_H);
+                float dividerW      = PsdToWorld(6f);
+                int   dTexW         = Mathf.Max(4, Mathf.RoundToInt(dividerW * 100f));
+                int   dTexH         = Mathf.Max(8, Mathf.RoundToInt(dividerH * 100f));
+                Sprite dividerSprite = TileRenderer.CreateSolidRoundedRect(
+                    dTexW, dTexH, Mathf.Min(dTexW, dTexH) / 2,
+                    new Color(0.78f, 0.78f, 0.92f, 0.45f));
+
+                // Divider Y matches card row, not the offset NEXT slot.
+                float dividerY = GetCardRowY();
+                GameObject dividerGO = new GameObject("NextDivider");
+                dividerGO.transform.SetParent(transform, false);
+                dividerGO.transform.position = new Vector3(dividerX, dividerY, -0.4f);
+                var divSR = dividerGO.AddComponent<SpriteRenderer>();
+                divSR.sprite = dividerSprite;
+                divSR.sortingOrder = 8;
+            }
         }
 
         // ── Tile Bag button ─────────────────────────────────────────────────
@@ -5516,6 +5911,13 @@ namespace WordDrop
 
         private void BuildTileBagButton()
         {
+            // 2026-05-28 (Path A): legacy world-space tile bag button retired.
+            // BoosterHUDSlot owns the new TileBag tool in screen-space and uses
+            // BuildTileBagSpriteForUI() below for the icon. Body kept as dormant
+            // code (early-return) so any callers still wiring through this don't
+            // break. Will fully remove in Commit 3 cleanup.
+            return;
+#pragma warning disable CS0162 // unreachable code — intentional, see comment above
             if (_grid == null) return;
 
             float actionRowY = SurvivalManager.IsSurvivalMode ? GetActionRowY() : _shuffleButtonY;
@@ -5600,6 +6002,58 @@ namespace WordDrop
             _tileBagButton.transform.localScale = new Vector3(bagScale, bagScale, 1f);
 
             // No label — icon only
+#pragma warning restore CS0162
+        }
+
+        /// <summary>
+        /// Public sprite factory for the tile-bag icon. Reused by the new
+        /// screen-space BoosterHUDSlot tools row so the bag art stays consistent
+        /// across the codebase. Generates a fresh sprite each call (cheap —
+        /// 64×80 procedural texture); callers may cache the result.
+        /// </summary>
+        public static Sprite BuildTileBagSpriteForUI()
+        {
+            int texW = 64, texH = 80;
+            var tex = new Texture2D(texW, texH, TextureFormat.ARGB32, false);
+            Color clear = Color.clear;
+            Color fill  = new Color(0.85f, 0.80f, 0.70f, 0.95f);
+
+            var pixels = new Color[texW * texH];
+            for (int i = 0; i < pixels.Length; i++) pixels[i] = clear;
+
+            for (int y = 0; y < texH; y++)
+            {
+                for (int x = 0; x < texW; x++)
+                {
+                    float nx = (x - texW * 0.5f) / (texW * 0.5f);
+                    float ny = (float)y / texH;
+                    bool inside = false;
+
+                    if (ny < 0.7f)
+                    {
+                        float t = ny / 0.7f;
+                        float halfWidth = Mathf.Lerp(0.85f, 0.55f, t);
+                        inside = Mathf.Abs(nx) < halfWidth;
+                    }
+                    else if (ny < 0.85f)
+                    {
+                        inside = Mathf.Abs(nx) < 0.30f;
+                    }
+                    else
+                    {
+                        float t = (ny - 0.82f) / 0.18f;
+                        float bulge = 0.35f + 0.15f * Mathf.Sin(t * Mathf.PI);
+                        inside = Mathf.Abs(nx) < bulge;
+                    }
+                    if (inside) pixels[y * texW + x] = fill;
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply();
+            tex.filterMode = FilterMode.Bilinear;
+            return Sprite.Create(tex, new Rect(0, 0, texW, texH),
+                new Vector2(0.5f, 0.5f), 100f);
         }
 
         private bool TryHandleTileBagButton(Vector3 worldPos)

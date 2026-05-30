@@ -33,6 +33,23 @@ namespace WordDrop
         public const int INITIAL_SWAPS    = 2;  // per player (hand card trades)
         public const int INITIAL_REWRITES = 1;  // per player (board tile replacements)
 
+        // Survival stage-clear refill values. Refill never reduces the player's
+        // current count (Mathf.Max), so a player with 4 swaps from bonus pickups
+        // doesn't get punished by a stage clear.
+        public const int STAGE_CLEAR_REWRITE_REFILL = 3;
+        public const int STAGE_CLEAR_SWAP_REFILL    = 2;
+
+        /// <summary>Before/after snapshot of a stage-clear refill. Used by the
+        /// stage-clear modal to display what changed without it needing to
+        /// know refill rules.</summary>
+        public struct StageClearRefillSummary
+        {
+            public int RewritesBefore;
+            public int RewritesAfter;
+            public int SwapsBefore;
+            public int SwapsAfter;
+        }
+
         /// <summary>
         /// Debug / balancing flag (Phase 11+). When true, rewrite charges
         /// never deplete — the `> 0` gate in UseRewrite/UseRewriteCharge is
@@ -76,6 +93,10 @@ namespace WordDrop
         private readonly List<Vector2Int> _lastEditCells = new List<Vector2Int>();
         public const int SURVIVAL_BIG_WORD_THRESHOLD = 5;
         private bool _rulesWordScoredSubscribed = false;
+        // Path A (2026-05-28) — zero-floor edit refund: when player primes any
+        // word while at 0 rewrites remaining, refund 1. Subscribed in StartMatch,
+        // unsubscribed in OnDestroy. See HandleWordPrimedForZeroFloor.
+        private bool _rulesWordPrimedSubscribed = false;
 
         private PlayerHand[] _hands = new PlayerHand[NUM_PLAYERS];
         private TileBag      _bag;
@@ -171,6 +192,11 @@ namespace WordDrop
             {
                 RulesEngine.Instance.OnWordScored -= HandleWordScoredForEditRefund;
                 _rulesWordScoredSubscribed = false;
+            }
+            if (_rulesWordPrimedSubscribed && RulesEngine.Instance != null)
+            {
+                RulesEngine.Instance.OnWordPrimed -= HandleWordPrimedForZeroFloor;
+                _rulesWordPrimedSubscribed = false;
             }
         }
 
@@ -290,6 +316,13 @@ namespace WordDrop
             {
                 RulesEngine.Instance.OnWordScored += HandleWordScoredForEditRefund;
                 _rulesWordScoredSubscribed = true;
+            }
+            // Path A (2026-05-28) — subscribe to OnWordPrimed for the zero-floor
+            // edit refund. Same idempotent pattern as the scored-refund hook above.
+            if (RulesEngine.Instance != null && !_rulesWordPrimedSubscribed)
+            {
+                RulesEngine.Instance.OnWordPrimed += HandleWordPrimedForZeroFloor;
+                _rulesWordPrimedSubscribed = true;
             }
 
             // Create hands (no AI hand in solo modes: daily, blitz, survival, or level)
@@ -923,7 +956,12 @@ namespace WordDrop
             {
                 SurvivalManager.Instance.ConsumeBoostDrop();
                 SurvivalManager.Instance.NotifyScoreDelta(totalScore);
-                SurvivalManager.Instance.NotifyDropCommitted();
+                // Edits/rewrites are recovery tools, not plays — they shouldn't
+                // tick the turn counter or fire a per-move rise. Skip the drop
+                // commit so the player isn't punished for using a rewrite to
+                // prime/fix the board.
+                if (!isRewrite)
+                    SurvivalManager.Instance.NotifyDropCommitted();
             }
 
             // Bonus Mode: notify drop completion. If bonus is active, this either
@@ -1268,6 +1306,38 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Path A (2026-05-28) — Zero-floor edit refund.
+        ///
+        /// When the human player primes a word in Survival mode while at 0
+        /// rewrites remaining, refund 1 charge so they're never permanently
+        /// stuck without edits. Above 0, the existing SurvivalWordScored
+        /// 2-words-per-refund meter still governs steady-state recovery —
+        /// this is purely a safety floor.
+        ///
+        /// Cap is handled by RefundRewriteCharge itself (won't exceed max),
+        /// so the "while at 0" guard prevents over-firing on every prime.
+        /// </summary>
+        private void HandleWordPrimedForZeroFloor(WordPrimedEvent evt)
+        {
+            if (!SurvivalManager.IsSurvivalMode) return;
+            // Player-formed primes only — opponent-formed primes (legacy 1v1
+            // path) shouldn't refund. PlayerIndex on the event identifies who
+            // committed the drop that caused the prime.
+            if (evt.PlayerIndex != PLAYER_HUMAN) return;
+            if (GetRewritesRemaining(PLAYER_HUMAN) != 0) return;
+
+            RefundRewriteCharge(PLAYER_HUMAN);
+
+            if (BonusPopup.Instance != null)
+                BonusPopup.Instance.Show("EDIT +1", new Color(0.0f, 0.85f, 0.9f, 1f), Vector3.up * 3f, 1.1f);
+
+            if (HUDManager.Instance != null)
+                HUDManager.Instance.PulseRewriteCounter();
+
+            Debug.Log($"[ZeroFloorRefund] Primed '{evt.Word}' at 0 edits → +1 edit refunded");
+        }
+
+        /// <summary>
         /// Subscriber for RulesEngine.OnWordScored. Runs the Phase 11d refund
         /// check: if Survival mode, the scored word is directly-formed (not a
         /// cascade), the player formed it, and it's ≥ 5 letters and overlaps a
@@ -1415,18 +1485,47 @@ namespace WordDrop
         /// — Spencer's Phase 11 economy: survival runs are about getting each
         /// stage, not hoarding edits across stages. Banner shows "EDITS FULL".
         /// </summary>
-        private void OnSurvivalStageCleared(int stage)
+        /// <summary>
+        /// Refill edits + swaps for a stage-clear reward. Returns a summary the
+        /// caller (typically the stage-clear modal) can display. Refill is
+        /// Mathf.Max — never reduces a player who has more than the refill
+        /// amount (e.g. a player with 4 swaps from bonus pickups keeps them).
+        /// </summary>
+        public StageClearRefillSummary RefillStageClearResources(int playerIndex)
         {
-            const int SURVIVAL_REWRITE_CAP = 3;
-            _rewritesRemaining[PLAYER_HUMAN] = SURVIVAL_REWRITE_CAP;
-            if (HUDManager.Instance != null)
-                HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[PLAYER_HUMAN]);
+            if (playerIndex < 0 || playerIndex >= NUM_PLAYERS)
+                return default;
 
-            if (BonusPopup.Instance != null)
-                BonusPopup.Instance.Show(
-                    $"S{stage} CLEARED!\nEDITS FULL",
-                    new Color(0.4f, 1f, 0.5f, 1f), Vector3.up * 2.5f, 1.3f);
+            int rewritesBefore = _rewritesRemaining[playerIndex];
+            int swapsBefore    = _swapsRemaining[playerIndex];
 
+            _rewritesRemaining[playerIndex] = Mathf.Max(rewritesBefore, STAGE_CLEAR_REWRITE_REFILL);
+            _swapsRemaining[playerIndex]    = Mathf.Max(swapsBefore,    STAGE_CLEAR_SWAP_REFILL);
+
+            if (playerIndex == PLAYER_HUMAN && HUDManager.Instance != null)
+            {
+                HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[playerIndex]);
+                HUDManager.Instance.ShowSwapCount(_swapsRemaining[playerIndex]);
+            }
+
+            return new StageClearRefillSummary
+            {
+                RewritesBefore = rewritesBefore,
+                RewritesAfter  = _rewritesRemaining[playerIndex],
+                SwapsBefore    = swapsBefore,
+                SwapsAfter     = _swapsRemaining[playerIndex],
+            };
+        }
+
+        private void OnSurvivalStageCleared(SurvivalManager.StageClearContext ctx)
+        {
+            // Refill edits + swaps to stage-clear amounts. The StageClearModal
+            // (separate subscriber) reads the resulting values for display.
+            RefillStageClearResources(PLAYER_HUMAN);
+
+            // Audio + haptics fire here, not in the modal, so the celebration
+            // happens even if a future scenario suppresses the modal (e.g.
+            // accessibility mode, fast-forward, or a future autoplay debug path).
             GameAudio.Instance?.PlayScorePowerup();
             StartCoroutine(HapticsManager.StageClearChord()); // 3-tick ascending celebration chord
         }
