@@ -353,6 +353,86 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Variant of PlayMeltdown that takes an explicit uniform scale.
+        /// Use this when spawning a single prefab to span an entire WORD
+        /// instead of one prefab per tile — the caller computes the word's
+        /// bounding-box size and passes a scale that covers it. Particles
+        /// stay circular (uniform scale, no stretching). 2026-05-30.
+        /// </summary>
+        public void PlayMeltdownSized(Vector3 worldPos, float scale)
+        {
+            if (_meltdownPrefab == null)
+            {
+                Debug.LogWarning("[FlipbookFX] Meltdown prefab not assigned (Resources/Prefabs/FX/Magic Explosive Spell) — skipping");
+                return;
+            }
+            GameObject inst = Instantiate(_meltdownPrefab, worldPos, Quaternion.identity);
+
+            var demoShakers = inst.GetComponentsInChildren<AllIn1VfxToolkit.Demo.Scripts.AllIn1DoShake>(true);
+            for (int i = 0; i < demoShakers.Length; i++)
+                if (demoShakers[i] != null) Destroy(demoShakers[i]);
+
+            // Floor at MELTDOWN_SCALE so a single-tile-word still reads as
+            // "cluster-spanning". Cap at 6.0 to avoid frame-eating fill-rate
+            // spikes on big clusters — the prefab's particles scale with the
+            // transform, so unbounded scale → unbounded overdraw.
+            const float MELTDOWN_BRIGHTNESS = 0.75f;
+            const float MELTDOWN_SCALE_MAX  = 6.0f;
+            float finalScale = Mathf.Clamp(scale, 2.7f, MELTDOWN_SCALE_MAX);
+            inst.transform.localScale = Vector3.one * finalScale;
+            // 2026-05-30: fast-forward each ParticleSystem past the windup
+            // phase so the prefab spawns VISIBLE at its blast peak — skips
+            // the ~1.7s lead-up entirely per Spencer's preference. The
+            // ExplosionCoroutine also skips its corresponding WINDUP_DELAY
+            // wait so the tile destruct + pops land at the same blast frame.
+            float fastForwardTime = MELTDOWN_BLAST_PEAK_AT_REAL_SPEED / MELTDOWN_PREFAB_SPEED;
+            var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
+            for (int i = 0; i < systems.Length; i++)
+            {
+                if (systems[i] == null) continue;
+                var main = systems[i].main;
+                main.scalingMode = ParticleSystemScalingMode.Hierarchy;
+                main.simulationSpeed = MELTDOWN_PREFAB_SPEED;
+
+                var sc = main.startColor;
+                if (sc.mode == ParticleSystemGradientMode.Color)
+                {
+                    Color c = sc.color;
+                    sc.color = new Color(c.r * MELTDOWN_BRIGHTNESS, c.g * MELTDOWN_BRIGHTNESS, c.b * MELTDOWN_BRIGHTNESS, c.a);
+                }
+                else if (sc.mode == ParticleSystemGradientMode.TwoColors)
+                {
+                    Color a = sc.colorMin;
+                    Color b = sc.colorMax;
+                    sc.colorMin = new Color(a.r * MELTDOWN_BRIGHTNESS, a.g * MELTDOWN_BRIGHTNESS, a.b * MELTDOWN_BRIGHTNESS, a.a);
+                    sc.colorMax = new Color(b.r * MELTDOWN_BRIGHTNESS, b.g * MELTDOWN_BRIGHTNESS, b.b * MELTDOWN_BRIGHTNESS, b.a);
+                }
+                main.startColor = sc;
+
+                string n = systems[i].name;
+                if (n == "AbosrbMagicPieces" || n == "AbosrbMagicPiecesExplosion")
+                {
+                    var emission = systems[i].emission;
+                    emission.enabled = false;
+                    systems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                }
+
+                // Fast-forward THIS particle system past the windup so it
+                // becomes visible at its blast peak. withChildren=false
+                // since we're already iterating GetComponentsInChildren above.
+                systems[i].Simulate(fastForwardTime, false, true);
+                systems[i].Play(false);
+            }
+
+            const int MELTDOWN_SORT_ORDER = 50;
+            var renderers = inst.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+                if (renderers[i] != null) renderers[i].sortingOrder = MELTDOWN_SORT_ORDER;
+
+            Destroy(inst, 4f / MELTDOWN_PREFAB_SPEED);
+        }
+
+        /// <summary>
         /// Spawn the AllIn1 charge-up swirl as an overlay on a tile during
         /// meltdown wind-up. Plays for `duration` seconds, fading alpha
         /// 0→1 so it ramps in then peaks right before the explosion fires.

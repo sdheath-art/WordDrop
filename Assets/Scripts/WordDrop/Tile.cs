@@ -1556,6 +1556,15 @@ namespace WordDrop
         public static Sprite PrimedSprite =>
             s_spriteGold ?? Resources.Load<Sprite>("Tiles/primed_test@2x");
 
+        /// <summary>
+        /// Public accessor for the green "scored" tile sprite — used by
+        /// WordDropFX to force the green texture under fragments so the
+        /// debris matches the bright kelly-green the player saw.
+        /// Falls back to Resources.Load if the sprite cache hasn't built yet.
+        /// </summary>
+        public static Sprite ScoredSprite =>
+            s_spriteScored ?? Resources.Load<Sprite>("Tiles/green_tile2@2x");
+
         public static Color SCORED_TILE_TINT
         {
             get
@@ -1944,26 +1953,30 @@ namespace WordDrop
         /// <summary>
         /// Plays the squash-and-stretch landing effect. Call this after the tile
         /// reaches its final position, from any drop path (HandManager, GameVisualBridge, etc).
+        /// <paramref name="playSound"/> defaults to true; pass false to do a
+        /// silent squish (used by Jester Hat shuffle which squishes many tiles
+        /// simultaneously and doesn't want the audio chord from N PlayTileDrop
+        /// calls firing at once).
         /// </summary>
-        public void PlayLandingSquish()
+        public void PlayLandingSquish(bool playSound = true)
         {
             if (_squishCoroutine != null) StopCoroutine(_squishCoroutine);
-            _squishCoroutine = StartCoroutine(LandingSquishCoroutine());
+            _squishCoroutine = StartCoroutine(LandingSquishCoroutine(playSound));
         }
 
         /// <summary>Coroutine version for yielding.</summary>
         public IEnumerator PlayLandingSquishAndWait()
         {
             if (_squishCoroutine != null) StopCoroutine(_squishCoroutine);
-            _squishCoroutine = StartCoroutine(LandingSquishCoroutine());
+            _squishCoroutine = StartCoroutine(LandingSquishCoroutine(true));
             yield return _squishCoroutine;
         }
 
-        private IEnumerator LandingSquishCoroutine()
+        private IEnumerator LandingSquishCoroutine(bool playSound = true)
         {
             IsAnimating = true;
             Vector3 baseScale = transform.localScale;
-            PlayLandSound();
+            if (playSound) PlayLandSound();
 
             float squishDur = 0.18f;
             float elapsed = 0f;

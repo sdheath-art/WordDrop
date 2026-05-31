@@ -1226,7 +1226,10 @@ namespace WordDrop
                 };
                 _tileFallRareVariants = new AudioClip[]
                 {
-                    Resources.Load<AudioClip>("Audio/whoosh_buildup_1"),
+                    // 2026-05-30: whoosh_buildup_1 removed per Spencer — it
+                    // was firing during animations where the buildup feel
+                    // didn't fit. Other 4 variants kept; PlayTileFall still
+                    // picks one randomly at 10% rate.
                     Resources.Load<AudioClip>("Audio/whoosh_buildup_2"),
                     Resources.Load<AudioClip>("Audio/whoosh_buildup_3"),
                     Resources.Load<AudioClip>("Audio/whoosh_buildup_4"),

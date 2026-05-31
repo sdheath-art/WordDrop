@@ -145,8 +145,13 @@ namespace WordDrop
                 yield return null;
             }
 
-            // ── Phase 2: SHUFFLE DATA ───────────────────────────────────────
-            // Fisher-Yates permutation; SurvivalRng so daily seeds are stable.
+            // ── Phase 2: SHUFFLE LETTERS IN PLACE ────────────────────────────
+            // 2026-05-30: tiles no longer TRAVEL between cells. Each tile stays
+            // in its original cell position; the LETTER and underlying rules
+            // data swap to match the permutation. Same approach as the Edit
+            // booster's per-tile animation (HandManager.cs:3048-3080) extended
+            // to N tiles. Fisher-Yates permutation; SurvivalRng so daily seeds
+            // remain stable.
             int[] perm = new int[n];
             for (int i = 0; i < n; i++) perm[i] = i;
             for (int i = n - 1; i > 0; i--)
@@ -155,56 +160,43 @@ namespace WordDrop
                 int tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp;
             }
 
-            // Clear all sources first to avoid mid-place overwrites.
-            for (int i = 0; i < n; i++)
-            {
-                rules.ClearCell(positions[i].x, positions[i].y);
-                grid.ClearTileRefAt(positions[i].x, positions[i].y);
-            }
-
-            // Place permuted tiles at destinations.
+            // Update rules engine: each position gets the SOURCE's data.
+            // Tile objects don't move between cells — grid's tile references
+            // stay pinned. Only the letter + rules data swap.
             for (int i = 0; i < n; i++)
             {
                 int src = perm[i];
                 var pos = positions[i];
                 rules.SetCell(pos.x, pos.y, datas[src]);
-                grid.PlaceTileAt(pos.x, pos.y, tiles[src], gridCells[src]);
             }
 
-            // ── Phase 3: SETTLE ─────────────────────────────────────────────
-            // From wherever each tile currently sits (jittered position) to its
-            // NEW destination cell. OutBack overshoot mirrors the hand
-            // shuffle's snap-into-place feel.
+            // Update each tile's VISIBLE letter to match its new data, snap
+            // back to rest position + identity rotation (kills the jitter).
             for (int i = 0; i < n; i++)
             {
                 int src = perm[i];
-                Tile movedTile = tiles[src];
-                if (movedTile == null) continue;
-                Vector3 destWorld = restPositions[i];
-                Transform t = movedTile.transform;
-                t.DOKill();
-                // OutBack overshoot is proportional to move distance. The hand
-                // shuffle used 2f because cards never moved more than ~one card
-                // width. Board tiles can move across 5+ cells — 2f exaggerates
-                // the overshoot into a glitchy bounce. 0.8f keeps the snap-in
-                // feel without the wild fly-past.
-                t.DOMove(destWorld, SETTLE_DURATION)
-                    .SetEase(Ease.OutBack, 0.8f);
-                t.DORotate(Vector3.zero, 0.10f)
-                    .SetEase(Ease.OutQuad);
+                Tile t = tiles[i];
+                if (t == null) continue;
+                t.transform.DOKill();
+                t.transform.position = restPositions[i];
+                t.transform.localRotation = Quaternion.identity;
+                t.SetLetter(datas[src].Letter);
             }
 
-            yield return new WaitForSeconds(SETTLE_DURATION + 0.05f);
-
-            // Snap clean — kill any micro-jitter from overshoot residue.
+            // ── Phase 3: LANDING SQUISH ─────────────────────────────────────
+            // Same settle pop the Edit booster uses on each tile — in-place
+            // squash-and-stretch with no positional travel. Sound suppressed
+            // because firing PlayTileDrop on N tiles simultaneously produces
+            // a loud audio chord — PlayShuffle at the start of the shuffle
+            // is enough to carry the audio for the whole sequence.
             for (int i = 0; i < n; i++)
             {
-                int src = perm[i];
-                Tile movedTile = tiles[src];
-                if (movedTile == null) continue;
-                movedTile.transform.position = restPositions[i];
-                movedTile.transform.localRotation = Quaternion.identity;
+                Tile t = tiles[i];
+                if (t == null) continue;
+                t.PlayLandingSquish(playSound: false);
             }
+
+            yield return new WaitForSeconds(0.30f);
 
             Debug.Log($"[JesterHat] Shuffled {n} tiles board-wide (primed/wild/stone preserved)");
             onComplete?.Invoke();

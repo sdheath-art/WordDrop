@@ -154,11 +154,15 @@ namespace WordDrop
                 FireTier1Pop();
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 2 (6 tiles)", _btnStyle))
-                FireFakeDetonation(chainStep: 1, fakeTileCount: 6, forceMeltdown: false);
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 2 (8 tiles, initial drop)", _btnStyle))
+                FireFakeDetonation(chainStep: 0, fakeTileCount: 8, forceMeltdown: false);
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 3 (10 tiles, chain=2)", _btnStyle))
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 3 (12 tiles, initial drop)", _btnStyle))
+                FireFakeDetonation(chainStep: 0, fakeTileCount: 12, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 3 CASCADE (10 tiles, chain=2)", _btnStyle))
                 FireFakeDetonation(chainStep: 2, fakeTileCount: 10, forceMeltdown: false);
             innerY += BTN_H + GAP;
 
@@ -184,16 +188,24 @@ namespace WordDrop
             // reactivates them so game state stays clean. Useful for seeing
             // how the explosion reads against the populated grid (vs dummy
             // tiles in empty space).
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 4 board tiles (Tier 2)", _btnStyle))
-                DetonateRealBoardTiles(count: 4, chainStep: 1, forceMeltdown: false);
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 8 board tiles (Tier 2 initial)", _btnStyle))
+                DetonateRealBoardTiles(count: 8, chainStep: 0, forceMeltdown: false);
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 8 board tiles (Tier 3)", _btnStyle))
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 12 board tiles (Tier 3 initial)", _btnStyle))
+                DetonateRealBoardTiles(count: 12, chainStep: 0, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 8 board tiles CASCADE (chain=2)", _btnStyle))
                 DetonateRealBoardTiles(count: 8, chainStep: 2, forceMeltdown: false);
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 12 tiles MELTDOWN (Tier 4)", _btnStyle))
                 DetonateRealBoardTiles(count: 12, chainStep: 3, forceMeltdown: true);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown BLAST on REAL tiles (skip windup)", _btnStyle))
+                FireMeltdownBlastOnRealTiles();
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Cascade Word + BigBurst (horizontal)", _btnStyle))
@@ -686,6 +698,115 @@ namespace WordDrop
             WordDropFX.Instance.PlayExplosion(fakeTiles, chainStep: 3, wordLength: FAKE_TILE_COUNT);
 
             yield return new WaitForSeconds(2.5f);
+        }
+
+        /// <summary>
+        /// Same as FireMeltdownBlastOnly but fires on REAL live board tiles
+        /// instead of fake center-screen dummies — shows how the meltdown
+        /// blast moment reads against the actual populated grid. Tiles are
+        /// re-activated + restored to their original position/scale after
+        /// the FX so RulesEngine + MatchController state stays clean.
+        /// </summary>
+        private void FireMeltdownBlastOnRealTiles()
+        {
+            if (WordDropFX.Instance == null || GridManager.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] WordDropFX or GridManager missing");
+                return;
+            }
+
+            // Grab up to 12 live board tiles — same picking pattern as
+            // DetonateRealBoardTiles (top-down, left-to-right).
+            var tiles = new List<Tile>();
+            for (int row = 0; row < RulesEngine.ROWS && tiles.Count < 12; row++)
+                for (int col = 0; col < RulesEngine.COLS && tiles.Count < 12; col++)
+                {
+                    Tile t = GridManager.Instance.GetTile(col, row);
+                    if (t != null && t.gameObject.activeSelf) tiles.Add(t);
+                }
+
+            if (tiles.Count == 0)
+            {
+                Debug.LogWarning("[FXTest] No live tiles on the board — drop a few first.");
+                return;
+            }
+
+            StartCoroutine(MeltdownBlastOnRealTilesCoroutine(tiles));
+        }
+
+        private IEnumerator MeltdownBlastOnRealTilesCoroutine(List<Tile> tiles)
+        {
+            // Cache pre-FX state so we can restore tiles after PlayExplosion
+            // disables them. Same restore pattern RealDetonationCoroutine uses.
+            var positions = new List<Vector3>(tiles.Count);
+            var scales    = new List<Vector3>(tiles.Count);
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                positions.Add(tiles[i].transform.position);
+                scales.Add(tiles[i].transform.localScale);
+            }
+
+            // Spawn the Magic Explosive Spell prefab on each REAL tile,
+            // fast-forwarded past its ~1.7s windup via ParticleSystem.Simulate
+            // so it spawns visible AT its blast peak.
+            GameObject magicPrefab = Resources.Load<GameObject>("Prefabs/FX/Magic Explosive Spell");
+            if (magicPrefab != null)
+            {
+                float fastForwardTime =
+                    FlipbookExplosion.MELTDOWN_BLAST_PEAK_AT_REAL_SPEED
+                    / FlipbookExplosion.MELTDOWN_PREFAB_SPEED;
+
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    if (tiles[i] == null) continue;
+                    GameObject inst = Instantiate(magicPrefab, tiles[i].transform.position, Quaternion.identity);
+
+                    // Strip AllIn1 demo shakers — they reference a singleton
+                    // that doesn't exist in our scene. Same cleanup
+                    // FlipbookExplosion.PlayMeltdown does.
+                    var demoShakers = inst.GetComponentsInChildren<AllIn1VfxToolkit.Demo.Scripts.AllIn1DoShake>(true);
+                    for (int s = 0; s < demoShakers.Length; s++)
+                        if (demoShakers[s] != null) Destroy(demoShakers[s]);
+
+                    // Fast-forward all ParticleSystems past the windup phase.
+                    var systems = inst.GetComponentsInChildren<ParticleSystem>(true);
+                    for (int j = 0; j < systems.Length; j++)
+                    {
+                        var ps = systems[j];
+                        if (ps == null) continue;
+                        var main = ps.main;
+                        main.playOnAwake = false;
+                        ps.Simulate(fastForwardTime, false, true);
+                        ps.Play(false);
+                    }
+
+                    Destroy(inst, 3f);
+                }
+            }
+
+            // Fire tier-4 pops + fragments + BigBurst + detonation audio
+            // immediately on the real tiles. _isPlaying stays FALSE so
+            // PlayExplosion takes the non-meltdown path — no prefab spawn
+            // (we did it manually fast-forwarded), no internal windup wait,
+            // no earthquake rumble. Just the blast moment.
+            yield return WordDropFX.Instance.PlayExplosion(tiles, chainStep: 3, wordLength: tiles.Count);
+
+            // Hold briefly for the prefab tail to settle before restoring tiles.
+            yield return new WaitForSeconds(0.6f);
+
+            // Restore tiles to their pre-explosion state — same pattern as
+            // RealDetonationCoroutine. Re-activate, kill leftover tweens,
+            // snap transforms back. Keeps RulesEngine/MatchController state
+            // consistent so subsequent play continues normally.
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                if (tiles[i] == null) continue;
+                tiles[i].gameObject.SetActive(true);
+                tiles[i].transform.DOKill();
+                tiles[i].transform.position    = positions[i];
+                tiles[i].transform.localScale  = scales[i];
+                tiles[i].transform.localRotation = Quaternion.identity;
+            }
         }
 
         private IEnumerator MeltdownIntroOnlyCoroutine()

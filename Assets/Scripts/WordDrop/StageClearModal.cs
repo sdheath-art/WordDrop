@@ -61,6 +61,13 @@ namespace WordDrop
         // the 3-phase rotation Sequence.
         private float _titleZRot;
 
+        // 2026-05-30: post-explosion beat. Track the unscaled time when
+        // explosions last cleared so we can wait a moment before presenting
+        // — gives the player a beat to see the last explosion's tail before
+        // the modal flies in.
+        private float _explosionsClearedAt = -1f;
+        private const float POST_EXPLOSION_BEAT = 0.45f;
+
         // Note: we intentionally do NOT manage HandManager.IsInteractable.
         // The dim overlay's raycastTarget=true blocks all taps from reaching
         // the board/hand while the modal is up, which is sufficient. Touching
@@ -192,15 +199,28 @@ namespace WordDrop
             if (_isPresenting) return;          // already showing — wait for Continue
             if (_pendingQueue.Count == 0) return;
 
-            // Show immediately on event. We previously waited for
-            // MatchController.IsProcessing == false to avoid popping over a
-            // cascade, but IsProcessing was sticking past the visual cascade
-            // in practice (modal felt like it waited for "next drop").
-            // Trade-off accepted: cascade visuals may still be animating when
-            // modal pops. The dim overlay backgrounds them, SetOverlayPaused
-            // freezes Survival timers, HandManager input is blocked — the
-            // residual cascade just finishes behind the celebration.
+            // 2026-05-30: wait for active explosion FX to finish + a short
+            // beat. MatchController.IsProcessing was unreliable (sticking
+            // past the visual cascade) so we gate on
+            // WordDropFX.HasActiveExplosions — a direct counter incremented
+            // when ExplosionCoroutine starts and decremented when it ends.
+            // After explosions clear, we hold for POST_EXPLOSION_BEAT so
+            // the player sees the last explosion's tail before the modal
+            // flies in — prevents the modal stomping over the celebration.
+            if (WordDropFX.HasActiveExplosions)
+            {
+                _explosionsClearedAt = -1f; // reset; will start timer when explosions truly settle
+                return;
+            }
+            if (_explosionsClearedAt < 0f)
+            {
+                _explosionsClearedAt = Time.unscaledTime; // first frame with no explosions
+                return; // wait until next frame to start checking the beat
+            }
+            if (Time.unscaledTime - _explosionsClearedAt < POST_EXPLOSION_BEAT) return;
+
             var ctx = _pendingQueue.Dequeue();
+            _explosionsClearedAt = -1f; // reset for the NEXT stage's wait
             Show(ctx);
         }
 
@@ -240,6 +260,13 @@ namespace WordDrop
             if (_canvas == null) return;
             _isDismissing = false;
             _isPresenting = true;
+
+            // 2026-05-30: kill any active background animations so the modal
+            // is the focused element. Currently this means the hint-manager
+            // tile-hop sequences (CC-style "play this word" hops). Other
+            // pulses (primed glow) stay — they're behind the dim overlay and
+            // SetOverlayPaused freezes their gameplay impact anyway.
+            HintManager.Instance?.ClearVisuals();
 
             // Modal entry SFX — fires the instant the panel appears. Mirrors
             // mobile-game convention (Royal Match / Candy Crush play a sting

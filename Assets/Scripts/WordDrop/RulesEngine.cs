@@ -1689,7 +1689,11 @@ namespace WordDrop
                     };
                     result.PrimedWords.Add(primedEvt);
                     OnWordPrimed?.Invoke(primedEvt);
-                    GameAudio.Instance?.PlayTilePrimed();
+                    // 2026-05-30: PlayTilePrimed removed here — was double-
+                    // firing with GameVisualBridge.cs:603 which also plays
+                    // the primed sound for every word being scored/primed.
+                    // RulesEngine is the gameplay state machine, shouldn't
+                    // play audio directly — that's the visual bridge's job.
 
                     // Check if any cell in this new word overlaps an EXISTING primed word
                     // (not one primed in THIS resolution)
