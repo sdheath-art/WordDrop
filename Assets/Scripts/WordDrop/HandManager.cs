@@ -141,6 +141,14 @@ namespace WordDrop
 
         public bool IsInteractable { get; set; } = false;
 
+        // ── Tap-to-swap mode (driven by BoosterHUDSlot's TileBag tap) ──────────
+        /// <summary>True while the player is in tap-to-swap mode: scrim is up,
+        /// hand cards are pulsing, the next card tap triggers a swap.</summary>
+        public bool TapToSwapModeActive { get; private set; }
+        /// <summary>Pulse tweens started in EnterTapToSwapMode so we can kill
+        /// them on exit / on a successful swap.</summary>
+        private readonly List<Tweener> _tapToSwapPulseTweens = new List<Tweener>();
+
         // ── Unity lifecycle ───────────────────────────────────────────────────────
 
         private void Awake()
@@ -403,19 +411,15 @@ namespace WordDrop
         /// Pop-in for each hand card. Curve identity (OutElastic sprout) is
         /// shared with row-rise new tiles via UIAnimations.NewTilePop —
         /// tuning the sprout feel in one place updates both call sites.
-        /// Audio: each card plays GameAudio.PlayTileArrival — the canonical
-        /// "new tile/card arrives" sound shared with the row-rise and all
-        /// single-card refill sites. Pitched up one semitone per card so the
-        /// full deal sweeps up musically (single-card refills pass pitch=1.0
-        /// so only the full deal has the climb). Stagger 0.06s per card.
+        /// Audio: 2026-06-01 — fires ONE PlayEntryPop at the start of the
+        /// deal instead of four staggered PlayTileArrival pitches. The old
+        /// 4-tone climb felt busy; one consolidated pop reads cleaner.
+        /// Stagger 0.06s per card (visual only).
         /// </summary>
         private IEnumerator StaggeredHandPopIn()
         {
             Vector3 baseScale = GetCardBaseScale();
-            // 2^(1/12) — one equal-tempered semitone. Multiplying pitch by
-            // this each step gives a chromatic climb (1 → 1.0595 → 1.1225 …).
-            const float SEMITONE_RATIO = 1.05946309f;
-            float pitch = 1f;
+            GameAudio.Instance?.PlayEntryPop();
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
@@ -423,8 +427,6 @@ namespace WordDrop
                     _cardObjects[i].transform,
                     baseScale,
                     speedMult: HAND_POP_SPEED_MULT);
-                GameAudio.Instance?.PlayTileArrival(pitch);
-                pitch *= SEMITONE_RATIO;
                 yield return WaitCache.Get(0.06f);
             }
         }
@@ -713,9 +715,9 @@ namespace WordDrop
         {
             if (_rewriteModeActive && _rewriteTargetRow >= 0)
             {
-                // Clear highlight on old tile
+                // Clear edit-selected visual on old tile
                 Tile oldTile = _grid != null ? _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow) : null;
-                if (oldTile != null) { oldTile.Highlight(false); oldTile.ResetVisuals(); }
+                if (oldTile != null) { oldTile.SetEditSelected(false); oldTile.ResetVisuals(); }
 
                 _rewriteTargetRow += 1;
 
@@ -731,10 +733,9 @@ namespace WordDrop
                 Tile newTile = _grid != null ? _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow) : null;
                 if (newTile != null)
                 {
-                    newTile.Highlight(true, REWRITE_HIGHLIGHT_COLOR);
-                    // Restart pulse on the new tile reference
-                    if (_rewritePulseCoroutine != null) StopCoroutine(_rewritePulseCoroutine);
-                    _rewritePulseCoroutine = StartCoroutine(RewritePulseCoroutine(newTile));
+                    // Re-apply the edit-selected visual so the halo + breath
+                    // follow the tile to its new row after the shift.
+                    newTile.SetEditSelected(true);
                 }
                 else
                 {
@@ -748,7 +749,6 @@ namespace WordDrop
         }
         public  bool IsRewriteModeActive => _rewriteModeActive;
         private int  _rewriteMatchRewriteCount = 0; // debug: total rewrites this match
-        private static readonly Color REWRITE_HIGHLIGHT_COLOR = new Color(0.6f, 1.9f, 1.8f, 1f); // HDR teal — blooms on pulse
 
         // ── Wild Tiles Phase C — per-resolution injection cap ───────────────────────
         // Multiple injection triggers (wild-refill tile detonation + chain depth reward)
@@ -765,8 +765,6 @@ namespace WordDrop
         private const int   WILD_EXPIRY_DROPS   = 3;
         private bool  _wildExpiryPaused = false;
         private float _wildExpiryPauseStarted = -1f;
-
-        private Coroutine _rewritePulseCoroutine;
 
         // ── Swap Tile confirmation popup ──
         private bool _swapTileConfirmActive = false;
@@ -805,6 +803,24 @@ namespace WordDrop
             screenPos.z = Mathf.Abs(_cam.transform.position.z);
             Vector3 worldPos = _cam.ScreenToWorldPoint(screenPos);
 
+            // Tap-to-swap mode intercept: if active, any card tap routes to
+            // PerformTapToSwap and we short-circuit the rest of Update so the
+            // normal drag/drop logic doesn't also fire. The X cancel button
+            // and the scrim live on a UI canvas owned by BoosterHUDSlot, so
+            // taps on them are absorbed there before reaching this loop.
+            if (TapToSwapModeActive)
+            {
+                if (mouseDown)
+                {
+                    int tappedCard = GetCardIndexAtPosition(worldPos);
+                    if (tappedCard >= 0)
+                    {
+                        PerformTapToSwap(tappedCard);
+                    }
+                }
+                return;
+            }
+
             UpdateSelectedCardShadow();
 
             // Block ALL input when not interactable or during processing (rising rows, chain resolution).
@@ -818,9 +834,18 @@ namespace WordDrop
             // IsInteractable so the modal doesn't have to race with the hand
             // coroutine's own state ownership.
             bool overlayPaused = SurvivalManager.Instance != null && SurvivalManager.Instance.IsOverlayPaused;
+            // 2026-06-01: also block hand input while a booster is in aim
+            // mode (Bloomburst, Comet, Jester Hat, Stone Splitter). Otherwise
+            // the player could drag-drop a hand card to a column while
+            // simultaneously trying to aim at a board tile, doubling-up the
+            // turn. The scrim that BoosterHUDSlot puts up makes the hand row
+            // visually dim, but the input gate is what actually disables it.
+            bool aimModeActive = BoosterManager.Instance != null
+                                 && BoosterManager.Instance.AimMode;
             if (!IsInteractable ||
                 levelLocked ||
                 overlayPaused ||
+                aimModeActive ||
                 (MatchController.Instance != null && MatchController.Instance.IsProcessing))
             {
                 if (DropPreview.Instance != null)
@@ -1113,8 +1138,18 @@ namespace WordDrop
                         bool tutColOk  = TutorialManager.AllowedColumn < 0    || dropCol == TutorialManager.AllowedColumn;
                         bool tutCardOk = TutorialManager.AllowedCardIndex < 0 || _touchCardIndex == TutorialManager.AllowedCardIndex;
 
-                        // Check if released over the tile bag → swap
-                        bool overBag = TryHandleTileBagButton(worldPos);
+                        // Check if released over the tile bag → swap. 2026-06-01:
+                        // legacy world-space TileBagButton was retired (HandManager:5917)
+                        // — drag-release now hit-tests the screen-space slot
+                        // owned by BoosterHUDSlot. Legacy world-space check
+                        // kept as a fallback so it'll still work if the
+                        // world-space bag ever gets reinstated.
+                        Vector3 releaseScreen = Input.touchCount > 0
+                            ? (Vector3)Input.GetTouch(0).position
+                            : Input.mousePosition;
+                        bool overBag = (BoosterHUDSlot.Instance != null
+                                            && BoosterHUDSlot.Instance.IsScreenPointOverTileBag(releaseScreen))
+                                       || TryHandleTileBagButton(worldPos);
                         if (overBag && _touchCardIndex >= 0 && !TutorialManager.BlockShuffleAndSwap)
                         {
                             // Dissolve the card into the bag, then deal replacement
@@ -1453,35 +1488,14 @@ namespace WordDrop
             GameObject cardGO = _cardObjects[cardIndex];
             if (cardGO == null) { IsInteractable = true; yield break; }
 
-            // Move card to bag position with a quick tween
-            Vector3 bagPos = new Vector3(_tileBagX, _tileBagY, -2f);
-            cardGO.transform.DOMove(bagPos, 0.12f).SetEase(DG.Tweening.Ease.InQuad);
-            yield return WaitCache.Get(0.10f);
-
-            // Dissolve with particles
-            GameParticles.Instance?.PlayDetonation(bagPos, 0);
-            GameAudio.Instance?.PlayPoofExplosion();
-            HapticsManager.Light();
-
-            // Shrink + fade
-            cardGO.transform.DOScale(Vector3.zero, 0.15f).SetEase(DG.Tweening.Ease.InBack);
+            // 2026-06-01: dissolve in place. Was previously DOMove-ing the card
+            // to (_tileBagX, _tileBagY) before dissolving, but the world-space
+            // bag was retired so those fields were 0,0 — the card flew to the
+            // board centre and dissolved there. Now particles + shrink fire at
+            // the card's current world position regardless of how it got here
+            // (dragged onto the bag, tapped via the tap-to-swap mode, etc.).
             SpriteRenderer cardSR = cardGO.GetComponent<SpriteRenderer>();
-            if (cardSR != null)
-            {
-                Color startCol = cardSR.color;
-                float fadeElapsed = 0f;
-                while (fadeElapsed < 0.15f)
-                {
-                    fadeElapsed += Time.deltaTime;
-                    float t = Mathf.Clamp01(fadeElapsed / 0.15f);
-                    cardSR.color = new Color(startCol.r, startCol.g, startCol.b, 1f - t);
-                    yield return null;
-                }
-            }
-            else
-            {
-                yield return WaitCache.Get(0.15f);
-            }
+            yield return StartCoroutine(DissolveCardInPlace(cardGO, cardSR));
 
             // Execute the actual swap in data
             bool success = MatchController.Instance.UseSwap(cardIndex);
@@ -1489,6 +1503,11 @@ namespace WordDrop
             {
 //                 Debug.Log($"[HandManager] SwapViaBagDrop: card {cardIndex} swapped");
                 RestoreAllCardSortOrder();
+                // Clear selection so RefreshCardVisual doesn't paint the new
+                // card with the green-bordered _spriteSelected (the swapped
+                // card was the selection when we started — Spencer reported
+                // "tile turns green on arrival").
+                _selectedIndex = -1;
                 RefreshHandFromMatchController();
 
                 // Reset card visual for the new letter
@@ -1563,6 +1582,16 @@ namespace WordDrop
             if (TutorialManager.BlockShuffleAndSwap) return;
             if (MatchController.Instance == null || RulesEngine.Instance == null) return;
 
+            // 2026-06-01: tile taps during booster aim mode are RESERVED for
+            // the armed booster's target — they must not also enter rewrite
+            // mode (which would turn the tile cyan and consume an edit charge).
+            // Spencer caught this with the Jester Hat: tapping a tile to
+            // confirm the shuffle was simultaneously starting a rewrite-target
+            // selection. Bail early so the tap is exclusively the booster
+            // target. BoosterHUDSlot's ResolveAim path handles the actual
+            // booster resolution.
+            if (BoosterManager.Instance != null && BoosterManager.Instance.AimMode) return;
+
             int rewritesLeft = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
             if (rewritesLeft <= 0)
             {
@@ -1618,10 +1647,12 @@ namespace WordDrop
             Tile targetTile = _grid.GetTile(col, row);
             if (targetTile != null)
             {
-                targetTile.SetRewriteTargetSprite(true);
-                targetTile.Highlight(true, REWRITE_HIGHLIGHT_COLOR);
-                if (_rewritePulseCoroutine != null) StopCoroutine(_rewritePulseCoroutine);
-                _rewritePulseCoroutine = StartCoroutine(RewritePulseCoroutine(targetTile));
+                // Option A "selected" treatment: keep the tile's own face and
+                // layer a cyan glow halo + springy select-pop + gentle breath
+                // behind it (see Tile.SetEditSelected). Earlier approaches — a
+                // full cyan sprite swap, or a color-tint pulse on a white tile —
+                // read as a glitch or a washed-out faint tint.
+                targetTile.SetEditSelected(true);
             }
 
             // Deselect any selected card
@@ -2473,15 +2504,12 @@ namespace WordDrop
 
         private void CancelRewriteMode()
         {
-            if (_rewritePulseCoroutine != null) { StopCoroutine(_rewritePulseCoroutine); _rewritePulseCoroutine = null; }
-
             if (_rewriteTargetCol >= 0 && _rewriteTargetRow >= 0)
             {
                 Tile targetTile = _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow);
                 if (targetTile != null)
                 {
-                    targetTile.SetRewriteTargetSprite(false);
-                    targetTile.Highlight(false);
+                    targetTile.SetEditSelected(false);
                     targetTile.ResetVisuals();
                 }
             }
@@ -2491,9 +2519,6 @@ namespace WordDrop
             _rewriteTargetRow = -1;
 //             Debug.Log("[HandManager] Rewrite mode cancelled.");
         }
-
-        private static readonly Color REWRITE_LOW  = new Color(0.85f, 0.95f, 0.95f, 1f); // subtle teal tint
-        private static readonly Color REWRITE_HIGH = new Color(0.6f, 1.9f, 1.8f, 1f);   // HDR teal — bloom peak
 
         // ═══════════════════════════════════════════════════════════════════════════
         // Big Burst Flash — per-word wall-of-light on detonation
@@ -2930,24 +2955,6 @@ namespace WordDrop
             GameAudio.Instance?.PlayScorePowerup();
         }
 
-        private IEnumerator RewritePulseCoroutine(Tile tile)
-        {
-            if (tile == null) { _rewritePulseCoroutine = null; yield break; }
-
-            SpriteRenderer sr = tile.GetComponent<SpriteRenderer>();
-            float speed = 2.2f;
-
-            while (_rewriteModeActive && tile != null && sr != null)
-            {
-                float t = (Mathf.Sin(Time.time * speed) + 1f) * 0.5f;
-                sr.color = Color.Lerp(REWRITE_LOW, REWRITE_HIGH, t);
-                yield return null;
-            }
-
-            // Restore normal color when done
-            if (sr != null) sr.color = Color.white;
-            _rewritePulseCoroutine = null;
-        }
 
         /// <summary>
         /// Executes the rewrite: replaces the board tile at the stored target
@@ -2997,10 +3004,9 @@ namespace WordDrop
 //             Debug.Log($"[HandManager] Rewrite ACCEPTED: '{letter}' → ({col},{row}) " +
                       // $"replacing '{oldLetter}' | rewrite #{_rewriteMatchRewriteCount} this match");
 
-            // Stop pulse and clear highlight
-            if (_rewritePulseCoroutine != null) { StopCoroutine(_rewritePulseCoroutine); _rewritePulseCoroutine = null; }
+            // Clear edit-selected visual on the committed tile
             Tile targetTile = _grid.GetTile(col, row);
-            if (targetTile != null) { targetTile.SetRewriteTargetSprite(false); targetTile.Highlight(false); targetTile.ResetVisuals(); }
+            if (targetTile != null) { targetTile.SetEditSelected(false); targetTile.ResetVisuals(); }
 
             _rewriteModeActive = false;
             _rewriteTargetCol = -1;
@@ -4071,7 +4077,10 @@ namespace WordDrop
                     droppedTile.ClearFake3D();
                     droppedTile.transform.position = targetPos;
                     droppedTile.PlayLandingSquish();
-                    GameAudio.Instance?.PlayTileDrop();
+                    // 2026-06-01: PlayTileDrop call removed — PlayLandingSquish
+                    // already fires it via PlayLandSound (Tile.cs:1943). The bare
+                    // call here was double-firing two tile_land variants ~1 frame
+                    // apart, audible as a stutter on every player drop.
                 }
             }
 
@@ -5129,6 +5138,164 @@ namespace WordDrop
 
         private Coroutine _shadowAnimCoroutine;
 
+        // ═════════════════════════════════════════════════════════════════════════
+        // Tap-to-swap mode — entered via BoosterHUDSlot's TileBag tap. Dim scrim
+        // sits on a separate Canvas (owned by BoosterHUDSlot); HandManager's job
+        // here is just to (a) start a subtle pulse on the hand cards and (b)
+        // intercept the next card tap to route it through MatchController.UseSwap.
+        // ═════════════════════════════════════════════════════════════════════════
+
+        /// <summary>Start the swap-selection mode. Called by BoosterHUDSlot
+        /// after it shows the scrim + X. Pulses each hand card so it's clear
+        /// they're tappable. Update()'s top-of-frame check intercepts the next
+        /// card tap and routes it to PerformTapToSwap.</summary>
+        public void EnterTapToSwapMode()
+        {
+            if (TapToSwapModeActive) return;
+            TapToSwapModeActive = true;
+
+            // Kill any prior pulse tweens just in case.
+            for (int i = 0; i < _tapToSwapPulseTweens.Count; i++)
+                _tapToSwapPulseTweens[i]?.Kill();
+            _tapToSwapPulseTweens.Clear();
+
+            // Per-card subtle scale pulse (1.0 ⇄ 1.06 @ 0.55s, ping-pong).
+            // Tween stored so we can kill it cleanly on exit. DOKill first so
+            // a stale tween (snap-back, hover) doesn't fight the pulse — cards
+            // should be in their resting state when this mode enters.
+            Vector3 baseScale = GetCardBaseScale();
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                var card = _cardObjects[i];
+                if (card == null) continue;
+                card.transform.DOKill();
+                card.transform.localScale = baseScale;
+                var pulse = card.transform
+                    .DOScale(baseScale * 1.06f, 0.55f)
+                    .SetEase(Ease.InOutSine)
+                    .SetLoops(-1, LoopType.Yoyo);
+                _tapToSwapPulseTweens.Add(pulse);
+            }
+        }
+
+        /// <summary>Exit tap-to-swap mode. Kills pulse tweens and restores
+        /// the card scale. Called by BoosterHUDSlot on cancel (X) or by
+        /// PerformTapToSwap after a successful swap.</summary>
+        public void ExitTapToSwapMode()
+        {
+            if (!TapToSwapModeActive) return;
+            TapToSwapModeActive = false;
+
+            // Kill ONLY the pulse tweens we created — using stored refs so we
+            // don't trample the punch-scale tween PerformTapToSwap may have
+            // started on the same transform.
+            for (int i = 0; i < _tapToSwapPulseTweens.Count; i++)
+                _tapToSwapPulseTweens[i]?.Kill();
+            _tapToSwapPulseTweens.Clear();
+
+            // Restore card scales to base — the ping-pong tween may have left
+            // them mid-stride. The punch tween, if active, will overwrite this
+            // immediately on its next frame so the punch isn't lost.
+            Vector3 baseScale = GetCardBaseScale();
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] == null) continue;
+                _cardObjects[i].transform.localScale = baseScale;
+            }
+        }
+
+        /// <summary>Execute the swap on the tapped card and exit the mode.
+        /// Dissolves the card in place (matches SwapViaBagDrop's in-place
+        /// dissolve), executes the data swap, then pops in the replacement.</summary>
+        private void PerformTapToSwap(int cardIndex)
+        {
+            if (cardIndex < 0 || cardIndex >= HAND_SIZE) return;
+            if (MatchController.Instance == null) return;
+            if (MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN) <= 0)
+            {
+                BoosterHUDSlot.Instance?.ExitTileBagSwapMode();
+                return;
+            }
+            if (_hand[cardIndex] == '\0') return;
+            StartCoroutine(TapToSwapSequence(cardIndex));
+        }
+
+        private IEnumerator TapToSwapSequence(int cardIndex)
+        {
+            // Stop the pulse on THIS card before dissolving so the scale tween
+            // doesn't fight the dissolve shrink.
+            GameObject cardGO = _cardObjects[cardIndex];
+            if (cardGO != null) cardGO.transform.DOKill();
+
+            SpriteRenderer cardSR = cardGO != null ? cardGO.GetComponent<SpriteRenderer>() : null;
+            yield return StartCoroutine(DissolveCardInPlace(cardGO, cardSR));
+
+            bool success = MatchController.Instance != null
+                && MatchController.Instance.UseSwap(cardIndex);
+
+            // EXIT MODE FIRST so ExitTapToSwapMode's "restore all card scales
+            // to baseScale" pass runs BEFORE we kick off the NewTilePop on the
+            // replacement card. Otherwise the exit-cleanup snaps the new card
+            // to baseScale immediately and the pop animation never plays.
+            BoosterHUDSlot.Instance?.ExitTileBagSwapMode();
+
+            if (success)
+            {
+                RestoreAllCardSortOrder();
+                _selectedIndex = -1;
+                RefreshHandFromMatchController();
+
+                // Pop the replacement in. Same NewTilePop curve as SwapViaBagDrop
+                // so the tap-to-swap path feels identical to a fresh single-tile
+                // deal (or the row-rise tile arrival).
+                if (_cardObjects[cardIndex] != null)
+                {
+                    _cardObjects[cardIndex].transform.localScale = Vector3.zero;
+                    if (cardSR != null) cardSR.color = Color.white;
+                    Vector3 restPos = new Vector3(GetCardX(cardIndex), GetCardRowY(), -1f);
+                    _cardObjects[cardIndex].transform.position = restPos;
+                    UIAnimations.NewTilePop(
+                        _cardObjects[cardIndex].transform,
+                        GetCardBaseScale(),
+                        speedMult: HAND_POP_SPEED_MULT);
+                    GameAudio.Instance?.PlayTileArrival();
+                }
+                RefreshAllCardVisuals();
+            }
+        }
+
+        /// <summary>Shared dissolve animation: particles at the card's current
+        /// world position, poof sound, light haptic, then shrink-and-fade in
+        /// place. Used by both SwapViaBagDrop (drag-onto-bag) and
+        /// TapToSwapSequence (tap-to-swap mode) so the visual is consistent.</summary>
+        private IEnumerator DissolveCardInPlace(GameObject cardGO, SpriteRenderer cardSR)
+        {
+            if (cardGO == null) yield break;
+
+            Vector3 cardPos = cardGO.transform.position;
+            GameParticles.Instance?.PlayDetonation(cardPos, 0);
+            GameAudio.Instance?.PlayPoofExplosion();
+            HapticsManager.Light();
+
+            cardGO.transform.DOScale(Vector3.zero, 0.15f).SetEase(DG.Tweening.Ease.InBack);
+            if (cardSR != null)
+            {
+                Color startCol = cardSR.color;
+                float fadeElapsed = 0f;
+                while (fadeElapsed < 0.15f)
+                {
+                    fadeElapsed += Time.deltaTime;
+                    float t = Mathf.Clamp01(fadeElapsed / 0.15f);
+                    cardSR.color = new Color(startCol.r, startCol.g, startCol.b, 1f - t);
+                    yield return null;
+                }
+            }
+            else
+            {
+                yield return WaitCache.Get(0.15f);
+            }
+        }
+
         /// <summary>Boost sorting order on a card so it renders above all others.</summary>
         private void BoostCardSortOrder(int index)
         {
@@ -6163,6 +6330,277 @@ namespace WordDrop
 
             char next = hand.CachedNextLetter;
             _nextTileLetter.text = (next != '\0') ? next.ToString() : "";
+        }
+
+        // ═════════════════════════════════════════════════════════════════════════
+        // BOOSTER CASCADE — drive the post-booster NextStep loop with full FX
+        // ═════════════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Called by BoosterManager after a booster has cleared tiles AND
+        /// RulesEngine.BeginCascadeAfterBoosterClear has set up gravity +
+        /// seed cells. Drives the same NextStep resolution loop as a player
+        /// drop, so post-booster gravity can form / prime / score / detonate
+        /// words and cascade chains.
+        ///
+        /// Models the swap-resolution loop pattern (HandManager.cs ~2322).
+        /// Sets IsInteractable=false + BeginProcessing for the duration so
+        /// hand input cannot corrupt the state machine. Does NOT consume a
+        /// turn or switch player — boosters are turn-neutral.
+        ///
+        /// playerIdx defaults to PLAYER_HUMAN since today's boosters are
+        /// human-only (no AI booster path). Threaded as a parameter so future
+        /// AI booster support is one-line wire-up.
+        /// </summary>
+        public IEnumerator RunBoosterCascadeChain(int playerIdx)
+        {
+            RulesEngine rules = RulesEngine.Instance;
+            GridManager grid  = GridManager.Instance;
+            if (rules == null || grid == null) yield break;
+
+            // Input gate — mirrors player drop / rewrite / swap paths.
+            bool previousInteractable = IsInteractable;
+            IsInteractable = false;
+            if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
+            bool resolving = true;
+            int totalScore = 0;
+            int wordIndex  = 0;
+            int maxChainDepth = 0;
+
+            // Reset scoring display chain counter so cascade words use fresh
+            // chain step numbers like a regular drop does.
+            if (ScoringDisplay.Instance != null)
+                ScoringDisplay.Instance.ResetChain();
+            Color playerColor = new Color(0.9f, 0.2f, 0.8f);  // magenta — same as drop path
+
+            try
+            {
+                while (resolving)
+                {
+                    RulesEngine.StepResult step = rules.NextStep();
+                    if (step == null) { resolving = false; break; }
+
+                    if (step.ChainDepth > maxChainDepth)
+                        maxChainDepth = step.ChainDepth;
+
+                    switch (step.Phase)
+                    {
+                        case RulesEngine.ResolutionPhase.WordsDetected:
+                            break;
+
+                        case RulesEngine.ResolutionPhase.WordsScored:
+                        {
+                            bool detonationComing = rules.PeekHasTriggers();
+
+                            if (step.ScoredWords != null)
+                            {
+                                foreach (var sw in step.ScoredWords)
+                                {
+                                    List<Tile> scoredTiles = new List<Tile>();
+                                    if (sw.Cells != null)
+                                        foreach (var cell in sw.Cells)
+                                        {
+                                            Tile t = grid.GetTile(cell.x, cell.y);
+                                            if (t != null) scoredTiles.Add(t);
+                                        }
+
+                                    if (WordDropFX.Instance != null)
+                                        WordDropFX.Instance.PlayWordScored(scoredTiles, playerColor, wordIndex);
+
+                                    GameAudio.Instance?.PlayTilePrimed();
+                                    HapticsManager.Light();
+
+                                    if (!detonationComing && BonusPopup.Instance != null && scoredTiles.Count > 0)
+                                    {
+                                        Vector3 wc = Vector3.zero;
+                                        for (int st = 0; st < scoredTiles.Count; st++)
+                                            if (scoredTiles[st] != null) wc += scoredTiles[st].transform.position;
+                                        wc /= Mathf.Max(1, scoredTiles.Count);
+                                        BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, wc);
+                                    }
+
+                                    // Survival long-word reward parity with drop path
+                                    if (SurvivalManager.IsSurvivalMode
+                                        && GameVisualBridge.Instance != null
+                                        && !string.IsNullOrEmpty(sw.Word))
+                                    {
+                                        GameVisualBridge.Instance.TriggerSurvivalLongWordReward(
+                                            sw.Word, scoredTiles, isPlayer: true);
+                                    }
+
+                                    wordIndex++;
+                                }
+                            }
+                            yield return WaitCache.Get(detonationComing ? 0.1f : 0.3f);
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.TriggersFound:
+                        {
+                            // Set primed glow on triggered tiles (parity with swap-resolution)
+                            if (step.Triggers != null)
+                            {
+                                foreach (var trig in step.Triggers)
+                                {
+                                    var pw = rules.PrimedRegistry != null
+                                        ? rules.PrimedRegistry.GetById(trig.PrimedWordId)
+                                        : null;
+                                    int currentTurn = rules.GlobalTurn;
+                                    int heatLevel = pw != null
+                                        ? Mathf.Min(Mathf.Max(0, currentTurn - pw.PrimedOnTurn),
+                                                    RulesEngine.HEAT_FUSE_MAX_BONUS)
+                                        : 0;
+                                    int fuse = pw != null ? Mathf.Max(0, pw.ExpiresOnTurn - currentTurn) : 0;
+                                    bool isGold = pw != null && pw.IsGold;
+                                    Color glowColor = isGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+                                    if (trig.TriggeredCells != null)
+                                    {
+                                        foreach (var c in trig.TriggeredCells)
+                                        {
+                                            Tile t = grid.GetTile(c.x, c.y);
+                                            if (t != null)
+                                                t.SetPrimedGlow(glowColor, playFlash: true,
+                                                    heatLevel: heatLevel, fuseRemaining: fuse, isGold: isGold);
+                                        }
+                                    }
+                                }
+                            }
+
+                            CacheBurstTriggers(step);
+                            yield return WaitCache.Get(0.05f);
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.Exploding:
+                        {
+                            if (ChainCounter.Instance != null)
+                                ChainCounter.Instance.OnDetonation(step.ChainDepth);
+
+                            if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
+                            {
+                                var dyingTiles = new List<Tile>();
+                                foreach (var c in step.ExplodedCells)
+                                {
+                                    Tile t = grid.GetTile(c.x, c.y);
+                                    if (t != null) dyingTiles.Add(t);
+                                }
+
+                                Vector3 center = Vector3.zero;
+                                for (int d = 0; d < dyingTiles.Count; d++)
+                                    if (dyingTiles[d] != null) center += dyingTiles[d].transform.position;
+                                center /= Mathf.Max(1, dyingTiles.Count);
+
+                                // Hitstop on initial detonation only — cascades pop instantly.
+                                if (dyingTiles.Count > 0 && step.ChainDepth == 0)
+                                {
+                                    yield return StartCoroutine(WordDropFX.HitStop(0.05f));
+                                }
+
+                                FirePerWordBurst();
+                                FireTileFlashBoxes(dyingTiles);
+
+                                if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
+                                {
+                                    int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
+                                    yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
+                                }
+
+                                grid.RemoveTiles(step.ExplodedCells);
+
+                                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                                    SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
+
+                                if (step.DetonationBonus > 0 && BonusPopup.Instance != null)
+                                {
+                                    int baseBonus = step.DetonationBonus - step.DetonationHeat;
+                                    BonusPopup.Instance.ShowDetonation("", baseBonus, center, step.ChainDepth);
+                                    if (step.DetonationHeat > 0)
+                                        BonusPopup.Instance.ShowHeatBonus(step.DetonationHeat, center);
+                                }
+
+                                ApplyDetonationRefillRewards(step, center, 0);
+                            }
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.GravityApplied:
+                        {
+                            yield return StartCoroutine(grid.ApplyGravity());
+                            yield return WaitCache.Get(0.08f);
+                            break;
+                        }
+
+                        case RulesEngine.ResolutionPhase.Complete:
+                        {
+                            if (ChainCounter.Instance != null)
+                                ChainCounter.Instance.OnChainComplete();
+                            totalScore = step.TotalScore;
+                            resolving = false;
+                            break;
+                        }
+
+                        default:
+                            resolving = false;
+                            break;
+                    }
+                }
+
+                // Finalize engine state + visual sync. Uses the booster-specific
+                // finalize (does NOT tick _globalTurn / expire primed words) so
+                // booster use stays turn-neutral.
+                rules.FinalizeBoosterCascade();
+                try { grid.SyncToRulesState(rules); }
+                catch (System.Exception ex) { Debug.LogError($"[BoosterCascade] SyncToRulesState: {ex}"); }
+
+                // Apply persistent primed glow to every cell of every primed word.
+                // Without this, words primed during the cascade flash green via
+                // PlayWordScored but the glow tint never lands, so the tile
+                // visually reverts to white as the flash finishes — leaving the
+                // player with no indication that the word is primed/scored.
+                // Mirrors the rewrite path at HandManager.cs:3434.
+                PrimedWordRegistry registry = rules.PrimedRegistry;
+                int finalTurn = rules.GlobalTurn;
+                if (registry != null)
+                {
+                    for (int p = 0; p < registry.Count; p++)
+                    {
+                        var pw = registry.GetByIndex(p);
+                        if (pw == null) continue;
+                        int survived = Mathf.Max(0, finalTurn - pw.PrimedOnTurn);
+                        int heatLevel = Mathf.Min(survived, RulesEngine.HEAT_FUSE_MAX_BONUS);
+                        bool justPrimed = (pw.PrimedOnTurn == finalTurn - 1 || pw.PrimedOnTurn == finalTurn);
+                        for (int c = 0; c < pw.Cells.Count; c++)
+                        {
+                            Tile t = grid.GetTile(pw.Cells[c].x, pw.Cells[c].y);
+                            int fuse = Mathf.Max(0, pw.ExpiresOnTurn - finalTurn);
+                            Color glowColor = pw.IsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+                            if (t != null)
+                                t.SetPrimedGlow(glowColor, playFlash: justPrimed,
+                                    heatLevel: heatLevel, fuseRemaining: fuse, isGold: pw.IsGold);
+                        }
+                    }
+                }
+
+                // Score path — booster cascades count toward the player score
+                // without consuming a turn or switching player. Survival's score
+                // delta also routes through LevelController in Level mode.
+                if (totalScore > 0)
+                {
+                    if (ScoreManager.Instance != null)
+                        ScoreManager.Instance.AddScore(totalScore, playerIdx);
+                    LevelController.Instance?.NotifyScore(totalScore);
+                    if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                        SurvivalManager.Instance.NotifyScoreDelta(totalScore);
+                }
+
+                Debug.Log($"[BoosterCascade] Complete — totalScore={totalScore}, maxChainDepth={maxChainDepth}");
+            }
+            finally
+            {
+                IsInteractable = previousInteractable;
+                if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+            }
         }
     }
 

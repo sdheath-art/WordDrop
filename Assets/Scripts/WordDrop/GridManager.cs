@@ -80,6 +80,7 @@ namespace WordDrop
 
         private Camera     _cam;
         private GameObject _gridRoot;
+        private SpriteRenderer _gridBackgroundSR; // stored so booster aim-mode can bump its sortingOrder above the scrim
 
         private readonly List<GameObject> _allTileObjects = new List<GameObject>();
 
@@ -398,6 +399,7 @@ namespace WordDrop
             SpriteRenderer bgSR = bgGO.AddComponent<SpriteRenderer>();
             bgSR.sprite       = bgSprite;
             bgSR.sortingOrder = 0;
+            _gridBackgroundSR = bgSR;
 
             // 2026-05-30 candy-bright pivot: custom material removed so the
             // BOARD_INNER / FRAME_OUTER colors render cleanly (the material
@@ -552,6 +554,23 @@ namespace WordDrop
             if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return null;
             return _cells[col, row];
         }
+
+        /// <summary>Bump or restore the board background sprite's sortingOrder.
+        /// Used by BoosterHUDSlot's aim-mode scrim — when aim is active, the
+        /// scrim canvas covers the board bg (which sits at sortingOrder=0)
+        /// and dims it. Boosting the bg above the scrim's sortingOrder keeps
+        /// the panel bright alongside the tiles.</summary>
+        public void SetBoardBackgroundSortingOrder(int order)
+        {
+            if (_gridBackgroundSR != null) _gridBackgroundSR.sortingOrder = order;
+        }
+
+        /// <summary>World-space bounds of the board background sprite (the
+        /// lavender rounded-rect panel behind the tiles). Used by the aim-mode
+        /// scrim to compute its cutout from the actual rendered board geometry
+        /// instead of hardcoded PSD constants.</summary>
+        public Bounds? BoardBackgroundWorldBounds =>
+            _gridBackgroundSR != null ? _gridBackgroundSR.bounds : (Bounds?)null;
 
         public Tile GetTile(int col, int row)
         {
@@ -717,6 +736,7 @@ namespace WordDrop
                     if (rulesCell == null && visualTile != null)
                     {
                         // Data says empty but visual has a tile — return to pool
+                        Debug.LogWarning($"[BoosterDbg] Sync FIX ({col},{row}): data null + visual '{visualTile.Letter}' → returning to pool");
                         ReturnTile(visualTile);
                         _tiles[col, row] = null;
                         _cells[col, row] = null;
@@ -728,6 +748,9 @@ namespace WordDrop
                         Vector3 correctPos = CellToWorld(col, row);
                         if (Vector3.Distance(visualTile.transform.position, correctPos) > 0.01f)
                         {
+                            Debug.LogWarning($"[BoosterDbg] Sync FIX ({col},{row}): pos drift " +
+                                             $"({visualTile.transform.position.x:0.0},{visualTile.transform.position.y:0.0}) → " +
+                                             $"({correctPos.x:0.0},{correctPos.y:0.0})");
                             visualTile.transform.position = correctPos;
                             fixed_count++;
                         }
@@ -747,6 +770,7 @@ namespace WordDrop
                              && (rulesCell.Letter != '\0' || rulesCell.IsWild))
                     {
                         // Data has a tile but visual doesn't — checkout from pool
+                        Debug.LogWarning($"[BoosterDbg] Sync FIX ({col},{row}): data '{rulesCell.Letter}' + visual null → checking out from pool");
                         Vector3 worldPos = CellToWorld(col, row);
                         char displayLetter = (rulesCell.IsWild && rulesCell.Letter == '\0')
                             ? TileBag.WILD_CHAR : rulesCell.Letter;
@@ -1016,7 +1040,27 @@ namespace WordDrop
                 Tile tile = _tiles[fromCol, fromRow];
                 CellData cell = _cells[fromCol, fromRow];
 
-                if (tile == null) continue;
+                if (tile == null)
+                {
+                    // BoosterDbg: data says a tile fell from here, but visual
+                    // array has nothing. That's a sign the visual layer drifted
+                    // out of sync earlier — the falling tile is orphaned.
+                    Debug.LogWarning($"[BoosterDbg] AGFE: source ({fromCol},{fromRow}) is null in _tiles — " +
+                                     $"data wanted to move it to ({toCol},{toRow}). Skipping.");
+                    continue;
+                }
+
+                // BoosterDbg: if the destination already has a tile in _tiles,
+                // we're about to ORPHAN that tile (the existing reference gets
+                // overwritten and the GameObject lingers in the scene without
+                // an array reference). This is the most likely root cause of
+                // "letters falling into other letters."
+                if (_tiles[toCol, toRow] != null && _tiles[toCol, toRow] != tile)
+                {
+                    Debug.LogError($"[BoosterDbg] AGFE COLLISION: moving ({fromCol},{fromRow})→({toCol},{toRow}), " +
+                                   $"but _tiles[{toCol},{toRow}] already has tile '{_tiles[toCol, toRow].Letter}'. " +
+                                   $"Existing tile will be orphaned.");
+                }
 
                 // Clear old position
                 _tiles[fromCol, fromRow] = null;

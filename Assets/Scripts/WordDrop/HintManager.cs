@@ -165,6 +165,14 @@ namespace WordDrop
             if (MatchController.Instance.CurrentPlayer != MatchController.PLAYER_HUMAN) return false;
             if (HandManager.Instance != null && !HandManager.Instance.IsInteractable) return false;
             if (GridManager.Instance == null || RulesEngine.Instance == null) return false;
+            // Stage-clear modal up → suppress hints so background tiles don't
+            // jiggle behind the panel. The modal's Show() also calls
+            // ClearVisuals; this gate keeps Update() from re-firing.
+            if (StageClearModal.Instance != null && StageClearModal.Instance.IsShowing) return false;
+            // Continue modal (top-out rescue) — same rule. Background tile-hops
+            // shouldn't compete with the dim scrim while the player decides
+            // whether to play on.
+            if (ContinueModal.Instance != null && ContinueModal.Instance.IsShowing) return false;
             return true;
         }
 

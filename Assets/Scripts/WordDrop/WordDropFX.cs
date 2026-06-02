@@ -209,7 +209,7 @@ namespace WordDrop
                     sr.color = Color.white;
                     DOTween.Sequence()
                         .AppendInterval(delay)
-                        .AppendCallback(() => { if (sr != null) sr.color = new Color(2f, 2f, 2f, 1f); }) // HDR bright flash
+                        .AppendCallback(() => { if (sr != null) sr.color = new Color(1.15f, 1.5f, 1.2f, 1f); }) // green-biased flash — G blooms, R/B stay low so it pops bright GREEN not white (2,2,2 white-out tamed)
                         .Append(DOTween.To(() => sr.color, c => { if (sr != null) sr.color = c; },
                             Color.white, 0.15f).SetEase(DG.Tweening.Ease.OutQuad));
                 }

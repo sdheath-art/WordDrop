@@ -61,6 +61,16 @@ namespace WordDrop
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);
 
+            // BoosterDbg: full cleared-cell dump so we can verify the bomb hit
+            // the cells the player expected for that aim tap.
+            var coords = new System.Text.StringBuilder();
+            for (int i = 0; i < toRemove.Count; i++)
+            {
+                if (i > 0) coords.Append(",");
+                coords.Append($"({toRemove[i].x},{toRemove[i].y})");
+            }
+            Debug.Log($"[BoosterDbg] Bloomburst target=({col},{row}) radius={radius} " +
+                      $"cleared={toRemove.Count}: {coords}");
             Debug.Log($"[Bloomburst] Cleared {toRemove.Count} tiles centered on ({col},{row})");
             GameAudio.Instance?.PlayUIClick();
 

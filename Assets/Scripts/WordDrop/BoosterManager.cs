@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -122,6 +123,12 @@ namespace WordDrop
         public void TryActivate(string boosterId)
         {
             if (AimMode) return;
+            // Block booster activation during an active resolution loop —
+            // player drops, rewrites, swaps and prior boosters all set
+            // MatchController.IsProcessing while their NextStep loop runs.
+            // Without this gate a racing UI tap could corrupt the engine
+            // step-state mid-cascade.
+            if (MatchController.Instance != null && MatchController.Instance.IsProcessing) return;
             var booster = GetBoosterById(boosterId);
             if (booster == null) return;
             if (GetCharges(boosterId) <= 0) return;
@@ -146,9 +153,14 @@ namespace WordDrop
                 _charges[boosterId] = GetCharges(boosterId) - 1;
                 Debug.Log($"[Booster] {booster.DisplayName} resolved (untargeted), charges→{_charges[boosterId]}");
                 OnStateChanged?.Invoke();
+                // Snapshot occupied cells BEFORE the booster mutates _board so
+                // we can derive the set of cleared cells once it completes.
+                HashSet<Vector2Int> occupiedBefore =
+                    booster.TriggersGravity ? SnapshotOccupiedCells() : null;
                 booster.Activate(() =>
                 {
-                    if (booster.TriggersGravity) RunGravity();
+                    if (booster.TriggersGravity)
+                        StartCoroutine(RunGravityAndCascadeCoroutine(occupiedBefore));
                 });
             }
         }
@@ -158,6 +170,10 @@ namespace WordDrop
         public void ResolveAim(int col, int row)
         {
             if (!AimMode || ArmedBooster == null) return;
+            // Block resolution during an active resolution loop (mirrors
+            // TryActivate's gate). Aim mode should never be entered while
+            // a drop is resolving, but if input races, hold the booster.
+            if (MatchController.Instance != null && MatchController.Instance.IsProcessing) return;
             string id = ArmedBooster.Id;
             if (GetCharges(id) <= 0) { AimMode = false; ArmedBooster = null; OnStateChanged?.Invoke(); return; }
 
@@ -167,9 +183,14 @@ namespace WordDrop
             ArmedBooster = null;
             Debug.Log($"[Booster] {booster.DisplayName} resolved at ({col},{row}), charges→{_charges[id]}");
             OnStateChanged?.Invoke();
+            // Snapshot occupied cells BEFORE the booster mutates _board so we
+            // can derive the set of cleared cells once it completes.
+            HashSet<Vector2Int> occupiedBefore =
+                booster.TriggersGravity ? SnapshotOccupiedCells() : null;
             booster.ResolveWithTarget(col, row, () =>
             {
-                if (booster.TriggersGravity) RunGravity();
+                if (booster.TriggersGravity)
+                    StartCoroutine(RunGravityAndCascadeCoroutine(occupiedBefore));
             });
         }
 
@@ -193,25 +214,133 @@ namespace WordDrop
             OnStateChanged?.Invoke();
         }
 
-        // ── Gravity helper ──────────────────────────────────────────────────────
+        // ── Gravity + cascade ───────────────────────────────────────────────────
 
-        /// <summary>Run gravity after a destructive booster so floating tiles
-        /// fall into the gaps it created.
-        ///
-        /// Canonical pattern (matches the scoring path):
-        ///   1. RulesEngine.ApplyGravityInDataPublic() — compacts the data layer
-        ///      _board[] AND returns a moves dict mapping old → new positions
-        ///   2. GridManager.ApplyGravityFromEvents(moves) — animates the visual
-        ///      tile GameObjects using the moves dict
-        ///
-        /// Calling only GridManager.ApplyGravity (the older standalone version)
-        /// would leave RulesEngine._board out of sync and break the drop preview.</summary>
-        private void RunGravity()
+        /// <summary>Snapshot of which cells currently contain tiles. Used to
+        /// derive the set of cells a booster cleared by diffing pre- vs
+        /// post-Activate board state, without modifying every Booster subclass.</summary>
+        private HashSet<Vector2Int> SnapshotOccupiedCells()
         {
-            if (RulesEngine.Instance == null || GridManager.Instance == null) return;
-            var moves = RulesEngine.Instance.ApplyGravityInDataPublic();
+            var snap = new HashSet<Vector2Int>();
+            var rules = RulesEngine.Instance;
+            if (rules == null) return snap;
+            for (int c = 0; c < RulesEngine.COLS; c++)
+            {
+                for (int r = 0; r < RulesEngine.ROWS; r++)
+                {
+                    if (rules.GetCell(c, r) != null)
+                        snap.Add(new Vector2Int(c, r));
+                }
+            }
+            return snap;
+        }
+
+        /// <summary>Run gravity AND the post-clear cascade after a destructive
+        /// booster. Drives the same NextStep resolution loop a player drop uses,
+        /// so falling tiles can form / prime / score / detonate words.
+        ///
+        /// Flow:
+        ///   1. Diff pre-booster snapshot vs current board → cleared cells
+        ///   2. RulesEngine.BeginCascadeAfterBoosterClear → applies data-layer
+        ///      gravity with full bookkeeping (primed registry updates, scored
+        ///      key purges, seed cells populated, RemoveInvalidPrimedWords).
+        ///      Returns the moves dict.
+        ///   3. GridManager.ApplyGravityFromEvents(moves) — animates falls.
+        ///   4. HandManager.RunBoosterCascadeChain — drives NextStep with FX
+        ///      until the chain finishes; calls FinalizeBoosterCascade.
+        ///   5. If nothing moved, finalize directly so engine state returns to Idle.</summary>
+        private IEnumerator RunGravityAndCascadeCoroutine(HashSet<Vector2Int> occupiedBefore)
+        {
+            var rules = RulesEngine.Instance;
+            var grid  = GridManager.Instance;
+            if (rules == null || grid == null) yield break;
+
+            // 1. Derive cleared cells by diffing the snapshot against current state.
+            var clearedCells = new List<Vector2Int>();
+            if (occupiedBefore != null)
+            {
+                foreach (var cell in occupiedBefore)
+                {
+                    if (rules.GetCell(cell.x, cell.y) == null)
+                        clearedCells.Add(cell);
+                }
+            }
+            Debug.Log($"[BoosterDbg] Cascade snapshotBefore={occupiedBefore?.Count ?? 0} " +
+                      $"clearedDiff={clearedCells.Count}");
+
+            // 2. Engine entry: applies gravity + full bookkeeping, returns moves.
+            var moves = rules.BeginCascadeAfterBoosterClear(clearedCells, MatchController.PLAYER_HUMAN);
+
+            // 3. Animate gravity if anything fell.
             if (moves != null && moves.Count > 0)
-                StartCoroutine(GridManager.Instance.ApplyGravityFromEvents(moves));
+                yield return StartCoroutine(grid.ApplyGravityFromEvents(moves));
+
+            // BoosterDbg: post-gravity audit. Walks every board cell and
+            // compares the data (_board) vs visual (_tiles) layer. Logs the
+            // exact (col,row) of any desync so we can pin down which cell is
+            // showing the "fell into another letter" bug.
+            int desyncs = AuditBoardVisualSync(rules, grid);
+            if (desyncs > 0)
+                Debug.LogError($"[BoosterDbg] Post-gravity desync count: {desyncs} cell(s)");
+
+            // 4. Drive cascade chain via HandManager if anything fell. The chain
+            //    coroutine handles WordsScored / Triggers / Exploding / chain
+            //    gravity / Complete and calls FinalizeBoosterCascade at the end.
+            if (moves != null && moves.Count > 0 && HandManager.Instance != null)
+            {
+                yield return HandManager.Instance.StartCoroutine(
+                    HandManager.Instance.RunBoosterCascadeChain(MatchController.PLAYER_HUMAN));
+            }
+            else
+            {
+                // No tiles moved → no cascade possible. Engine is still in
+                // GravityApplied phase from BeginCascadeAfterBoosterClear, so
+                // finalize manually to return to Idle.
+                rules.FinalizeBoosterCascade();
+            }
+
+            // Post-cascade audit — after SyncToRulesState ran in the cascade
+            // chain (or the no-cascade finalize path), the visual should match
+            // the data. Any remaining desync is a bug we haven't accounted for.
+            int finalDesyncs = AuditBoardVisualSync(rules, grid);
+            if (finalDesyncs > 0)
+                Debug.LogError($"[BoosterDbg] Post-cascade FINAL desync count: {finalDesyncs} cell(s) " +
+                               "(visual layer drifted from data after SyncToRulesState)");
+        }
+
+        /// <summary>Diagnostic: walk every board cell and log any (col,row)
+        /// where the rules engine data and the visual tile layer disagree.
+        /// Returns the number of mismatches detected.</summary>
+        private int AuditBoardVisualSync(RulesEngine rules, GridManager grid)
+        {
+            int mismatches = 0;
+            for (int c = 0; c < RulesEngine.COLS; c++)
+            {
+                for (int r = 0; r < RulesEngine.ROWS; r++)
+                {
+                    var rulesCell = rules.GetCell(c, r);
+                    var visualTile = grid.GetTile(c, r);
+
+                    bool dataHas   = rulesCell != null;
+                    bool visualHas = visualTile != null;
+
+                    if (dataHas != visualHas)
+                    {
+                        Debug.LogWarning($"[BoosterDbg] DESYNC ({c},{r}): " +
+                                         $"data={(dataHas ? rulesCell.Letter.ToString() : "null")}, " +
+                                         $"visual={(visualHas ? visualTile.Letter.ToString() : "null")}");
+                        mismatches++;
+                    }
+                    else if (dataHas && visualHas && rulesCell.Letter != visualTile.Letter
+                             && rulesCell.Letter != '\0')
+                    {
+                        Debug.LogWarning($"[BoosterDbg] LETTER DESYNC ({c},{r}): " +
+                                         $"data='{rulesCell.Letter}', visual='{visualTile.Letter}'");
+                        mismatches++;
+                    }
+                }
+            }
+            return mismatches;
         }
 
         // ── Backward-compat shims (legacy API — kept dormant for unused paths) ──

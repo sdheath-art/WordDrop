@@ -39,6 +39,14 @@ namespace WordDrop
         public static readonly Color TILE_BORDER_WILD = new Color(0.20f, 0.90f, 1.00f, 1f);
 
         public static readonly Color PRIMED_GLOW       = new Color(1.8f, 0.5f, 1.3f, 1f);  // HDR magenta — bloom catches this
+
+        /// <summary>Override for ResetVisuals's "restore default sortingOrder"
+        /// step. When > 0, ResetVisuals will set the tile's sortingOrder to
+        /// this value instead of the baseline 5. Used by BoosterHUDSlot during
+        /// booster aim mode so tiles stay above the scrim even if a cleanup
+        /// path (rewrite cancel, drop complete, etc.) fires mid-aim.
+        /// Reset to 0 when aim mode ends.</summary>
+        public static int AimModeTileOrder = 0;
         public static readonly Color PRIMED_GOLD_GLOW  = new Color(2.0f, 1.5f, 0.3f, 1f);  // HDR gold — bloom catches this
         // Final-turn warning: primed word has 1 drop left. Shifts to HDR red-orange
         // so the player gets a clear "USE THIS OR LOSE IT" signal on their last chance.
@@ -88,6 +96,24 @@ namespace WordDrop
         private static Material s_wildHaloMaterial;
         private GameObject      _wildHaloGO;
         private SpriteRenderer  _wildHaloSR;
+
+        // Edit-selected halo — reuses the wild-halo radial texture, tinted cyan.
+        // Option A "selected" treatment: tile keeps its own face; a cyan glow
+        // ring breathes behind it + a select-pop reads as "picked".
+        private GameObject      _editHaloGO;
+        private SpriteRenderer  _editHaloSR;
+        private static Sprite   s_editHaloSprite;   // Square_aura_invert — rounded-square rim glow
+        private static Material s_editHaloMaterial;
+        private Vector3         _editBaseScale = Vector3.one;
+        private bool            _editSelected;
+        private static readonly Color EDIT_HALO_CYAN = new Color(0.35f, 0.88f, 0.98f, 1f);
+        private const float EDIT_POP_SCALE        = 1.09f; // springy lift on select
+        private const float EDIT_BREATH_SCALE     = 1.05f; // stays slightly enlarged while breathing
+        private const float EDIT_POP_DUR          = 0.26f;
+        private const float EDIT_BREATH_DUR       = 0.85f;
+        private const float EDIT_HALO_ALPHA_LOW   = 0.10f;
+        private const float EDIT_HALO_ALPHA_HIGH  = 0.26f;
+        private const float EDIT_HALO_SIZE        = 1.5f;  // halo footprint as ×cell (rim spills past tile edges)
         // ColorState removed (was for Wordle mode)
 
         private SpriteRenderer _spriteRenderer;
@@ -166,6 +192,11 @@ namespace WordDrop
         public void Reinitialise(char letter, int col, int row, float cellSize, int ownerIndex = -1)
         {
             if (!_poolInitialized) { Initialise(letter, col, row, cellSize, ownerIndex); return; }
+
+            // Kill any in-flight edit-selected breath tween before reuse — a
+            // recycled tile must not carry an oscillating DOScale into its next
+            // life (would fight the localScale set below). No-op if not selected.
+            SetEditSelected(false);
 
             // Pool reuse: wild flag does not survive, caller must re-SetWild if needed.
             _isWild    = false;
@@ -1277,7 +1308,13 @@ namespace WordDrop
                 else if (!_isGoldBonus)
                     _spriteRenderer.color = Color.white;
             }
-            SetSortingOrder(5); // restore default sorting
+            // 2026-06-01: respect aim-mode sortingOrder boost. When a booster
+            // is in aim mode, BoosterHUDSlot bumps every tile above the
+            // scrim's order so they stay visible inside the cutout. If
+            // ResetVisuals (called from various cleanup paths) hard-coded the
+            // default 5, the tile would drop BELOW the scrim mid-aim and
+            // disappear. AimModeTileOrder is set by BoosterHUDSlot.
+            SetSortingOrder(AimModeTileOrder > 0 ? AimModeTileOrder : 5);
             Color border = _hasPrimedGlow ? _primedGlowColor : TILE_BORDER_NORMAL;
             ApplyBorderColor(border);
         }
@@ -1687,6 +1724,110 @@ namespace WordDrop
                 else
                     _spriteRenderer.sprite = s_spriteNormal;
             }
+        }
+
+        /// <summary>
+        /// Edit-selected visual (Option A). Keeps the tile's own sprite + letter
+        /// and layers a cyan additive glow halo BEHIND it, plus a springy
+        /// select-pop that settles into a gentle scale + halo breath. This is the
+        /// "this tile is selected" treatment premium mobile puzzlers use — motion
+        /// + an additive highlight — instead of repainting the whole tile cyan
+        /// (which read as a glitch). Fully self-contained: start with true,
+        /// clear with false.
+        /// </summary>
+        public void SetEditSelected(bool active)
+        {
+            if (active)
+            {
+                EnsureEditHalo();
+
+                // Capture the tile's true rest scale ONCE per selection — tiles
+                // rest at a cell-derived scale, not 1.0, so the pop/breath/exit
+                // must all restore to this value.
+                if (!_editSelected) _editBaseScale = transform.localScale;
+                _editSelected = true;
+
+                // Select-pop → continuous breath that stays slightly enlarged so
+                // the tile keeps reading "lifted / selected" the whole time.
+                transform.DOKill();
+                transform.localScale = _editBaseScale;
+                transform.DOScale(_editBaseScale * EDIT_POP_SCALE, EDIT_POP_DUR)
+                    .SetEase(Ease.OutBack, 1.7f)
+                    .OnComplete(() =>
+                    {
+                        transform.DOScale(_editBaseScale * EDIT_BREATH_SCALE, EDIT_BREATH_DUR)
+                            .SetEase(Ease.InOutSine)
+                            .SetLoops(-1, LoopType.Yoyo);
+                    });
+
+                // Swap to the authored cyan_tile sprite (bright candy cyan) so the
+                // tile itself reads "selected". A multiply-tint on the white tile
+                // could only DARKEN it (dull "shaded cyan"); the sprite is the real
+                // vibrant cyan. Keep color white so the sprite shows true.
+                SetRewriteTargetSprite(true);
+                if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+
+                if (_editHaloGO != null) _editHaloGO.SetActive(true);
+                if (_editHaloSR != null)
+                {
+                    _editHaloSR.DOKill();
+                    _editHaloSR.color = new Color(EDIT_HALO_CYAN.r, EDIT_HALO_CYAN.g, EDIT_HALO_CYAN.b, EDIT_HALO_ALPHA_LOW);
+                    _editHaloSR.DOFade(EDIT_HALO_ALPHA_HIGH, EDIT_BREATH_DUR)
+                        .SetEase(Ease.InOutSine)
+                        .SetLoops(-1, LoopType.Yoyo);
+                }
+            }
+            else
+            {
+                if (!_editSelected) return;
+                _editSelected = false;
+                transform.DOKill();
+                transform.localScale = _editBaseScale;
+                // Restore the original sprite + white tint (cleanup also calls
+                // ResetVisuals, but keep this self-contained so nothing lingers).
+                SetRewriteTargetSprite(false);
+                if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
+                if (_editHaloSR != null) _editHaloSR.DOKill();
+                if (_editHaloGO != null) _editHaloGO.SetActive(false);
+            }
+        }
+
+        /// <summary>Lazily build the cyan edit halo child using the rounded-square
+        /// rim-glow texture (Square_aura_invert — transparent center, glow hugging
+        /// the tile silhouette). Behind the tile so the letter stays readable; the
+        /// rim spills past the tile edges.</summary>
+        private void EnsureEditHalo()
+        {
+            if (_editHaloGO != null) return;
+
+            if (s_editHaloSprite == null)
+            {
+                Texture2D tex = Resources.Load<Texture2D>("Particles/Square_aura_invert");
+                if (tex != null)
+                {
+                    s_editHaloSprite = Sprite.Create(
+                        tex, new Rect(0, 0, tex.width, tex.height),
+                        new Vector2(0.5f, 0.5f), 100f);
+                    Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
+                    if (addShader == null) addShader = Shader.Find("Sprites/Default");
+                    s_editHaloMaterial = new Material(addShader);
+                }
+            }
+            if (s_editHaloSprite == null) return; // asset missing — skip silently
+
+            _editHaloGO = new GameObject("TileEditHalo");
+            _editHaloGO.transform.SetParent(transform, false);
+            _editHaloGO.transform.localPosition = new Vector3(0f, 0f, 0.3f);
+            _editHaloSR = _editHaloGO.AddComponent<SpriteRenderer>();
+            _editHaloSR.sprite = s_editHaloSprite;
+            if (s_editHaloMaterial != null) _editHaloSR.sharedMaterial = s_editHaloMaterial;
+            _editHaloSR.sortingOrder = 3; // tiles render at 5 — halo sits behind
+            float haloNative = (_editHaloSR.sprite != null && _editHaloSR.sprite.bounds.size.x > 0)
+                ? _editHaloSR.sprite.bounds.size.x : 1f;
+            float tileScale = transform.localScale.x;
+            float haloScale = (_cellSize * EDIT_HALO_SIZE) / (haloNative * Mathf.Max(tileScale, 0.01f));
+            _editHaloGO.transform.localScale = new Vector3(haloScale, haloScale, 1f);
+            _editHaloGO.SetActive(false);
         }
 
         public void Highlight(bool on, Color color)

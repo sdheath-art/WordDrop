@@ -300,16 +300,24 @@ namespace WordDrop
             _movesSinceLastRise = Mathf.Min(_movesSinceLastRise + 1, CurrentMovesPerRise);
             _currentStageMovesUsed++;
 
+            // Snapshot the stages-cleared counter so we can detect whether
+            // the upcoming CheckStageClear call advanced the stage. If it did,
+            // we suppress this drop's rise (the win shouldn't be followed by
+            // a punitive rise tick before the StageClearModal pops out).
+            int stagesClearedBefore = _stagesCleared;
+
             // Clear-check — if this drop crossed the target, the stage advances.
             CheckStageClear();
+
+            bool clearedStageThisDrop = _stagesCleared > stagesClearedBefore;
 
             // Debug toggle: per-move rises. Fires a rise after every human drop
             // resolves. NotifyDropCommitted is invoked from CompleteDropBookkeeping
             // while MatchController.IsProcessing is still true (word scoring,
             // detonations, gravity), so we defer the rise via a wait-coroutine
             // until processing clears.
-            Debug.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused}");
-            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused)
+            Debug.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused} clearedThisDrop={clearedStageThisDrop}");
+            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused && !clearedStageThisDrop)
             {
                 // Onboarding ramp: stages 1-4 rise every 2 turns, stages 5+ every turn.
                 _turnsSinceLastTurnRise++;
@@ -501,8 +509,9 @@ namespace WordDrop
             _currentStageMovesUsed = 0;
             _currentStageCleared   = false;
             // Fresh rise window per Spencer's ask — full cadence before first rise.
-            _movesSinceLastRise    = 0;
-            _riseTimerSeconds      = 0f;   // Phase 11b time-based rise clock
+            _movesSinceLastRise     = 0;
+            _riseTimerSeconds       = 0f;   // Phase 11b time-based rise clock
+            _turnsSinceLastTurnRise = 0;    // turn-based rise counter — also fresh per stage
 
             // Reset per-stage rise counter for analytics
             _risesInCurrentStage   = 0;
@@ -1366,7 +1375,9 @@ namespace WordDrop
                 {
                     droppedTile.transform.position = targetPos;
                     droppedTile.PlayLandingSquish();
-                    GameAudio.Instance?.PlayTileDrop();
+                    // 2026-06-01: PlayTileDrop removed — squish coroutine
+                    // already fires it via Tile.PlayLandSound. Mirrors the
+                    // HandManager:4074 fix for the same double-fire pattern.
                 }
             }
 

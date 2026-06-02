@@ -128,6 +128,66 @@ namespace WordDrop
 
         private GameObject[]      _slotButtons;
         private Image[]           _slotImages;
+
+        // ── Tap-to-swap mode (full-screen dim with X over bag) ──
+        private Canvas     _swapModeCanvas;       // overlay scrim + X
+        private GameObject _swapModeScrim;        // full-screen dim Image
+        private GameObject _swapModeXButton;      // X positioned over the bag slot
+        public  bool       TileBagSwapModeActive { get; private set; }
+
+        // ── Booster aim-mode scrim ──
+        // 2026-06-01: cutout scrim — two Image rectangles covering the area
+        // ABOVE the board (HUD + gap where "TAP A TILE" sits) and BELOW the
+        // board (hand row + booster bench). The board area is left UNCOVERED
+        // so tiles and the board panel render at their natural sortingOrder
+        // without needing per-tile bumps (which fought Tile.cs's internal
+        // SetSortingOrder(5) calls during animations).
+        private Canvas     _aimScrimCanvas;
+        private GameObject _aimScrimTop;     // above the board
+        private GameObject _aimScrimBottom;  // below the board
+        private GameObject _aimScrimLeft;    // left of the board panel
+        private GameObject _aimScrimRight;   // right of the board panel
+        private bool       _wasAim;
+        private const int  AIM_SCRIM_SORT_ORDER = 15;  // above hand cards (10) and bench (8), below dragged card (20)
+        private const int  ARMED_SLOT_SORT_ORDER = 20; // armed booster slot Canvas.overrideSorting target — above scrim
+
+        // Board region in normalized canvas anchor coords (bottom-left origin).
+        // Calibrated from PSD spec: board X=44.5 W=1110 (so right=1154.5),
+        // Y=446 H=1420 (so bottom=1866) on a 1179×2556 canvas.
+        //   left   X PSD 44.5   / 1179 = 0.0377
+        //   right  X PSD 1154.5 / 1179 = 0.979
+        //   top    Y → 1 - (446/2556)  = 0.826
+        //   bottom Y → 1 - (1866/2556) = 0.270
+        private const float BOARD_LEFT_ANCHOR_X   = 0.0377f;
+        private const float BOARD_RIGHT_ANCHOR_X  = 0.979f;
+        private const float BOARD_TOP_ANCHOR_Y    = 0.826f;
+        private const float BOARD_BOTTOM_ANCHOR_Y = 0.270f;
+
+        /// <summary>Hit-test a screen-space point against the TileBag slot's
+        /// rect. Used by HandManager's drag-release path to detect when the
+        /// player drops a hand card onto the bag for a tile-swap. The legacy
+        /// world-space bag (HandManager._tileBagButton) was retired in the
+        /// Path A HUD rework, so drag-release now has to query this
+        /// screen-space slot instead.</summary>
+        public bool IsScreenPointOverTileBag(Vector2 screenPoint)
+        {
+            if (_slotButtons == null) return false;
+            for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+            {
+                if (DISPLAY_ORDER[i].Type != SlotType.TileBag) continue;
+                if (_slotButtons[i] == null) return false;
+                var rt = _slotButtons[i].GetComponent<RectTransform>();
+                if (rt == null) return false;
+                // 2026-06-01: pass the canvas's render camera now that the
+                // canvas is in ScreenSpaceCamera mode (was Overlay → null was
+                // correct previously). RectangleContainsScreenPoint needs the
+                // camera for Camera/WorldSpace canvases to map screen point to
+                // local rect correctly.
+                Camera cam = _slotCanvas != null ? _slotCanvas.worldCamera : null;
+                return RectTransformUtility.RectangleContainsScreenPoint(rt, screenPoint, cam);
+            }
+            return false;
+        }
         private TextMeshProUGUI[] _slotLabels;
         private TextMeshProUGUI[] _chargeBadges;
         private GameObject[]      _chargeBadgeContainers;
@@ -160,12 +220,16 @@ namespace WordDrop
         {
             if (BoosterManager.Instance != null)
                 BoosterManager.Instance.OnStateChanged += RefreshDisplay;
+            if (MatchController.Instance != null)
+                MatchController.Instance.OnSwapUsed += OnSwapUsed_RefreshBadge;
         }
 
         private void OnDisable()
         {
             if (BoosterManager.Instance != null)
                 BoosterManager.Instance.OnStateChanged -= RefreshDisplay;
+            if (MatchController.Instance != null)
+                MatchController.Instance.OnSwapUsed -= OnSwapUsed_RefreshBadge;
         }
 
         private void Start()
@@ -175,6 +239,20 @@ namespace WordDrop
                 BoosterManager.Instance.OnStateChanged -= RefreshDisplay;
                 BoosterManager.Instance.OnStateChanged += RefreshDisplay;
             }
+            // MatchController may not have existed at OnEnable time (it's
+            // created on demand). Re-bind here defensively.
+            if (MatchController.Instance != null)
+            {
+                MatchController.Instance.OnSwapUsed -= OnSwapUsed_RefreshBadge;
+                MatchController.Instance.OnSwapUsed += OnSwapUsed_RefreshBadge;
+            }
+            RefreshDisplay();
+        }
+
+        /// <summary>Fires when MatchController.UseSwap decrements the swap
+        /// counter. Forces the TileBag chip badge to re-read the live value.</summary>
+        private void OnSwapUsed_RefreshBadge(SwapUsedEvent evt)
+        {
             RefreshDisplay();
         }
 
@@ -216,7 +294,14 @@ namespace WordDrop
             if (GridManager.Instance != null
                 && GridManager.Instance.WorldToCell(worldPos, out int col, out int row))
             {
+                Debug.Log($"[BoosterDbg] AimTap screen=({screenPos.x:0},{screenPos.y:0}) " +
+                          $"world=({worldPos.x:0.00},{worldPos.y:0.00}) → cell=({col},{row})");
                 BoosterManager.Instance.ResolveAim(col, row);
+            }
+            else
+            {
+                Debug.Log($"[BoosterDbg] AimTap screen=({screenPos.x:0},{screenPos.y:0}) " +
+                          $"world=({worldPos.x:0.00},{worldPos.y:0.00}) → WorldToCell FAILED");
             }
         }
 
@@ -238,8 +323,18 @@ namespace WordDrop
                 typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             canvasGO.transform.SetParent(transform, false);
             _slotCanvas = canvasGO.GetComponent<Canvas>();
-            _slotCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            _slotCanvas.sortingOrder = SLOT_CANVAS_ORDER;
+            // 2026-06-01: switched from ScreenSpaceOverlay to ScreenSpaceCamera
+            // so the canvas's sortingOrder can compete with world-space
+            // SpriteRenderers. Overlay always renders above the scene
+            // regardless of order, which left the dragged hand card hidden
+            // behind the bag slot during a drag-to-swap. Camera mode + a low
+            // sortingOrder lets the card (sortingOrder=20 while dragged via
+            // BoostCardSortOrder) draw above the bag while still keeping the
+            // bag above the board tiles (sortingOrder=5-6).
+            _slotCanvas.renderMode = RenderMode.ScreenSpaceCamera;
+            _slotCanvas.worldCamera = Camera.main;
+            _slotCanvas.planeDistance = 2f;
+            _slotCanvas.sortingOrder = 8;
 
             var scaler = canvasGO.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -299,7 +394,23 @@ namespace WordDrop
                 _slotImages[i].sprite = GetCircleSpriteBig();
                 _slotImages[i].color  = SlotBaseColor(spec.Type);
 
-                slot.GetComponent<Button>().onClick.AddListener(() => OnSlotTapped(slotIndex));
+                var slotBtn = slot.GetComponent<Button>();
+                slotBtn.onClick.AddListener(() => OnSlotTapped(slotIndex));
+
+                // 2026-06-01: override Unity's default disabled-state tint
+                // (which dims the button to ~50% alpha) so the Edit slot —
+                // which we set interactable=false on per Spencer — doesn't
+                // look "see through" relative to the active booster slots.
+                // disabledColor == normalColor means there's no visual
+                // difference between enabled and disabled states.
+                var cb = slotBtn.colors;
+                cb.normalColor      = Color.white;
+                cb.highlightedColor = Color.white;
+                cb.pressedColor     = new Color(0.85f, 0.85f, 0.85f, 1f);
+                cb.selectedColor    = Color.white;
+                cb.disabledColor    = Color.white;
+                cb.colorMultiplier  = 1f;
+                slotBtn.colors = cb;
 
                 // Settings slot gets a two-stage click feel: PointerDown
                 // fires the press half (otherpop_press), release fires the
@@ -311,6 +422,29 @@ namespace WordDrop
                     if (trigger == null) trigger = slot.AddComponent<EventTrigger>();
                     var pdEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
                     pdEntry.callback.AddListener((_) => GameAudio.Instance?.PlaySettingsPress());
+                    trigger.triggers.Add(pdEntry);
+                }
+                else if (spec.Type == SlotType.Booster)
+                {
+                    // Booster slots get a PointerDown handler that fires the
+                    // multi-pop press half ONLY when this slot is currently
+                    // styled as the aim-cancel button (red ✕). Otherwise the
+                    // PointerDown is a no-op and the slot's onClick handler
+                    // plays PlaySettingsRelease via OnSlotTapped's top branch.
+                    var trigger = slot.GetComponent<EventTrigger>();
+                    if (trigger == null) trigger = slot.AddComponent<EventTrigger>();
+                    int capturedIndex = slotIndex;
+                    var pdEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+                    pdEntry.callback.AddListener((_) =>
+                    {
+                        var bm = BoosterManager.Instance;
+                        if (bm == null || !bm.AimMode) return;
+                        if (capturedIndex < 0 || capturedIndex >= DISPLAY_ORDER.Length) return;
+                        var s = DISPLAY_ORDER[capturedIndex];
+                        if (s.Type != SlotType.Booster) return;
+                        if (bm.ArmedBooster == null || s.BoosterId != bm.ArmedBooster.Id) return;
+                        GameAudio.Instance?.PlayMultiPopPress();
+                    });
                     trigger.triggers.Add(pdEntry);
                 }
 
@@ -419,6 +553,12 @@ namespace WordDrop
             scaler.referenceResolution = new Vector2(CANVAS_W, CANVAS_H);
             scaler.matchWidthOrHeight = 1.0f;
 
+            // 2026-06-01: dark blue background panel removed per Spencer.
+            // Banner rect stays as the layout container (so the centered text
+            // child still positions correctly), but its Image is transparent
+            // and the anchoredPosition is pushed down so the text sits near
+            // the same Y as where the +WORDS / scored-word popup renders —
+            // roughly the gap between the HUD bar and the top of the board.
             var bannerGO = new GameObject("Banner",
                 typeof(RectTransform), typeof(Image));
             bannerGO.transform.SetParent(canvasGO.transform, false);
@@ -427,8 +567,8 @@ namespace WordDrop
             bannerRT.anchorMax = new Vector2(1f, 1f);
             bannerRT.pivot     = new Vector2(0.5f, 1f);
             bannerRT.sizeDelta = new Vector2(0f, 220f);
-            bannerRT.anchoredPosition = new Vector2(0f, -260f);
-            bannerGO.GetComponent<Image>().color = new Color(0.10f, 0.08f, 0.20f, 0.92f);
+            bannerRT.anchoredPosition = new Vector2(0f, -200f); // centers the text in the gap between the HUD bar (~y=180 PSD) and the top of the board panel (~y=446 PSD) — Spencer 2026-06-01
+            bannerGO.GetComponent<Image>().color = Color.clear;
             bannerGO.GetComponent<Image>().raycastTarget = false;
 
             var labelGO = new GameObject("Text", typeof(RectTransform));
@@ -447,35 +587,337 @@ namespace WordDrop
             labelRT.offsetMin = Vector2.zero;
             labelRT.offsetMax = Vector2.zero;
 
-            var cancelGO = new GameObject("Cancel",
-                typeof(RectTransform), typeof(Image), typeof(Button));
-            cancelGO.transform.SetParent(bannerGO.transform, false);
-            var cancelRT = cancelGO.GetComponent<RectTransform>();
-            cancelRT.anchorMin = new Vector2(1f, 0.5f);
-            cancelRT.anchorMax = new Vector2(1f, 0.5f);
-            cancelRT.pivot     = new Vector2(1f, 0.5f);
-            cancelRT.sizeDelta = new Vector2(150f, 150f);
-            cancelRT.anchoredPosition = new Vector2(-44f, 0f);
-            cancelGO.GetComponent<Image>().color = new Color(0.55f, 0.18f, 0.18f, 1f);
-            _aimCancelButton = cancelGO.GetComponent<Button>();
-            _aimCancelButton.onClick.AddListener(OnCancelAimTapped);
-
-            var xGO = new GameObject("X", typeof(RectTransform));
-            xGO.transform.SetParent(cancelGO.transform, false);
-            var xText = xGO.AddComponent<TextMeshProUGUI>();
-            if (displayFont != null) xText.font = displayFont;
-            xText.text = "X";
-            xText.fontSize = 82;
-            xText.alignment = TextAlignmentOptions.Center;
-            xText.color = Color.white;
-            xText.raycastTarget = false;
-            var xRT = xGO.GetComponent<RectTransform>();
-            xRT.anchorMin = Vector2.zero;
-            xRT.anchorMax = Vector2.one;
-            xRT.offsetMin = Vector2.zero;
-            xRT.offsetMax = Vector2.zero;
+            // 2026-06-01: banner cancel button removed per Spencer. Cancel now
+            // happens by tapping the armed booster's slot directly (which
+            // RefreshDisplay re-styles as a red ✕ during aim mode), matching
+            // the tile-bag swap-mode UX. _aimCancelButton stays null —
+            // _aimTapHandler's rectangle-contains check guards against null.
 
             _aimCanvas.gameObject.SetActive(false);
+        }
+
+        // ── Tap-to-swap overlay (scrim + X over bag) ─────────────────────────────
+
+        /// <summary>Build the swap-mode canvas lazily. ScreenSpaceCamera mode
+        /// at sortingOrder=9 sits ABOVE the booster bench (sortingOrder=8) but
+        /// BELOW the hand cards (sortingOrder=10) so the cards stay bright
+        /// against the dim scrim. HUD/modal canvases stay above the scrim
+        /// because they're ScreenSpaceOverlay (always renders over scene).</summary>
+        private void BuildSwapModeCanvas()
+        {
+            if (_swapModeCanvas != null) return;
+
+            var canvasGO = new GameObject("TileBagSwapModeCanvas",
+                typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            canvasGO.transform.SetParent(transform, false);
+            _swapModeCanvas = canvasGO.GetComponent<Canvas>();
+            _swapModeCanvas.renderMode = RenderMode.ScreenSpaceCamera;
+            _swapModeCanvas.worldCamera = Camera.main;
+            _swapModeCanvas.planeDistance = 2f;
+            _swapModeCanvas.sortingOrder = 9;
+
+            var scaler = canvasGO.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(CANVAS_W, CANVAS_H);
+            scaler.matchWidthOrHeight = 1f;
+
+            // Full-screen scrim image. raycastTarget=true so taps on the dim
+            // area are absorbed (don't accidentally reach the board behind).
+            _swapModeScrim = new GameObject("Scrim", typeof(RectTransform), typeof(Image));
+            _swapModeScrim.transform.SetParent(canvasGO.transform, false);
+            var scrimRT = _swapModeScrim.GetComponent<RectTransform>();
+            scrimRT.anchorMin = Vector2.zero;
+            scrimRT.anchorMax = Vector2.one;
+            scrimRT.offsetMin = Vector2.zero;
+            scrimRT.offsetMax = Vector2.zero;
+            var scrimImg = _swapModeScrim.GetComponent<Image>();
+            scrimImg.color = new Color(0f, 0f, 0f, 0.72f);
+            scrimImg.raycastTarget = true;
+
+            // X button positioned over the TileBag slot. Anchored from the
+            // bottom of the screen to match the bag slot's anchor scheme so
+            // it sits exactly where the bag is.
+            _swapModeXButton = new GameObject("CancelX",
+                typeof(RectTransform), typeof(Image), typeof(Button));
+            _swapModeXButton.transform.SetParent(canvasGO.transform, false);
+            var xRT = _swapModeXButton.GetComponent<RectTransform>();
+            xRT.anchorMin = new Vector2(0.5f, 0f);
+            xRT.anchorMax = new Vector2(0.5f, 0f);
+            xRT.pivot     = new Vector2(0.5f, 0.5f);
+            xRT.sizeDelta = new Vector2(SLOT_SIZE, SLOT_SIZE);
+            // Find the TileBag slot's anchored position so the X lines up.
+            int bagIndex = 0;
+            for (int i = 0; i < DISPLAY_ORDER.Length; i++)
+                if (DISPLAY_ORDER[i].Type == SlotType.TileBag) { bagIndex = i; break; }
+            float bagXPsd = SLOT_LEFT_X + bagIndex * SLOT_STEP;
+            xRT.anchoredPosition = PsdAnchoredCenter(bagXPsd, SLOT_TOP_Y, SLOT_SIZE, SLOT_SIZE);
+
+            var xImg = _swapModeXButton.GetComponent<Image>();
+            xImg.sprite = GetCircleSpriteBig();
+            xImg.color  = new Color(0.50f, 0.18f, 0.18f, 0.95f); // muted red
+
+            // X glyph on top of the button
+            var xGlyphGO = new GameObject("Glyph", typeof(RectTransform));
+            xGlyphGO.transform.SetParent(_swapModeXButton.transform, false);
+            var xGlyphRT = xGlyphGO.GetComponent<RectTransform>();
+            xGlyphRT.anchorMin = Vector2.zero;
+            xGlyphRT.anchorMax = Vector2.one;
+            xGlyphRT.offsetMin = Vector2.zero;
+            xGlyphRT.offsetMax = Vector2.zero;
+            var xText = xGlyphGO.AddComponent<TextMeshProUGUI>();
+            xText.text = "✕";
+            xText.alignment = TextAlignmentOptions.Center;
+            xText.fontSize = 56;
+            xText.color = Color.white;
+            xText.raycastTarget = false;
+            var displayFont = GameFont.GetDisplayTMP();
+            if (displayFont != null) xText.font = displayFont;
+
+            // 2026-06-01: same split multi-pop SFX as the SettingsModal close
+            // button (SettingsModal.BuildCloseButton). PointerDown plays the
+            // press half, onClick plays the release half. Spencer asked for
+            // the swap-mode X to "have the exact sound" as the settings X.
+            var xTrigger = _swapModeXButton.GetComponent<EventTrigger>();
+            if (xTrigger == null) xTrigger = _swapModeXButton.AddComponent<EventTrigger>();
+            var xDownEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+            xDownEntry.callback.AddListener((_) => GameAudio.Instance?.PlayMultiPopPress());
+            xTrigger.triggers.Add(xDownEntry);
+
+            _swapModeXButton.GetComponent<Button>().onClick.AddListener(() =>
+            {
+                GameAudio.Instance?.PlayMultiPopRelease();
+                ExitTileBagSwapMode();
+            });
+
+            _swapModeCanvas.gameObject.SetActive(false);
+        }
+
+        // ── Booster aim-mode scrim helpers ──────────────────────────────────────
+
+        /// <summary>Build the aim-mode scrim canvas lazily. Two Image
+        /// rectangles cover the area ABOVE the board and BELOW the board,
+        /// leaving a CUTOUT for the board itself. The board panel + tiles
+        /// stay at their natural sortingOrder and are simply not covered by
+        /// the scrim — which avoids fighting Tile.cs's internal SetSortingOrder
+        /// resets during animations. raycastTarget=false on both rects so
+        /// taps pass through to BoosterHUDSlot.Update's aim-tap handler.</summary>
+        private void BuildAimScrimCanvas()
+        {
+            if (_aimScrimCanvas != null) return;
+
+            var canvasGO = new GameObject("BoosterAimScrimCanvas",
+                typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            canvasGO.transform.SetParent(transform, false);
+            _aimScrimCanvas = canvasGO.GetComponent<Canvas>();
+            _aimScrimCanvas.renderMode = RenderMode.ScreenSpaceCamera;
+            _aimScrimCanvas.worldCamera = Camera.main;
+            _aimScrimCanvas.planeDistance = 2f;
+            _aimScrimCanvas.sortingOrder = AIM_SCRIM_SORT_ORDER;
+
+            var scaler = canvasGO.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(CANVAS_W, CANVAS_H);
+            scaler.matchWidthOrHeight = 1f;
+
+            Color scrimColor = new Color(0f, 0f, 0f, 0.72f);
+
+            // Four-rectangle frame around the board. Anchors are placeholders
+            // at build time — the actual cutout is computed from the board
+            // background SR's world bounds in UpdateScrimGeometry, called on
+            // every aim-mode entry. This way the cutout always matches the
+            // ACTUAL rendered board panel, regardless of PSD vs runtime drift.
+            _aimScrimTop    = MakeScrimRect(canvasGO.transform, "ScrimTop",    Vector2.zero, Vector2.one, scrimColor);
+            _aimScrimBottom = MakeScrimRect(canvasGO.transform, "ScrimBottom", Vector2.zero, Vector2.one, scrimColor);
+            _aimScrimLeft   = MakeScrimRect(canvasGO.transform, "ScrimLeft",   Vector2.zero, Vector2.one, scrimColor);
+            _aimScrimRight  = MakeScrimRect(canvasGO.transform, "ScrimRight",  Vector2.zero, Vector2.one, scrimColor);
+
+            _aimScrimCanvas.gameObject.SetActive(false);
+        }
+
+        /// <summary>Snap the 4 scrim rects to frame the board's actual world
+        /// bounds. Called when aim mode activates so the cutout precisely
+        /// matches whatever the lavender board panel renders at — width,
+        /// height, position — without hardcoded PSD constants.</summary>
+        private void UpdateScrimGeometry()
+        {
+            var grid = GridManager.Instance;
+            var cam  = Camera.main;
+            if (grid == null || cam == null) return;
+
+            Bounds? b = grid.BoardBackgroundWorldBounds;
+            if (!b.HasValue) return;
+
+            // World-space corners → viewport (0-1) coords. For a ScreenSpaceCamera
+            // canvas the viewport coords map directly to anchor coords (0,0 =
+            // bottom-left of viewport, 1,1 = top-right). Orthographic camera
+            // means the conversion is a clean affine map.
+            Vector3 minVP = cam.WorldToViewportPoint(b.Value.min);
+            Vector3 maxVP = cam.WorldToViewportPoint(b.Value.max);
+
+            float left   = Mathf.Clamp01(minVP.x);
+            float right  = Mathf.Clamp01(maxVP.x);
+            float bottom = Mathf.Clamp01(minVP.y);
+            float top    = Mathf.Clamp01(maxVP.y);
+
+            SetRectAnchors(_aimScrimTop,    new Vector2(0f,    top),    new Vector2(1f,    1f));
+            SetRectAnchors(_aimScrimBottom, new Vector2(0f,    0f),     new Vector2(1f,    bottom));
+            SetRectAnchors(_aimScrimLeft,   new Vector2(0f,    bottom), new Vector2(left,  top));
+            SetRectAnchors(_aimScrimRight,  new Vector2(right, bottom), new Vector2(1f,    top));
+        }
+
+        private static void SetRectAnchors(GameObject go, Vector2 anchorMin, Vector2 anchorMax)
+        {
+            if (go == null) return;
+            var rt = go.GetComponent<RectTransform>();
+            if (rt == null) return;
+            rt.anchorMin = anchorMin;
+            rt.anchorMax = anchorMax;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+        }
+
+        private static GameObject MakeScrimRect(Transform parent, string name,
+            Vector2 anchorMin, Vector2 anchorMax, Color color)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = anchorMin;
+            rt.anchorMax = anchorMax;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            var img = go.GetComponent<Image>();
+            img.color = color;
+            img.raycastTarget = false; // taps pass through to the aim handler
+            return go;
+        }
+
+        /// <summary>Toggle the cutout scrim + armed-slot sort override.
+        /// Called from RefreshDisplay when the cached _wasAim flag disagrees
+        /// with the live state.
+        ///
+        /// Bright during aim (uncovered by scrim): the entire board area —
+        /// background panel, tiles, board background sprites. No per-element
+        /// sortingOrder manipulation required (which previously fought Tile.cs's
+        /// internal SetSortingOrder resets during tile animations).
+        /// Dim during aim (covered by scrim): HUD area, the "TAP A TILE"
+        /// banner gap, hand row, NEXT preview, bench panel + un-armed slots.
+        /// Armed booster slot uses Canvas.overrideSorting to stay bright on
+        /// top of the bottom scrim so the red ✕ cancel reads.</summary>
+        private void SetAimModeVisuals(bool active)
+        {
+            BuildAimScrimCanvas();
+            // Full-screen scrim now; corners-of-board are handled by bumping the
+            // board panel's rounded sprite ABOVE the scrim's sortingOrder, so
+            // the panel itself naturally clips out only its rounded shape
+            // (slivers stay dim with the scrim, panel area is bright).
+            if (active) StretchScrimsFullScreen();
+            if (_aimScrimCanvas != null) _aimScrimCanvas.gameObject.SetActive(active);
+
+            // Bump board background + all tiles above the scrim so they
+            // render bright inside the panel cutout. The board bg's rounded
+            // sprite shape provides the perfect cutout for free — the corner
+            // slivers (where the bg has 0 alpha) stay dim with the scrim.
+            var grid = GridManager.Instance;
+            if (grid != null)
+            {
+                grid.SetBoardBackgroundSortingOrder(active ? AIM_BOARD_BG_ORDER : 0);
+                int tileOrder = active ? AIM_TILE_ORDER : 5;
+                Tile.AimModeTileOrder = active ? AIM_TILE_ORDER : 0;
+                for (int c = 0; c < RulesEngine.COLS; c++)
+                {
+                    for (int r = 0; r < RulesEngine.ROWS; r++)
+                    {
+                        var tile = grid.GetTile(c, r);
+                        if (tile != null) tile.SetSortingOrder(tileOrder);
+                    }
+                }
+            }
+
+            ApplyArmedSlotSortOverride(active);
+
+            // The "TAP A TILE" banner sits in the same slot as the last-word
+            // score readout ("TOE +7"); shown together they overlap and read as
+            // jumbled text. Clear the score readout while aim mode is up — it
+            // repopulates on its own the next time a word scores after aim exits.
+            if (active) LastWordDisplay.Instance?.Clear();
+        }
+
+        private const int AIM_BOARD_BG_ORDER = 17; // above scrim (15), below tiles
+        private const int AIM_TILE_ORDER     = 25; // well above scrim and board bg
+
+        /// <summary>Set up the scrim as a single full-screen dim layer.
+        /// Uses _aimScrimTop as the sole active rect; the other 3 (Bottom /
+        /// Left / Right) are hidden so the 72% alpha doesn't stack 4×
+        /// (which would compound to ~99% opacity and read as pure black).
+        /// The cutout for the board area comes from bumping the board panel
+        /// + tiles above the scrim's sortingOrder, not from anchor geometry.</summary>
+        private void StretchScrimsFullScreen()
+        {
+            SetRectAnchors(_aimScrimTop, Vector2.zero, Vector2.one);
+            if (_aimScrimBottom != null) _aimScrimBottom.SetActive(false);
+            if (_aimScrimLeft   != null) _aimScrimLeft.SetActive(false);
+            if (_aimScrimRight  != null) _aimScrimRight.SetActive(false);
+        }
+
+        /// <summary>Use Canvas.overrideSorting on the armed booster's slot
+        /// GameObject so it renders above the aim scrim. On exit, disable
+        /// the override and the slot reverts to the bench canvas's order.</summary>
+        private void ApplyArmedSlotSortOverride(bool active)
+        {
+            if (_slotButtons == null) return;
+            for (int i = 0; i < _slotButtons.Length && i < DISPLAY_ORDER.Length; i++)
+            {
+                if (_slotButtons[i] == null) continue;
+                var spec = DISPLAY_ORDER[i];
+                if (spec.Type != SlotType.Booster) continue;
+
+                var bm = BoosterManager.Instance;
+                bool isArmed = active && bm != null && bm.ArmedBooster != null
+                                       && spec.BoosterId == bm.ArmedBooster.Id;
+
+                var subCanvas = _slotButtons[i].GetComponent<Canvas>();
+                if (isArmed)
+                {
+                    if (subCanvas == null) subCanvas = _slotButtons[i].AddComponent<Canvas>();
+                    subCanvas.overrideSorting = true;
+                    subCanvas.sortingOrder = ARMED_SLOT_SORT_ORDER; // above the scrim's sortingOrder
+                    // GraphicRaycaster needed so the Button still receives
+                    // taps under the new sub-canvas. Idempotent: AddComponent
+                    // returns the existing one if already present.
+                    if (_slotButtons[i].GetComponent<GraphicRaycaster>() == null)
+                        _slotButtons[i].AddComponent<GraphicRaycaster>();
+                }
+                else if (subCanvas != null)
+                {
+                    subCanvas.overrideSorting = false;
+                }
+            }
+        }
+
+        /// <summary>Enter tap-to-swap mode. Caller must verify swaps remaining > 0.
+        /// Shows the dim scrim + X over the bag, and tells HandManager to
+        /// start the card-pulse + listen-for-card-tap behaviour.</summary>
+        public void EnterTileBagSwapMode()
+        {
+            if (TileBagSwapModeActive) return;
+            BuildSwapModeCanvas();
+            if (_swapModeCanvas != null) _swapModeCanvas.gameObject.SetActive(true);
+            TileBagSwapModeActive = true;
+            // 2026-06-01: PlayUIClick removed — the slot tap that invoked
+            // this already fired PlaySettingsRelease in OnSlotTapped.
+            HandManager.Instance?.EnterTapToSwapMode();
+        }
+
+        /// <summary>Exit tap-to-swap mode. Called by the X button, by
+        /// HandManager after a successful swap, or by any external code path
+        /// that wants to bail (e.g. modal-open guards).</summary>
+        public void ExitTileBagSwapMode()
+        {
+            if (!TileBagSwapModeActive) return;
+            TileBagSwapModeActive = false;
+            if (_swapModeCanvas != null) _swapModeCanvas.gameObject.SetActive(false);
+            HandManager.Instance?.ExitTapToSwapMode();
         }
 
         // ── Refresh ─────────────────────────────────────────────────────────────
@@ -509,9 +951,12 @@ namespace WordDrop
                             : 0;
                         break;
                     case SlotType.TileBag:
-                        // TODO Commit 3: source from a per-level Tile Bag
-                        // Exchange counter. Hardcoded to 2 for now.
-                        charges = 2;
+                        // 2026-06-01: source from MatchController's live swap
+                        // counter so the badge actually decrements when a tile
+                        // is swapped via drag-onto-bag. Was hardcoded to 2.
+                        charges = MatchController.Instance != null
+                            ? MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN)
+                            : 0;
                         break;
                     case SlotType.Settings:
                         break;
@@ -534,13 +979,59 @@ namespace WordDrop
                 }
 
                 var btn = _slotButtons[i].GetComponent<Button>();
-                if (btn != null) btn.interactable = !isAim;
 
+                // 2026-06-01: Edit icon is non-interactable for now (Commit 3
+                // wiring still pending — tapping it does nothing useful, so
+                // Spencer wants it un-clickable to avoid implying functionality).
+                bool isEditSlot   = spec.Type == SlotType.Edit;
+                bool isArmedSlot  = isAim && spec.Type == SlotType.Booster
+                                          && bm.ArmedBooster != null
+                                          && spec.BoosterId == bm.ArmedBooster.Id;
+
+                if (btn != null)
+                {
+                    if (isEditSlot)               btn.interactable = false;
+                    else if (isAim && !isArmedSlot) btn.interactable = false;
+                    else                          btn.interactable = true;
+                }
+
+                // Visual: armed slot during aim mode becomes the cancel button —
+                // red bg + ✕ glyph (same look as the tile-bag swap-mode X).
+                // Every other booster slot dims to its base color and is
+                // non-interactable.
                 if (_slotImages[i] != null)
-                    _slotImages[i].color = SlotBaseColor(spec.Type);
+                {
+                    _slotImages[i].color = isArmedSlot
+                        ? new Color(0.55f, 0.18f, 0.18f, 1f)
+                        : SlotBaseColor(spec.Type);
+                }
+                if (_slotLabels[i] != null && spec.Type == SlotType.Booster)
+                {
+                    if (isArmedSlot)
+                        _slotLabels[i].text = "✕";
+                    else if (slotActive)
+                    {
+                        var booster = bm != null ? bm.GetBoosterById(spec.BoosterId) : null;
+                        if (booster != null) _slotLabels[i].text = booster.DisplayName.Substring(0, 1);
+                    }
+                }
+                // Hide the charge badge on the armed slot so the ✕ reads cleanly.
+                if (_chargeBadgeContainers[i] != null && isArmedSlot)
+                    _chargeBadgeContainers[i].SetActive(false);
             }
 
             if (_aimCanvas != null) _aimCanvas.gameObject.SetActive(isAim);
+
+            // Scrim + board-tile sort boost — toggled on aim-state transitions.
+            // Tracked separately from per-slot state so the scrim's tile-sorting
+            // sweep only fires on the actual enter/exit edge, not on every
+            // OnStateChanged callback (which can fire mid-aim too, e.g. when
+            // charges change).
+            if (isAim != _wasAim)
+            {
+                SetAimModeVisuals(isAim);
+                _wasAim = isAim;
+            }
         }
 
         // ── Group animation (Candy-Crush-style converge/expand when a menu opens) ────
@@ -672,10 +1163,26 @@ namespace WordDrop
             if (slotIndex < 0 || slotIndex >= DISPLAY_ORDER.Length) return;
             var spec = DISPLAY_ORDER[slotIndex];
 
-            // Booster activations play their OWN SFX (e.g. Jester Hat fires
-            // PlayShuffle). The generic UI click was muddying those sounds —
-            // suppressed when a booster activates successfully. Only Settings
-            // and the "+" buy-more path get the click feedback now.
+            // Aim-mode cancel: tapping the armed booster's slot (now styled
+            // as a red ✕) cancels aim. Same multi-pop release sound as the
+            // tile-bag swap-mode X (press half fires on PointerDown — see
+            // EventTrigger wired in BuildSlotCanvas).
+            var bm = BoosterManager.Instance;
+            if (bm != null && bm.AimMode && spec.Type == SlotType.Booster
+                && bm.ArmedBooster != null && spec.BoosterId == bm.ArmedBooster.Id)
+            {
+                GameAudio.Instance?.PlayMultiPopRelease();
+                bm.CancelAim();
+                return;
+            }
+
+            // 2026-06-01: every non-Settings slot click plays the same
+            // settings-tab release sound per Spencer ("the sound played in the
+            // settings menu when you click between buttons"). Settings has its
+            // own paired press+release (a fuller 2-stage feel) wired below.
+            if (spec.Type != SlotType.Settings)
+                GameAudio.Instance?.PlaySettingsRelease();
+
             bool suppressClick = false;
 
             switch (spec.Type)
@@ -708,9 +1215,22 @@ namespace WordDrop
                     break;
                 }
                 case SlotType.TileBag:
-                    // TODO Commit 3: enter Tile Bag Exchange mode.
-                    Debug.Log("[BoosterHUD] Tile Bag tapped — wiring pending (Commit 3)");
+                {
+                    // Tap-to-swap mode: dim everything except the hand cards,
+                    // replace the bag with an X. Tapping a card swaps it;
+                    // tapping the X cancels without consuming a swap.
+                    int swapsLeft = MatchController.Instance != null
+                        ? MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN)
+                        : 0;
+                    if (swapsLeft <= 0)
+                    {
+                        OnBuyMoreTapped(spec);
+                        break;
+                    }
+                    EnterTileBagSwapMode();
+                    suppressClick = true; // EnterTileBagSwapMode handles its own SFX
                     break;
+                }
                 case SlotType.Settings:
                     if (SettingsModal.Instance == null)
                     {
@@ -725,8 +1245,12 @@ namespace WordDrop
                     break;
             }
 
-            if (!suppressClick)
-                GameAudio.Instance?.PlayUIClick();
+            // 2026-06-01: dropped the bottom PlayUIClick fallback — the
+            // settings-tab release sound is now fired at the top of this
+            // method for every non-Settings slot, so there's no need for a
+            // second click sound here. suppressClick is left in place in case
+            // future case branches need to opt out of the top sound.
+            _ = suppressClick;
         }
 
         private void OnCancelAimTapped()

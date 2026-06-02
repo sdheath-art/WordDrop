@@ -120,16 +120,20 @@ namespace WordDrop
                 FireCascadePops();
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Stage Clear Modal — Show", _btnStyle))
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Show", _btnStyle))
                 FireStageClearShow();
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Stage Clear Modal — Hide", _btnStyle))
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Hide", _btnStyle))
                 FireStageClearHide();
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Top Out Panel (drop / dwell / exit)", _btnStyle))
                 FireTopOutPanel();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Continue Modal — Show", _btnStyle))
+                FireContinueModalShow();
             innerY += BTN_H + GAP;
 
             // ── MVP P5 turn-based playtest toggle ────────────────────────────────
@@ -138,6 +142,12 @@ namespace WordDrop
                 : "Rise-Per-Move:  OFF (time-based)";
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), riseLabel, _btnStyle))
                 SurvivalManager.RisePerMoveDebug = !SurvivalManager.RisePerMoveDebug;
+            innerY += BTN_H + GAP;
+
+            // ── Booster cheat: refill all 4 boosters to 99 charges ───────────────
+            // Lets us spam boosters during the cascade-bug repro session.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Refill Boosters (99 each)", _btnStyle))
+                RefillAllBoosters(99);
             innerY += BTN_H + GAP;
 
             innerY += 14;
@@ -294,6 +304,36 @@ namespace WordDrop
             FlipbookExplosion.Instance.PlayMeltdown(ScreenCenterWorld());
         }
 
+        private void RefillAllBoosters(int targetCount)
+        {
+            var bm = BoosterManager.Instance;
+            if (bm == null) { Debug.LogWarning("[FXTest] BoosterManager missing — start a Survival run first"); return; }
+
+            // AddCharges only works for booster IDs already in inventory.
+            // StartRun populates the 4 MVP boosters; if a run hasn't started,
+            // _charges is empty and AddCharges is a no-op.
+            string[] ids = {
+                BoosterManager.ID_BLOOMBURST,
+                BoosterManager.ID_BRAMBLE_SWEEP,
+                BoosterManager.ID_WISPWHIRL,
+                BoosterManager.ID_ROCK_CRUSHER,
+            };
+
+            int refilled = 0;
+            foreach (string id in ids)
+            {
+                int current = bm.GetCharges(id);
+                int delta = targetCount - current;
+                if (delta > 0)
+                {
+                    bm.AddCharges(id, delta);
+                    refilled++;
+                }
+            }
+
+            Debug.Log($"[FXTest] Refilled {refilled} booster(s) to {targetCount} charges each");
+        }
+
         private void FireFlipbookGlow()
         {
             bool savedGlow = WordDropFX.FX_FlipbookGlow;
@@ -346,6 +386,27 @@ namespace WordDrop
             }
             TopOutPanel.Instance.SetText("TOP OUT!");
             TopOutPanel.Instance.Show();
+        }
+
+        private void FireContinueModalShow()
+        {
+            // Spawns the ContinueModal singleton on demand if it doesn't
+            // exist yet (mirrors how SurvivalManager creates it the first
+            // time the player tops out). Then calls Show with the actual
+            // SurvivalManager so the cost ladder + ad availability render
+            // correctly. If Survival isn't active, fall back to null —
+            // Show() handles the null path with a default cost of 50.
+            if (ContinueModal.Instance == null)
+            {
+                var modalGO = new GameObject("ContinueModalRoot");
+                modalGO.AddComponent<ContinueModal>();
+            }
+            if (ContinueModal.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] ContinueModal failed to bootstrap.");
+                return;
+            }
+            ContinueModal.Instance.Show(SurvivalManager.Instance);
         }
 
         private void FireStageClearShow()

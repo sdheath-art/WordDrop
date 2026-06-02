@@ -32,12 +32,25 @@ namespace WordDrop
         public override string Id               => "wispwhirl_row";
         public override string DisplayName      => "Jester Hat";
         public override string ShortDescription
-            => "Rearranges all non-primed letters on the board.";
-        public override bool NeedsTarget => false;
+            => "Tap a tile — rearranges all non-primed letters on the board.";
+        // 2026-06-01: NeedsTarget = true per Spencer. Requires a tile tap to
+        // confirm so the player can't lose a charge by an accidental tap on
+        // the slot. The tap location is ignored — the shuffle still operates
+        // board-wide. Same UX as the other boosters: tap arms aim mode, board
+        // tap confirms, armed-slot ✕ cancels.
+        public override bool NeedsTarget => true;
 
         // Animation timings mirror HandManager.ShuffleHandAnimated.
         private const float SHAKE_DURATION  = 0.25f;
         private const float SETTLE_DURATION = 0.18f;
+
+        public override void ResolveWithTarget(int col, int row, System.Action onComplete)
+        {
+            // Tap target is ignored — the shuffle is board-wide. The tap is
+            // purely a "confirm" gesture. Delegates to the legacy Activate
+            // body below.
+            Activate(onComplete);
+        }
 
         public override void Activate(System.Action onComplete)
         {

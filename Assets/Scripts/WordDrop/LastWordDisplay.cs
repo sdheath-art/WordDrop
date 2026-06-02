@@ -69,8 +69,11 @@ namespace WordDrop
 
         /// <summary>
         /// Show the last word played with a wave animation.
+        /// playSound=false suppresses PlayWordPopup so a refresh-with-final-total
+        /// (e.g. MatchController.CompleteDropBookkeeping re-firing with detonation
+        /// total) doesn't double up the popup sound on the same drop.
         /// </summary>
-        public void ShowWord(string word, int score, bool isPlayer)
+        public void ShowWord(string word, int score, bool isPlayer, bool playSound = true)
         {
             if (_text == null) return;
 
@@ -84,7 +87,10 @@ namespace WordDrop
                 _text.transform.position = new Vector3(0f, y, -5f);
             }
 
-            GameAudio.Instance?.PlayWordPopup();
+            // 2026-06-01: word_popup retired per Spencer — PlayWordScored +
+            // tile_primed already announce a scored word; the popup audio
+            // layered redundantly on top. Visual punch-in is enough.
+            _ = playSound; // kept for API stability; sound intentionally silenced.
 
             string rivalName = RivalSystem.Instance != null ? RivalSystem.Instance.CurrentRival.Name : "AI";
             string fullText;

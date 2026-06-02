@@ -298,6 +298,12 @@ namespace WordDrop
                 _playerScoreNum.overflowMode = TMPro.TextOverflowModes.Overflow;
             }
 
+            // 2026-06-01: hide the YOU score + label per Spencer — Survival HUD
+            // uses the Stage Score chip + coin counter; the "0" leftover from
+            // the older HUD layout is no longer needed.
+            if (_playerScoreText != null) _playerScoreText.gameObject.SetActive(false);
+            if (_playerScoreNum  != null) _playerScoreNum.gameObject.SetActive(false);
+
             // ── Center: Stage label + progress bar ───────────────────────────────
             // 2026-05-28: replaced "S1 204/400" text readout with a horizontal
             // progress bar that fills as the player closes on the stage target.
@@ -510,6 +516,12 @@ namespace WordDrop
 
         private void BuildMenuButton(Transform plateTransform)
         {
+            // 2026-06-01: menu button suppressed per Spencer's screenshot —
+            // settings access moved to the BoosterHUDSlot cog (bottom row).
+            // Kept as a no-op so any other call sites that bootstrap the HUD
+            // don't blow up on a missing build.
+            return;
+#pragma warning disable CS0162 // unreachable code — intentional, see comment above
             // Small pause/menu icon tucked into top-left corner (not overlapping scores)
             GameObject btnGO = new GameObject("MenuButton");
             btnGO.transform.SetParent(plateTransform, false);
@@ -550,6 +562,7 @@ namespace WordDrop
             t.fontStyle = FontStyle.Bold;
             t.color = new Color(0.85f, 0.85f, 0.92f, 0.6f);
             t.alignment = TextAnchor.MiddleCenter;
+#pragma warning restore CS0162
         }
 
         private void BuildWordFoundOverlay(Transform canvasTransform)
@@ -1422,7 +1435,7 @@ namespace WordDrop
             // no Image.fillAmount/Mask voodoo. anchorMax.x=0 → empty pill;
             // =1 → full pill. Both ends stay rounded since fill uses the same
             // pill sprite as the BG.
-            if (_stageLabelText != null) _stageLabelText.text = $"S{stage}";
+            if (_stageLabelText != null) _stageLabelText.text = $"L{stage}";
             if (_stageProgressFillRT != null)
             {
                 float fill = stageTarget > 0 ? (float)stageScore / stageTarget : 0f;

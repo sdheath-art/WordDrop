@@ -22,6 +22,8 @@ namespace WordDrop
         private int _forceLevelId = 1;
         private int _forceStreak = 1;
         private string _lastStatus = "(no action yet)";
+        private bool _dropTestArmed = false; // SCRAPPY PROTOTYPE: watching for a drop-target to reach the bottom
+        private bool _dropSubscribed = false; // subscribed to OnResolutionComplete for timing-safe collection
 
         private static LevelDebugMenu _instance;
 
@@ -57,6 +59,65 @@ namespace WordDrop
                 LevelController.Instance.OnLevelComplete -= OnLevelComplete;
                 LevelController.Instance.OnLevelFail     -= OnLevelFail;
             }
+            if (_dropSubscribed && RulesEngine.Instance != null)
+                RulesEngine.Instance.OnResolutionComplete -= OnDropResolutionComplete;
+        }
+
+        // ── SCRAPPY PROTOTYPE: drop-to-bottom collection ──
+        // Collect every drop-target sitting on the bottom row. Driven by
+        // OnResolutionComplete (fires right after gravity, BEFORE the rise's Update
+        // can shove them up) and polled in Update as a backup.
+        private void CollectBottomDropTargets()
+        {
+            var rules = RulesEngine.Instance;
+            if (rules == null) return;
+            var collected = new System.Collections.Generic.List<Vector2Int>();
+            for (int c = 0; c < RulesEngine.COLS; c++)
+            {
+                var cell = rules.GetCell(c, 0);
+                if (cell != null && cell.IsDropTarget)
+                {
+                    rules.ClearCell(c, 0);             // clear DATA
+                    collected.Add(new Vector2Int(c, 0));
+                }
+            }
+            if (collected.Count > 0)
+            {
+                // Remove ONLY the collected tiles' visuals — NOT a whole-board
+                // SyncToRulesState (that snapped every tile mid-explosion = the
+                // "wonky board" bug). RemoveTiles touches only these cells.
+                GridManager.Instance?.RemoveTiles(collected);
+                GameAudio.Instance?.PlayScorePowerup();
+                _lastStatus = $"🎉 Collected {collected.Count} drop-target(s) at the bottom!";
+                Debug.Log($"[DropTest] Collected {collected.Count} at row 0.");
+            }
+        }
+
+        private void OnDropResolutionComplete(ResolutionCompleteEvent evt)
+        {
+            if (!_dropTestArmed) return;
+            // Census: log where every drop-target is this turn — diagnoses
+            // fall (row drops) vs vanish (count drops with no collect) vs rise-off.
+            var rules = RulesEngine.Instance;
+            if (rules != null)
+            {
+                var pos = new System.Collections.Generic.List<string>();
+                for (int c = 0; c < RulesEngine.COLS; c++)
+                    for (int r = 0; r < RulesEngine.ROWS; r++)
+                    {
+                        var cell = rules.GetCell(c, r);
+                        if (cell != null && cell.IsDropTarget) pos.Add($"({c},{r})");
+                    }
+                Debug.Log($"[DropTest] census: {pos.Count} on board — {string.Join(" ", pos)}");
+            }
+            CollectBottomDropTargets();
+        }
+
+        private void EnsureDropSubscription()
+        {
+            if (_dropSubscribed || RulesEngine.Instance == null) return;
+            RulesEngine.Instance.OnResolutionComplete += OnDropResolutionComplete;
+            _dropSubscribed = true;
         }
 
         private void Update()
@@ -65,6 +126,11 @@ namespace WordDrop
             {
                 _visible = !_visible;
             }
+
+            // ── SCRAPPY PROTOTYPE: backup poll. The timing-safe collection happens
+            // in OnDropResolutionComplete (before the rise's Update can rob it);
+            // this just mops up any straggler still sitting at row 0.
+            if (_dropTestArmed) CollectBottomDropTargets();
         }
 
         private void OnGUI()
@@ -134,6 +200,27 @@ namespace WordDrop
                     StarterPackModal.Instance.SetVisible(true);
                 _lastStatus = "Starter Pack shown (persistence flags cleared).";
             }
+
+            // ── SCRAPPY PROTOTYPE: drop-to-bottom feel test ──
+            GUILayout.Space(4f);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("► Spawn 1 Drop-Target") && RulesEngine.Instance != null && GridManager.Instance != null)
+            {
+                RulesEngine.Instance.SpawnDropTargetsForTest(1);
+                GridManager.Instance.SyncToRulesState(RulesEngine.Instance);
+                _dropTestArmed = true;
+                EnsureDropSubscription();
+                _lastStatus = "1 drop-target spawned. Clear beneath it to drop it to the bottom!";
+            }
+            if (GUILayout.Button("► Spawn 5 Drop-Targets") && RulesEngine.Instance != null && GridManager.Instance != null)
+            {
+                RulesEngine.Instance.SpawnDropTargetsForTest(5);
+                GridManager.Instance.SyncToRulesState(RulesEngine.Instance);
+                _dropTestArmed = true;
+                EnsureDropSubscription();
+                _lastStatus = "5 drop-targets spawned across columns — juggle them all to the bottom before the rows bury them!";
+            }
+            GUILayout.EndHorizontal();
 
             // ── Toggles (moved from MenuUI in Phase 9) ──
             GUILayout.Space(4f);

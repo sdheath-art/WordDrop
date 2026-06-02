@@ -32,13 +32,28 @@ namespace WordDrop
     {
         public static StageClearModal Instance { get; private set; }
 
+        /// <summary>True while the modal canvas is currently active on screen.
+        /// Subscribers (e.g. HintManager) use this to suppress background
+        /// animations that would otherwise compete with the modal.</summary>
+        public bool IsShowing => _canvas != null && _canvas.gameObject.activeSelf;
+
         private Canvas _canvas;
         private GameObject _panel;
         private Image _overlayImage;          // dim backdrop — faded in separately from panel
         private Text _titleText;
         private Text _scoreLabelText;
         private Text _scoreValueText;
-        private Text _refillText;
+        private Text _refillText; // legacy — retained for compile-compat in animation refs; chip layout below supersedes it
+        private GameObject _refillRow;
+        private CanvasGroup _refillRowGroup;
+        private GameObject _editChip;
+        private Image _editIcon;
+        private Text _editLabel;
+        private GameObject _swapChip;
+        private Image _swapIcon;
+        private Text _swapLabel;
+        private GameObject _coinChip;
+        private Text _coinLabel;
         private GameObject _btnContinue;
         private CanvasGroup _btnContinueGroup; // for fading the button in/out independently
 
@@ -46,6 +61,8 @@ namespace WordDrop
         // open→close sequence doesn't leave runaway tweens writing to dead refs.
         private Sequence _entranceSequence;
         private Tweener _scoreCountTween;
+        private Tweener _coinCountTween;
+        private int _coinCountTarget; // captured at entrance time so the count-up tween knows its end value
 
         // Deferred-show queue — events captured during a resolution batch are
         // queued and shown in sequence. Single-slot would lose stage 1 if stage 2
@@ -199,22 +216,33 @@ namespace WordDrop
             if (_isPresenting) return;          // already showing — wait for Continue
             if (_pendingQueue.Count == 0) return;
 
-            // 2026-05-30: wait for active explosion FX to finish + a short
-            // beat. MatchController.IsProcessing was unreliable (sticking
-            // past the visual cascade) so we gate on
-            // WordDropFX.HasActiveExplosions — a direct counter incremented
-            // when ExplosionCoroutine starts and decremented when it ends.
-            // After explosions clear, we hold for POST_EXPLOSION_BEAT so
-            // the player sees the last explosion's tail before the modal
-            // flies in — prevents the modal stomping over the celebration.
-            if (WordDropFX.HasActiveExplosions)
+            // 2026-05-30: wait for active explosion FX to finish + a short beat.
+            // 2026-06-01: ALSO gate on MatchController.IsProcessing so the timer
+            // doesn't start ticking during the brief gap between cascade
+            // explosions (HasActiveExplosions drops to 0 between explosion N
+            // ending and explosion N+1 starting while gravity animates the
+            // chain step). Spencer hit: modal flew in over a cascade explosion
+            // because the gap fell within POST_EXPLOSION_BEAT.
+            //
+            // IsProcessing stays TRUE for the entire turn-resolution loop
+            // (player drop → score → trigger → explode → gravity → detect-words
+            // → repeat → final FinalizeDrop), so it correctly says "more
+            // explosions may still come." Once it drops to false AND
+            // HasActiveExplosions is also 0, the chain is truly done.
+            //
+            // HasActiveExplosions is kept as a secondary gate so the BEAT
+            // covers the last explosion's visual tail even after IsProcessing
+            // already cleared.
+            bool stillResolving = MatchController.Instance != null
+                                  && MatchController.Instance.IsProcessing;
+            if (stillResolving || WordDropFX.HasActiveExplosions)
             {
                 _explosionsClearedAt = -1f; // reset; will start timer when explosions truly settle
                 return;
             }
             if (_explosionsClearedAt < 0f)
             {
-                _explosionsClearedAt = Time.unscaledTime; // first frame with no explosions
+                _explosionsClearedAt = Time.unscaledTime; // first frame with everything settled
                 return; // wait until next frame to start checking the beat
             }
             if (Time.unscaledTime - _explosionsClearedAt < POST_EXPLOSION_BEAT) return;
@@ -289,15 +317,31 @@ namespace WordDrop
             // Populate text fields. Score value displays "0" initially so the
             // count-up animation can tally up from zero. Final value populates
             // when the count-up completes.
-            if (_titleText != null) _titleText.text = $"STAGE {ctx.ClearedStage} CLEARED!";
-            if (_scoreLabelText != null) _scoreLabelText.text = "Stage Score";
+            if (_titleText != null) _titleText.text = $"LEVEL {ctx.ClearedStage} CLEARED!";
+            if (_scoreLabelText != null) _scoreLabelText.text = "Level Score";
             if (_scoreValueText != null) _scoreValueText.text = "0";
-            if (_refillText != null)
-            {
-                string refillLine = $"Edits {summary.RewritesAfter}  •  Swaps {summary.SwapsAfter}";
-                if (ctx.CoinsEarned > 0) refillLine += $"  •  +{ctx.CoinsEarned}¢";
-                _refillText.text = refillLine;
-            }
+            // Populate refill row chips with this stage's deltas — how many
+            // edits/swaps were actually added back by the refill (i.e. the
+            // gap between Before and the refill cap). If the player was
+            // already at or above the cap, the refill was a no-op and the
+            // chip is hidden. Coins always shows the amount earned this stage.
+            // Per Spencer 2026-06-01: "if it is refilling it... tell you how
+            // much it has added back."
+            int editsDelta = Mathf.Max(0, summary.RewritesAfter - summary.RewritesBefore);
+            int swapsDelta = Mathf.Max(0, summary.SwapsAfter   - summary.SwapsBefore);
+            int coinsDelta = Mathf.Max(0, ctx.CoinsEarned);
+
+            if (_editChip != null) _editChip.SetActive(editsDelta > 0);
+            if (_swapChip != null) _swapChip.SetActive(swapsDelta > 0);
+            if (_coinChip != null) _coinChip.SetActive(coinsDelta > 0);
+
+            if (_editLabel != null) _editLabel.text = $"+{editsDelta}";
+            if (_swapLabel != null) _swapLabel.text = $"+{swapsDelta}";
+            // Coin label starts at 0 — the count-up tween in the entrance
+            // sequence tallies it up to coinsDelta in sync with the chip
+            // fade-in (StartCoinCountUp below).
+            if (_coinLabel != null) _coinLabel.text = $"● +0";
+            _coinCountTarget = coinsDelta;
 
             // Freeze gameplay timers. We do NOT touch HandManager.IsInteractable —
             // the dim overlay's raycastTarget=true already blocks all input
@@ -338,6 +382,8 @@ namespace WordDrop
             _entranceSequence = null;
             _scoreCountTween?.Kill();
             _scoreCountTween = null;
+            _coinCountTween?.Kill();
+            _coinCountTween = null;
 
             // Each child Component tween is owned by the component reference,
             // so DOKill on the component cancels its outstanding tweens.
@@ -352,6 +398,7 @@ namespace WordDrop
                 _scoreValueText.transform.DOKill();
             }
             if (_refillText != null) _refillText.DOKill();
+            if (_refillRowGroup != null) _refillRowGroup.DOKill();
             if (_btnContinueGroup != null) _btnContinueGroup.DOKill();
 
             // Transform-level tweens — panel PopIn (DOScale) and button idle
@@ -387,6 +434,7 @@ namespace WordDrop
             SetTextAlpha(_scoreLabelText, 0f);
             SetTextAlpha(_scoreValueText, 0f);
             SetTextAlpha(_refillText, 0f);
+            if (_refillRowGroup != null) _refillRowGroup.alpha = 0f;
             if (_btnContinueGroup != null) _btnContinueGroup.alpha = 0f;
             if (_btnContinue != null) _btnContinue.transform.localScale = Vector3.one;
         }
@@ -430,7 +478,12 @@ namespace WordDrop
                     var rt = _panel.transform as RectTransform;
                     if (rt != null) UIAnimations.DropInWithBounce(rt, speedMult: DROP_SPEED);
                 });
-                seq.AppendInterval(UIAnimations.DROP_TOTAL_DUR / DROP_SPEED + 0.05f);
+                // 2026-06-01: extended post-drop buffer 0.05 → 0.25s per Spencer.
+                // The title toss-in was firing while the panel's settle phase was
+                // still finishing, so the two animations stacked visually. Now
+                // the panel fully settles, holds for ~200ms, THEN the letters pop —
+                // cleaner sequence of beats (modal arrives → pause → letters punch).
+                seq.AppendInterval(UIAnimations.DROP_TOTAL_DUR / DROP_SPEED + 0.25f);
             }
 
             // Phase 3: Children fade in with 80ms stagger (Playrix-style).
@@ -448,7 +501,16 @@ namespace WordDrop
                 StartScoreCountUp(ctx.StageScore, 0.55f);
             });
             seq.AppendInterval(0.10f);
-            seq.AppendCallback(() => FadeInText(_refillText, 0.18f));
+            seq.AppendCallback(() =>
+            {
+                FadeInText(_refillText, 0.18f);
+                if (_refillRowGroup != null)
+                    _refillRowGroup.DOFade(1f, 0.18f).SetEase(Ease.OutQuad);
+                // Start coin count-up at the same moment the chips fade in.
+                // Duration 0.55s — matches the score count-up rhythm so the
+                // two tallies finish together. Skips if no coins to count.
+                if (_coinCountTarget > 0) StartCoinCountUp(_coinCountTarget, 0.55f);
+            });
             seq.AppendInterval(0.08f);
             // Continue button — fade then start the idle pulse.
             seq.AppendCallback(() =>
@@ -553,6 +615,36 @@ namespace WordDrop
                             Vector3.one * 0.15f, 0.20f, 6, 0.6f);
                     }
                     _scoreCountTween = null;
+                });
+        }
+
+        /// <summary>
+        /// Tally up the coin chip label from 0 to target over duration, matching
+        /// the StageScore count-up rhythm. Lands with a small punch-scale so the
+        /// final number has the same "look how much you earned" beat as the score.
+        /// </summary>
+        private void StartCoinCountUp(int target, float duration)
+        {
+            if (_coinLabel == null) return;
+            _coinCountTween?.Kill();
+            int current = 0;
+            _coinCountTween = DOTween.To(() => current, v =>
+            {
+                current = v;
+                if (_coinLabel != null) _coinLabel.text = $"● +{v}";
+            }, target, duration)
+                .SetEase(Ease.OutQuad)
+                .OnComplete(() =>
+                {
+                    if (_coinLabel != null)
+                    {
+                        _coinLabel.text = $"● +{target}";
+                        // Smaller punch than the score (0.10 vs 0.15) — the
+                        // coin chip is a secondary reward beat, not the hero.
+                        _coinLabel.transform.DOPunchScale(
+                            Vector3.one * 0.10f, 0.18f, 5, 0.6f);
+                    }
+                    _coinCountTween = null;
                 });
         }
 
@@ -720,14 +812,14 @@ namespace WordDrop
             // Title — top section of the larger panel
             _titleText = CreateLabel(_panel.transform, "Title",
                 new Vector2(0.04f, 0.78f), new Vector2(0.96f, 0.93f),
-                "STAGE 1 CLEARED!", 40, TITLE);
+                "LEVEL 1 CLEARED!", 40, TITLE);
             _titleText.fontStyle = FontStyle.Bold;
             _titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
 
             // Score label
             _scoreLabelText = CreateLabel(_panel.transform, "ScoreLabel",
                 new Vector2(0.10f, 0.62f), new Vector2(0.90f, 0.70f),
-                "Stage Score", 20, SUBTITLE);
+                "Level Score", 20, SUBTITLE);
 
             // Score value — hero element, bigger font fills the new space
             _scoreValueText = CreateLabel(_panel.transform, "ScoreValue",
@@ -735,10 +827,33 @@ namespace WordDrop
                 "0", 56, Color.white);
             _scoreValueText.fontStyle = FontStyle.Bold;
 
-            // Refill summary
-            _refillText = CreateLabel(_panel.transform, "Refill",
-                new Vector2(0.06f, 0.30f), new Vector2(0.94f, 0.40f),
-                "Edits 3  •  Swaps 2", 22, REFILL_GREEN);
+            // Refill summary — horizontal row of 3 icon+amount chips
+            // 2026-06-01: replaced the single text line ("Edits 3 • Swaps 2 • +26¢")
+            // with three icon chips. Edit uses the cyan_tile sprite, Swap uses the
+            // swap_tile sprite, Coin uses the same ● Unicode glyph as HUDManager
+            // (HUDManager.cs:460) for visual consistency with the HUD coin counter.
+            // Each chip shows the delta added by this stage clear ("+3"), not the
+            // absolute total.
+            _refillRow = new GameObject("RefillRow");
+            _refillRow.transform.SetParent(_panel.transform, false);
+            RectTransform rowRT = _refillRow.AddComponent<RectTransform>();
+            rowRT.anchorMin = new Vector2(0.06f, 0.30f);
+            rowRT.anchorMax = new Vector2(0.94f, 0.40f);
+            rowRT.offsetMin = Vector2.zero;
+            rowRT.offsetMax = Vector2.zero;
+            _refillRowGroup = _refillRow.AddComponent<CanvasGroup>();
+            HorizontalLayoutGroup rowHLG = _refillRow.AddComponent<HorizontalLayoutGroup>();
+            rowHLG.childAlignment = TextAnchor.MiddleCenter;
+            rowHLG.spacing = 30;
+            rowHLG.childForceExpandWidth = false;
+            rowHLG.childForceExpandHeight = false;
+
+            Sprite editSprite = Resources.Load<Sprite>("Tiles/cyan_tile@2x");
+            Sprite swapSprite = Resources.Load<Sprite>("Tiles/swap_tile");
+
+            _editChip  = CreateRefillChip(_refillRow.transform, "EditChip",  editSprite, REFILL_GREEN, out _editIcon, out _editLabel);
+            _swapChip  = CreateRefillChip(_refillRow.transform, "SwapChip",  swapSprite, REFILL_GREEN, out _swapIcon, out _swapLabel);
+            _coinChip  = CreateCoinChip (_refillRow.transform, "CoinChip",  new Color(1f, 0.85f, 0.30f, 1f), out _coinLabel);
 
             // Continue button — bigger, sits in bottom 25% of panel
             int childCountBefore = _panel.transform.childCount;
@@ -786,6 +901,66 @@ namespace WordDrop
             t.color = color;
             t.alignment = TextAnchor.MiddleCenter;
             return t;
+        }
+
+        /// <summary>Refill chip: Image (icon) + Text (delta) horizontally
+        /// packed via HorizontalLayoutGroup. Returns the chip GameObject so the
+        /// caller can hide it when the delta is zero.</summary>
+        private static GameObject CreateRefillChip(Transform parent, string name,
+            Sprite iconSprite, Color labelColor, out Image iconOut, out Text labelOut)
+        {
+            GameObject chip = new GameObject(name);
+            chip.transform.SetParent(parent, false);
+            chip.AddComponent<RectTransform>();
+            HorizontalLayoutGroup hlg = chip.AddComponent<HorizontalLayoutGroup>();
+            hlg.childAlignment = TextAnchor.MiddleCenter;
+            hlg.spacing = 4;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = false;
+
+            GameObject iconGO = new GameObject("Icon");
+            iconGO.transform.SetParent(chip.transform, false);
+            iconOut = iconGO.AddComponent<Image>();
+            iconOut.sprite = iconSprite;
+            iconOut.preserveAspect = true;
+            iconOut.color = Color.white;
+            LayoutElement iconLE = iconGO.AddComponent<LayoutElement>();
+            iconLE.preferredWidth = 30;
+            iconLE.preferredHeight = 30;
+
+            GameObject labelGO = new GameObject("Label");
+            labelGO.transform.SetParent(chip.transform, false);
+            labelOut = labelGO.AddComponent<Text>();
+            labelOut.font = MenuUI.GetFont();
+            labelOut.text = "+0";
+            labelOut.fontSize = 22;
+            labelOut.color = labelColor;
+            labelOut.alignment = TextAnchor.MiddleLeft;
+            LayoutElement labelLE = labelGO.AddComponent<LayoutElement>();
+            labelLE.preferredWidth = 50;
+            labelLE.preferredHeight = 30;
+
+            return chip;
+        }
+
+        /// <summary>Coin chip uses the same ● Unicode glyph as HUDManager's
+        /// coin counter for visual consistency — no separate sprite needed.</summary>
+        private static GameObject CreateCoinChip(Transform parent, string name,
+            Color tint, out Text labelOut)
+        {
+            GameObject chip = new GameObject(name);
+            chip.transform.SetParent(parent, false);
+            chip.AddComponent<RectTransform>();
+            labelOut = chip.AddComponent<Text>();
+            labelOut.font = MenuUI.GetFont();
+            labelOut.text = "● +0";
+            labelOut.fontSize = 22;
+            labelOut.color = tint;
+            labelOut.alignment = TextAnchor.MiddleCenter;
+            LayoutElement le = chip.AddComponent<LayoutElement>();
+            le.preferredWidth = 80;
+            le.preferredHeight = 30;
+            return chip;
         }
     }
 }

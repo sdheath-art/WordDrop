@@ -462,6 +462,53 @@ namespace WordDrop
             if (!InBounds(col, row)) return;
             _board[col, row] = null;
             _bonusCells[col, row] = false; // gold consumed with the cell
+            _cyanCells[col, row]  = false; // cyan refill consumed too — parity with DoExplode
+        }
+
+        // ── SCRAPPY PROTOTYPE (2026-06-01): drop-to-bottom feel test ──────────────
+        /// <summary>Spawn an inert drop-target RESTING ON TOP of the tallest existing
+        /// column, so there are letters directly beneath it to clear (the whole point:
+        /// clear below to drop it down). Stone-like (word barrier + falls with gravity)
+        /// but survives detonations (guarded in DoExplode). Throwaway — LevelDebugMenu.</summary>
+        public void SpawnDropTargetsForTest(int count)
+        {
+            // Place one on top of each of the `count` tallest columns (distinct
+            // columns = juggling multiple at once, which is where the thought is).
+            var cols = new System.Collections.Generic.List<Vector2Int>(); // x=col, y=height
+            for (int c = 0; c < COLS; c++)
+            {
+                int h = 0;
+                for (int r = 0; r < ROWS; r++)
+                    if (_board[c, r] != null) h = r + 1;
+                if (h > 0) cols.Add(new Vector2Int(c, h));
+            }
+            cols.Sort((a, b) => b.y.CompareTo(a.y)); // tallest first
+            int n = Mathf.Min(count, cols.Count);
+            for (int i = 0; i < n; i++)
+            {
+                int col = cols[i].x;
+                int restRow = Mathf.Clamp(cols[i].y, 0, ROWS - 1); // just above the stack
+                _board[col, restRow] = new RulesCellData
+                {
+                    Letter = '#',
+                    Col = col,
+                    Row = restRow,
+                    IsStone = true,
+                    IsDropTarget = true,
+                };
+            }
+        }
+
+        /// <summary>Column of a drop-target sitting on the bottom row (row 0), or -1.
+        /// Poll-based bottom check for the prototype payoff.</summary>
+        public int FindDropTargetAtBottomRow()
+        {
+            for (int c = 0; c < COLS; c++)
+            {
+                var cell = _board[c, 0];
+                if (cell != null && cell.IsDropTarget) return c;
+            }
+            return -1;
         }
 
         public void ClearBoard()
@@ -3367,6 +3414,120 @@ namespace WordDrop
                       // $"{_stepJustPrimed.Count} just-primed, player={playerIndex}");
         }
 
+        // ── BeginCascadeAfterBoosterClear ────────────────────────────────────────────
+
+        /// <summary>
+        /// Booster-clear entry point. Caller (a booster) has already nulled the
+        /// destroyed cells in _board via ClearCell. This method performs the
+        /// equivalent of DoExplode's post-clear bookkeeping (PurgeScoredKeys for
+        /// the cleared cells) plus the full DoGravity routine (gravity in data,
+        /// PrimedRegistry position update, scored-key purge for old+new gravity
+        /// cells, seed ALL occupied cells in moved columns, RemoveInvalidPrimedWords).
+        ///
+        /// After this returns, _currentPhase is GravityApplied and the next
+        /// NextStep() call routes into DoDetectWords against the seed cells —
+        /// so post-booster gravity will form, prime, score, and detonate words
+        /// the same way a player-drop cascade does.
+        ///
+        /// Returns the gravity moves dictionary (old → new positions) so the
+        /// visual layer can animate falls via GridManager.ApplyGravityFromEvents.
+        /// An empty result means no tiles fell and no cascade is possible.
+        /// </summary>
+        public Dictionary<Vector2Int, Vector2Int> BeginCascadeAfterBoosterClear(
+            IEnumerable<Vector2Int> clearedCells, int playerIndex)
+        {
+            // 1. Purge scored-key bookkeeping for the cells the booster cleared —
+            //    parallel to DoExplode line ~4406. Without this, a previously
+            //    scored word at these cells would silently block re-detection.
+            var clearedList = new List<Vector2Int>();
+            if (clearedCells != null)
+                foreach (var c in clearedCells) clearedList.Add(c);
+            if (clearedList.Count > 0)
+                PurgeScoredKeysForCells(clearedList);
+
+            // 2. Init step state — mirrors BeginDrop / BeginRewrite.
+            _stepPlayerIndex           = playerIndex;
+            _stepChainDepth            = 0;
+            _stepTotalScore            = 0;
+            _splashFiredThisResolution = false;
+            _stepChainTriggeredCount   = 0;
+            _stepJustPrimed            = new HashSet<int>();
+            _stepScoredKeys            = new HashSet<string>();
+            _stepPendingWords          = null;
+            _stepTriggerWords          = null;
+            _stepPendingTriggers       = null;
+            _stepSeedCells             = new List<Vector2Int>();
+
+            // 3. Apply gravity + full DoGravity bookkeeping. Mirrors DoGravity
+            //    at line ~4428 — must stay in sync.
+            var gravityMoves = ApplyGravityInData();
+
+            if (gravityMoves.Count > 0)
+            {
+                _primedRegistry.UpdateCellPositions(gravityMoves);
+
+                var affectedCells = new List<Vector2Int>(gravityMoves.Count * 2);
+                foreach (var kvp in gravityMoves)
+                {
+                    affectedCells.Add(kvp.Key);
+                    affectedCells.Add(kvp.Value);
+                }
+                PurgeScoredKeysForCells(affectedCells);
+                PurgeStepScoredKeysForCells(affectedCells);
+
+                // Seed every occupied cell in moved columns — stationary tiles
+                // can combine with newly-fallen tiles to form words (e.g. AMP
+                // where A and M were already in place and only P fell).
+                var movedCols = new HashSet<int>();
+                foreach (var kvp in gravityMoves)
+                    movedCols.Add(kvp.Value.x);
+
+                foreach (int col in movedCols)
+                {
+                    for (int row = 0; row < ROWS; row++)
+                    {
+                        if (_board[col, row] != null)
+                            _stepSeedCells.Add(new Vector2Int(col, row));
+                    }
+                }
+            }
+
+            RemoveInvalidPrimedWords();
+
+            _currentPhase = ResolutionPhase.GravityApplied;
+
+            Debug.Log($"[RulesEngine] BeginCascadeAfterBoosterClear: " +
+                      $"cleared={clearedList.Count}, moves={gravityMoves.Count}, " +
+                      $"seeds={_stepSeedCells.Count}, player={playerIndex}");
+
+            // BoosterDbg: full moves dump + cleared list — lets us audit every
+            // tile that should have fallen vs what actually rendered.
+            if (clearedList.Count > 0)
+            {
+                var cb = new System.Text.StringBuilder();
+                for (int i = 0; i < clearedList.Count; i++)
+                {
+                    if (i > 0) cb.Append(",");
+                    cb.Append($"({clearedList[i].x},{clearedList[i].y})");
+                }
+                Debug.Log($"[BoosterDbg] CascadeClearedList: {cb}");
+            }
+            if (gravityMoves.Count > 0)
+            {
+                var mb = new System.Text.StringBuilder();
+                bool first = true;
+                foreach (var kvp in gravityMoves)
+                {
+                    if (!first) mb.Append(",");
+                    mb.Append($"({kvp.Key.x},{kvp.Key.y})→({kvp.Value.x},{kvp.Value.y})");
+                    first = false;
+                }
+                Debug.Log($"[BoosterDbg] CascadeGravityMoves: {mb}");
+            }
+
+            return gravityMoves;
+        }
+
         // ── NextStep ─────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -3437,6 +3598,33 @@ namespace WordDrop
             _stepPendingTriggers = null;
 
 //             Debug.Log($"[RulesEngine] FinalizeDrop: turn incremented to {_globalTurn}, phase=Idle.");
+        }
+
+        // ── FinalizeBoosterCascade ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Cleanup variant for booster-initiated cascades. Mirrors FinalizeDrop
+        /// EXCEPT it does NOT increment _globalTurn and does NOT expire primed
+        /// words. Boosters are turn-neutral by design — using a booster should
+        /// not age primed-word fuses or consume the player's "turn budget."
+        ///
+        /// Still runs RemoveInvalidPrimedWords so any primed-word entries that
+        /// became invalid mid-cascade are culled, and resets the step state
+        /// machine back to Idle.
+        /// </summary>
+        public void FinalizeBoosterCascade()
+        {
+            if (_currentPhase == ResolutionPhase.Idle) return;
+
+            RemoveInvalidPrimedWords();
+            _currentPhase = ResolutionPhase.Idle;
+
+            _stepJustPrimed      = null;
+            _stepScoredKeys      = null;
+            _stepPendingWords    = null;
+            _stepPendingTriggers = null;
+
+            Debug.Log("[RulesEngine] FinalizeBoosterCascade: phase=Idle (globalTurn unchanged).");
         }
 
         // ── Do* step methods ─────────────────────────────────────────────────────────
@@ -4271,7 +4459,9 @@ namespace WordDrop
                         if (checkedStones.Contains(stonePos)) continue;
                         checkedStones.Add(stonePos);
                         var adj = _board[sx, sy];
-                        if (adj != null && adj.IsStone)
+                        // Drop-targets (scrappy prototype) are stone-like but must
+                        // SURVIVE detonations — the only way to move them is gravity.
+                        if (adj != null && adj.IsStone && !adj.IsDropTarget)
                         {
                             _board[sx, sy] = null;
                             stoneCleared.Add(stonePos);
@@ -4386,7 +4576,7 @@ namespace WordDrop
                     {
                         var pos = new Vector2Int(col, clearRow);
                         if (alreadyExploded.Contains(pos)) continue;
-                        if (_board[col, clearRow] != null)
+                        if (_board[col, clearRow] != null && !_board[col, clearRow].IsDropTarget) // drop-targets survive the jackpot too
                         {
                             _board[col, clearRow] = null;
                             _bonusCells[col, clearRow] = false;
@@ -4513,6 +4703,11 @@ namespace WordDrop
         public bool IsEditRefill  { get; set; }
         public bool IsWildRefill  { get; set; }
         public bool IsStone       { get; set; } // grey junk tile — can't be used in words, cleared by adjacent detonation
+        // SCRAPPY PROTOTYPE (2026-06-01): drop-to-bottom feel test. A drop-target is
+        // an inert stone-like tile that FALLS with gravity but SURVIVES detonations,
+        // so the only way to move it down is to clear cells beneath it. Reaching
+        // row 0 (bottom) = "collected". Throwaway — gated behind LevelDebugMenu.
+        public bool IsDropTarget  { get; set; }
     }
 
     public enum WordDirection

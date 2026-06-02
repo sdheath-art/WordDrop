@@ -103,6 +103,8 @@ namespace WordDrop
         private AudioClip _sparkleWhoosh;
         private AudioClip _sparkleWhooshAlt;
         private AudioClip _entry;   // modal entry SFX — stage clear, boss reward, etc.
+        private AudioClip _entryPop; // single "hand dealt" pop — replaces the 4-tone staggered tile_arrival climb at deal-in
+        private AudioClip _victory1; // continue-modal entry sting (post top-out rescue offer)
         private AudioClip _wood2;   // wooden thunk — TopOutPanel landing impact
         // Continue button on stage clear modal — original floraphonic
         // multi-pop split into two halves so the first pop fires on press-
@@ -459,6 +461,8 @@ namespace WordDrop
             _sparkleWhoosh   = Resources.Load<AudioClip>("SFX/sparkle_whoosh");
             _sparkleWhooshAlt = null; // removed — was silent
             _entry           = Resources.Load<AudioClip>("SFX/entry");
+            _entryPop        = Resources.Load<AudioClip>("SFX/entrypop");
+            _victory1        = Resources.Load<AudioClip>("SFX/victory1");
             _wood2           = Resources.Load<AudioClip>("SFX/wood2");
             _multiPopPress   = Resources.Load<AudioClip>("SFX/multipop_press");
             _multiPopRelease = Resources.Load<AudioClip>("SFX/multipop_release");
@@ -521,10 +525,18 @@ namespace WordDrop
 
         // ── Core play method ───────────────────────────────────────────────────
 
+        /// <summary>Master toggle for [SFX] firing logs. When true, every
+        /// sound played routes through Play() and emits an [SFX] line with
+        /// the calling PlayXxx method name. Used for hunting double-fires
+        /// and unexpected SFX. Currently ON for the 2026-06-01 audit pass;
+        /// flip false once the bugs are pinned down to keep the log clean.</summary>
+        public static bool LogSfxFiring = true;
+
         private void Play(AudioClip clip, float volumeMult = 1f, float pitch = 1f, [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
         {
             if (_muted || clip == null) return;
-//             Debug.Log($"[SFX] {caller} → {clip.name} (vol={_volume * volumeMult:F2} pitch={pitch:F2})");
+            if (LogSfxFiring)
+                Debug.Log($"[SFX] {caller} → {clip.name} (vol={_volume * volumeMult:F2} pitch={pitch:F2})");
             if (Mathf.Approximately(pitch, 1f))
             {
                 // Normal pitch — use main source (no pitch interference)
@@ -1309,9 +1321,14 @@ namespace WordDrop
             // individual sound is now well under 0dB so the sum stays
             // under clipping.
             Play(PickRandom(_matchLineVariants), 0.65f, pitch);
-            // Faint matchline13 underlay on cascade pops 2+. Volume 0.35 →
-            // 0.22 to further reduce the cumulative HF sum during chains.
-            if (effectiveStep > 0 && _matchLine13 != null)
+            // Faint matchline13 underlay on TRUE cascade pops only. 2026-06-01:
+            // gate switched from effectiveStep > 0 to cascadeStep >= 1 so the
+            // underlay no longer fires on (a) initial detonations that happen
+            // to follow a PlayWordScored within the burst window, or (b)
+            // multi-trigger TRIPLE/DOUBLE events at chainDepth 0 (which inflate
+            // the burst counter but aren't real cascades). Spencer's ask:
+            // detonations should sound distinct from cascade chains.
+            if (cascadeStep >= 1 && _matchLine13 != null)
                 Play(_matchLine13, 0.22f, pitch);
         }
 
@@ -1366,6 +1383,26 @@ namespace WordDrop
         public void PlayEntry()
         {
             Play(_entry, 1.0f);
+        }
+
+        /// <summary>Single hand-dealt pop. Replaces the 4-tone PlayTileArrival
+        /// ascending-semitone climb that used to play one per card during the
+        /// initial staggered hand deal — per Spencer 2026-06-01, one consolidated
+        /// sound reads cleaner than a 4-tone arpeggio.</summary>
+        public void PlayEntryPop()
+        {
+            // 2026-06-01: bumped 1.0 → 1.4 per Spencer ("raise volume a little
+            // bit"). 1.0 is the standard max volumeMult; Unity's PlayOneShot
+            // accepts values >1.0 as a soft boost on most platforms.
+            Play(_entryPop, 1.4f);
+        }
+
+        /// <summary>Continue-modal entry sting — fired when the top-out
+        /// rescue offer pops up. Distinct from PlayEntry (StageClearModal
+        /// sting) so the two modals are audibly different.</summary>
+        public void PlayVictory1()
+        {
+            Play(_victory1, 1.0f);
         }
 
         /// <summary>Wooden thunk — TopOutPanel landing impact. Plays alongside

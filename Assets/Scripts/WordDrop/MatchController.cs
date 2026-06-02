@@ -925,7 +925,12 @@ namespace WordDrop
             if (totalScore > 0 && LastWordDisplay.Instance != null && !string.IsNullOrEmpty(LastTurnWord)
                 && totalScore >= LastTurnShownScore)
             {
-                LastWordDisplay.Instance.ShowWord(LastTurnWord, totalScore, playerIndex == PLAYER_HUMAN);
+                // playSound=false: this is a refresh of the display with the
+                // final post-detonation total, not a fresh word event. The
+                // in-loop ShowWord already played PlayWordPopup. Without this
+                // suppression, both word_popup AND word_popup_alt fired ~15ms
+                // apart on every detonating drop / rewrite.
+                LastWordDisplay.Instance.ShowWord(LastTurnWord, totalScore, playerIndex == PLAYER_HUMAN, playSound: false);
             }
             LastTurnWord = null;
             LastTurnShownScore = 0;

@@ -421,13 +421,24 @@ namespace WordDrop
         // matches the current anchoredPosition — DropInWithBounce reads this
         // as the target and animates relative to it.
 
+        // 2026-06-01: bounce amounts increased + a second small dip added per
+        // Spencer ("more cartoonishness, more bounce, less damping"). The
+        // sequence is now: drop past rest by 80 → rebound up 40 → dip back
+        // down 15 → settle. The 4-phase shape gives a clear "bonk … boing …
+        // bonk-settle" rhythm characteristic of Royal Match / Toon Blast
+        // modals, vs the older 3-phase damped landing.
         public const float DROP_OFFSCREEN_OFFSET   = 1200f;
-        public const float DROP_DIP_BELOW          = 40f;
-        public const float DROP_REBOUND_UP         = 14f;
-        public const float DROP_PHASE_DROP_DUR     = 0.20f;
-        public const float DROP_PHASE_REBOUND_DUR  = 0.12f;
-        public const float DROP_PHASE_SETTLE_DUR   = 0.11f;
-        public const float DROP_TOTAL_DUR          = DROP_PHASE_DROP_DUR + DROP_PHASE_REBOUND_DUR + DROP_PHASE_SETTLE_DUR;
+        public const float DROP_DIP_BELOW          = 80f;   // was 40 — bigger overshoot past rest
+        public const float DROP_REBOUND_UP         = 40f;   // was 14 — more visible bounce-back
+        public const float DROP_BOUNCE_DIP         = 15f;   // NEW — second smaller dip before final settle
+        public const float DROP_PHASE_DROP_DUR     = 0.22f; // was 0.20 — slightly slower for more punch
+        public const float DROP_PHASE_REBOUND_DUR  = 0.16f; // was 0.12 — slower so the rebound reads
+        public const float DROP_PHASE_BOUNCE_DUR   = 0.14f; // duration of the second dip
+        public const float DROP_PHASE_SETTLE_DUR   = 0.22f; // 2026-06-01 — was 0.10; longer + OutCubic so the bounce winds down gradually instead of cutting off abruptly
+        public const float DROP_TOTAL_DUR          = DROP_PHASE_DROP_DUR
+                                                   + DROP_PHASE_REBOUND_DUR
+                                                   + DROP_PHASE_BOUNCE_DUR
+                                                   + DROP_PHASE_SETTLE_DUR;
 
         /// <summary>
         /// Drops a RectTransform from above its current anchoredPosition and
@@ -451,16 +462,27 @@ namespace WordDrop
 
             float dropDur    = DROP_PHASE_DROP_DUR    / speedMult;
             float reboundDur = DROP_PHASE_REBOUND_DUR / speedMult;
+            float bounceDur  = DROP_PHASE_BOUNCE_DUR  / speedMult;
             float settleDur  = DROP_PHASE_SETTLE_DUR  / speedMult;
 
             float restY = rt.anchoredPosition.y;
             float aboveY = restY + DROP_OFFSCREEN_OFFSET;
             rt.anchoredPosition = new Vector2(rt.anchoredPosition.x, aboveY);
 
+            // Four-phase cartoony bounce: drop past rest → big rebound up →
+            // smaller dip back down → settle. The middle two phases use
+            // OutBack with mild overshoot so each direction-change "snaps"
+            // rather than smoothly easing, giving the modal that bouncy
+            // toy-landing feel Spencer asked for.
             Sequence seq = DOTween.Sequence();
             seq.Append(rt.DOAnchorPosY(restY - DROP_DIP_BELOW,  dropDur).SetEase(Ease.OutQuad));
-            seq.Append(rt.DOAnchorPosY(restY + DROP_REBOUND_UP, reboundDur).SetEase(Ease.OutQuad));
-            seq.Append(rt.DOAnchorPosY(restY,                   settleDur).SetEase(Ease.OutQuad));
+            seq.Append(rt.DOAnchorPosY(restY + DROP_REBOUND_UP, reboundDur).SetEase(Ease.OutBack, 1.4f));
+            seq.Append(rt.DOAnchorPosY(restY - DROP_BOUNCE_DIP, bounceDur).SetEase(Ease.OutBack, 1.2f));
+            // 2026-06-01: final settle eased to OutCubic (was OutQuad). OutCubic
+            // has a more pronounced "long tail" — velocity drops off much more
+            // gradually as the panel approaches rest, so the bounce reads as
+            // winding down rather than coming to a sudden stop.
+            seq.Append(rt.DOAnchorPosY(restY,                   settleDur).SetEase(Ease.OutCubic));
             if (onArrive != null) seq.OnComplete(() => onArrive());
             return seq;
         }
