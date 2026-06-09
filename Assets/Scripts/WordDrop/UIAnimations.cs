@@ -595,6 +595,43 @@ namespace WordDrop
             return t;
         }
 
+        // ── WildCardPop — extra-juicy entry for an AWARDED WILD ──────────────────
+        // Reads as a reward, not a normal deal: punches WAY past the rest size,
+        // holds big for a beat so the player registers it, then elastic-settles to
+        // the right size with a small celebratory wobble. 2026-06-04 Spencer.
+        public const float WILD_POP_OVERSHOOT = 1.75f; // peak = 1.75× the rest scale
+        public const float WILD_POP_GROW_DUR  = 0.30f; // anticipatory grow to peak
+        public const float WILD_POP_HOLD      = 0.30f; // hold big — the "ta-da" beat
+        public const float WILD_POP_SETTLE    = 0.55f; // settle back to rest size
+
+        /// <summary>Big-overshoot → hold → elastic-settle pop for an awarded wild.
+        /// Caller need not set start scale (we start it small). ReducedMotion snaps.</summary>
+        public static Sequence WildCardPop(Transform target, Vector3 targetScale, Action onComplete = null)
+        {
+            if (target == null) { onComplete?.Invoke(); return null; }
+
+            if (ReducedMotion)
+            {
+                target.localScale = targetScale;
+                onComplete?.Invoke();
+                return null;
+            }
+
+            target.DOKill();
+            target.localScale = targetScale * 0.25f;
+            Sequence seq = DOTween.Sequence();
+            // Grow well past rest with an anticipatory back-ease.
+            seq.Append(target.DOScale(targetScale * WILD_POP_OVERSHOOT, WILD_POP_GROW_DUR).SetEase(Ease.OutBack, 3f));
+            // Small celebratory wobble while it's big (returns to rest rotation).
+            seq.Join(target.DOPunchRotation(new Vector3(0f, 0f, 11f), WILD_POP_GROW_DUR + WILD_POP_HOLD, 6, 0.7f));
+            // Hold big for a beat so the award reads.
+            seq.AppendInterval(WILD_POP_HOLD);
+            // Settle to the correct size with a soft elastic bounce.
+            seq.Append(target.DOScale(targetScale, WILD_POP_SETTLE).SetEase(Ease.OutElastic, 0.6f, 0.45f));
+            if (onComplete != null) seq.OnComplete(() => onComplete());
+            return seq;
+        }
+
         // ═══════════════════════════════════════════════════════════════════════
         // 12. ConfettiBurst — particle pop, 1.5s envelope
         // ═══════════════════════════════════════════════════════════════════════

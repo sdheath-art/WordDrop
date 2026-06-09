@@ -105,7 +105,37 @@ namespace WordDrop
             return _benchSprite;
         }
 
+        private static Sprite _lockSprite;
+        private static Sprite GetLockSprite()
+        {
+            if (_lockSprite == null)
+            {
+                _lockSprite = Resources.Load<Sprite>("Tiles/icon_lock");
+                if (_lockSprite == null) // PNG imported as a plain Texture (default) → build a Sprite
+                {
+                    var tex = Resources.Load<Texture2D>("Tiles/icon_lock");
+                    if (tex != null)
+                        _lockSprite = Sprite.Create(
+                            tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+                }
+            }
+            return _lockSprite;
+        }
+
         private enum SlotType { Booster, Edit, TileBag, Settings }
+
+        /// <summary>Onboarding lock: true while this tool is gated for early levels. Settings is
+        /// never locked. 2026-06-09.</summary>
+        private static bool IsSlotLocked(SlotSpec spec)
+        {
+            switch (spec.Type)
+            {
+                case SlotType.Edit:    return TutorialLocks.EditLocked;
+                case SlotType.TileBag: return TutorialLocks.BagLocked;
+                case SlotType.Booster: return TutorialLocks.BoostersLocked;
+                default:               return false; // Settings always available
+            }
+        }
 
         private struct SlotSpec
         {
@@ -358,7 +388,7 @@ namespace WordDrop
             benchRT.anchoredPosition = PsdAnchoredCenter(BENCH_X, BENCH_Y, BENCH_W, BENCH_H);
             var benchImg = benchGO.GetComponent<Image>();
             benchImg.sprite = GetBenchSprite();
-            benchImg.color  = new Color(0.36f, 0.20f, 0.58f, 0.92f); // placeholder garden-purple
+            benchImg.color  = new Color(0.10f, 0.27f, 0.50f, 0.92f); // 2026-06-02: deep ocean blue (was garden-purple) — candy-palette chrome
             benchImg.raycastTarget = false;
 
             int slotCount = DISPLAY_ORDER.Length;
@@ -523,6 +553,29 @@ namespace WordDrop
                     chargeRT.anchorMax = Vector2.one;
                     chargeRT.offsetMin = Vector2.zero;
                     chargeRT.offsetMax = Vector2.zero;
+                }
+
+                // ── Onboarding lock overlay ──────────────────────────────────────
+                // Locked tools (Edit/Bag/boosters in early levels) show a padlock and
+                // ignore taps. Added last so it renders above the icon/badge. 2026-06-09.
+                if (IsSlotLocked(spec))
+                {
+                    slotBtn.interactable = false;
+                    // Locked tools show ONLY the lock — hide the icon/letter/badge beneath it.
+                    for (int ch = slot.transform.childCount - 1; ch >= 0; ch--)
+                        slot.transform.GetChild(ch).gameObject.SetActive(false);
+
+                    var lockGO = new GameObject("LockOverlay", typeof(RectTransform), typeof(Image));
+                    lockGO.transform.SetParent(slot.transform, false);
+                    var lockRT = lockGO.GetComponent<RectTransform>();
+                    lockRT.anchorMin = lockRT.anchorMax = new Vector2(0.5f, 0.5f);
+                    lockRT.pivot     = new Vector2(0.5f, 0.5f);
+                    lockRT.sizeDelta = new Vector2(SLOT_SIZE * 0.62f, SLOT_SIZE * 0.62f);
+                    lockRT.anchoredPosition = Vector2.zero;
+                    var lockImg = lockGO.GetComponent<Image>();
+                    lockImg.sprite         = GetLockSprite();
+                    lockImg.preserveAspect = true;
+                    lockImg.raycastTarget  = false;
                 }
             }
         }
@@ -972,9 +1025,10 @@ namespace WordDrop
                     _chargeBadges[i].text = charges > 0 ? charges.ToString() : "+";
                 if (_chargeBadgeContainers[i] != null)
                 {
-                    bool showBadge = spec.Type == SlotType.Booster
+                    bool showBadge = (spec.Type == SlotType.Booster
                                   || spec.Type == SlotType.Edit
-                                  || spec.Type == SlotType.TileBag;
+                                  || spec.Type == SlotType.TileBag)
+                                  && !IsSlotLocked(spec); // locked tools show no charge badge
                     _chargeBadgeContainers[i].SetActive(showBadge);
                 }
 
@@ -990,9 +1044,10 @@ namespace WordDrop
 
                 if (btn != null)
                 {
-                    if (isEditSlot)               btn.interactable = false;
+                    if (IsSlotLocked(spec))         btn.interactable = false; // onboarding lock
+                    else if (isEditSlot)            btn.interactable = false;
                     else if (isAim && !isArmedSlot) btn.interactable = false;
-                    else                          btn.interactable = true;
+                    else                            btn.interactable = true;
                 }
 
                 // Visual: armed slot during aim mode becomes the cancel button —
@@ -1028,6 +1083,16 @@ namespace WordDrop
             // OnStateChanged callback (which can fire mid-aim too, e.g. when
             // charges change).
             if (isAim != _wasAim)
+            {
+                SetAimModeVisuals(isAim);
+                _wasAim = isAim;
+            }
+            // Safety net (2026-06-03 Spencer: the dim scrim stayed stuck after using
+            // Stone Splitter). The edge-gate above can miss the exit edge if _wasAim
+            // desyncs during a booster resolve+cascade, leaving the screen dark with
+            // no way back. Force a full re-sync whenever the scrim's ACTUAL state
+            // disagrees with the aim state — the dim can never get stuck on.
+            else if (_aimScrimCanvas != null && _aimScrimCanvas.gameObject.activeSelf != isAim)
             {
                 SetAimModeVisuals(isAim);
                 _wasAim = isAim;
@@ -1162,6 +1227,10 @@ namespace WordDrop
         {
             if (slotIndex < 0 || slotIndex >= DISPLAY_ORDER.Length) return;
             var spec = DISPLAY_ORDER[slotIndex];
+
+            // Locked during early onboarding — ignore the tap (defensive; the button is also
+            // interactable=false). 2026-06-09.
+            if (IsSlotLocked(spec)) { GameAudio.Instance?.PlayInvalidDrop(); return; }
 
             // Aim-mode cancel: tapping the armed booster's slot (now styled
             // as a red ✕) cancels aim. Same multi-pop release sound as the

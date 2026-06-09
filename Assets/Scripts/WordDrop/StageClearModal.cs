@@ -240,6 +240,13 @@ namespace WordDrop
                 _explosionsClearedAt = -1f; // reset; will start timer when explosions truly settle
                 return;
             }
+            // 2026-06-04 Spencer: also hold for an in-flight wild ARRIVAL pop so the
+            // modal doesn't cut off the wild's entry animation.
+            if (HandManager.Instance != null && HandManager.Instance.IsWildEntryAnimating)
+            {
+                _explosionsClearedAt = -1f; // restart the settle beat after the wild lands
+                return;
+            }
             if (_explosionsClearedAt < 0f)
             {
                 _explosionsClearedAt = Time.unscaledTime; // first frame with everything settled
@@ -249,6 +256,11 @@ namespace WordDrop
 
             var ctx = _pendingQueue.Dequeue();
             _explosionsClearedAt = -1f; // reset for the NEXT stage's wait
+            // [StageModalTrace] TEMP — pair with "[Stage] CLEARED stage N". If a stage N
+            // shows here twice, the event was enqueued twice (SurvivalManager); if it shows
+            // once per "[Stage] CLEARED" the modal isn't the doubler. queueRemaining helps
+            // spot a stale leftover enqueue.
+            Debug.Log($"[StageModalTrace] SHOW stage {ctx.ClearedStage} (queueRemaining={_pendingQueue.Count})");
             Show(ctx);
         }
 

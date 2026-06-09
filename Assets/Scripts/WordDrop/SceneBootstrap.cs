@@ -26,6 +26,11 @@ namespace WordDrop
     {
         private Camera _mainCamera;
 
+        // 2026-06-08 Spencer: TEMP on-screen bloom/HDR diagnostic for the iOS build (can't
+        // read device logs from the dev box, so put the state on screen). Flip to false /
+        // delete once the no-glow-on-mobile cause is found.
+        private const bool SHOW_BLOOM_DEBUG = false;
+
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         // Phase 0 of Survival→Level migration: placeholder until GameMode enum lands in Phase 2.
         private bool _debugIsLevelMode;
@@ -101,6 +106,12 @@ namespace WordDrop
             GameObject camGO = new GameObject("MainCamera");
             _mainCamera = camGO.AddComponent<Camera>();
             _mainCamera.tag              = "MainCamera";
+            // 2026-06-05 Spencer: explicitly enable HDR on the camera. Bloom only catches
+            // values >1.0 (threshold 1.30), which requires an HDR render target. On iOS
+            // builds the glow was completely absent; forcing allowHDR here rules out the
+            // camera rendering to an LDR buffer (the other classic "no bloom on device" cause,
+            // alongside the post-FX shader stripping fix in UniversalRenderPipelineGlobalSettings).
+            _mainCamera.allowHDR         = true;
             _mainCamera.orthographic     = true;
             _mainCamera.orthographicSize = 10f;
             _mainCamera.clearFlags       = CameraClearFlags.SolidColor;
@@ -124,13 +135,12 @@ namespace WordDrop
             float halfW = halfH * ((float)Screen.width / Screen.height);
 
             // Vertical gradient background.
-            // 2026-05-30: PLACEHOLDER lavender — same hue family as the HUD
-            // purple (#391D78 / (0.2228, 0.1134, 0.4716)), just lighter
-            // values. Holds the visual together while Spencer reworks the
-            // final look in Photoshop. Earlier passes tried dark-blue
-            // (mystical), then warm peach (candy-bright) — neither final.
-            Color bgTop    = new Color(0.70f, 0.62f, 0.85f, 1f); // pale lavender (top of sky)
-            Color bgBottom = new Color(0.55f, 0.45f, 0.75f, 1f); // soft purple (toward the board)
+            // 2026-06-02: candy-bright CYAN per Spencer's Royal-Match/Candy-Crush
+            // reference — vivid sky-cyan at top → mint-teal toward the board.
+            // (Just the gradient; the reference's light rays / bokeh / dot pattern
+            // would need a painted background asset.)
+            Color bgTop    = new Color(0.40f, 0.82f, 0.96f, 1f); // vivid sky cyan (top)
+            Color bgBottom = new Color(0.50f, 0.90f, 0.84f, 1f); // bright mint-teal (toward the board)
             Sprite bgGrad = TileRenderer.CreateGradientRect(4, 128, bgBottom, bgTop);
             GameObject bgGO = new GameObject("BackgroundGradient");
             // NOT parented to camera — stays still while camera shakes
@@ -287,6 +297,41 @@ namespace WordDrop
 
 //             Debug.Log("[SceneBootstrap] UI screens created (MenuUI hidden, GameOverUI hidden). " +
                       // "No RoundManager / WordleEvaluator / RoundOverUI — removed in Job 12.");
+        }
+
+        // 2026-06-08 Spencer: on-device bloom/HDR diagnostic. Reads the ACTUAL render
+        // state on the phone so we can see why bloom is absent. Read it off the screen.
+        private void OnGUI()
+        {
+            if (!SHOW_BLOOM_DEBUG) return;
+            var style = new GUIStyle(GUI.skin.label) { fontSize = 30, normal = { textColor = Color.yellow } };
+            float y = 60f;
+            void L(string s) { GUI.Label(new Rect(16f, y, 3000f, 40f), s, style); y += 40f; }
+
+            L($"GFX: {SystemInfo.graphicsDeviceType}");
+            L($"HDR DefaultHDR supported: {SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.DefaultHDR)}");
+            L($"HDR RGB111110Float: {SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RGB111110Float)}");
+            L($"HDR ARGBHalf: {SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf)}");
+            L($"cam.allowHDR: {(_mainCamera != null ? _mainCamera.allowHDR.ToString() : "NO CAM")}");
+
+            var camData = _mainCamera != null
+                ? _mainCamera.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>() : null;
+            L($"cam postFX: {(camData != null ? camData.renderPostProcessing.ToString() : "no camData")}");
+
+            int q = QualitySettings.GetQualityLevel();
+            L($"Quality: {q} ({(QualitySettings.names != null && q < QualitySettings.names.Length ? QualitySettings.names[q] : "?")})");
+            var rp = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline;
+            L($"Pipeline: {(rp != null ? rp.name : "NULL (built-in!)")}");
+
+            var vol = Object.FindFirstObjectByType<UnityEngine.Rendering.Volume>();
+            L($"Volume found: {(vol != null)}  profile: {(vol != null && vol.profile != null)}");
+            if (vol != null && vol.profile != null)
+            {
+                if (vol.profile.TryGet<UnityEngine.Rendering.Universal.Bloom>(out var b))
+                    L($"Bloom: active={b.active} intensity={b.intensity.value} threshold={b.threshold.value}");
+                else
+                    L("Bloom: NOT in profile!");
+            }
         }
     }
 }

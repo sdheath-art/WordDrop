@@ -19,8 +19,33 @@ namespace WordDrop
     {
         // ── Tuning ──────────────────────────────────────────────────────────────
 
-        private const int MAX_HELPERS = 40;
+        private const int MAX_HELPERS = 500; // raised for weighting headroom (was 40)
         private const int MIN_RUN_LENGTH = 2;
+
+        // ── OPPORTUNITY SEEDING (2026-06-09) ──────────────────────────────────────
+        // The board-assist used to feed any letter that made *a* word (length-blind), so the
+        // board kept offering 3-letter filler and big plays were pure luck → stale. With seeding
+        // ON, each assist letter is weighted by the LONGEST word it would enable, so the board
+        // keeps dangling 4/5/6-letter opportunities. Toggle at runtime (debug key O) to A/B feel it.
+        // Two independent helpers so difficulty can be dialed PER LEVEL (Candy-Crush style):
+        //   • OpportunitySeeding (length) — board keeps offering long words.
+        //   • DetonationSeeding  (explode) — board nudges you toward setting off charged words.
+        // Breezy level = both ON (knife-through-butter flow). "Plan it" level = length only.
+        // Boss/hard level = both OFF (raw thinking). Debug keys: O = length, P = detonation.
+        public static bool OpportunitySeeding = true; // length weighting
+        public static bool DetonationSeeding  = true; // detonation bonus
+
+        // 3→1, 4→4, 5→9, 6→16, 7→25 : strongly biases toward longer words while still allowing short.
+        private static int OpportunityWeight(int wordLen)
+        {
+            int e = Mathf.Clamp(wordLen - 2, 1, 5);
+            return e * e;
+        }
+
+        // A drop whose word crosses a charged tile detonates it — the wow moment. Flat bonus on
+        // top of the length weight, so even a short detonating play is strongly favored. Tunable:
+        // higher = the board pushes you toward explosions harder. 2026-06-09.
+        private const int DETONATION_BONUS = 12;
 
         // ── Public API ──────────────────────────────────────────────────────────
 
@@ -127,19 +152,20 @@ namespace WordDrop
                 {
                     if (helpers.Count >= MAX_HELPERS) return;
 
-                    bool found = false;
+                    // Longest word this drop would enable, either axis — and whether that run
+                    // crosses a charged tile (→ detonation).
+                    int hLen = CheckHorizontalWord(board, col, landRow, ch, cols, out bool hPrimed);
+                    int vLen = CheckVerticalWord(board, col, landRow, ch, rows, out bool vPrimed);
+                    int wordLen = Mathf.Max(hLen, vLen);
+                    if (wordLen < 3) continue;
 
-                    // Check horizontal words (consecutive tiles including the dropped one)
-                    found = found || CheckHorizontalWord(board, col, landRow, ch, cols);
-
-                    // Check vertical words (tiles below + dropped tile)
-                    found = found || CheckVerticalWord(board, col, landRow, ch, rows);
-
-                    if (found)
-                    {
-                        // EXPERIMENT: reduced from 3x to 1x — revert if draws feel too random
+                    // Seeding ON → weight by length so longer plays get fed more often, PLUS a
+                    // bonus if the play detonates a charged word (the wow). OFF → flat 1× legacy.
+                    int weight = OpportunitySeeding ? OpportunityWeight(wordLen) : 1;
+                    if (DetonationSeeding && ((hLen >= 3 && hPrimed) || (vLen >= 3 && vPrimed)))
+                        weight += DETONATION_BONUS;
+                    for (int w = 0; w < weight && helpers.Count < MAX_HELPERS; w++)
                         helpers.Add(ch);
-                    }
                 }
             }
         }
@@ -148,8 +174,13 @@ namespace WordDrop
         /// Check if placing 'ch' at (col, row) creates a valid horizontal word
         /// by reading the consecutive run of letters through that position.
         /// </summary>
-        private static bool CheckHorizontalWord(RulesEngine board, int col, int row, char ch, int cols)
+        /// <summary>Returns the LENGTH of the longest valid word (3-7) that placing 'ch' at
+        /// (col,row) forms horizontally through that position, or 0 if none. hitsPrimed = true if
+        /// that run crosses a currently-charged (primed) tile → dropping here would detonate.</summary>
+        private static int CheckHorizontalWord(RulesEngine board, int col, int row, char ch, int cols, out bool hitsPrimed)
         {
+            hitsPrimed = false;
+
             // Find the leftmost extent of the run through (col, row)
             int left = col;
             while (left > 0 && board.GetCell(left - 1, row) != null && !board.GetCell(left - 1, row).IsStone)
@@ -161,9 +192,11 @@ namespace WordDrop
                 right++;
 
             int totalLen = right - left + 1;
-            if (totalLen < 3) return false;
+            if (totalLen < 3) return 0;
 
-            // Build the string with ch inserted at col
+            // Build the string with ch inserted at col; note if any existing tile is charged.
+            var reg = board.PrimedRegistry;
+            bool runPrimed = false;
             var sb = new System.Text.StringBuilder(totalLen);
             for (int c = left; c <= right; c++)
             {
@@ -172,38 +205,47 @@ namespace WordDrop
                 else
                 {
                     var cell = board.GetCell(c, row);
-                    if (cell == null || cell.IsStone) return false; // gap — not a valid run
+                    if (cell == null || cell.IsStone) return 0; // gap — not a valid run
                     sb.Append(char.ToUpper(cell.Letter));
+                    if (reg != null && reg.GetPrimedWordsContaining(new Vector2Int(c, row)).Count > 0)
+                        runPrimed = true;
                 }
             }
 
-            // Check all substrings of length 3-7 that include position col
+            // Longest valid substring (length 3-7) that includes position col.
             string full = sb.ToString();
             int colIdx = col - left; // index of our letter in the string
+            int best = 0;
 
             for (int start = 0; start < full.Length; start++)
             {
                 for (int len = 3; len <= Mathf.Min(7, full.Length - start); len++)
                 {
                     int end = start + len - 1;
-                    if (colIdx >= start && colIdx <= end)
+                    if (colIdx >= start && colIdx <= end && len > best)
                     {
                         string candidate = full.Substring(start, len);
                         if (WordDictionary.IsValidWord(candidate))
-                            return true;
+                            best = len;
                     }
                 }
             }
 
-            return false;
+            hitsPrimed = best > 0 && runPrimed;
+            return best;
         }
 
         /// <summary>
         /// Check if placing 'ch' at (col, row) creates a valid vertical word
         /// by reading the consecutive run of letters through that position.
         /// </summary>
-        private static bool CheckVerticalWord(RulesEngine board, int col, int row, char ch, int rows)
+        /// <summary>Returns the LENGTH of the longest valid word (3-7) that placing 'ch' at
+        /// (col,row) forms vertically through that position, or 0 if none. hitsPrimed = true if
+        /// that run crosses a currently-charged (primed) tile → dropping here would detonate.</summary>
+        private static int CheckVerticalWord(RulesEngine board, int col, int row, char ch, int rows, out bool hitsPrimed)
         {
+            hitsPrimed = false;
+
             // Find the bottom extent (below row)
             int bottom = row;
             while (bottom > 0 && board.GetCell(col, bottom - 1) != null && !board.GetCell(col, bottom - 1).IsStone)
@@ -215,9 +257,11 @@ namespace WordDrop
                 top++;
 
             int totalLen = top - bottom + 1;
-            if (totalLen < 3) return false;
+            if (totalLen < 3) return 0;
 
-            // Build the string top-to-bottom (how words read vertically)
+            // Build the string top-to-bottom; note if any existing tile is charged.
+            var reg = board.PrimedRegistry;
+            bool runPrimed = false;
             var sb = new System.Text.StringBuilder(totalLen);
             for (int r = top; r >= bottom; r--)
             {
@@ -226,29 +270,33 @@ namespace WordDrop
                 else
                 {
                     var cell = board.GetCell(col, r);
-                    if (cell == null || cell.IsStone) return false;
+                    if (cell == null || cell.IsStone) return 0;
                     sb.Append(char.ToUpper(cell.Letter));
+                    if (reg != null && reg.GetPrimedWordsContaining(new Vector2Int(col, r)).Count > 0)
+                        runPrimed = true;
                 }
             }
 
             string full = sb.ToString();
             int rowIdx = top - row; // index of our letter in the string
+            int best = 0;
 
             for (int start = 0; start < full.Length; start++)
             {
                 for (int len = 3; len <= Mathf.Min(7, full.Length - start); len++)
                 {
                     int end = start + len - 1;
-                    if (rowIdx >= start && rowIdx <= end)
+                    if (rowIdx >= start && rowIdx <= end && len > best)
                     {
                         string candidate = full.Substring(start, len);
                         if (WordDictionary.IsValidWord(candidate))
-                            return true;
+                            best = len;
                     }
                 }
             }
 
-            return false;
+            hitsPrimed = best > 0 && runPrimed;
+            return best;
         }
 
         // ── Strategy 2: Run extension ───────────────────────────────────────────

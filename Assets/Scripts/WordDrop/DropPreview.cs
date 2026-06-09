@@ -24,6 +24,7 @@ namespace WordDrop
         private int  _previewRow = -1;
         private bool _previewActive = false;
         private bool _isWild = false;
+        private char _resolvedWildLetter = '\0'; // letter a wild would resolve to here (0 = no word)
 
         // ── Cached simulation results ───────────────────────────────────────────
         private List<RulesWordMatch> _previewWords;
@@ -94,6 +95,12 @@ namespace WordDrop
             // Run simulation (non-destructive)
             _previewWords = rules.SimulateDropWithTriggerCheck(
                 col, letter, MatchController.PLAYER_HUMAN, out _wouldTriggerPrimed);
+
+            // Wild: which letter would it resolve to here? '\0' if it makes no word.
+            // (Only runs on lane change — UpdatePreview is cached above.) 2026-06-03 Spencer.
+            _resolvedWildLetter = _isWild
+                ? rules.PreviewWildResolveLetter(col, MatchController.PLAYER_HUMAN)
+                : '\0';
 
             // Find specific triggered primed words + chain group
             _triggeredPrimedWords = new List<PrimedWordRegistry.PrimedWord>();
@@ -201,8 +208,11 @@ namespace WordDrop
             _ghostTile.transform.position = pos;
             _ghostTile.SetActive(true);
 
-            // Wild ghost uses wild2@2x (blank iridescent), non-wild uses green_tile2.
-            string spritePath = _isWild ? "Tiles/wild2@2x" : "Tiles/green_tile2@2x";
+            // Wild ghost: iridescent wild uses the white tile (+ "?" below) instead of
+            // the old wild2@2x painted sprite. Non-wild uses green_tile2. 2026-06-03 Spencer.
+            string spritePath = _isWild
+                ? (Tile.IridescentWild ? "Tiles/white5@2x" : "Tiles/wild2@2x")
+                : "Tiles/green_tile2@2x";
             Sprite selectedSprite = Resources.Load<Sprite>(spritePath);
             if (selectedSprite != null)
             {
@@ -233,17 +243,25 @@ namespace WordDrop
                 GameObject letterGO = new GameObject("GhostLetter");
                 letterGO.transform.SetParent(_ghostTile.transform, false);
                 _ghostLetterTMP = letterGO.AddComponent<TMPro.TextMeshPro>();
-                _ghostLetterTMP.alignment = TMPro.TextAlignmentOptions.Center;
+                _ghostLetterTMP.alignment = TMPro.TextAlignmentOptions.Midline; // match board/hand centering
                 _ghostLetterTMP.sortingOrder = 6;
                 _ghostLetterTMP.enableAutoSizing = false;
 
                 var font = GameFont.GetTMP();
                 if (font != null) _ghostLetterTMP.font = font;
+                // 2026-06-03 Spencer: effects removed to match board/hand — no dilate.
+                _ghostLetterTMP.fontMaterial.SetFloat("_FaceDilate", 0.05f); // very slight bolden, matches board/hand
+                _ghostLetterTMP.fontMaterial.DisableKeyword("UNDERLAY_ON");
             }
-            // For wild tiles, suppress letter text (wild2 sprite is blank, no "*"/"?")
-            _ghostLetterTMP.text = _isWild ? "" : letter.ToString();
-            _ghostLetterTMP.fontSize = 5.5f; // matches board tile font size
-            _ghostLetterTMP.fontStyle = TMPro.FontStyles.Normal;
+            // Wild ghost: show the letter the wild would RESOLVE to here if it makes
+            // a word, else "?". (Old wild2 sprite baked its own "?", so suppress text.)
+            _ghostLetterTMP.text = _isWild
+                ? (Tile.IridescentWild
+                    ? (_resolvedWildLetter != '\0' ? _resolvedWildLetter.ToString() : "?")
+                    : "")
+                : letter.ToString();
+            _ghostLetterTMP.fontSize = 7.6f; // Avenir: −6%, matches the board tile letter size
+            _ghostLetterTMP.fontStyle = TMPro.FontStyles.Bold;
             _ghostLetterTMP.color = new Color(0.15f, 0.15f, 0.18f, 0.35f);
             _ghostLetterTMP.rectTransform.sizeDelta = new Vector2(2f, 2f);
             float sprNative = (_ghostSR.sprite != null) ? _ghostSR.sprite.bounds.size.x : cellSize;

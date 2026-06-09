@@ -320,6 +320,9 @@ namespace WordDrop
                 }
             }
 
+            // Tier-3 burst centers on the move that triggered it: this dropped cell.
+            WordDropFX.LastTriggerCell = new Vector2Int(col, targetRow);
+
             // Detonation Replay: record the dropped tile
             if (DetonationRecorder.Instance != null)
                 DetonationRecorder.Instance.RecordDrop(letter, col, targetRow);
@@ -531,21 +534,24 @@ namespace WordDrop
                                             var rulesCellDbg = RulesEngine.Instance != null
                                                 ? RulesEngine.Instance.GetCell(sw.Cells[c].x, sw.Cells[c].y)
                                                 : null;
-                                            // TEMP DEBUG: trace wild letter bug
-                                            Debug.Log($"[WildDebug] Scored tile at ({sw.Cells[c].x},{sw.Cells[c].y}) word='{sw.Word}' tile.IsWild={tile.IsWild} tile.Letter='{tile.Letter}' rulesCell.IsWild={(rulesCellDbg != null ? rulesCellDbg.IsWild.ToString() : "null")} rulesCell.Letter='{(rulesCellDbg != null ? rulesCellDbg.Letter.ToString() : "null")}'");
+                                            // 2026-06-03 Spencer: show the wild's resolved
+                                            // letter DURING the green flash (not only once it
+                                            // primes magenta). Prefer the committed rules
+                                            // letter; if it hasn't committed yet at score
+                                            // time, derive it from the scored word at this
+                                            // cell's position so the green tile shows the
+                                            // real letter instead of a blank "?".
                                             if (tile.IsWild)
                                             {
-                                                if (rulesCellDbg != null
-                                                    && rulesCellDbg.Letter != '\0'
-                                                    && tile.Letter != rulesCellDbg.Letter)
-                                                {
-                                                    Debug.Log($"[WildDebug] Syncing wild letter: tile.Letter='{tile.Letter}' → rulesCell.Letter='{rulesCellDbg.Letter}'");
-                                                    tile.SetLetter(rulesCellDbg.Letter);
-                                                }
-                                                else
-                                                {
-                                                    Debug.Log($"[WildDebug] Sync condition NOT met. rulesCell={(rulesCellDbg == null ? "NULL" : "exists")} rulesCell.Letter='{(rulesCellDbg != null ? rulesCellDbg.Letter.ToString() : "n/a")}' tile.Letter='{tile.Letter}'");
-                                                }
+                                                char resolved = '\0';
+                                                if (rulesCellDbg != null && rulesCellDbg.Letter != '\0'
+                                                    && rulesCellDbg.Letter != TileBag.WILD_CHAR)
+                                                    resolved = rulesCellDbg.Letter;
+                                                else if (!string.IsNullOrEmpty(sw.Word) && c < sw.Word.Length
+                                                         && sw.Word[c] != TileBag.WILD_CHAR)
+                                                    resolved = sw.Word[c]; // sw.Cells[c] ↔ sw.Word[c]
+                                                if (resolved != '\0' && resolved != TileBag.WILD_CHAR && tile.Letter != resolved)
+                                                    tile.SetLetter(resolved);
                                             }
                                             scoredTilesForFX.Add(tile);
                                         }
@@ -812,6 +818,11 @@ namespace WordDrop
                             // Explosion — sequential per word if we have groups, otherwise all at once
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                             {
+                                // big_pop on the FULL step count BEFORE the per-word
+                                // group split below — otherwise a big multi-word first
+                                // detonation reads as several small per-group pops and
+                                // never crosses the 8-tile threshold.
+                                yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
                                 if (_triggerWordGroups != null && _triggerWordGroups.Count > 1)
                                 {
                                     // Sequential: explode each word group one at a time
@@ -1189,6 +1200,7 @@ namespace WordDrop
                     }
                 }
             }
+
         }
 
         // =============================================================================

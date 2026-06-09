@@ -209,6 +209,36 @@ namespace WordDrop
                 t.PlayLandingSquish(playSound: false);
             }
 
+            // ── Phase 4: PRIME any words the shuffle happened to form ──────────
+            // Jester Hat upside: if the rearrangement creates valid words, prime
+            // them (same treatment an auto-drop gives a newly-formed word). Makes
+            // the shuffle feel rewarding instead of purely random. Primes ALL words
+            // for now — if that's too strong in playtest, cap the count here.
+            var primedByShuffle = rules.PrimeAllWordsOnBoard();
+            if (primedByShuffle != null && primedByShuffle.Count > 0)
+            {
+                foreach (var word in primedByShuffle)
+                {
+                    if (word.Cells == null) continue;
+                    // 2026-06-03 Spencer: a word the Jester Hat shuffle forms counts
+                    // toward the edit-refund meter, same as making a normal word
+                    // (every SURVIVAL_WORDS_PER_REFUND → +1 edit).
+                    MatchController.Instance?.SurvivalWordScored();
+                    int fuse = rules.GetFuseLengthPublic(word.Word.Length);
+                    foreach (var cell in word.Cells)
+                    {
+                        Tile glowTile = grid.GetTile(cell.x, cell.y);
+                        if (glowTile != null)
+                        {
+                            glowTile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+                            GameParticles.Instance?.PlayPrimed(glowTile.transform.position);
+                        }
+                    }
+                }
+                GameAudio.Instance?.PlayTilePrimed();
+                Debug.Log($"[JesterHat] Shuffle formed + primed {primedByShuffle.Count} word(s)!");
+            }
+
             yield return new WaitForSeconds(0.30f);
 
             Debug.Log($"[JesterHat] Shuffled {n} tiles board-wide (primed/wild/stone preserved)");

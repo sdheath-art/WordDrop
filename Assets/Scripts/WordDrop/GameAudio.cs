@@ -55,6 +55,7 @@ namespace WordDrop
         private AudioClip _tilePrimedAlt;
         private AudioClip _detonation;
         private AudioClip _detonationAlt;
+        private AudioClip _bigPop; // big_pop accent layered onto tier 2/3 detonations
         private AudioClip _chainReaction;
         private AudioClip _chainReactionAlt;
         private AudioClip _meltdown;
@@ -81,6 +82,8 @@ namespace WordDrop
         private AudioClip _shuffleAlt;
         private AudioClip _personalBest;
         private AudioClip _goldSpawn;
+        private AudioClip _line; // SFX/line — wild-award chime
+        private AudioClip _bing; // SFX/bing — objective-complete cue
 
         // ── New SFX (April 7, 2026) ──────────────────────────────────────────
         private AudioClip _chainRumble;
@@ -88,6 +91,11 @@ namespace WordDrop
         // Dedicated source for stoppable rumble loops (earthquake) so we can
         // cut them off when the detonation bang plays.
         private AudioSource _rumbleSource;
+        // Dedicated source for big_pop so its start can be delayed with
+        // sample accuracy (PlayDelayed) — the frame-quantized explosion hold
+        // can't sync the peak finer than ~16ms, so a continuous audio nudge
+        // does the sub-frame alignment to the detonation pop.
+        private AudioSource _bigPopSource;
         private AudioClip[] _deepImpactVariants;
         private AudioClip[] _scorePowerupVariants;
         private AudioClip[] _poofExplosionVariants;
@@ -315,6 +323,9 @@ namespace WordDrop
             // Dedicated source for stoppable rumble (earthquake meltdown wind-up).
             _rumbleSource = gameObject.AddComponent<AudioSource>();
             _rumbleSource.playOnAwake = false;
+            _bigPopSource = gameObject.AddComponent<AudioSource>();
+            _bigPopSource.playOnAwake = false;
+            _bigPopSource.pitch       = 0.95f;
 
             // Load saved prefs
             _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.80f);
@@ -343,6 +354,7 @@ namespace WordDrop
             _pitchedSource.outputAudioMixerGroup = _sfxGroup;
             _musicSource.outputAudioMixerGroup   = _musicGroup;
             _rumbleSource.outputAudioMixerGroup  = _sfxGroup;
+            _bigPopSource.outputAudioMixerGroup  = _sfxGroup;
 
             ApplyMixerLevels();
             // 2026-05-29: persistence bug fix — the AudioMixer can be mid-
@@ -370,6 +382,7 @@ namespace WordDrop
             _tilePrimedAlt   = Resources.Load<AudioClip>("SFX/tile_primed_alt");
             _detonation      = Resources.Load<AudioClip>("SFX/detonation");
             _detonationAlt   = Resources.Load<AudioClip>("SFX/detonation_alt");
+            _bigPop          = Resources.Load<AudioClip>("SFX/big_pop");
             _chainReaction   = Resources.Load<AudioClip>("SFX/chain_reaction");
             _chainReactionAlt= Resources.Load<AudioClip>("SFX/chain_reaction_alt");
             _meltdown        = Resources.Load<AudioClip>("SFX/meltdown");
@@ -400,6 +413,8 @@ namespace WordDrop
             _shuffleAlt      = Resources.Load<AudioClip>("SFX/shuffle_alt");
             _personalBest    = Resources.Load<AudioClip>("SFX/personal_best");
             _goldSpawn       = Resources.Load<AudioClip>("SFX/gold_spawn");
+            _line            = Resources.Load<AudioClip>("SFX/line");
+            _bing            = Resources.Load<AudioClip>("SFX/bing");
 
             // Music tracks (2026-05-16): folder-based pools. Each folder loads
             // every AudioClip inside via Resources.LoadAll. Add/remove MP3s
@@ -1045,9 +1060,28 @@ namespace WordDrop
                 _musicSequenceRoutine = null;
             }
 
+            // Build the level-win rotation EXCLUDING Skybound_Victory (removed from
+            // the rotation per Spencer 2026-06-02). Falls back to the full pool only
+            // if filtering would leave nothing.
+            AudioClip[] pool = _victoryMusicPool;
+            if (_victorySkyboundClip != null)
+            {
+                int keep = 0;
+                for (int i = 0; i < _victoryMusicPool.Length; i++)
+                    if (_victoryMusicPool[i] != _victorySkyboundClip) keep++;
+                if (keep > 0)
+                {
+                    var filtered = new AudioClip[keep];
+                    int k = 0;
+                    for (int i = 0; i < _victoryMusicPool.Length; i++)
+                        if (_victoryMusicPool[i] != _victorySkyboundClip) filtered[k++] = _victoryMusicPool[i];
+                    pool = filtered;
+                }
+            }
+
             // Pick a random clip, excluding the last one we played so the
             // player doesn't hear the same celebration track twice in a row.
-            AudioClip chosen = PickRandomClip(_victoryMusicPool, exclude: _lastStageClearClip);
+            AudioClip chosen = PickRandomClip(pool, exclude: _lastStageClearClip);
             _lastStageClearClip = chosen;
 
             _musicSource.clip = chosen;
@@ -1126,9 +1160,21 @@ namespace WordDrop
             Play(_personalBest, 0.9f);
         }
 
+        /// <summary>SFX/bing — objective-complete celebratory cue.</summary>
+        public void PlayBing()
+        {
+            Play(_bing, 0.9f);
+        }
+
         public void PlayGoldSpawn()
         {
             Play(_goldSpawn, 0.6f);
+        }
+
+        /// <summary>SFX/line — the wild-award chime.</summary>
+        public void PlayLine()
+        {
+            Play(_line, 0.9f);
         }
 
         // ── New play methods (April 7) ────────────────────────────────────────
@@ -1289,6 +1335,8 @@ namespace WordDrop
         private static int _matchLineBurstStep = 0;
         private static float _matchLineBurstLastTime = -10f;
         private const float MATCH_LINE_BURST_WINDOW = 0.50f; // 500ms: enough for parallel detonations, short enough to reset between turns
+        private static float _lastBigPopTime = -10f;
+        private const float BIG_POP_COOLDOWN = 0.30f; // ONE big_pop per cascade event, not per word-pop (was machine-gunning)
 
         public void PlayMatchLine(int cascadeStep = 0)
         {
@@ -1330,6 +1378,36 @@ namespace WordDrop
             // detonations should sound distinct from cascade chains.
             if (cascadeStep >= 1 && _matchLine13 != null)
                 Play(_matchLine13, 0.22f, pitch);
+            // NOTE: big_pop is NOT fired here — PlayMatchLine fires on cascade pops
+            // too, and big_pop must NEVER play on cascades. It's fired from the
+            // detonation site (WordDropFX) gated on the initial (non-cascade) pop.
+            // See GameAudio.PlayBigPop().
+
+        }
+
+        /// <summary>big_pop accent — fired from the detonation site (WordDropFX) ONLY
+        /// on the INITIAL, non-cascade explosion (never gravity cascades). The
+        /// cooldown collapses a multi-word initial detonation into a single boom.</summary>
+        public void PlayBigPop(float nudge = 0f)
+        {
+            if (_bigPop == null || _muted || _bigPopSource == null) return;
+            float now = Time.unscaledTime;
+            if (now - _lastBigPopTime < BIG_POP_COOLDOWN) return;
+            _lastBigPopTime = now;
+            if (LogSfxFiring)
+                Debug.Log($"[SFX] PlayBigPop → big_pop (vol={_volume * 0.8f:F2} pitch=0.95 nudge={nudge:F3})");
+            // Dedicated source so the clip start can be nudged with sample
+            // accuracy — the frame-quantized explosion hold can only sync the
+            // peak to within ~16ms; this slides it continuously onto the pop.
+            //   nudge > 0 → PlayDelayed: whole clip later → transient LATER
+            //   nudge < 0 → start partway into the clip → transient EARLIER
+            //               (trims that much of the leading swell)
+            _bigPopSource.clip   = _bigPop;
+            _bigPopSource.pitch  = 0.95f;
+            _bigPopSource.volume = _volume * 0.8f;
+            _bigPopSource.time   = nudge < 0f ? Mathf.Min(-nudge, _bigPop.length - 0.05f) : 0f;
+            if (nudge > 0f) _bigPopSource.PlayDelayed(nudge);
+            else            _bigPopSource.Play();
         }
 
         /// <summary>Organic button click — for standard UI buttons.</summary>

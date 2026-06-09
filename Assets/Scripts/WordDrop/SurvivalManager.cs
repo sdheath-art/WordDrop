@@ -144,6 +144,7 @@ namespace WordDrop
         private float _autoDropTimer;
         private int   _movesSinceLastRise;   // vestigial (Phase 11b) — NotifyDropCommitted still increments, but rises fire off _riseTimerSeconds now
         private int   _turnsSinceLastTurnRise;   // turn-based mode (RisePerMoveDebug): counts player turns since last rise to gate cadence per stage
+        private bool  _riseScheduledPending;     // true from when a rise is queued until it executes; used by GetMovesUntilTopOut to read 0 the instant a fatal rise is queued
         private float _riseTimerSeconds;     // Phase 11b: time-based rising rows; resets on rise fire, stage advance, StartSurvival
         private bool  _appPaused;            // Phase 11b: OnApplicationPause(true) sets this, Update skips timer accumulation while true
         private int   _movesPlayed;          // lifetime move count — drives stage + debrief
@@ -167,6 +168,11 @@ namespace WordDrop
         private int _risesInCurrentStage = 0;       // balance analytics — rises fired per stage
         private int _stageStartRisesPending = 0;    // extra rises to fire post-stage-advance to hit minimum
         private bool _currentStageCleared = false;  // hit the target yet?
+        // 2026-06-03 Spencer: once a stage clears mid-resolution, the rest of that
+        // move's cascade score is absorbed into the cleared stage (no carryover) so
+        // a single move can never clear two stages / leak score into the next.
+        private bool _clearedThisResolution = false;
+        private bool _wasProcessing = false;        // tracks IsProcessing edge for resolution-end release
         private int _lastStageReached = 1;          // for debrief
         private int _lastStageShortfall = 0;        // for debrief near-miss copy
         private int _lastStageTarget = 0;           // for debrief
@@ -203,6 +209,34 @@ namespace WordDrop
         /// rise every turn (full pressure).
         /// </summary>
         public static int GetTurnsPerRiseForStage(int stage) => stage <= 4 ? 2 : 1;
+
+        /// <summary>
+        /// Estimated player MOVES until the board tops out, given the current board
+        /// headroom AND this stage's rise cadence. = (rise headroom) × (turns per rise)
+        /// − (turns since last rise), so it counts down ~1 per move and automatically
+        /// reads double when the cadence is every-2-moves (Spencer's point). Drives the
+        /// HUD top-out danger countdown. Dynamic: clearing a tall stack raises it,
+        /// filling lowers it. Turn-based (RisePerMoveDebug) only; returns the raw rise
+        /// headroom otherwise (time-based rises can't be expressed in moves).
+        /// </summary>
+        /// <summary>
+        /// Raw "player turns until top out" estimate for the HUD danger counter. Top out =
+        /// a rise is ATTEMPTED while a tile is already in the top row, pushing it OVER the
+        /// board (RisingRowManager.RiseRow ~86-92, regardless of top-out mode). So a tile
+        /// must first REACH the top row (headroom rises), then ONE MORE rise pushes it over
+        /// → rises-until-overflow = headroom + 1, × cadence, minus turns since the last rise.
+        /// This value can briefly jump UP (the cadence counter resets when a rise is
+        /// SCHEDULED, before the board changes on EXECUTE); HUDManager.RefreshTopOutDanger
+        /// applies a monotonic clamp so that jitter never reaches the player.
+        /// </summary>
+        public int GetMovesUntilTopOut()
+        {
+            if (RulesEngine.Instance == null) return 99;
+            int strictRises = RulesEngine.Instance.GetRisesUntilTopOut() + 1; // headroom + the overflow rise
+            if (!RisePerMoveDebug) return Mathf.Max(0, strictRises);
+            int turnsPerRise = Mathf.Max(1, GetTurnsPerRiseForStage(_currentStageIndex));
+            return Mathf.Max(0, strictRises * turnsPerRise - _turnsSinceLastTurnRise);
+        }
 
         /// <summary>Current stage target.</summary>
         public int CurrentStageTarget => ComputeStageTarget(_currentStageIndex);
@@ -338,6 +372,7 @@ namespace WordDrop
                     {
                         Debug.Log($"[RisePerMove] scheduling rise (stage {_currentStageIndex}, cadence {turnsPerRise})");
                         _riseTimerSeconds = 0f;
+                        _riseScheduledPending = true; // a rise is queued; if a tile is already in the top row it's FATAL
                         StartCoroutine(WaitAndExecuteRise());
                     }
                 }
@@ -400,6 +435,24 @@ namespace WordDrop
         /// </summary>
         public void CheckStageClear()
         {
+            bool resolving = MatchController.Instance != null && MatchController.Instance.IsProcessing;
+
+            // 2026-06-03 Spencer: NO score carries between stages, and a single move
+            // can never clear two. Once we've cleared a stage during a still-resolving
+            // move, keep the next stage's baseline PINNED to the running total so the
+            // rest of this move's cascade score is absorbed into the cleared stage —
+            // it can't accumulate in (or clear) the next stage mid-cascade. Released
+            // at resolution-end (Update) and here once the board settles.
+            if (_clearedThisResolution)
+            {
+                if (resolving)
+                {
+                    if (ScoreManager.Instance != null) _stageStartScore = ScoreManager.Instance.PlayerScore;
+                    return;
+                }
+                _clearedThisResolution = false; // settled — resume normal evaluation
+            }
+
             // Cap chosen generously — a realistic multi-stage cascade clears
             // 1-3 thresholds at once; 32 handles pathological scores without
             // bounding legitimate play. Loop is O(stages) and each iteration is
@@ -409,7 +462,12 @@ namespace WordDrop
             while (safety < MAX_STAGE_CLEARS_PER_CALL)
             {
                 if (_currentStageCleared) return;
-                if (CurrentStageScore < CurrentStageTarget) return;
+                // 2026-06-08: an active objective IS the win condition (replaces the score
+                // target). Clear only when it's complete; otherwise the score target gates the
+                // clear (endless mode with no objective).
+                bool objMode = ObjectiveManager.Instance != null && ObjectiveManager.Instance.HasObjective;
+                if (objMode) { if (!ObjectiveManager.Instance.Active.IsComplete) return; }
+                else         { if (CurrentStageScore < CurrentStageTarget) return; }
                 safety++;
 
                 // Capture everything we need BEFORE mutating state or calling handlers,
@@ -433,6 +491,13 @@ namespace WordDrop
                 _currentStageCleared = true;
                 _stagesCleared++;
                 AdvanceToNextStage();
+
+                // If a cascade is still resolving, absorb the rest of its score into
+                // THIS cleared stage (via the pin at the top of subsequent calls) so
+                // nothing leaks into the next stage. Immediate one-shot scores don't
+                // need this — the baseline already jumped by the full amount, so there
+                // is no remaining score to carry. 2026-06-03 Spencer.
+                if (resolving) _clearedThisResolution = true;
 
                 // MVP P4: refill booster charge on stage clear ("1 charge per stage").
                 BoosterManager.Instance?.RefillForStage();
@@ -473,6 +538,12 @@ namespace WordDrop
                 };
                 try { OnStageCleared?.Invoke(ctx); }
                 catch (System.Exception ex) { Debug.LogError($"[Stage] OnStageCleared handler threw: {ex}"); }
+
+                // Objective mode: clear exactly ONE stage per completed objective. RETIRE (don't
+                // clear) so the completed 3/3 stays on the HUD behind the stage-clear modal; it
+                // stops being the live win condition (so the loop won't re-clear) and resets to a
+                // fresh objective when the modal closes. 2026-06-09.
+                if (objMode) { ObjectiveManager.Instance?.RetireForStageClear(); return; }
 
                 // Loop: if the same NotifyScoreDelta call's score also crossed
                 // the next stage's target, fire that event too. The modal
@@ -871,6 +942,18 @@ namespace WordDrop
             // Global debug keyboard shortcut — works in menu OR gameplay
             if (Input.GetKeyDown(KeyCode.N))
                 ToggleNoAssistMode();
+
+            // 2026-06-03 Spencer: detect the resolution-end edge. When a move that
+            // cleared a stage finishes resolving, snap the next stage's baseline to
+            // the final total (discarding all post-clear cascade overflow) and release
+            // the absorb flag so the NEXT move starts the new stage cleanly at 0.
+            bool processingNow = MatchController.Instance != null && MatchController.Instance.IsProcessing;
+            if (_wasProcessing && !processingNow && _clearedThisResolution)
+            {
+                if (ScoreManager.Instance != null) _stageStartScore = ScoreManager.Instance.PlayerScore;
+                _clearedThisResolution = false;
+            }
+            _wasProcessing = processingNow;
 
             UpdateSurvival();
         }
@@ -1474,7 +1557,7 @@ namespace WordDrop
                 yield return null;
             }
             // Re-check guards (player might've topped out or modal opened during the wait).
-            if (_isRisingRow || _isAutoDropping || _isOverlayPaused || _isGameOver) yield break;
+            if (_isRisingRow || _isAutoDropping || _isOverlayPaused || _isGameOver) { _riseScheduledPending = false; yield break; }
             Debug.Log($"[RisePerMove] firing rise after {waited:F2}s wait");
             yield return StartCoroutine(ExecuteRisingRow());
         }
@@ -1482,6 +1565,7 @@ namespace WordDrop
         private IEnumerator ExecuteRisingRow()
         {
             _isRisingRow = true;
+            _riseScheduledPending = false; // the queued rise is now executing — no longer "pending"
             bool isProcessing = MatchController.Instance != null && MatchController.Instance.IsProcessing;
             bool isRewriting  = HandManager.Instance != null && HandManager.Instance.IsRewriteModeActive;
             bool rmExists     = RisingRowManager.Instance != null;
@@ -1528,6 +1612,47 @@ namespace WordDrop
                 TriggerTopOut();
                 _isRisingRow = false;
                 yield break;
+            }
+
+            // ── Prime ONLY words a wild completes because of this rise ─────────────
+            // 2026-06-08 Spencer (chosen behavior): if the rise slides a WILD into place
+            // so it completes a word (X-I-wild → FIX), light it up now instead of making
+            // the player wait until their next drop's scan. PrimeWildWordsAfterRise seeds
+            // only the wilds it resolves, so incidental all-real-letter words the rise
+            // happens to align (SEAR) are NOT primed — only your action primes those.
+            var riseRules = RulesEngine.Instance;
+            var riseGrid  = GridManager.Instance;
+            if (riseRules != null && riseGrid != null)
+            {
+                var primedByRise = riseRules.PrimeWildWordsAfterRise();
+                if (primedByRise != null && primedByRise.Count > 0)
+                {
+                    foreach (var word in primedByRise)
+                    {
+                        if (word.Cells == null) continue;
+                        int fuse = riseRules.GetFuseLengthPublic(word.Word.Length);
+                        foreach (var cell in word.Cells)
+                        {
+                            Tile glowTile = riseGrid.GetTile(cell.x, cell.y);
+                            if (glowTile != null)
+                            {
+                                // Wild repaint: the rise just committed this wild's letter in data;
+                                // push it to the visual so it shows the real letter instead of a
+                                // blank magenta tile (mirrors the drop-path repaint). 2026-06-09.
+                                if (glowTile.IsWild)
+                                {
+                                    var rc = riseRules.GetCell(cell.x, cell.y);
+                                    if (rc != null && rc.Letter != '\0' && rc.Letter != TileBag.WILD_CHAR
+                                        && glowTile.Letter != rc.Letter)
+                                        glowTile.SetLetter(rc.Letter);
+                                }
+                                glowTile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+                                GameParticles.Instance?.PlayPrimed(glowTile.transform.position);
+                            }
+                        }
+                    }
+                    GameAudio.Instance?.PlayTilePrimed();
+                }
             }
 
             _isRisingRow = false;

@@ -27,6 +27,14 @@ namespace WordDrop
         public override bool NeedsTarget     => true;
         public override bool TriggersGravity => true;
 
+        /// <summary>Only a stone tile is a valid target — taps elsewhere keep the
+        /// booster armed instead of wasting the charge. 2026-06-03 Spencer.</summary>
+        public override bool CanResolveAt(int col, int row)
+        {
+            var cell = RulesEngine.Instance?.GetCell(col, row);
+            return cell != null && cell.IsStone;
+        }
+
         public override void ResolveWithTarget(int col, int row, System.Action onComplete)
         {
             var rules = RulesEngine.Instance;

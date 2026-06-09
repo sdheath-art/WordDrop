@@ -22,15 +22,36 @@ namespace WordDrop
 
         // ── TMP ─────────────────────────────────────────────────────────────────
 
-        /// <summary>Tile font: Avenir Next SDF — board tile letters.</summary>
+        /// <summary>Tile font: Clarity SDF — trying it on board + hand-card letters (2026-06-03, was Baloo2 SDF). Fallbacks Baloo2 → AvenirNext.</summary>
         public static TMP_FontAsset GetTMP()
         {
             if (!_loadedTileTMP)
             {
                 _tileTMP = Resources.Load<TMP_FontAsset>("AvenirNext SDF");
+                if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("ClearSans-Bold SDF"); // fallback
+                if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("Geometos SDF"); // fallback
+                if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("Clarity SDF"); // fallback
+                if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("Baloo2 SDF"); // fallback
+                if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("AvenirNext SDF"); // fallback
                 _loadedTileTMP = true;
+                bool gotLuckiest = Resources.Load<TMP_FontAsset>("LuckiestGuy SDF") != null;
+                Debug.Log($"[GameFont] Tile font loaded: '{(_tileTMP != null ? _tileTMP.name : "NULL")}' | LuckiestGuy SDF resolvable={gotLuckiest}");
             }
             return _tileTMP;
+        }
+
+        // 2026-06-04 Spencer: dedicated font for the WILD "?" symbol (Geometos),
+        // so the wild glyph reads distinct/enchanted vs the normal tile letters.
+        private static TMP_FontAsset _wildSymbolTMP;
+        private static bool _loadedWildSymbolTMP;
+        public static TMP_FontAsset GetWildSymbolTMP()
+        {
+            if (!_loadedWildSymbolTMP)
+            {
+                _wildSymbolTMP = Resources.Load<TMP_FontAsset>("Geometos SDF");
+                _loadedWildSymbolTMP = true;
+            }
+            return _wildSymbolTMP;
         }
 
         /// <summary>UI font: Clarity SDF — HUD, buttons, scores, labels, game over body.</summary>

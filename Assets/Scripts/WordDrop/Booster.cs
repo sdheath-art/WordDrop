@@ -71,5 +71,12 @@ namespace WordDrop
         {
             onComplete?.Invoke();
         }
+
+        /// <summary>Pre-consume validity check for targeted boosters. BoosterManager
+        /// calls this in aim mode BEFORE spending a charge — if it returns false the
+        /// tap is ignored and the booster stays armed (no charge wasted). Default true
+        /// (any tap is valid). Override for boosters that only work on specific tiles
+        /// (e.g. Stone Splitter → only a stone). 2026-06-03 Spencer.</summary>
+        public virtual bool CanResolveAt(int col, int row) => true;
     }
 }

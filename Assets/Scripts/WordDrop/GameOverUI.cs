@@ -229,8 +229,12 @@ namespace WordDrop
             GameAudio.Instance?.PlayGameOver();
             GameAudio.Instance?.PlayWhooshBig();
 
-            // Check for detonation replay before showing the panel
-            if (DetonationRecorder.Instance != null && DetonationRecorder.Instance.HasReplay
+            // 2026-06-03 Spencer: best-chain detonation replay DISABLED in-game (the
+            // code below + DetonationRecorder/DetonationReplay are kept intact for
+            // later — flip ENABLE_BEST_CHAIN_REPLAY to true to restore it).
+            const bool ENABLE_BEST_CHAIN_REPLAY = false;
+            if (ENABLE_BEST_CHAIN_REPLAY
+                && DetonationRecorder.Instance != null && DetonationRecorder.Instance.HasReplay
                 && DetonationReplay.Instance != null)
             {
                 StartCoroutine(ShowWithReplay());

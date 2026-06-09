@@ -28,6 +28,25 @@ namespace WordDrop
     {
         public static bool Enabled = true;
 
+        // First-level board: deterministic instead of random, so L1 is the SAME rich tutorial
+        // board every run (board-only scoring → hand-independent). Reroll FirstBoardSeed to
+        // audition different fixed boards; once we like one it's locked. 2026-06-09 Spencer.
+        // Hand-authored exact placement is the upgrade path if we want full per-tile control.
+        public static bool UseFixedFirstBoard = false; // OFF while testing loop feel — fresh random board each run.
+        public static int  FirstBoardSeed     = 7;   // only used if FixedFirstBoardLayout is null
+
+        // Hand-authored L1 board (top row first, '_' = empty). Dense, common, vowel-balanced
+        // letters → many word possibilities for the tutorial. Gravity-stable: every column is
+        // filled contiguously from the bottom. 6 cols × up to 4 rows. Edit freely to retune.
+        // Rich seams here: CAR/ROT/ROTS verticals, CAR(E)(S)(S)/RAT(E)(S) horizontals. 2026-06-09.
+        public static string[] FixedFirstBoardLayout = new[]
+        {
+            "__ST__",
+            "RATEST",
+            "ANONED",
+            "CARESS",
+        };
+
         // ── Placement ───────────────────────────────────────────────────────────
 
         public struct Placement
@@ -128,9 +147,11 @@ namespace WordDrop
 
         private static string ApplySurvivalOpening(RulesEngine rules)
         {
-            // Read the player's hand so we can ensure hand+board synergy
+            // Read the player's hand so we can ensure hand+board synergy. For the fixed L1 board
+            // we deliberately IGNORE the hand (null) so the chosen board is fully deterministic —
+            // otherwise the random hand would sway candidate selection and the board would vary.
             char[] hand = null;
-            if (MatchController.Instance != null)
+            if (!UseFixedFirstBoard && MatchController.Instance != null)
             {
                 var playerHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
                 if (playerHand != null)
@@ -138,26 +159,39 @@ namespace WordDrop
             }
 
             System.Random rng;
-            if (DailyDropManager.IsDailyMode)
+            if (UseFixedFirstBoard)
+                rng = new System.Random(FirstBoardSeed);      // deterministic L1 tutorial board
+            else if (DailyDropManager.IsDailyMode)
                 rng = new System.Random(DailyDropManager.GetDailySeed() + 4219);
             else
                 rng = new System.Random(System.Environment.TickCount);
 
-            // Generate candidates and pick the best
             char[,] bestBoard = null;
             int bestScore = -999;
             string bestName = "Opening";
 
-            for (int attempt = 0; attempt < NUM_CANDIDATES; attempt++)
+            if (UseFixedFirstBoard && FixedFirstBoardLayout != null && FixedFirstBoardLayout.Length > 0)
             {
-                char[,] candidate = GenerateOpeningBoard(rng);
-                int score = ScoreOpening(candidate, hand, rules);
-
-                if (score > bestScore)
+                // Hand-authored L1 board — dense common letters for many word possibilities,
+                // beats gambling on a generator seed for the tutorial. 2026-06-09.
+                bestBoard = BuildBoardFromLayout(FixedFirstBoardLayout);
+                bestScore = ScoreOpening(bestBoard, null, rules);
+                bestName  = "FixedAuthoredL1";
+            }
+            else
+            {
+                // Generate candidates and pick the best
+                for (int attempt = 0; attempt < NUM_CANDIDATES; attempt++)
                 {
-                    bestScore = score;
-                    bestBoard = candidate;
-                    bestName = $"SurvOpen_{attempt}";
+                    char[,] candidate = GenerateOpeningBoard(rng);
+                    int score = ScoreOpening(candidate, hand, rules);
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestBoard = candidate;
+                        bestName = $"SurvOpen_{attempt}";
+                    }
                 }
             }
 
@@ -196,11 +230,29 @@ namespace WordDrop
             string logRows = "";
             for (int row = OPENING_ROWS - 1; row >= 0; row--)
                 logRows += $"  Row {row}: {rowStrs[row]}\n";
-//             Debug.Log($"[OpeningSeed] Survival opening (score={bestScore}, placed={placed}):\n{logRows}" +
-                      // $"  Primed: {(primedWord ?? "none")}\n" +
-                      // $"  Hand: {(hand != null ? new string(hand) : "?")}");
+            Debug.Log($"[OpeningSeed] Opening (fixed={UseFixedFirstBoard} seed={FirstBoardSeed} score={bestScore} placed={placed}):\n{logRows}" +
+                      $"  Primed: {(primedWord ?? "none")}");
 
             return bestName;
+        }
+
+        /// <summary>Builds a board grid from an authored layout (rows top→bottom, '_' = empty).
+        /// layout[0] is the TOP row; mapped to board[col, OPENING_ROWS-1] down to row 0. 2026-06-09.</summary>
+        private static char[,] BuildBoardFromLayout(string[] rowsTopDown)
+        {
+            char[,] board = new char[RulesEngine.COLS, OPENING_ROWS];
+            int rowCount = Mathf.Min(rowsTopDown.Length, OPENING_ROWS);
+            for (int r = 0; r < rowCount; r++)
+            {
+                int boardRow = OPENING_ROWS - 1 - r; // first layout line = top row
+                string line = rowsTopDown[r] ?? "";
+                for (int col = 0; col < RulesEngine.COLS; col++)
+                {
+                    char c = col < line.Length ? line[col] : '_';
+                    board[col, boardRow] = (c == '_' || c == ' ') ? '\0' : char.ToUpper(c);
+                }
+            }
+            return board;
         }
 
         /// <summary>

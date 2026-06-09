@@ -28,6 +28,9 @@ namespace WordDrop
         // 512×512 — keeps world-space bounds identical to the old circle path
         // so the rest of the scale math doesn't need re-tuning.
         private Sprite _glowSpriteBubble;
+        private Sprite _circleSprite;   // 2026-06-03 Spencer: VFX_Circle ring for the tier-1 pop bubble
+        private Sprite _vfxGlowSprite;   // VFX_Glow soft blob — the glow-behind layer
+        private Sprite _squareGlowSprite; // Square_glow soft square — the pop aura (softer than square_aura)
         private readonly Stack<SpriteRenderer> _pool = new Stack<SpriteRenderer>(POOL_SIZE);
         private readonly Stack<SpriteRenderer> _glowPool = new Stack<SpriteRenderer>(POOL_SIZE);
 
@@ -186,6 +189,13 @@ namespace WordDrop
 
             Debug.Log($"[FlipbookFX] glow load — bubble@2x: " +
                       $"{(bubbleTex != null ? $"{bubbleTex.width}x{bubbleTex.height}" : "MISSING")}");
+
+            // 2026-06-03 Spencer: VFX_Circle ring for the tier-1 pop bubble (only).
+            Texture2D circleTex = Resources.Load<Texture2D>("Particles/vfx_circle");
+            if (circleTex != null)
+                _circleSprite = Sprite.Create(
+                    circleTex, new Rect(0, 0, circleTex.width, circleTex.height),
+                    new Vector2(0.5f, 0.5f), 200f);
         }
 
         private void PrewarmPool()
@@ -255,6 +265,175 @@ namespace WordDrop
             // Orange shrapnel sprite-sheet retired 2026-04-30 — colored prefab + tile shards
             // carry the impact now. Glow halo layer kept (still gated by FX_FlipbookGlow).
             if (WordDropFX.FX_FlipbookGlow)   StartCoroutine(GlowCoroutine(worldPos, tier));
+        }
+
+        /// <summary>
+        /// Tier-2 hero "big bubble" — ONE soft bubble at the cluster centre that
+        /// inflates over inflateDur then POPS (quick over-expand + snap-fade), so
+        /// the whole explosion reads as a single bubble bursting. Reuses the same
+        /// bubble@2x sprite as the per-tile glows. Caller passes the world
+        /// diameter to span the cluster and an inflate duration (use the big_pop
+        /// hold so the pop lands on the explosion). Unscaled-time so it survives
+        /// a hitstop.
+        /// </summary>
+        private SpriteRenderer _bigBubbleSR;
+        private Material _iridescentMat;
+
+        private void EnsureBigBubble()
+        {
+            if (_bigBubbleSR != null) return;
+            GameObject go = new GameObject("BigBubble");
+            go.transform.SetParent(transform, false);
+            _bigBubbleSR = go.AddComponent<SpriteRenderer>();
+            _bigBubbleSR.sprite = _glowSpriteBubble;
+            _bigBubbleSR.sortingOrder = 28; // just behind per-tile glows (29) → they spray on top
+            // Iridescent thin-film shader → soap-bubble rainbow. Falls back to the
+            // additive glow material if the shader is missing (no magenta).
+            Shader sh = Resources.Load<Shader>("Shaders/IridescentBubble");
+            if (sh != null)
+            {
+                _iridescentMat = new Material(sh);
+                // Bind the bubble texture explicitly — SpriteRenderer's auto
+                // _MainTex binding is unreliable with custom materials; without
+                // it the shader samples white and renders a square, not a circle.
+                if (_glowSpriteBubble != null && _glowSpriteBubble.texture != null)
+                    _iridescentMat.mainTexture = _glowSpriteBubble.texture;
+                _bigBubbleSR.material = _iridescentMat;
+            }
+            else
+            {
+                Debug.LogWarning("[FlipbookFX] Resources/Shaders/IridescentBubble not found — big bubble falls back to additive glow");
+                _bigBubbleSR.material = _additiveMat;
+            }
+            go.SetActive(false);
+        }
+
+        // ── Tier-3 Candy-Crush burst layers — dedicated additive HDR renderers ──
+        private SpriteRenderer _tier3Core;
+        private SpriteRenderer _tier3Accent;
+        private SpriteRenderer _tier3Rays;
+        private Sprite _raysSprite;
+
+        private SpriteRenderer MakeFXRenderer(string name, Sprite spr, int sort)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(transform, false);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.material = _additiveMat;     // additive → adds light, blooms
+            sr.sprite = spr;
+            sr.sortingOrder = sort;
+            go.SetActive(false);
+            return sr;
+        }
+
+        /// <summary>Bright additive core — the "energy" centre that bloom catches. HDR tint.</summary>
+        public void PlayCoreGlow(Vector3 center, float worldDiameter, float dur, float brightness, Color hdrTint)
+        {
+            if (_glowSpriteBubble == null || worldDiameter <= 0.01f) return;
+            if (_tier3Core == null) _tier3Core = MakeFXRenderer("Tier3Core", _glowSpriteBubble, 55); // above meltdown (50)
+            StartCoroutine(FXScaleFade(_tier3Core, center, worldDiameter, dur, hdrTint * brightness, false));
+        }
+
+        /// <summary>Secondary accent glow (e.g. the green wisp) — own renderer so it can co-exist with the core.</summary>
+        public void PlayAccentGlow(Vector3 center, float worldDiameter, float dur, float brightness, Color hdrTint)
+        {
+            if (_glowSpriteBubble == null || worldDiameter <= 0.01f) return;
+            if (_tier3Accent == null) _tier3Accent = MakeFXRenderer("Tier3Accent", _glowSpriteBubble, 54);
+            StartCoroutine(FXScaleFade(_tier3Accent, center, worldDiameter, dur, hdrTint * brightness, false));
+        }
+
+        /// <summary>Radiating light streaks (light_rays texture), additive HDR + slow spin. HDR tint.</summary>
+        public void PlayRaysBurst(Vector3 center, float worldDiameter, float dur, float brightness, Color hdrTint)
+        {
+            if (worldDiameter <= 0.01f) return;
+            if (_raysSprite == null)
+            {
+                // Soft round glow blob (VFX_Glow) — reads as an energy bloom with
+                // no directional artefact. (Was the directional light_rays.)
+                Texture2D rt = Resources.Load<Texture2D>("Particles/vfx_glow")
+                            ?? Resources.Load<Texture2D>("Particles/light_rays");
+                if (rt != null) _raysSprite = Sprite.Create(rt, new Rect(0, 0, rt.width, rt.height), new Vector2(0.5f, 0.5f), 200f);
+            }
+            if (_raysSprite == null) return;
+            if (_tier3Rays == null) _tier3Rays = MakeFXRenderer("Tier3Rays", _raysSprite, 53); // above meltdown (50)
+            StartCoroutine(FXScaleFade(_tier3Rays, center, worldDiameter, dur, hdrTint * brightness, true));
+        }
+
+        // Scale-up (ease-out) + bright-then-fade for an additive FX sprite. Unscaled
+        // time so it survives a hitstop. Optional slow spin (for the rays).
+        private IEnumerator FXScaleFade(SpriteRenderer sr, Vector3 center, float worldDiameter, float dur, Color hdr, bool spin)
+        {
+            sr.gameObject.SetActive(true);
+            sr.transform.position = new Vector3(center.x, center.y, -1.6f);
+            float spriteWorld = sr.sprite != null ? sr.sprite.bounds.size.x : 2.56f;
+            float maxScale   = worldDiameter / Mathf.Max(0.01f, spriteWorld);
+            float startScale = maxScale * 0.2f;
+            float rot = 0f;
+            float t = 0f;
+            while (t < dur)
+            {
+                t += Time.unscaledDeltaTime;
+                float k  = Mathf.Clamp01(t / dur);
+                float se = 1f - (1f - k) * (1f - k);
+                float s  = Mathf.Lerp(startScale, maxScale, se);
+                sr.transform.localScale = new Vector3(s, s, 1f);
+                if (spin) { rot += Time.unscaledDeltaTime * 55f; sr.transform.localRotation = Quaternion.Euler(0, 0, rot); }
+                float a = k < 0.25f ? 1f : 1f - ((k - 0.25f) / 0.75f); // hold bright, then fade
+                sr.color = new Color(hdr.r, hdr.g, hdr.b, a);
+                yield return null;
+            }
+            sr.gameObject.SetActive(false);
+        }
+
+        public void PlayBigBubble(Vector3 center, float worldDiameter, float inflateDur)
+        {
+            if (_glowSpriteBubble == null || worldDiameter <= 0.01f) return;
+            EnsureBigBubble();
+            StartCoroutine(BigBubbleCoroutine(center, worldDiameter, inflateDur));
+        }
+
+        private IEnumerator BigBubbleCoroutine(Vector3 center, float worldDiameter, float inflateDur)
+        {
+            SpriteRenderer b = _bigBubbleSR;
+            if (b == null) yield break;
+            b.gameObject.SetActive(true);
+            // Same glow plane as the per-tile bubbles (z = -1.5).
+            b.transform.position = new Vector3(center.x, center.y, -1.5f);
+
+            float spriteWorld = b.sprite != null ? b.sprite.bounds.size.x : 2.56f; // bubble@2x ≈ 2.56u @ scale 1
+            float maxScale   = worldDiameter / Mathf.Max(0.01f, spriteWorld);
+            float startScale = maxScale * 0.12f;
+            // The iridescent shader generates the colour; vertex-colour RGB is
+            // ignored, only ALPHA matters (controls overall opacity/fade).
+            const float BUBBLE_ALPHA = 0.72f;
+
+            // ── Inflate — fills like a bubble (ease-out: fast then settling) ──
+            float t = 0f;
+            while (t < inflateDur)
+            {
+                t += Time.unscaledDeltaTime;
+                float k = inflateDur > 0f ? Mathf.Clamp01(t / inflateDur) : 1f;
+                float eased = 1f - (1f - k) * (1f - k);
+                float s = Mathf.Lerp(startScale, maxScale, eased);
+                b.transform.localScale = new Vector3(s, s, 1f);
+                b.color = new Color(1f, 1f, 1f, BUBBLE_ALPHA);
+                yield return null;
+            }
+
+            // ── POP — brief over-expand + snap fade (the membrane bursting) ──
+            const float POP_DUR = 0.07f;
+            float p = 0f;
+            while (p < POP_DUR)
+            {
+                p += Time.unscaledDeltaTime;
+                float k = Mathf.Clamp01(p / POP_DUR);
+                float s = Mathf.Lerp(maxScale, maxScale * 1.18f, k);
+                b.transform.localScale = new Vector3(s, s, 1f);
+                b.color = new Color(1f, 1f, 1f, BUBBLE_ALPHA * (1f - k));
+                yield return null;
+            }
+
+            b.gameObject.SetActive(false);
         }
 
         /// <summary>
@@ -462,20 +641,27 @@ namespace WordDrop
             overlay.transform.position = new Vector3(worldPos.x, worldPos.y, -0.45f);
 
             SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
-            sr.sprite = _heatAuraSprite;
+            // Square_glow (soft blurred square) instead of square_aura — softer,
+            // more subtle falloff. Loaded lazily; falls back to the heat aura.
+            if (_squareGlowSprite == null)
+            {
+                Texture2D sg = Resources.Load<Texture2D>("Particles/square_glow");
+                if (sg != null) _squareGlowSprite = Sprite.Create(sg, new Rect(0, 0, sg.width, sg.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            sr.sprite = _squareGlowSprite != null ? _squareGlowSprite : _heatAuraSprite;
             sr.material = _additiveMat;
             sr.sortingOrder = 28; // above tiles (5/6), below bubble (29) and fragments (31)
 
-            // square_aura native size = 2.56 world units (256px @ ppu=100).
             // FIXED scale — does not animate. Sized close to one tile width so
-            // the soft falloff extends just slightly past tile edges.
-            float nativeSize = _heatAuraSprite.bounds.size.x;
-            float fixedScale = (cellSize * 0.85f) / Mathf.Max(nativeSize, 0.001f);
+            // the soft falloff extends just slightly past tile edges. Use the
+            // ACTUAL sprite's native size (Square_glow differs from square_aura).
+            float nativeSize = sr.sprite.bounds.size.x;
+            float fixedScale = (cellSize * 1.7f) / Mathf.Max(nativeSize, 0.001f); // bigger — was 1.3 (Spencer: make it bigger)
             overlay.transform.localScale = new Vector3(fixedScale, fixedScale, 1f);
 
             // Constant low alpha — subtle frame, not a peaked flash. Brief
             // fade-in at start + fade-out at end so it doesn't pop in/out.
-            const float HOLD_ALPHA = 0.20f;
+            const float HOLD_ALPHA = 0.14f; // softer — was 0.22 (Spencer: too strong)
             const float FADE_IN  = 0.04f; // first 40ms ramp up
             const float FADE_OUT = 0.06f; // last 60ms ramp down
 
@@ -523,12 +709,11 @@ namespace WordDrop
             bubble.transform.position = new Vector3(pos.x, pos.y, -1.5f);
 
             SpriteRenderer sr = bubble.AddComponent<SpriteRenderer>();
-            sr.sprite = _glowSpriteBubble;
-            // Alpha-blended overlay (NOT additive). CC bubbles are translucent
-            // — you see through them to the candy. Additive on a white-radial
-            // texture would clip to white at the center (bloom amplifier rule).
-            // Leaving sr.material unset → SpriteRenderer uses the default
-            // Sprites/Default material (Blend SrcAlpha OneMinusSrcAlpha).
+            sr.sprite = _circleSprite != null ? _circleSprite : _glowSpriteBubble; // VFX_Circle ring (2026-06-03 Spencer)
+            // Translucent (default Sprites/Default material) — you see THROUGH
+            // the bubble. The glow is a SEPARATE additive+HDR layer spawned just
+            // behind it (below), so the bubble stays see-through with a glow wash
+            // behind it — Spencer's CC reference.
             sr.sortingOrder = 29;
 
             float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
@@ -545,7 +730,30 @@ namespace WordDrop
             // Translucent overlay alpha — see-through, like a soap bubble.
             const float PEAK_ALPHA = 0.45f;
 
-            // Initial state — small, invisible.
+            // ── Glow BEHIND the bubble — additive + HDR so it blooms, sized a
+            //    touch larger so it washes out past the bubble's edges. ──
+            GameObject glowGO = new GameObject("Tier1PopBubbleGlow");
+            glowGO.transform.position = new Vector3(pos.x, pos.y, -1.52f); // just behind the bubble
+            SpriteRenderer glowSr = glowGO.AddComponent<SpriteRenderer>();
+            // VFX_Glow (soft round blob) for the glow-behind, per Spencer.
+            if (_vfxGlowSprite == null)
+            {
+                Texture2D gt = Resources.Load<Texture2D>("Particles/vfx_glow");
+                if (gt != null) _vfxGlowSprite = Sprite.Create(gt, new Rect(0, 0, gt.width, gt.height), new Vector2(0.5f, 0.5f), 200f);
+            }
+            glowSr.sprite = _vfxGlowSprite != null ? _vfxGlowSprite : _glowSpriteBubble;
+            glowSr.material = _additiveMat;
+            glowSr.sortingOrder = 28; // behind the bubble (29)
+            float glowStart = startScale * 1.25f, glowEnd = endScale * 1.25f;
+            glowGO.transform.localScale = new Vector3(glowStart, glowStart, 1f);
+            float bgHDR = WordDropFX.BubbleGlowHDR;
+            glowSr.color = new Color(tint.r * bgHDR, tint.g * bgHDR, tint.b * bgHDR, 0f); // HDR via FX Bloom Tuning slider
+            glowGO.transform.DOScale(new Vector3(glowEnd, glowEnd, 1f), duration).SetEase(DG.Tweening.Ease.OutQuart);
+            DOTween.Sequence()
+                .Append(DOTween.ToAlpha(() => glowSr.color, c => glowSr.color = c, 0.35f, duration * 0.05f).SetEase(DG.Tweening.Ease.OutQuad)) // was 0.5 — softer glow
+                .Append(DOTween.ToAlpha(() => glowSr.color, c => glowSr.color = c, 0f, duration * 0.95f).SetEase(DG.Tweening.Ease.InCubic));
+
+            // Initial state — small, invisible. Translucent (normal tint, default mat).
             bubble.transform.localScale = new Vector3(startScale, startScale, 1f);
             sr.color = new Color(tint.r, tint.g, tint.b, 0f);
 
@@ -571,6 +779,12 @@ namespace WordDrop
 
             yield return new WaitForSeconds(duration);
 
+            if (glowGO != null)
+            {
+                glowGO.transform.DOKill();
+                if (glowSr != null) glowSr.DOKill();
+                Destroy(glowGO);
+            }
             if (bubble != null)
             {
                 bubble.transform.DOKill();

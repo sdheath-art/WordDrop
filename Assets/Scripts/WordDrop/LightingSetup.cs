@@ -141,6 +141,9 @@ namespace WordDrop
             //   threshold 1.30: needs solid HDR push to bloom (was 1.20)
             //   intensity 0.20: very gentle amplification (was 0.35)
             //   scatter   0.30: tight halo spread (unchanged)
+            // Real values restored 2026-06-08 (the device-glow diagnostics — threshold 0,
+            // 0.85, 0.7 — confirmed bloom RENDERS on iOS but the whole scene is dimmed/clamped
+            // below ~0.7 there; root cause being chased separately). These are the editor look.
             bloom.threshold.value = 1.30f;
             bloom.intensity.value = 0.20f;
             bloom.scatter.value   = 0.30f;

@@ -1294,6 +1294,11 @@ namespace WordDrop
         /// </summary>
         public void RecordEditCells(params Vector2Int[] cells)
         {
+            // Tier-3 burst centers on the move that triggered it: the edited cell.
+            // (Set before the survival gate so it works in every mode.)
+            if (cells != null && cells.Length > 0)
+                WordDropFX.LastTriggerCell = cells[0];
+
             if (!SurvivalManager.IsSurvivalMode) return;
             _lastEditCells.Clear();
             if (cells == null) return;
@@ -1589,7 +1594,7 @@ namespace WordDrop
         /// responsible for running the resolution coroutine and calling
         /// CompleteDropBookkeeping afterward.
         /// </summary>
-        public bool UseRewrite(int handSlot, int targetCol, int targetRow)
+        public bool UseRewrite(int handSlot, int targetCol, int targetRow, bool isWild = false)
         {
             if (!_isMatchActive || _isGameOver)
             {
@@ -1631,8 +1636,15 @@ namespace WordDrop
             char handLetter = _hands[player].GetSlot(handSlot);
             char oldBoardLetter = cell.Letter;
 
-            // Block same-letter rewrite — prevents re-scoring expired words for free
-            if (handLetter == oldBoardLetter)
+            // Block same-letter rewrite — prevents re-scoring expired words for free.
+            // Wilds are exempt (no committed letter; always a real change). 2026-06-08
+            // Spencer: ALSO allow a same-letter rewrite when the target cell already sits
+            // in a real word that isn't primed/scored yet — this lets you spend an edit to
+            // "claim" a word a rising row formed (e.g. K-for-K to prime PEAK / trigger an
+            // explosion). The CellHasUnscoredWord gate skips already-scored words, so this
+            // can't re-score for free; it just costs an edit charge each time.
+            if (!isWild && handLetter == oldBoardLetter
+                && !(RulesEngine.Instance != null && RulesEngine.Instance.CellHasUnscoredWord(targetCol, targetRow)))
             {
 //                 Debug.Log($"[MatchController] UseRewrite: same letter '{handLetter}' — no-op.");
                 return false;
@@ -1642,8 +1654,13 @@ namespace WordDrop
             if (!UnlimitedRewrites)
                 _rewritesRemaining[player]--;
 
-            // Clear the hand slot (will be refilled in CompleteDropBookkeeping)
-            _hands[player].SetSlot(handSlot, '\0');
+            // Clear the hand slot (will be refilled in CompleteDropBookkeeping).
+            // Wild slots route through ConsumeWildSlot so wild-expiry tracking clears
+            // properly; a plain SetSlot would leave the wild clock dangling.
+            if (isWild)
+                _hands[player].ConsumeWildSlot(handSlot);
+            else
+                _hands[player].SetSlot(handSlot, '\0');
 
 //             Debug.Log($"[MatchController] UseRewrite: player={player} slot={handSlot} " +
                       // $"'{handLetter}' replaces '{oldBoardLetter}' at ({targetCol},{targetRow}) " +

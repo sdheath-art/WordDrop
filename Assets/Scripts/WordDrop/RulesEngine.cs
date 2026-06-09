@@ -428,6 +428,27 @@ namespace WordDrop
         /// <summary>Public wrapper for ScanEntireBoard (for legal swap validation).</summary>
         public List<RulesWordMatch> ScanEntireBoardPublic() => ScanEntireBoard();
 
+        /// <summary>Public wrapper for the wild-resolving seed scan. Swap/edit paths use
+        /// this instead of raw FindNewWords so a word that runs THROUGH an uncommitted wild
+        /// is detected: ScanSeedCellsOnly first resolves any uncommitted wilds (committing a
+        /// letter), seeds the resolved cells, and returns words through the given seeds plus
+        /// those wilds. Raw FindNewWords treats an uncommitted wild as a wall, so words like
+        /// PAD (P-wild-D) formed by a swap stayed invisible until the next drop. 2026-06-08.</summary>
+        public List<RulesWordMatch> ScanSeedCellsPublic(List<Vector2Int> seedCells) => ScanSeedCellsOnly(seedCells);
+
+        /// <summary>True if the tile at (col,row) currently sits in at least one valid
+        /// dictionary word. Lets an otherwise-no-op same-letter edit/swap "claim" a real
+        /// word the player didn't build (e.g. one a rising row formed) — priming it or
+        /// triggering a connected detonation. Does NOT exclude already-scored words:
+        /// re-claiming costs an edit charge each time (Spencer's call), and a currently
+        /// primed word is already blocked upstream (can't edit/swap a primed tile).
+        /// Non-mutating (does not commit wilds). 2026-06-08 Spencer.</summary>
+        public bool CellHasUnscoredWord(int col, int row)
+        {
+            if (!InBounds(col, row) || _board[col, row] == null) return false;
+            return FindNewWords(col, row).Count > 0;
+        }
+
         // ── Unity lifecycle ───────────────────────────────────────────────────────
 
         private void Awake()
@@ -449,6 +470,11 @@ namespace WordDrop
         {
             if (!InBounds(col, row)) return;
             _board[col, row] = data;
+            // 2026-06-03 Spencer bug: keep the cell's OWN coordinates in sync with
+            // where it now lives. The Jester Hat shuffle relocates cells via SetCell;
+            // without this, data.Row/Col stayed stale → ApplyGravityInData read the
+            // wrong source rows → scrambled gravity, collisions, desync mess.
+            if (data != null) { data.Col = col; data.Row = row; }
         }
 
         public RulesCellData GetCell(int col, int row)
@@ -499,6 +525,50 @@ namespace WordDrop
             }
         }
 
+        /// <summary>Break-Rocks: drop `count` anchored rocks onto distinct columns. Rocks are
+        /// IsStone (non-matchable, break on adjacent detonation) + IsAnchored (resist gravity —
+        /// they float in place while tiles around them fall). Placed just above each tall column's
+        /// stack and clamped off the top row so a rising row can't shove them off before the player
+        /// reaches them (Q2 caveat). Auto-placement is the feel-test atom; authored positions come
+        /// with the per-level config. 2026-06-09.</summary>
+        public void SpawnRocks(int count)
+        {
+            var cols = new System.Collections.Generic.List<Vector2Int>(); // x=col, y=height
+            for (int c = 0; c < COLS; c++)
+            {
+                int h = 0;
+                for (int r = 0; r < ROWS; r++)
+                    if (_board[c, r] != null) h = r + 1;
+                if (h > 0) cols.Add(new Vector2Int(c, h));
+            }
+            cols.Sort((a, b) => b.y.CompareTo(a.y)); // tallest first = distinct, well-supported columns
+            int n = Mathf.Min(count, cols.Count);
+            for (int i = 0; i < n; i++)
+            {
+                int col     = cols[i].x;
+                int restRow = Mathf.Clamp(cols[i].y, 0, ROWS - 2); // just above the stack, never the top row
+                _board[col, restRow] = new RulesCellData
+                {
+                    Letter     = '#',
+                    Col        = col,
+                    Row        = restRow,
+                    IsStone    = true,
+                    IsAnchored = true,
+                };
+            }
+            Debug.Log($"[BreakRocks] SpawnRocks placed {n} anchored rock(s).");
+        }
+
+        /// <summary>Break-Rocks: how many anchored rocks remain on the board (objective polls this).</summary>
+        public int CountAnchoredCells()
+        {
+            int n = 0;
+            for (int c = 0; c < COLS; c++)
+                for (int r = 0; r < ROWS; r++)
+                    if (_board[c, r] != null && _board[c, r].IsAnchored) n++;
+            return n;
+        }
+
         /// <summary>Column of a drop-target sitting on the bottom row (row 0), or -1.
         /// Poll-based bottom check for the prototype payoff.</summary>
         public int FindDropTargetAtBottomRow()
@@ -538,6 +608,30 @@ namespace WordDrop
 
         public bool IsColumnAvailable(int col)
             => GetLowestEmptyRow(col) >= 0;
+
+        /// <summary>2026-06-03 Spencer: preview helper. If a WILD dropped in `col`
+        /// would form a word, returns the letter it would RESOLVE to (the one that
+        /// makes the longest word through the drop cell, alphabetical tiebreak).
+        /// Returns '\0' if the column is full or no letter makes any word.
+        /// Non-mutating (uses SimulateDropWithTriggerCheck).</summary>
+        public char PreviewWildResolveLetter(int col, int playerIndex)
+        {
+            if (GetLowestEmptyRow(col) < 0) return '\0';
+            char best = '\0';
+            int bestLen = 0;
+            for (char ch = 'A'; ch <= 'Z'; ch++)
+            {
+                bool wouldTrigger;
+                var matches = SimulateDropWithTriggerCheck(col, ch, playerIndex, out wouldTrigger);
+                if (matches == null || matches.Count == 0) continue;
+                int len = 0;
+                for (int i = 0; i < matches.Count; i++)
+                    if (matches[i].Word != null && matches[i].Word.Length > len)
+                        len = matches[i].Word.Length;
+                if (len > bestLen) { bestLen = len; best = ch; } // strict > → alphabetical tiebreak
+            }
+            return best;
+        }
 
         /// <summary>How many tiles are in this column (0 = empty, ROWS = full).</summary>
         public int GetColumnHeight(int col)
@@ -587,6 +681,28 @@ namespace WordDrop
             for (int col = 0; col < COLS; col++)
                 if (_board[col, topRow] != null) return true;
             return false;
+        }
+
+        /// <summary>
+        /// How many more rising rows the board can absorb before topping out — the
+        /// empty-row headroom above the HIGHEST occupied cell (gaps-aware; not the
+        /// lowest-empty-row used by GetColumnHeight). 0 = a tile is already in the top
+        /// row, so the very next rise overflows = game over. Drives the HUD danger
+        /// indicator. Dynamic: clearing a tall stack raises it, a rise lowers it.
+        /// </summary>
+        public int GetRisesUntilTopOut()
+        {
+            int highestOccupiedRow = -1;
+            for (int row = ROWS - 1; row >= 0; row--)
+            {
+                for (int col = 0; col < COLS; col++)
+                {
+                    if (_board[col, row] != null) { highestOccupiedRow = row; break; }
+                }
+                if (highestOccupiedRow >= 0) break;
+            }
+            // Empty board → full headroom. Else headroom = rows above the highest tile.
+            return (ROWS - 1) - highestOccupiedRow;
         }
 
         /// <summary>
@@ -1403,6 +1519,82 @@ namespace WordDrop
             return newWords;
         }
 
+        /// <summary>Scans the ENTIRE board and primes every valid word that isn't
+        /// already primed/scored. Used by the Jester Hat shuffle so a rearrangement
+        /// that happens to form words primes them (the booster's upside). Mirrors
+        /// DetectAndPrimeAtCell but board-wide. Turn-neutral (uses the current
+        /// _globalTurn, does NOT tick). Returns the newly-primed words so the caller
+        /// can apply the glow.</summary>
+        public List<RulesWordMatch> PrimeAllWordsOnBoard()
+        {
+            var newWords = new List<RulesWordMatch>();
+            var justPrimedIds = new HashSet<int>();
+            var allWords = ScanEntireBoard();
+
+            for (int i = 0; i < allWords.Count; i++)
+            {
+                string key = allWords[i].Word + "|" + allWords[i].CellKey;
+                if (_scoredWordKeys.Contains(key)) continue; // already primed or scored
+
+                var match = allWords[i];
+                int score = CalculateWordScore(match.Word, match.WildLetterIndices);
+                match.Score = score;
+
+                int expiresOn = _globalTurn + GetFuseLength(match.Word.Length);
+                int primedId = _primedRegistry.AddPrimedWord(
+                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score);
+                justPrimedIds.Add(primedId);
+
+                _scoredWordKeys.Add(key);
+                newWords.Add(match);
+            }
+
+            if (justPrimedIds.Count > 0)
+                ResetExistingPrimedWordsForNewPrime(justPrimedIds, _globalTurn);
+
+            return newWords;
+        }
+
+        /// <summary>
+        /// Resolves any uncommitted wilds board-wide and primes ONLY the words that run
+        /// through a wild that JUST resolved this call — nothing else. Used by the rising
+        /// row so a wild the rise slides into position (e.g. P-wild-D → PAD, X-I-wild → FIX)
+        /// lights up immediately, WITHOUT priming incidental all-real-letter words the rise
+        /// happens to align (those must come from a player action — the SEAR case). Works by
+        /// passing an EMPTY seed list to ScanSeedCellsOnly: it seeds only the wilds it
+        /// resolved, so a rise with no newly-resolvable wild primes nothing. Turn-neutral.
+        /// Returns the newly-primed words so the caller can apply the glow. 2026-06-08.
+        /// </summary>
+        public List<RulesWordMatch> PrimeWildWordsAfterRise()
+        {
+            var newWords = new List<RulesWordMatch>();
+            var justPrimedIds = new HashSet<int>();
+            var wildWords = ScanSeedCellsOnly(new List<Vector2Int>());
+
+            for (int i = 0; i < wildWords.Count; i++)
+            {
+                string key = wildWords[i].Word + "|" + wildWords[i].CellKey;
+                if (_scoredWordKeys.Contains(key)) continue; // already primed or scored
+
+                var match = wildWords[i];
+                int score = CalculateWordScore(match.Word, match.WildLetterIndices);
+                match.Score = score;
+
+                int expiresOn = _globalTurn + GetFuseLength(match.Word.Length);
+                int primedId = _primedRegistry.AddPrimedWord(
+                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score);
+                justPrimedIds.Add(primedId);
+
+                _scoredWordKeys.Add(key);
+                newWords.Add(match);
+            }
+
+            if (justPrimedIds.Count > 0)
+                ResetExistingPrimedWordsForNewPrime(justPrimedIds, _globalTurn);
+
+            return newWords;
+        }
+
         /// <summary>
         /// After a rising row shift, remap _scoredWordKeys to new cell positions.
         /// Only words that were ALREADY scored keep their "scored" status at the
@@ -1853,11 +2045,16 @@ namespace WordDrop
                     int detonationBonus = 0;
                     int longestPrimedWord = 0;
                     var primedSplashSources = new List<List<Vector2Int>>();
+                    // Complete record of every primed word that blows up here (trigger +
+                    // connected group + splash) for objective tracking. 2026-06-08.
+                    var explodedWords = new List<ExplodedWordInfo>();
 
                     foreach (int pid in primedIdsToExplode)
                     {
                         PrimedWordRegistry.PrimedWord pw = _primedRegistry.GetById(pid);
                         if (pw == null) continue;
+
+                        explodedWords.Add(new ExplodedWordInfo { Word = pw.Word, OwnerPlayerIndex = pw.OwnerPlayer });
 
                         if (pw.Word.Length > longestPrimedWord)
                             longestPrimedWord = pw.Word.Length;
@@ -1961,6 +2158,8 @@ namespace WordDrop
                             var splashPw = _primedRegistry.GetById(splashPid);
                             if (splashPw == null) continue;
 
+                            explodedWords.Add(new ExplodedWordInfo { Word = splashPw.Word, OwnerPlayerIndex = splashPw.OwnerPlayer });
+
                             if (splashPw.Cells != null)
                                 for (int c = 0; c < splashPw.Cells.Count; c++)
                                     allCellsToRemove.Add(splashPw.Cells[c]);
@@ -1981,9 +2180,10 @@ namespace WordDrop
                     // Emit TilesExploded
                     var explodeEvt = new TilesExplodedEvent
                     {
-                        RemovedCells = removedList,
-                        SourceWord   = "triggered",
-                        ChainStep    = chainStep,
+                        RemovedCells  = removedList,
+                        SourceWord    = "triggered",
+                        ChainStep     = chainStep,
+                        ExplodedWords = explodedWords,
                     };
                     result.Explosions.Add(explodeEvt);
                     OnTilesExploded?.Invoke(explodeEvt);
@@ -2181,12 +2381,21 @@ namespace WordDrop
 
             for (int col = 0; col < COLS; col++)
             {
-                // Collect surviving cells bottom to top
+                // Collect surviving cells bottom to top, tracking the ACTUAL board
+                // row each was found at. 2026-06-03 Spencer bug: the move source
+                // below must use this found row, NOT cell.Row — a Jester Hat shuffle
+                // can leave cell.Row stale (relocated in _board without updating the
+                // field), and trusting cell.Row produced scrambled gravity moves →
+                // collisions → desync mess.
                 List<RulesCellData> surviving = new List<RulesCellData>();
+                List<int> survivingRows = new List<int>();
                 for (int row = 0; row < ROWS; row++)
                 {
                     if (_board[col, row] != null)
+                    {
                         surviving.Add(_board[col, row]);
+                        survivingRows.Add(row);
+                    }
                 }
 
                 // If column is full or empty, nothing to compact
@@ -2206,12 +2415,26 @@ namespace WordDrop
                 for (int row = 0; row < ROWS; row++)
                     _board[col, row] = null;
 
-                // Repack from row 0 upward
+                // Repack from row 0 upward. Anchored rocks DON'T fall — they stay at their found
+                // row and act as a fixed floor; other tiles compact into the free rows below the
+                // next anchor (and above any anchor below them). 2026-06-09.
+                int writeRow = 0;
                 for (int i = 0; i < surviving.Count; i++)
                 {
                     RulesCellData cell  = surviving[i];
-                    int oldRow          = cell.Row;
-                    int newRow          = i;
+                    int oldRow          = survivingRows[i]; // actual board row (robust to stale cell.Row)
+                    int newRow;
+
+                    if (cell.IsAnchored)
+                    {
+                        newRow   = oldRow;        // fixed — never moves
+                        writeRow = oldRow + 1;    // following tiles stack on top of it
+                    }
+                    else
+                    {
+                        newRow   = writeRow;
+                        writeRow++;
+                    }
 
                     cell.Row = newRow;
                     cell.Col = col;
@@ -2353,10 +2576,21 @@ namespace WordDrop
         /// </summary>
         private List<RulesWordMatch> ScanSeedCellsOnly(List<Vector2Int> seedCells)
         {
-            ResolveUncommittedWilds();
+            var resolvedWilds = ResolveUncommittedWilds();
 
             var results  = new List<RulesWordMatch>();
             var seenKeys = new HashSet<string>();
+
+            // 2026-06-08 Spencer: include just-resolved wild cells as SEEDS. A wild that
+            // resolves into a word on a LATER turn just became meaningful; without seeding
+            // it, the seed-scan misses the word formed through it, so it never primes or
+            // triggers (the delayed-wild bug). ScanEntireBoard already covers everything.
+            if (resolvedWilds != null && resolvedWilds.Count > 0)
+            {
+                seedCells = (seedCells == null) ? new List<Vector2Int>() : new List<Vector2Int>(seedCells);
+                for (int i = 0; i < resolvedWilds.Count; i++)
+                    if (!seedCells.Contains(resolvedWilds[i])) seedCells.Add(resolvedWilds[i]);
+            }
 
             if (seedCells == null || seedCells.Count == 0) return results;
 
@@ -2412,8 +2646,9 @@ namespace WordDrop
         /// real letter. Two adjacent wilds cannot mutually resolve — they stay
         /// uncommitted until a real letter lands next to them.
         /// </summary>
-        private void ResolveUncommittedWilds()
+        private List<Vector2Int> ResolveUncommittedWilds()
         {
+            var resolvedCells = new List<Vector2Int>();
             for (int col = 0; col < COLS; col++)
             {
                 for (int row = 0; row < ROWS; row++)
@@ -2454,6 +2689,10 @@ namespace WordDrop
 
                     if (bestLetter != '\0')
                     {
+                        // 2026-06-08 Spencer: a wild whose committed letter CHANGED (incl. a
+                        // first-time '\0'→X resolution) is a NEW seed — words through it must
+                        // be (re)scanned so a delayed-wild word actually primes/triggers.
+                        if (oldLetter != bestLetter) resolvedCells.Add(wildPos);
                         Debug.Log($"[WildResolve] OK ({col},{row}) '{oldLetter}'→'{bestLetter}' (longest word len={bestLen})");
                     }
                     else
@@ -2464,6 +2703,7 @@ namespace WordDrop
                     }
                 }
             }
+            return resolvedCells;
         }
 
         /// <summary>
@@ -3327,10 +3567,12 @@ namespace WordDrop
         /// Returns null if the cell is invalid, empty, not owned by the player,
         /// or contains a primed tile.
         /// </summary>
-        public StepResult BeginRewrite(int col, int row, char newLetter, int playerIndex)
+        public StepResult BeginRewrite(int col, int row, char newLetter, int playerIndex, bool isWild = false)
         {
             if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return null;
-            if (newLetter == '\0') { Debug.LogError("[RulesEngine] BeginRewrite: REJECTED null letter"); return null; }
+            // A wild rewrite carries no letter ('\0' is expected); only reject a null
+            // letter for a normal (non-wild) rewrite.
+            if (!isWild && newLetter == '\0') { Debug.LogError("[RulesEngine] BeginRewrite: REJECTED null letter"); return null; }
 
             RulesCellData existing = _board[col, row];
             if (existing == null) return null;
@@ -3341,15 +3583,24 @@ namespace WordDrop
 
             char oldLetter = existing.Letter;
 
-            // Overwrite the cell
+            // Overwrite the cell. For a wild rewrite, place an uncommitted wild
+            // (Letter='\0', IsWild=true) exactly like a dropped wild — it then resolves
+            // through ResolveUncommittedWilds to whatever forms a word at this cell.
             var cellData = new RulesCellData
             {
-                Letter      = char.ToUpper(newLetter),
+                Letter      = isWild ? '\0' : char.ToUpper(newLetter),
                 Col         = col,
                 Row         = row,
                 PlayerIndex = playerIndex,
+                IsWild      = isWild,
             };
             _board[col, row] = cellData;
+            // Wilds never carry gold/cyan bonus — clear any on the target cell.
+            if (isWild)
+            {
+                _bonusCells[col, row] = false;
+                _cyanCells[col, row]  = false;
+            }
 
             // Purge scored word keys that reference this cell so new words can be detected
             PurgeScoredKeysForCells(new List<Vector2Int> { new Vector2Int(col, row) });
@@ -3586,6 +3837,27 @@ namespace WordDrop
                 foreach (var pw in expiredList)
                     _scoredWordKeys.Remove(pw.Word + "|" + pw.CellsString());
 //                 Debug.Log($"[RulesEngine] FinalizeDrop: expired {expired} primed word(s), scored keys purged");
+
+                // 2026-06-03 Spencer: diffuse cue — these words extinguished without
+                // detonating. Collect their tiles and hand them to WordDropFX for a
+                // DEFERRED springy pop (deferred so the rising row can't DOComplete it
+                // away). Tile objects survive gravity/rise; the pop lands wherever they
+                // end up.
+                if (GridManager.Instance != null && WordDropFX.Instance != null)
+                {
+                    var diffuseTiles = new List<Tile>();
+                    foreach (var pw in expiredList)
+                    {
+                        if (pw.Cells == null) continue;
+                        for (int c = 0; c < pw.Cells.Count; c++)
+                        {
+                            Tile t = GridManager.Instance.GetTile(pw.Cells[c].x, pw.Cells[c].y);
+                            if (t != null) diffuseTiles.Add(t);
+                        }
+                    }
+                    Debug.Log($"[DiffusePop] FinalizeDrop expired {expired} word(s) → queued {diffuseTiles.Count} tile(s) (turn={_globalTurn})");
+                    WordDropFX.Instance.QueueDiffusePops(diffuseTiles);
+                }
             }
 
             RemoveInvalidPrimedWords();
@@ -4153,6 +4425,9 @@ namespace WordDrop
                 PrimedWordRegistry.PrimedWord pw = _primedRegistry.GetById(pid);
                 if (pw == null) continue;
 
+                // Objective tracking: this primed word is about to explode (live path). 2026-06-09.
+                ObjectiveManager.Instance?.NotifyWordExploded(pw.Word, pw.OwnerPlayer);
+
                 if (pw.Word.Length > longestPrimedWord)
                     longestPrimedWord = pw.Word.Length;
 
@@ -4251,7 +4526,11 @@ namespace WordDrop
                                 var primedAt = _primedRegistry.GetPrimedWordsContaining(trigWord.Cells[tc]);
                                 if (primedAt != null)
                                     for (int p = primedAt.Count - 1; p >= 0; p--)
+                                    {
+                                        // Objective tracking: trigger-word cells take these primed words with them. 2026-06-09.
+                                        ObjectiveManager.Instance?.NotifyWordExploded(primedAt[p].Word, primedAt[p].OwnerPlayer);
                                         _primedRegistry.RemovePrimedWord(primedAt[p].Id);
+                                    }
                             }
                         }
                     }
@@ -4323,6 +4602,7 @@ namespace WordDrop
                                 var cell = new Vector2Int(col, row);
                                 if (alreadyExploded.Contains(cell)) continue;
                                 if (!InBounds(col, row) || _board[col, row] == null) continue;
+                                if (_board[col, row].IsDropTarget) continue; // drop-targets only exit at the bottom
 
                                 var data = _board[col, row];
                                 int letterPts = LetterData.GetPoints(data.Letter);
@@ -4353,6 +4633,7 @@ namespace WordDrop
                                 var cell = new Vector2Int(col, row);
                                 if (alreadyExploded.Contains(cell)) continue;
                                 if (!InBounds(col, row) || _board[col, row] == null) continue;
+                                if (_board[col, row].IsDropTarget) continue; // drop-targets only exit at the bottom
 
                                 var data = _board[col, row];
                                 int letterPts = LetterData.GetPoints(data.Letter);
@@ -4385,6 +4666,9 @@ namespace WordDrop
                         {
                             var pw = _primedRegistry.GetById(pid);
                             if (pw == null) continue;
+
+                            // Objective tracking: splash swept this primed word into the blast. 2026-06-09.
+                            ObjectiveManager.Instance?.NotifyWordExploded(pw.Word, pw.OwnerPlayer);
 
                             // Sweep remaining cells of this primed word (splash may
                             // have cleared some already).
@@ -4708,6 +4992,10 @@ namespace WordDrop
         // so the only way to move it down is to clear cells beneath it. Reaching
         // row 0 (bottom) = "collected". Throwaway — gated behind LevelDebugMenu.
         public bool IsDropTarget  { get; set; }
+        // ANCHORED rock (2026-06-09): a stone that does NOT fall with gravity — it stays fixed at
+        // its cell so it can be placed anywhere (e.g. near the top) as a "break the box" obstacle.
+        // Breaks like any stone (adjacent detonation). Other tiles fall around it.
+        public bool IsAnchored    { get; set; }
     }
 
     public enum WordDirection

@@ -48,9 +48,9 @@ namespace WordDrop
         // a SINGLE solid panel (no visible inner frame). Same pattern as the
         // original dark-navy panel — just at a different value.
         // See project_wordrop_visual_direction_2026_05_30.
-        private static readonly Color FRAME_OUTER    = new Color(0.45f, 0.40f, 0.50f, 1f);  // matches BOARD_INNER — single panel
+        private static readonly Color FRAME_OUTER    = new Color(0f, 0.463f, 0.690f, 1f);  // #0076b0 (2026-06-04 Spencer) — matches BOARD_INNER, single panel
         private static readonly Color FRAME_EDGE     = new Color(0.220f, 0.270f, 0.540f, 1f);  // brighter top lip — sculpted
-        private static readonly Color BOARD_INNER    = new Color(0.45f, 0.40f, 0.50f, 1f);  // Candy-Crush-style desaturated stage
+        private static readonly Color BOARD_INNER    = new Color(0f, 0.463f, 0.690f, 1f);  // #0076b0 (2026-06-04 Spencer)
 
         // Cells: readable against board — lighter face, dark inset border
         private static readonly Color CELL_FILL_COLOR   = new Color(0.150f, 0.190f, 0.410f, 1f);  // slightly brighter than board inner
@@ -73,6 +73,26 @@ namespace WordDrop
         private CellData[,]    _cells      = new CellData[COLS, MAX_ROWS];
         private Tile[,]        _tiles      = new Tile[COLS, MAX_ROWS];
         private GameObject[,]  _cellObjects = new GameObject[COLS, MAX_ROWS];
+
+        // 2026-06-05 Spencer: authored cell-slot liner (Resources/menu psds/cell_liner.psd)
+        // stamped on every cell. Tunable LIVE in the Inspector (Play mode) — see Update() —
+        // so the look adjusts without recompiling; re-saving the PSD hot-reloads the art.
+        // 2026-06-05 Spencer: TEMP compile-time switch — OFF to isolate device frame drops.
+        // Flip back to true to restore the cell liner.
+        private const bool CELL_LINER_ENABLED = false;
+        [Header("Cell Liner (tune live in Play mode)")]
+        [SerializeField] private bool  _cellLinerEnabled = true;
+        [SerializeField, Range(0.5f, 1.3f)] private float _cellLinerScale   = 0.95f; // 2026-06-05 Spencer: back to original. Size as a fraction of the cell pitch.
+        [SerializeField] private Color _cellLinerTint    = Color.white;
+        [SerializeField, Range(0f, 1f)]     private float _cellLinerOpacity = 1f;
+        private SpriteRenderer[,] _cellLinerSRs = new SpriteRenderer[COLS, MAX_ROWS];
+        private Sprite _cellLinerSprite;
+
+        // 2026-06-05 Spencer: live BOARD shadow darkness (multiply _Strength). Applied to
+        // Tile's static shadow material every frame, so dragging this in Play mode dials
+        // the board drop-shadow darkness without recompiling.
+        [Header("Board Shadow (tune live in Play mode)")]
+        [SerializeField, Range(0f, 2f)] private float _boardShadowStrength = 0.48f;
 
         // ---------------------------------------------------------------------------
         // Private refs
@@ -214,7 +234,7 @@ namespace WordDrop
         // per side; inter-tile gap grows 15 → 18 PSD. Tile visual size stays
         // 150 PSD (Tile.cs TILE_DISPLAY_RATIO MUST stay in sync — currently
         // 150f / 168f. If you change pitch, update Tile.cs to match.)
-        private const float PSD_CELL_PITCH = 168f;
+        private const float PSD_CELL_PITCH = 172f; // 2026-06-05 Spencer: 168→172, board a hair bigger + wider tile spacing (gap 21→25 PSD; tile stays 147)
 
         private float PsdToWorld(float psdPx)
         {
@@ -340,7 +360,16 @@ namespace WordDrop
             // legacy 16%-of-cellSize uniform padding.
             if (SurvivalManager.IsSurvivalMode)
             {
-                CreateBackgroundPanel(PsdToWorld(PSD_BOARD_W), PsdToWorld(PSD_BOARD_H));
+                // 2026-06-04 Spencer: even margins — board now WRAPS the cell area with
+                // padding = HALF the inter-tile gap on every side, so the distance from
+                // the board edge to the outer tiles equals the gap between tiles. (Was
+                // PSD-pinned 1110×1420, whose ~51 PSD side margin was fatter than the
+                // 21 PSD tile gap.) The outer tile is already inset half-a-gap from the
+                // cell-area edge, so half-gap padding makes board→tile == one full gap.
+                // gap = CellSize*(1 - TILE_DISPLAY_RATIO) where ratio = 147/172.
+                float halfGapPad = CellSize * (1f - 147f / 172f) * 0.5f;
+                CreateBackgroundPanel((GridRight - GridLeft) + halfGapPad * 2f,
+                                      (GridTop   - GridBottom) + halfGapPad * 2f);
             }
             else
             {
@@ -357,8 +386,20 @@ namespace WordDrop
                 texSize, texSize, radius,
                 CELL_FILL_COLOR, CELL_BORDER_COLOR, border);
 
-            // Cell background squares hidden — just the dark panel behind tiles
-            // Keep the _cellObjects array populated with empty GOs for position tracking
+            // 2026-06-05 Spencer: load the authored cell-slot liner once. Imported as a
+            // Default texture, so load as Texture2D and build the sprite in code (full
+            // frame; sized per cell via _cellLinerScale in ApplyCellLinerTuning).
+            // CELL_LINER_ENABLED is a compile-time gate (temp OFF to isolate frame drops
+            // on device — guaranteed off in the build, no Inspector-serialization gotcha).
+            if (CELL_LINER_ENABLED && _cellLinerSprite == null)
+            {
+                Texture2D linerTex = Resources.Load<Texture2D>("menu psds/cell_liner");
+                if (linerTex != null)
+                    _cellLinerSprite = Sprite.Create(linerTex, new Rect(0, 0, linerTex.width, linerTex.height),
+                                                     new Vector2(0.5f, 0.5f), 100f);
+            }
+
+            // Each cell GO carries the liner SpriteRenderer (order 1: above board, below tiles).
             for (int col = 0; col < COLS; col++)
             {
                 for (int row = 0; row < ROWS; row++)
@@ -369,11 +410,52 @@ namespace WordDrop
                     cellGO.transform.SetParent(_gridRoot.transform, false);
                     cellGO.transform.position = worldPos;
 
-                    // No SpriteRenderer — cells are invisible
+                    if (_cellLinerSprite != null)
+                    {
+                        var lsr = cellGO.AddComponent<SpriteRenderer>();
+                        lsr.sprite       = _cellLinerSprite;
+                        lsr.sortingOrder = 1; // above board panel (0), below tiles (5)
+                        _cellLinerSRs[col, row] = lsr;
+                    }
+
                     _cellObjects[col, row] = cellGO;
                     _cells[col, row]       = null;
                 }
             }
+
+            ApplyCellLinerTuning(); // apply size/tint/opacity immediately (also re-applied live in Update)
+        }
+
+        /// <summary>2026-06-05 Spencer: pushes the Inspector cell-liner values (size/tint/
+        /// opacity/enabled) onto every cell renderer. Called on build AND every frame in
+        /// Update, so dragging the sliders in Play mode updates the whole grid instantly.</summary>
+        private void ApplyCellLinerTuning()
+        {
+            if (_cellLinerSRs == null || _cellLinerSprite == null) return;
+            float spriteBounds = _cellLinerSprite.bounds.size.x > 0.0001f ? _cellLinerSprite.bounds.size.x : 1f;
+            float scale = (_cellLinerScale * CellSize) / spriteBounds;
+            Color c = _cellLinerTint; c.a *= Mathf.Clamp01(_cellLinerOpacity);
+            for (int col = 0; col < COLS; col++)
+                for (int row = 0; row < ROWS; row++)
+                {
+                    var sr = _cellLinerSRs[col, row];
+                    if (sr == null) continue;
+                    sr.enabled = _cellLinerEnabled;
+                    sr.transform.localScale = new Vector3(scale, scale, 1f);
+                    sr.color = c;
+                }
+        }
+
+        private void Update()
+        {
+            // Live cell-liner tuning — see ApplyCellLinerTuning. Cheap (stored SRs, no GetComponent).
+            ApplyCellLinerTuning();
+
+            // 2026-06-05 Spencer: \ flips the BOARD drop shadow A↔B in place (logs which).
+            if (Input.GetKeyDown(KeyCode.Backslash)) Tile.FlipBoardShadow();
+
+            // Live board-shadow darkness — drag _boardShadowStrength in the Inspector.
+            Tile.SetBoardShadowStrength(_boardShadowStrength);
         }
 
         private void CreateBackgroundPanel(float bgW, float bgH)
@@ -381,7 +463,18 @@ namespace WordDrop
 
             int bgTexW   = Mathf.Clamp(Mathf.RoundToInt(bgW * 150f), 64, 1024);
             int bgTexH   = Mathf.Clamp(Mathf.RoundToInt(bgH * 150f), 64, 1024);
-            int bgRadius = Mathf.Min(bgTexW, bgTexH) / 10;
+            // 2026-06-04 Spencer: match the board corners to the TILE corners — same
+            // ABSOLUTE world-space radius, so a board corner reads as the same curve as a
+            // tile corner (not proportional, which would balloon on the big board). The
+            // baked glossy tile's corner radius measures ~0.283 of the tile size; tile
+            // world size = CellSize * TILE_DISPLAY_RATIO (147/172). If the match looks
+            // off, tweak TILE_CORNER_FRAC.
+            const float TILE_CORNER_FRAC = 0.283f;
+            float tileRadiusWorld = CellSize * (147f / 172f) * TILE_CORNER_FRAC;
+            float texelsPerWorld  = bgTexW / Mathf.Max(bgW, 0.0001f);
+            int bgRadius = Mathf.Clamp(
+                Mathf.RoundToInt(tileRadiusWorld * texelsPerWorld),
+                4, Mathf.Min(bgTexW, bgTexH) / 2);
             int framePx  = Mathf.Max(4, Mathf.Min(bgTexW, bgTexH) / 14);
 
             // Two-layer frame: dark outer border → inner fill (no highlight edge — it distorts on stretch)
@@ -678,6 +771,7 @@ namespace WordDrop
 
                     // Special tile visuals
                     if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                    tile.SetAnchored(rulesCell.IsAnchored); // Break-Rocks: mirror fixed-rock flag
                     if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                     if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
                     if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
@@ -778,6 +872,7 @@ namespace WordDrop
                         tile.transform.position = worldPos;
 
                         if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                        tile.SetAnchored(rulesCell.IsAnchored); // Break-Rocks: mirror fixed-rock flag
                         if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                         if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
                         if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
@@ -920,9 +1015,11 @@ namespace WordDrop
 
             for (int col = 0; col < COLS; col++)
             {
-                // Collect all surviving tiles in this column, bottom to top
+                // Collect all surviving tiles in this column, bottom to top,
+                // tracking the actual row each was found at (needed for anchored rocks).
                 List<Tile>     columnTiles = new List<Tile>();
                 List<CellData> columnCells = new List<CellData>();
+                List<int>      columnRows  = new List<int>();
 
                 for (int row = 0; row < ROWS; row++)
                 {
@@ -930,6 +1027,7 @@ namespace WordDrop
                     {
                         columnTiles.Add(_tiles[col, row]);
                         columnCells.Add(_cells[col, row]);
+                        columnRows.Add(row);
                     }
                 }
 
@@ -943,12 +1041,28 @@ namespace WordDrop
                     _cells[col, row] = null;
                 }
 
-                // Repack from row 0 (floor) upward
+                // Repack from row 0 (floor) upward. Break-Rocks: anchored rocks DON'T fall —
+                // they stay at their found row and act as a fixed floor; other tiles compact
+                // into the free rows around them. Mirrors RulesEngine.ApplyGravityInData so the
+                // visual array stays index-aligned with the data layer (no desync). 2026-06-09.
+                int writeRow = 0;
                 for (int i = 0; i < columnTiles.Count; i++)
                 {
-                    int      newRow = i;
                     Tile     tile   = columnTiles[i];
                     CellData cell   = columnCells[i];
+                    int      oldRow = columnRows[i];
+                    int      newRow;
+
+                    if (tile.IsAnchored)
+                    {
+                        newRow   = oldRow;     // fixed — never moves
+                        writeRow = oldRow + 1; // following tiles stack on top of it
+                    }
+                    else
+                    {
+                        newRow   = writeRow;
+                        writeRow++;
+                    }
 
                     // Update grid position tracking
                     cell.Row = newRow;
@@ -1240,6 +1354,8 @@ namespace WordDrop
                     if (isStone)
                     {
                         tile.SetStoneVisual(true);
+                        var rockCell = RulesEngine.Instance?.GetCell(col, 0);
+                        tile.SetAnchored(rockCell != null && rockCell.IsAnchored); // Break-Rocks
                     }
                     else if (letter == '\0' || letter == '#')
                     {

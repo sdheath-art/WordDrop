@@ -152,9 +152,10 @@ namespace WordDrop
             intensity = Mathf.Clamp01(intensity);
             float speedScale = Mathf.Lerp(0.85f, 1.15f, intensity);
 
-            // Below bloom threshold (1.30) — sparkles render at their actual
-            // painted brightness without bloom-blur destroying the star shape.
-            Color baseColor = tint ?? new Color(1.10f, 1.10f, 1.15f, 1f);
+            // Brightness via the FX Bloom Tuning slider. Kept low because additive
+            // sparkles OVERLAP and sum — too bright and the overlaps wash white.
+            float sb = WordDropFX.SparkleBright;
+            Color baseColor = tint ?? new Color(sb, sb, sb * 1.06f, 1f);
 
             // 4 big flares + 7 small point dots per explosion. Counts scale
             // gently with intensity so smaller events still emit fewer.

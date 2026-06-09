@@ -114,6 +114,26 @@ namespace WordDrop
         private SpriteRenderer[]   _cardShadows  = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
 
         private Sprite           _spriteNormal;
+        // 2026-06-04 Spencer: baked glassy tile + separate baked drop shadow for the
+        // wild card (authored in PS). Built in code with a computed PPU so the 80%-fill
+        // tile lands at the exact rack size. _spriteTileShadow renders as the contact shadow.
+        private Sprite           _spriteGlossy;
+        private Sprite           _spriteTileShadow;
+        private Sprite           _spriteWildShadow; // 2026-06-04 Spencer: dedicated baked shadow for wild rack cards only
+        private static Material  s_shadowMultiplyMat; // 2026-06-04 Spencer: MULTIPLY blend for the baked shadow (matches PS layer)
+
+        // 2026-06-05 Spencer: in-editor A/B shadow compare. Flips the WHOLE board's card
+        // shadow between variant A (current) and B (a new one) IN PLACE — toggle in the
+        // Inspector or press the \ key in Play mode. Strengths are live. To test a new
+        // shadow, drop its texture's bare name (e.g. "shadow_b@2x") into _shadowTexB.
+        [Header("Shadow A/B Test ( \\ key flips in Play )")]
+        [SerializeField] private bool   _shadowUseB = false; // 2026-06-08 Spencer: default back to A (test_shadow@2x)
+        [SerializeField] private string _shadowTexA = "test_shadow@2x";
+        [SerializeField] private string _shadowTexB = "menu psds/shadowy"; // 2026-06-05 Spencer: test PSD shadow
+        [SerializeField, Range(0f, 2f)] private float _shadowStrengthA = 0.40f;
+        [SerializeField, Range(0f, 2f)] private float _shadowStrengthB = 0.40f;
+        private Sprite   _shadowSpriteA, _shadowSpriteB;
+        private Material _shadowMatA, _shadowMatB;
         private Sprite           _spriteSelected;
         private Sprite           _spriteSwap;
         private Sprite           _spriteSwapSelected;
@@ -125,6 +145,24 @@ namespace WordDrop
         private Material         _wildHaloMaterial;
         private GameObject[]     _cardHalos = new GameObject[PlayerHand.MAX_HAND_SIZE];
         private SpriteRenderer[] _cardHaloSRs = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
+        // 2026-06-04 Spencer: tight dark contact shadow hugging the wild tile edge,
+        // layered between the aura and the card face so the tile stays crisp on the glow.
+        private GameObject[]     _cardContactShadow = new GameObject[PlayerHand.MAX_HAND_SIZE];
+
+        // 2026-06-04 Spencer: LIVE wild-shadow tuning. These are exposed in the Inspector
+        // so the wild rack-card shadow can be dialed in during Play mode WITHOUT a
+        // recompile — drag the sliders and it updates every frame (see Update()).
+        [Header("Wild Shadow (tune live in Play mode)")]
+        [SerializeField] private bool    _wildShadowEnabled  = true;
+        [SerializeField, Range(0f, 2f)]    private float   _wildShadowStrength = 0.48f; // Multiply darkness
+        [SerializeField] private Vector2 _wildShadowOffset   = Vector2.zero;             // local x/y nudge
+        [SerializeField, Range(0.3f, 2.5f)] private float  _wildShadowScale    = 1f;     // size multiplier
+        private Material _wildShadowMat; // dedicated instance so strength is independent of normal cards
+        // 2026-06-03 Spencer: holographic overlay on the WILD hand card (matches the
+        // board tile). Shown by RefreshCardVisual when the slot is wild + Tile.IridescentWild.
+        private GameObject[]     _cardIrid = new GameObject[PlayerHand.MAX_HAND_SIZE];
+        private static Material  s_iridCardMaterial;
+        private static Sprite    s_cardWildGlow;   // 2026-06-03: soft VFX_Glow radial behind the card rays
 
         private Camera           _cam;
         private GridManager      _grid;
@@ -774,9 +812,84 @@ namespace WordDrop
 
         // (bag button triggers hand swap directly, board rewrite is a tap on a board tile)
 
+        // 2026-06-04 Spencer: re-applies the Inspector wild-shadow values to every active
+        // wild card shadow each frame so the look updates live in Play mode. A shadow
+        // whose sprite == _spriteWildShadow is, by construction, a wild card slot
+        // (RefreshCardVisual only assigns that sprite to wild cards), so it's safe to
+        // drive enable/offset/scale from here without re-checking emptiness.
+        private void ApplyWildShadowTuningLive()
+        {
+            if (_cardContactShadow == null || _spriteWildShadow == null) return;
+            if (_wildShadowMat != null) _wildShadowMat.SetFloat("_Strength", _wildShadowStrength);
+            for (int s = 0; s < _cardContactShadow.Length; s++)
+            {
+                var sgo = _cardContactShadow[s];
+                if (sgo == null) continue;
+                var ssr = sgo.GetComponent<SpriteRenderer>();
+                if (ssr == null || ssr.sprite != _spriteWildShadow) continue; // wild shadows only
+                if (!_wildShadowEnabled) { if (sgo.activeSelf) sgo.SetActive(false); continue; }
+                if (!sgo.activeSelf) sgo.SetActive(true);
+                var t = sgo.transform;
+                t.localPosition = new Vector3(_wildShadowOffset.x, _wildShadowOffset.y, 0.04f);
+                t.localScale    = Vector3.one * _wildShadowScale;
+            }
+        }
+
+        /// <summary>2026-06-05 Spencer: builds a card-shadow sprite from a bare texture name
+        /// in Resources/Tiles, full-frame at the given PPU (matches the main card shadow).</summary>
+        private Sprite MakeShadowSprite(string texName, float ppu)
+        {
+            if (string.IsNullOrEmpty(texName)) return null;
+            // Bare name → look in Tiles/; a name with a slash is treated as a full
+            // Resources path (e.g. "menu psds/shadowy").
+            string path = texName.Contains("/") ? texName : "Tiles/" + texName;
+            Texture2D t = Resources.Load<Texture2D>(path);
+            if (t == null) return null;
+            return Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), ppu);
+        }
+
+        /// <summary>2026-06-05 Spencer: A/B shadow compare. Each frame, pushes the selected
+        /// variant (A or B) onto every visible NON-wild card shadow, with its live strength,
+        /// so flipping _shadowUseB (Inspector or the \ key) swaps the whole board in place.</summary>
+        private void ApplyShadowABLive()
+        {
+            if (_cardContactShadow == null) return;
+            if (_shadowMatA == null || _shadowMatB == null)
+            {
+                Shader msh = Shader.Find("WordDrop/MultiplySprite");
+                if (msh == null) return;
+                if (_shadowMatA == null) _shadowMatA = new Material(msh);
+                if (_shadowMatB == null) _shadowMatB = new Material(msh);
+            }
+            _shadowMatA.SetFloat("_Strength", _shadowStrengthA);
+            _shadowMatB.SetFloat("_Strength", _shadowStrengthB);
+
+            Sprite   spr = _shadowUseB ? _shadowSpriteB : _shadowSpriteA;
+            Material mat = _shadowUseB ? _shadowMatB    : _shadowMatA;
+            if (spr == null) return;
+            for (int i = 0; i < _cardContactShadow.Length; i++)
+            {
+                var go = _cardContactShadow[i];
+                if (go == null || !go.activeSelf) continue; // wild/empty shadows are inactive → skipped
+                var sr = go.GetComponent<SpriteRenderer>();
+                if (sr == null || sr.sprite == _spriteWildShadow) continue; // never touch a wild shadow
+                sr.sprite         = spr;
+                sr.sharedMaterial = mat;
+            }
+        }
+
         private void Update()
         {
             if (_grid == null) return;
+
+            // 2026-06-04 Spencer: live wild-shadow tuning — push the Inspector values to
+            // any active wild card shadow EVERY frame so dragging the sliders in Play mode
+            // updates the look instantly, no recompile + no card refresh needed.
+            ApplyWildShadowTuningLive();
+
+            // 2026-06-05 Spencer: A/B shadow compare — the \ key flips A↔B in place.
+            if (Input.GetKeyDown(KeyCode.Backslash)) _shadowUseB = !_shadowUseB;
+            ApplyShadowABLive();
 
             // Phase C: wild expiry. Fires on 3-drop count OR 20s playable-time elapsed,
             // whichever comes first. Drop count is tracked in PlayerHand.DrawSlot.
@@ -1579,6 +1692,7 @@ namespace WordDrop
         /// </summary>
         private void TryEnterRewriteMode(int col, int row)
         {
+            if (TutorialLocks.EditLocked) return;   // edit is locked until it's taught (L2+)
             if (TutorialManager.BlockShuffleAndSwap) return;
             if (MatchController.Instance == null || RulesEngine.Instance == null) return;
 
@@ -1717,10 +1831,16 @@ namespace WordDrop
                 return false;
             }
 
-            // Reject same-letter swaps — no-op waste of edit
+            // Reject same-letter swaps — no-op waste of edit — UNLESS one of the swapped
+            // cells already sits in a real word that isn't primed/scored yet. 2026-06-08
+            // Spencer: a K↔K swap then "claims" that word (e.g. a PEAK a rising row formed),
+            // priming it or triggering a connected explosion. CellHasUnscoredWord skips
+            // already-scored words, so it can't re-score for free — just costs the edit.
             char letter1 = cell1.Letter;
             char letter2 = cell2.Letter;
-            if (char.ToUpper(letter1) == char.ToUpper(letter2))
+            if (char.ToUpper(letter1) == char.ToUpper(letter2)
+                && !rules.CellHasUnscoredWord(col1, row1)
+                && !rules.CellHasUnscoredWord(col2, row2))
             {
                 GameAudio.Instance?.PlayButtonClick();
                 return false;
@@ -1821,28 +1941,22 @@ namespace WordDrop
 
             // Now run the FULL rewrite resolution on the first cell
             // BeginRewrite won't re-swap since we already swapped in TryBoardSwap
-            // Instead, use BeginSwapResolution with detected words from both positions
-            var words1 = rules.FindNewWords(col1, row1);
-            var words2 = rules.FindNewWords(col2, row2);
+            // Instead, use BeginSwapResolution with detected words from both positions.
+            // 2026-06-08 Spencer: WILD-RESOLVING seed scan (not raw FindNewWords) so a swap
+            // completing a word THROUGH an uncommitted wild (P-wild-D → PAD) is detected now,
+            // not a turn later on the next drop. See SwapResolutionSequence for full rationale.
+            var swapWords = rules.ScanSeedCellsPublic(new System.Collections.Generic.List<Vector2Int>
+            {
+                new Vector2Int(col1, row1),
+                new Vector2Int(col2, row2),
+            });
             var allNew = new System.Collections.Generic.List<RulesWordMatch>();
 
-            if (words1 != null)
-                for (int i = 0; i < words1.Count; i++)
+            if (swapWords != null)
+                for (int i = 0; i < swapWords.Count; i++)
                 {
-                    string key = words1[i].Word + "|" + words1[i].CellKey;
-                    if (!rules.IsScoredKey(key)) allNew.Add(words1[i]);
-                }
-            if (words2 != null)
-                for (int i = 0; i < words2.Count; i++)
-                {
-                    string key = words2[i].Word + "|" + words2[i].CellKey;
-                    if (!rules.IsScoredKey(key))
-                    {
-                        bool dup = false;
-                        for (int j = 0; j < allNew.Count; j++)
-                            if (allNew[j].CellKey == words2[i].CellKey) { dup = true; break; }
-                        if (!dup) allNew.Add(words2[i]);
-                    }
+                    string key = swapWords[i].Word + "|" + swapWords[i].CellKey;
+                    if (!rules.IsScoredKey(key)) allNew.Add(swapWords[i]);
                 }
 
             if (allNew.Count > 0)
@@ -1880,6 +1994,9 @@ namespace WordDrop
                     int fuse = rules.GetFuseLengthPublic(match.Word.Length);
                     int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord);
                     justPrimedIds.Add(primedId);
+                    // This swap path primes directly (no RulesEngine.OnWordScored) — notify
+                    // the objective so swap/claim-made words still count. 2026-06-08.
+                    ObjectiveManager.Instance?.NotifyWordScored(match.Word, playerIdx);
 
                     // Visual: primed glow + particles
                     var scoredTiles = new System.Collections.Generic.List<Tile>();
@@ -2047,6 +2164,7 @@ namespace WordDrop
                                         FirePerWordBurst();
                                         FireTileFlashBoxes(dyingTiles);
                                         int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
+                                        yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
                                         yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
                                     }
                                     grid.RemoveTiles(step.ExplodedCells);
@@ -2222,30 +2340,26 @@ namespace WordDrop
 
             int playerIdx = MatchController.PLAYER_HUMAN;
 
-            // Find new words at both swap positions
-            var words1 = rules.FindNewWords(col1, row1);
-            var words2 = rules.FindNewWords(col2, row2);
+            // Find new words at both swap positions.
+            // 2026-06-08 Spencer: use the WILD-RESOLVING seed scan, not raw FindNewWords.
+            // Raw FindNewWords treats an uncommitted wild as a wall, so a swap that
+            // completes a word THROUGH a wild (e.g. P-wild-D → PAD) was invisible until
+            // the next drop's board scan resolved the wild. ScanSeedCellsPublic resolves
+            // uncommitted wilds, seeds them, and returns words through both swapped cells
+            // PLUS any wild it just committed — already deduped + substring-filtered.
+            var swapWords = rules.ScanSeedCellsPublic(new List<Vector2Int>
+            {
+                new Vector2Int(col1, row1),
+                new Vector2Int(col2, row2),
+            });
             var allNew = new List<RulesWordMatch>();
 
             // Collect genuinely new words (not already scored)
-            if (words1 != null)
-                for (int i = 0; i < words1.Count; i++)
+            if (swapWords != null)
+                for (int i = 0; i < swapWords.Count; i++)
                 {
-                    string key = words1[i].Word + "|" + words1[i].CellKey;
-                    if (!rules.IsScoredKey(key)) allNew.Add(words1[i]);
-                }
-            if (words2 != null)
-                for (int i = 0; i < words2.Count; i++)
-                {
-                    string key = words2[i].Word + "|" + words2[i].CellKey;
-                    if (!rules.IsScoredKey(key))
-                    {
-                        // Avoid duplicates
-                        bool dup = false;
-                        for (int j = 0; j < allNew.Count; j++)
-                            if (allNew[j].CellKey == words2[i].CellKey) { dup = true; break; }
-                        if (!dup) allNew.Add(words2[i]);
-                    }
+                    string key = swapWords[i].Word + "|" + swapWords[i].CellKey;
+                    if (!rules.IsScoredKey(key)) allNew.Add(swapWords[i]);
                 }
 
             // Score and prime new words — attributed to HUMAN player
@@ -2307,6 +2421,9 @@ namespace WordDrop
                     int fuse = rules.GetFuseLengthPublic(match.Word.Length);
                     int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord2);
                     justPrimedIds.Add(primedId);
+                    // Swap path primes directly (no OnWordScored) — notify the objective so
+                    // swap/claim-made words still count. 2026-06-08.
+                    ObjectiveManager.Instance?.NotifyWordScored(match.Word, playerIdx);
 
                     // Visual: apply primed glow
                     if (match.Cells != null)
@@ -2423,7 +2540,10 @@ namespace WordDrop
                                 FirePerWordBurst();
                                 FireTileFlashBoxes(dyingTiles);
                                 if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
+                                {
+                                    yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
                                     yield return WordDropFX.Instance.PlayExplosion(dyingTiles, 0);
+                                }
                                 grid.RemoveTiles(step.ExplodedCells);
 
                                 // Notify post-clear boost
@@ -2509,7 +2629,7 @@ namespace WordDrop
                 Tile targetTile = _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow);
                 if (targetTile != null)
                 {
-                    targetTile.SetEditSelected(false);
+                    targetTile.SetEditSelected(false, popOnExit: true);
                     targetTile.ResetVisuals();
                 }
             }
@@ -2970,26 +3090,25 @@ namespace WordDrop
 
             // Read letter from MatchController's authoritative hand, not local cache
             PlayerHand authHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+            bool isWild = authHand != null && authHand.IsWildSlot(handSlot);
             char letter = authHand != null ? authHand.GetSlot(handSlot) : _hand[handSlot];
 
-            if (letter == '\0')
+            // A wild slot carries no committed letter — only treat an empty NON-wild
+            // slot as "nothing to stamp."
+            if (!isWild && letter == '\0')
             {
 //                 Debug.Log("[HandManager] Rewrite: hand slot is empty — cancelling.");
                 CancelRewriteMode();
                 return;
             }
 
-            // Phase C: wild slots cannot be used as rewrite source. Wilds have no
-            // committed letter to stamp onto the target cell, and we don't want to
-            // burn a rewrite charge on a no-op. Cancel cleanly instead.
-            if (authHand != null && authHand.IsWildSlot(handSlot))
-            {
-                CancelRewriteMode();
-                return;
-            }
+            // 2026-06-08 Spencer: wilds CAN now be used as a rewrite source. Stamping a
+            // wild places an uncommitted wild tile at the target cell (resolves to
+            // whatever forms a word there). Costs an edit charge + the wild, handled by
+            // UseRewrite(..., isWild) below. (Previously this path was blocked outright.)
 
-            // Use MatchController to validate and consume swap charge
-            bool success = MatchController.Instance.UseRewrite(handSlot, col, row);
+            // Use MatchController to validate and consume swap charge + the wild
+            bool success = MatchController.Instance.UseRewrite(handSlot, col, row, isWild);
             if (!success)
             {
 //                 Debug.Log("[HandManager] Rewrite: MatchController.UseRewrite rejected.");
@@ -3018,10 +3137,10 @@ namespace WordDrop
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(false);
 
-            StartCoroutine(RewriteTurnSequence(col, row, letter, handSlot));
+            StartCoroutine(RewriteTurnSequence(col, row, letter, handSlot, isWild));
         }
 
-        private IEnumerator RewriteTurnSequence(int col, int row, char letter, int handSlot)
+        private IEnumerator RewriteTurnSequence(int col, int row, char letter, int handSlot, bool isWild = false)
         {
             if (JamHint.Instance != null) JamHint.Instance.ClearHint();
             if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
@@ -3076,8 +3195,16 @@ namespace WordDrop
                     yield return null;
                 }
 
-                // Phase 2: swap the letter visually
-                boardTile.SetLetter(letter);
+                // Phase 2: swap the letter visually (or convert the tile to a wild)
+                if (isWild)
+                {
+                    boardTile.SetLetter('\0');
+                    boardTile.SetWild(true);
+                }
+                else
+                {
+                    boardTile.SetLetter(letter);
+                }
                 boardTile.transform.position = restPos;
                 boardTile.transform.localRotation = Quaternion.identity;
 
@@ -3086,7 +3213,7 @@ namespace WordDrop
             }
             else
             {
-                grid.CreateSingleTile(col, row, letter);
+                grid.CreateSingleTile(col, row, isWild ? '\0' : letter, isWild);
             }
 
             // Detonation Replay: snapshot board before rewrite resolution
@@ -3094,7 +3221,7 @@ namespace WordDrop
                 DetonationRecorder.Instance.SnapshotBoard();
 
             // Run RulesEngine resolution
-            var beginResult = rules.BeginRewrite(col, row, letter, playerIdx);
+            var beginResult = rules.BeginRewrite(col, row, letter, playerIdx, isWild);
             if (beginResult == null)
             {
                 Debug.LogError("[HandManager] RewriteTurnSequence: BeginRewrite returned null.");
@@ -3351,6 +3478,7 @@ namespace WordDrop
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                             {
                                 int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
+                                yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
                                 yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
                             }
                             grid.RemoveTiles(step.ExplodedCells);
@@ -3725,6 +3853,16 @@ namespace WordDrop
             _cardHalos[a] = _cardHalos[b];
             _cardHalos[b] = tempHalo;
 
+            // Swap the iridescent overlay child too (same reason as the halo).
+            GameObject tempIrid = _cardIrid[a];
+            _cardIrid[a] = _cardIrid[b];
+            _cardIrid[b] = tempIrid;
+
+            // Swap the contact-shadow child too (same reason as the halo).
+            GameObject tempCS = _cardContactShadow[a];
+            _cardContactShadow[a] = _cardContactShadow[b];
+            _cardContactShadow[b] = tempCS;
+
             SpriteRenderer tempHaloSR = _cardHaloSRs[a];
             _cardHaloSRs[a] = _cardHaloSRs[b];
             _cardHaloSRs[b] = tempHaloSR;
@@ -3962,6 +4100,17 @@ namespace WordDrop
             if (DetonationRecorder.Instance != null)
                 DetonationRecorder.Instance.SnapshotBoard();
 
+            // 2026-06-03 Spencer: for a WILD, predict the letter it will resolve to at
+            // this column NOW (pre-drop state → resolver targets the right landing row)
+            // so the tile falls AS that letter instead of the "*" sentinel. If it makes
+            // no word, fall as '\0' so it renders as a blank wild ("?"), NOT the "*".
+            char wildDisplayLetter = letter;
+            if (isWild)
+            {
+                // resolved is the would-be letter, or '\0' when it forms no word.
+                wildDisplayLetter = rules.PreviewWildResolveLetter(col, playerIdx);
+            }
+
             // ── STEP 1: Animate hand tile flying to column, then drop into grid ──
             RulesEngine.StepResult beginResult = rules.BeginDrop(col, letter, playerIdx, isWild);
 
@@ -3995,6 +4144,9 @@ namespace WordDrop
                     grid.RemoveTiles(new System.Collections.Generic.List<Vector2Int> { new Vector2Int(col, targetRow) });
                 }
             }
+
+            // Tier-3 burst centers on the move that triggered it: this dropped cell.
+            WordDropFX.LastTriggerCell = new Vector2Int(col, targetRow);
 
             // Detonation Replay: record the dropped tile
             if (DetonationRecorder.Instance != null)
@@ -4036,8 +4188,9 @@ namespace WordDrop
                 }
             }
 
-            // Create grid tile at the top of the column and drop it straight down
-            Tile droppedTile = grid.CreateSingleTile(col, targetRow, letter, isWild);
+            // Create grid tile at the top of the column and drop it straight down.
+            // Wild shows its predicted resolved letter as it falls (wildDisplayLetter).
+            Tile droppedTile = grid.CreateSingleTile(col, targetRow, wildDisplayLetter, isWild);
             if (droppedTile != null)
             {
                 Vector3 targetPos = droppedTile.transform.position;
@@ -4358,6 +4511,7 @@ namespace WordDrop
                             if (WordDropFX.Instance != null)
                             {
                                 int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dying.Count;
+                                yield return WordDropFX.MaybeBigPopAndHold(dying);
                                 yield return WordDropFX.Instance.PlayExplosion(dying, step.ChainDepth, wLen);
                             }
 
@@ -4567,11 +4721,20 @@ namespace WordDrop
                 // constants propagates to every "new tile/card arrives"
                 // moment in the game.
                 Vector3 baseScale = GetCardBaseScale();
-                _cardObjects[handSlot].transform.localScale = Vector3.zero;
-                UIAnimations.NewTilePop(
-                    _cardObjects[handSlot].transform,
-                    baseScale,
-                    speedMult: HAND_POP_SPEED_MULT);
+                if (IsWildSlotChecked(handSlot))
+                {
+                    // Awarded WILD — juicy oversized entry (big pop + hold) instead
+                    // of the normal sprout, so the player registers the reward.
+                    PlayWildCardEntry(handSlot);
+                }
+                else
+                {
+                    _cardObjects[handSlot].transform.localScale = Vector3.zero;
+                    UIAnimations.NewTilePop(
+                        _cardObjects[handSlot].transform,
+                        baseScale,
+                        speedMult: HAND_POP_SPEED_MULT);
+                }
                 // No sound on this site (per-tile-drop refill) — the row-rise
                 // bloop here would double up with all the other tile-drop /
                 // detonation SFX firing in the same moment. Animation still
@@ -4906,6 +5069,200 @@ namespace WordDrop
             }
         }
 
+        /// <summary>DEBUG: force a wild ('*') into the hand immediately (first non-empty
+        /// slot, or slot 0) and refresh so it's visible right away. Bypasses the mechanic
+        /// gate / pending-queue. 2026-06-03 Spencer — to test the iridescent wild tile.</summary>
+        public void DebugForceWildIntoHand()
+        {
+            if (MatchController.Instance == null) return;
+            PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
+            if (hand == null) return;
+            int target = 0;
+            char[] slots = hand.GetAllSlots();
+            for (int i = 0; i < slots.Length; i++) { if (slots[i] != '\0') { target = i; break; } }
+            hand.SetSlot(target, TileBag.WILD_CHAR);
+            RefreshHandFromMatchController();
+            // Play the juicy wild-entry so the test button shows the real animation.
+            PlayWildCardEntry(target);
+            Debug.Log($"[Debug] Forced WILD ('*') into hand slot {target} — drop it to see the wild tile.");
+        }
+
+        /// <summary>Juicy entry for an awarded WILD card at <paramref name="slot"/>:
+        /// big-overshoot pop + hold (UIAnimations.WildCardPop) + gold-spawn chime +
+        /// sparkle. Used by the chain-reward refill and the Force-WILD test button.
+        /// 2026-06-04 Spencer.</summary>
+        // 2026-06-04 Spencer: true while a wild's ARRIVAL pop is playing, so overlays
+        // (StageClearModal) can hold until it finishes. Auto-expiring timestamp — can
+        // never get stuck even if the card is destroyed mid-animation.
+        private float _wildEntryEndsAt = -1f;
+        public bool IsWildEntryAnimating => Time.unscaledTime < _wildEntryEndsAt;
+
+        private void PlayWildCardEntry(int slot)
+        {
+            if (slot < 0 || slot >= HAND_SIZE) return;
+            GameObject card = _cardObjects[slot];
+            if (card == null) return;
+
+            // WildCardPop runs ~1.15s (grow + hold + settle); mark the arrival window.
+            _wildEntryEndsAt = Time.unscaledTime + 1.25f;
+
+            // Lift the WHOLE wild card group (face, letter, points, aura, glow) above
+            // its neighbours for the duration of the oversized pop — otherwise the
+            // 1.75× scale-up clips behind adjacent cards. +20 preserves the card's
+            // internal layering; we restore the exact original orders on completion.
+            var renderers = card.GetComponentsInChildren<Renderer>(true);
+            int[] saved = new int[renderers.Length];
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                saved[i] = renderers[i].sortingOrder;
+                renderers[i].sortingOrder += 20;
+            }
+
+            UIAnimations.WildCardPop(card.transform, GetCardBaseScale(), onComplete: () =>
+            {
+                for (int i = 0; i < renderers.Length; i++)
+                    if (renderers[i] != null) renderers[i].sortingOrder = saved[i];
+            });
+            GameAudio.Instance?.PlayLine();
+            // Dark contrast halo UNDER the bright glow/sparks — carves a pocket of
+            // darkness out of the bright board so the rainbow actually pops.
+            PlayWildDarkHalo(card.transform.position, sortingOrder: 12);
+            // Spark burst behind the wild card (VFX_Sparks_2 sheet, sliced into 4).
+            PlayWildSparkBurst(card.transform.position, sortingOrder: 13);
+        }
+
+        private static Sprite s_wildDarkHaloSprite;
+
+        /// <summary>Soft DARK radial behind the wild's bright glow/sparks — a localized
+        /// "contrast halo" that darkens the bright board so the colour reads. Fades in
+        /// with the pop, lifts as the card settles. Default (alpha-blend) material so it
+        /// darkens rather than adds. 2026-06-04 Spencer.</summary>
+        private void PlayWildDarkHalo(Vector3 center, int sortingOrder)
+        {
+            if (UIAnimations.ReducedMotion) return;
+            if (s_wildDarkHaloSprite == null)
+                s_wildDarkHaloSprite = MakeSoftRadialSprite();
+            if (s_wildDarkHaloSprite == null) return;
+
+            var go = new GameObject("WildDarkHalo");
+            go.transform.position = center;
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = s_wildDarkHaloSprite; // default alpha-blend material → darkens
+            sr.sortingOrder = sortingOrder;
+            sr.color = new Color(0.02f, 0.02f, 0.06f, 0f); // cool near-black, alpha 0 (fades in)
+
+            float native = (s_wildDarkHaloSprite.bounds.size.x > 0.0001f) ? s_wildDarkHaloSprite.bounds.size.x : 1f;
+            go.transform.localScale = Vector3.one * ((_cardSize * 3.6f) / native); // bigger than the glow so it surrounds it
+
+            GameObject capture = go;
+            var seq = DOTween.Sequence();
+            seq.Append(sr.DOFade(0.68f, 0.20f).SetEase(Ease.OutQuad)); // darken in with the grow
+            seq.AppendInterval(0.35f);                                 // hold through the beat
+            seq.Append(sr.DOFade(0f, 0.55f).SetEase(Ease.InQuad));     // lift as the card settles
+            seq.OnComplete(() => { if (capture != null) Destroy(capture); });
+        }
+
+        /// <summary>Procedural soft radial sprite (white, alpha 1 at center → 0 at edge),
+        /// generated once. Used as a tintable soft glow/vignette — no art dependency,
+        /// guaranteed circular + soft. 2026-06-04 Spencer.</summary>
+        private static Sprite MakeSoftRadialSprite()
+        {
+            const int size = 128;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            float c = (size - 1) * 0.5f;
+            float maxR = c;
+            var px = new Color[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) / maxR;
+                    // Full alpha through the core, soft feather only near the outer
+                    // edge — a strong, readable vignette that still fades out cleanly.
+                    float a = 1f - Mathf.SmoothStep(0.5f, 1f, d);
+                    px[y * size + x] = new Color(1f, 1f, 1f, a);
+                }
+            tex.SetPixels(px);
+            tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
+        }
+
+        private static Sprite[] s_wildSparkSprites;
+        private static Material s_wildSparkMat;
+
+        /// <summary>Small additive spark burst (the 4 sparkles from VFX_Sparks_2,
+        /// sliced from the 2×2 sheet) behind the awarded wild card. 2026-06-04.</summary>
+        private void PlayWildSparkBurst(Vector3 center, int sortingOrder)
+        {
+            if (UIAnimations.ReducedMotion) { Debug.Log("[WildSpark] skipped — ReducedMotion"); return; }
+            if (s_wildSparkSprites == null)
+            {
+                Texture2D tex = Resources.Load<Texture2D>("Particles/vfx_sparks_2");
+                if (tex == null)
+                {
+                    // PNG imported as a Sprite (default) — grab its underlying texture.
+                    Sprite sheet = Resources.Load<Sprite>("Particles/vfx_sparks_2");
+                    if (sheet != null) tex = sheet.texture;
+                }
+                if (tex == null) return;
+                int hw = tex.width / 2, hh = tex.height / 2;
+                s_wildSparkSprites = new Sprite[4]
+                {
+                    Sprite.Create(tex, new Rect(0,  hh, hw, hh), new Vector2(0.5f, 0.5f), 100f),
+                    Sprite.Create(tex, new Rect(hw, hh, hw, hh), new Vector2(0.5f, 0.5f), 100f),
+                    Sprite.Create(tex, new Rect(0,  0,  hw, hh), new Vector2(0.5f, 0.5f), 100f),
+                    Sprite.Create(tex, new Rect(hw, 0,  hw, hh), new Vector2(0.5f, 0.5f), 100f),
+                };
+            }
+            if (s_wildSparkMat == null)
+            {
+                Shader sh = Shader.Find("WordDrop/AdditiveSprite");
+                if (sh == null) sh = Shader.Find("Sprites/Default");
+                s_wildSparkMat = new Material(sh);
+            }
+
+            const int count = 7;
+            for (int i = 0; i < count; i++)
+            {
+                Sprite spr = s_wildSparkSprites[Random.Range(0, s_wildSparkSprites.Length)];
+                var go = new GameObject("WildSpark");
+                // Spawn on a ring BEYOND the (enlarged) card edges so the sparks
+                // radiate around the tile rather than being swallowed by it.
+                float ang = Random.Range(0f, Mathf.PI * 2f);
+                Vector3 dirOut = new Vector3(Mathf.Cos(ang), Mathf.Sin(ang), 0f);
+                float radius = _cardSize * Random.Range(0.85f, 1.35f);
+                go.transform.position = center + dirOut * radius;
+                go.transform.rotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
+
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = spr;
+                sr.sharedMaterial = s_wildSparkMat;
+                sr.sortingOrder = sortingOrder;
+                // Rainbow hue keyed to the spark's angle around the tile, so the burst
+                // matches the wild's iridescent rainbow aura sweeping around it.
+                Color hue = Color.HSVToRGB(ang / (Mathf.PI * 2f), 0.70f, 1f);
+                sr.color = new Color(hue.r, hue.g, hue.b, 0f); // alpha 0 → fades in
+
+                float native = (spr.bounds.size.x > 0.0001f) ? spr.bounds.size.x : 1f;
+                float peak = (_cardSize * Random.Range(0.30f, 0.55f)) / native;
+                go.transform.localScale = Vector3.one * peak * 0.25f;
+
+                Vector3 drift = dirOut * (_cardSize * 0.35f); // continue radiating outward
+
+                GameObject capture = go;
+                Vector3 startPos = go.transform.position;
+                var seq = DOTween.Sequence();
+                // Quick pop-in, drifting outward...
+                seq.Append(go.transform.DOScale(Vector3.one * peak, 0.14f).SetEase(Ease.OutBack, 2f));
+                seq.Join(sr.DOFade(1f, 0.08f));
+                seq.Join(go.transform.DOMove(startPos + drift, 0.40f).SetEase(Ease.OutCubic));
+                seq.Join(go.transform.DORotate(new Vector3(0f, 0f, Random.Range(-40f, 40f)), 0.40f, RotateMode.LocalAxisAdd));
+                // ...then immediately shrink + fade so it never hangs suspended.
+                seq.Insert(0.15f, sr.DOFade(0f, 0.25f));
+                seq.Insert(0.15f, go.transform.DOScale(Vector3.one * peak * 0.5f, 0.25f).SetEase(Ease.InQuad));
+                seq.OnComplete(() => { if (capture != null) Destroy(capture); });
+            }
+        }
+
         // ── Visual construction ───────────────────────────────────────────────────
 
         /// <summary>
@@ -4939,7 +5296,7 @@ namespace WordDrop
             int radius = Mathf.Min(texW, texH) / 8;
 
             // Same material family as board — slightly lighter than board outer
-            Color trayColor = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 — matches HUD bar. Held while Spencer reworks holder look in Photoshop. Solid alpha so warm bg doesn't bleed through.
+            Color trayColor = new Color(0.10f, 0.27f, 0.50f, 1.0f); // 2026-06-02: deep ocean blue (was #391D78 purple) — matches the new HUD bar; candy-palette chrome.
             Sprite traySprite = TileRenderer.CreateSolidRoundedRect(texW, texH, radius, trayColor);
 
             _controlTray = new GameObject("ControlTray");
@@ -4972,6 +5329,15 @@ namespace WordDrop
             // Try loading hand-drawn sprites
             Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/white5@2x");
             Sprite loadedSelected = Resources.Load<Sprite>("Tiles/green_tile2@2x");
+            // 2026-06-04 Spencer: new glossy green (greeny) — trimmed to the tile (100%),
+            // full rect at a PPU matched to white5 so it's a true drop-in / same size.
+            Texture2D greenyTex2 = Resources.Load<Texture2D>("Tiles/greeny@2x");
+            if (greenyTex2 != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+            {
+                float gppu = greenyTex2.width / loadedNormal.bounds.size.x;
+                loadedSelected = Sprite.Create(greenyTex2, new Rect(0, 0, greenyTex2.width, greenyTex2.height),
+                                               new Vector2(0.5f, 0.5f), gppu);
+            }
             Sprite loadedSwap     = Resources.Load<Sprite>("Tiles/swap_tile");
             Sprite loadedWild     = Resources.Load<Sprite>("Tiles/wild@2x");
 
@@ -4983,17 +5349,67 @@ namespace WordDrop
                 _spriteSwapSelected = loadedSwap ?? loadedNormal; // swap+selected uses swap sprite
                 _spriteWild         = loadedWild ?? loadedNormal;
 //                 Debug.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
+
+                // Baked glassy wild tile + its separate baked drop shadow. They import
+                // as plain 1024px textures filling 80% / 91% of frame; we Sprite.Create
+                // them with a PPU that puts the 80%-fill TILE at the same world size as
+                // white5 (which fills 100%), so the wild matches the rack. Same PPU on
+                // the shadow keeps it aligned (rendered at child scale 1.0).
+                const float GLOSSY_FILL = 0.80f; // measured: tile fills 80% of the glossy frame
+                float whiteBounds = _spriteNormal.bounds.size.x; // white5 fills 100% → this is the target tile size
+                Texture2D glossyTex = Resources.Load<Texture2D>("Tiles/white_glossy@2x");
+                if (glossyTex != null && whiteBounds > 0.0001f)
+                {
+                    float glossyPPU = glossyTex.width / (whiteBounds / GLOSSY_FILL);
+                    // Build from the TILE region only (the 80% content) so the sprite's
+                    // bounds == the tile → true drop-in (bounds-based sizing matches white5).
+                    float gm = (1f - GLOSSY_FILL) * 0.5f * glossyTex.width;
+                    float gcw = GLOSSY_FILL * glossyTex.width;
+                    _spriteGlossy = Sprite.Create(glossyTex, new Rect(gm, gm, gcw, gcw),
+                                                  new Vector2(0.5f, 0.5f), glossyPPU);
+                    // Shadow uses the FULL frame at the same PPU → bounds = 1/FILL × tile
+                    // (~1.25× the tile), so at child scale 1.0 it feathers just past the edge.
+                    Texture2D shadowTex = Resources.Load<Texture2D>("Tiles/test_shadow@2x");
+                    if (shadowTex != null)
+                        _spriteTileShadow = Sprite.Create(shadowTex, new Rect(0, 0, shadowTex.width, shadowTex.height),
+                                                          new Vector2(0.5f, 0.5f), glossyPPU);
+                    // A/B shadow variants — same full-frame build at the same PPU so both
+                    // line up identically; ApplyShadowABLive (Update) swaps the active one.
+                    _shadowSpriteA = MakeShadowSprite(_shadowTexA, glossyPPU);
+                    _shadowSpriteB = MakeShadowSprite(_shadowTexB, glossyPPU);
+                    Debug.Log($"[ShadowAB] A='{_shadowTexA}' ({(_shadowSpriteA != null ? "LOADED" : "NULL")}), " +
+                              $"B='{_shadowTexB}' ({(_shadowSpriteB != null ? "LOADED" : "NULL")}), useB={_shadowUseB}");
+                    // 2026-06-04 Spencer: dedicated wild shadow — same full-frame build at
+                    // the same PPU so it aligns exactly like the normal card shadow.
+                    Texture2D wildShadowTex = Resources.Load<Texture2D>("Tiles/wild_shadow2@2x");
+                    if (wildShadowTex != null)
+                        _spriteWildShadow = Sprite.Create(wildShadowTex, new Rect(0, 0, wildShadowTex.width, wildShadowTex.height),
+                                                          new Vector2(0.5f, 0.5f), glossyPPU);
+                    // 2026-06-04 Spencer: switch the rack WILD card to the baked glossy
+                    // wild_swap sprite — same 80%-content build as the glossy white so it
+                    // drops in at the exact rack tile size.
+                    Texture2D wildSwapTex = Resources.Load<Texture2D>("Tiles/wild_one@2x");
+                    if (wildSwapTex != null)
+                        _spriteWild = Sprite.Create(wildSwapTex, new Rect(gm, gm, gcw, gcw),
+                                                    new Vector2(0.5f, 0.5f), glossyPPU);
+                }
             }
 
             // Wild halo — loaded once, reused across all hand slots.
-            Texture2D haloTex = Resources.Load<Texture2D>("Particles/wild_halo");
+            // 2026-06-04 Spencer: trying the denser/softer VFX_Rays (was vfx_rays_sharp,
+            // which read spiky/sticker-ish). Swap to "vfx_rays_2" or back to
+            // "vfx_rays_sharp" here to compare.
+            Texture2D haloTex = Resources.Load<Texture2D>("Particles/vfx_rays");
+            if (haloTex == null) haloTex = Resources.Load<Texture2D>("Particles/vfx_rays_sharp"); // fallback
             if (haloTex != null)
             {
                 _spriteWildHalo = Sprite.Create(
                     haloTex, new Rect(0, 0, haloTex.width, haloTex.height),
                     new Vector2(0.5f, 0.5f), 100f);
-                Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
-                if (addShader == null) addShader = Shader.Find("Sprites/Default");
+                // Rainbow aura material (2026-06-03 Spencer) — matches the board wild.
+                Shader addShader = Shader.Find("WordDrop/IridescentAura")
+                                ?? Shader.Find("WordDrop/AdditiveSprite")
+                                ?? Shader.Find("Sprites/Default");
                 _wildHaloMaterial = new Material(addShader);
             }
             else
@@ -5020,6 +5436,8 @@ namespace WordDrop
                 if (_cardObjects[i] != null) Destroy(_cardObjects[i]);
                 if (_cardHalos[i] != null) Destroy(_cardHalos[i]);
                 _cardHalos[i] = null;
+                if (_cardIrid[i] != null) Destroy(_cardIrid[i]);
+                _cardIrid[i] = null;
                 _cardHaloSRs[i] = null;
             }
 
@@ -5052,20 +5470,26 @@ namespace WordDrop
                 // Letter text — TMP, matches board tiles exactly (true center)
                 GameObject textGO = new GameObject("CardLetter");
                 textGO.transform.SetParent(cardGO.transform, false);
-                textGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
+                textGO.transform.localPosition = new Vector3(0f, 0f, -0.1f); // 2026-06-04 Spencer: nudge to re-center Avenir
 
                 var tm = textGO.AddComponent<TMPro.TextMeshPro>();
                 TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
                 if (tileFont != null) tm.font = tileFont;
                 tm.text          = "?";
-                tm.fontSize      = 5.5f;
+                tm.fontSize      = 6.3f; // 2026-06-05 Spencer: −10% (was 7.0)
                 tm.fontStyle     = TMPro.FontStyles.Bold;
                 tm.color         = CARD_TEXT_COLOR;
-                tm.alignment     = TMPro.TextAlignmentOptions.Center;
+                tm.alignment     = TMPro.TextAlignmentOptions.Midline; // Midline so a single capital sits visually centered, not high
                 tm.sortingOrder  = 11;
                 tm.rectTransform.sizeDelta = new Vector2(2f, 2f);
                 tm.enableWordWrapping = false;
                 tm.overflowMode  = TMPro.TextOverflowModes.Overflow;
+                // 2026-06-03 Spencer: effects REMOVED to match the board letters —
+                // raw Clarity, no underlay shadow, no face dilate.
+                var cardLetterMat = tm.fontMaterial;
+                cardLetterMat.DisableKeyword("UNDERLAY_ON");
+                cardLetterMat.SetFloat("_FaceDilate", 0.05f); // very slight bolden (no shadow); old was 0.27
+                tm.UpdateMeshPadding();
                 textGO.transform.localScale = new Vector3(invScale, invScale, 1f);
 
                 // Point value — TMP, matches board tiles exactly
@@ -5108,18 +5532,130 @@ namespace WordDrop
                     var haloSR = haloGO.AddComponent<SpriteRenderer>();
                     haloSR.sprite = _spriteWildHalo;
                     if (_wildHaloMaterial != null) haloSR.sharedMaterial = _wildHaloMaterial;
-                    haloSR.sortingOrder = 9; // card is 10, halo renders just behind
+                    haloSR.sortingOrder = 7; // lowered to make room for contact shadow (8); card is 10
                     // Halo occupies roughly 1.25× card footprint — tight enough to
                     // read as "this card glows" without dominating the hand row.
                     float haloNativeSize = (haloSR.sprite != null && haloSR.sprite.bounds.size.x > 0)
                         ? haloSR.sprite.bounds.size.x : 1f;
-                    float haloScale = (_cardSize * 1.25f) / (haloNativeSize * scale);
+                    float haloScale = (_cardSize * 1.85f) / (haloNativeSize * scale); // 2026-06-04: rays bumped up so they spill past the glow
                     haloGO.transform.localScale = new Vector3(haloScale, haloScale, 1f);
                     // Animator — rotates + pulses so the halo reads as alive, not a sticker.
                     haloGO.AddComponent<WildHaloAnimator>();
+
+                    // Second aura layer — soft VFX_Glow radial behind the rays for a
+                    // fuller, rounder glow. Child of the halo so it toggles + cleans
+                    // up with it. 2026-06-03 Spencer.
+                    if (s_cardWildGlow == null)
+                    {
+                        Texture2D gtex = Resources.Load<Texture2D>("Particles/vfx_glow");
+                        if (gtex != null)
+                            s_cardWildGlow = Sprite.Create(gtex, new Rect(0, 0, gtex.width, gtex.height),
+                                                           new Vector2(0.5f, 0.5f), 100f);
+                    }
+                    if (s_cardWildGlow != null)
+                    {
+                        var glowGO = new GameObject("HandCardGlow");
+                        glowGO.transform.SetParent(haloGO.transform, false);
+                        glowGO.transform.localPosition = new Vector3(0f, 0f, 0.05f);
+                        var glowSR = glowGO.AddComponent<SpriteRenderer>();
+                        glowSR.sprite = s_cardWildGlow;
+                        if (_wildHaloMaterial != null) glowSR.sharedMaterial = _wildHaloMaterial;
+                        glowSR.sortingOrder = 6; // behind the rays (7)
+                        glowSR.color = new Color(1f, 1f, 1f, 1.0f);
+                        float glowNative = (glowSR.sprite != null && glowSR.sprite.bounds.size.x > 0)
+                            ? glowSR.sprite.bounds.size.x : 1f;
+                        // Bigger glow so it leads over the rays (matches the board look).
+                        glowGO.transform.localScale = Vector3.one * ((haloNativeSize / glowNative) * 0.97f); // 2026-06-04: glow back up a bit, still under the rays so the tips peek out
+                    }
+
+                    // Dark contrast backing BEHIND the rainbow aura so it pops against
+                    // the tray + neighbours even at rest (bright-on-bright reads muddy;
+                    // a dark pocket fixes it). Soft radial, normal alpha-blend (darkens,
+                    // doesn't add). Child of the halo → toggles/swaps/cleans up with it.
+                    if (s_wildDarkHaloSprite == null) s_wildDarkHaloSprite = MakeSoftRadialSprite();
+                    if (s_wildDarkHaloSprite != null)
+                    {
+                        var darkGO = new GameObject("HandCardDarkBacking");
+                        darkGO.transform.SetParent(haloGO.transform, false);
+                        darkGO.transform.localPosition = new Vector3(0f, 0f, 0.12f); // behind glow + rays
+                        var darkSR = darkGO.AddComponent<SpriteRenderer>();
+                        darkSR.sprite = s_wildDarkHaloSprite;
+                        darkSR.sortingOrder = 5; // behind glow (6) + rays (7)
+                        darkSR.color = new Color(0.02f, 0.02f, 0.06f, 0.45f); // cool near-black
+                        float darkNative = (darkSR.sprite.bounds.size.x > 0.0001f) ? darkSR.sprite.bounds.size.x : 1f;
+                        // World size ~2.2× card (halo is 1.40×): scale = (2.2/1.40) · halo/dark native.
+                        darkGO.transform.localScale = Vector3.one * ((2.2f / 1.40f) * (haloNativeSize / darkNative));
+                    }
+
                     haloGO.SetActive(false);
                     _cardHalos[i]   = haloGO;
                     _cardHaloSRs[i] = haloSR;
+                }
+
+                // Contact / separation shadow — a dark copy of the tile silhouette,
+                // slightly larger, layered between the aura (≤7) and the card face (10)
+                // so the tile edge stays crisp against the bright glow (the #118 look).
+                // 2026-06-04 Spencer.
+                if (_spriteNormal != null)
+                {
+                    var csGO = new GameObject("HandCardContactShadow");
+                    csGO.transform.SetParent(cardGO.transform, false);
+                    csGO.transform.localPosition = new Vector3(0f, 0f, 0.04f); // just behind the face
+                    var csSR = csGO.AddComponent<SpriteRenderer>();
+                    csSR.sortingOrder = 8;                             // above aura (≤7), below card face (10)
+                    if (_spriteTileShadow != null)
+                    {
+                        // Baked PS drop shadow — same PPU as the glossy tile, so child
+                        // scale 1.0 lines it up exactly; darkness + feather are baked in.
+                        csSR.sprite = _spriteTileShadow;
+                        csSR.color = Color.white;
+                        // MULTIPLY blend so it darkens the tray like the PS Multiply layer.
+                        if (s_shadowMultiplyMat == null)
+                        {
+                            Shader msh = Shader.Find("WordDrop/MultiplySprite");
+                            if (msh != null)
+                            {
+                                s_shadowMultiplyMat = new Material(msh);
+                                s_shadowMultiplyMat.SetFloat("_Strength", 0.40f); // 2026-06-05 Spencer: lighter shadow (was 0.48)
+                            }
+                        }
+                        if (s_shadowMultiplyMat != null) csSR.sharedMaterial = s_shadowMultiplyMat;
+                        csGO.transform.localScale = Vector3.one;
+                    }
+                    else
+                    {
+                        // Fallback: procedural soft shadow.
+                        Sprite softSpr = GetSoftShadowSprite();
+                        csSR.sprite = softSpr;
+                        csSR.color = new Color(0.02f, 0.02f, 0.06f, 0.60f);
+                        float cardNative = _spriteNormal.bounds.size.x > 0.0001f ? _spriteNormal.bounds.size.x : 1f;
+                        float softNative = (softSpr != null && softSpr.bounds.size.x > 0.0001f) ? softSpr.bounds.size.x : 1f;
+                        csGO.transform.localScale = Vector3.one * (1.30f * (cardNative / softNative));
+                    }
+                    csGO.SetActive(false);
+                    _cardContactShadow[i] = csGO;
+                }
+
+                // Wild iridescent overlay — fills the card with the holographic
+                // shader when the slot is wild (matches the board tile). White card
+                // shape as the mask. Starts disabled; RefreshCardVisual toggles it.
+                {
+                    if (s_iridCardMaterial == null)
+                    {
+                        Shader ish = Shader.Find("WordDrop/IridescentTile")
+                                  ?? Shader.Find("Sprites/Default");
+                        s_iridCardMaterial = new Material(ish);
+                    }
+                    GameObject iridGO = new GameObject("HandCardIrid");
+                    iridGO.transform.SetParent(cardGO.transform, false);
+                    iridGO.transform.localPosition = new Vector3(0f, 0f, -0.05f); // in front of the card face
+                    var iridSR = iridGO.AddComponent<SpriteRenderer>();
+                    iridSR.sprite = _spriteNormal;                 // white card shape = the mask
+                    if (s_iridCardMaterial != null) iridSR.sharedMaterial = s_iridCardMaterial;
+                    iridSR.sortingOrder = 10;                      // over the card face (10), under text (11)
+                    iridGO.transform.localScale = Vector3.one;     // matches the card face
+                    iridGO.SetActive(false);
+                    _cardIrid[i] = iridGO;
                 }
 
                 // 2026-05-29: cards spawn INACTIVE so they don't flash at
@@ -5482,7 +6018,9 @@ namespace WordDrop
         /// </summary>
         private Sprite GetSlotRestSprite(int index)
         {
-            if (IsWildSlotChecked(index)) return _spriteWild ?? _spriteNormal;
+            // Iridescent wild rests on the WHITE base (overlay/"?"/aura are children).
+            if (IsWildSlotChecked(index))
+                return Tile.IridescentWild ? _spriteNormal : (_spriteWild ?? _spriteNormal);
             return _spriteNormal;
         }
 
@@ -5493,7 +6031,11 @@ namespace WordDrop
         /// </summary>
         private Sprite GetSlotDragSprite(int index)
         {
-            if (IsWildSlotChecked(index)) return _spriteWild ?? _spriteNormal;
+            // 2026-06-03 Spencer: an iridescent wild keeps its WHITE base while dragging
+            // (the "?" text + iridescent overlay + rainbow aura are children that ride
+            // with the card), instead of reverting to the old hand-drawn wild sprite.
+            if (IsWildSlotChecked(index))
+                return Tile.IridescentWild ? _spriteNormal : (_spriteWild ?? _spriteNormal);
             return _spriteSelected ?? _spriteNormal;
         }
 
@@ -5526,14 +6068,42 @@ namespace WordDrop
             // the wild card reads as "special" even at a glance.
             if (_cardHalos[index] != null)
                 _cardHalos[index].SetActive(isWild);
+            // 2026-06-04 Spencer: baked drop shadow under each card. Wild cards use the
+            // dedicated wild_shadow sprite + a dedicated material (so its strength is
+            // tunable in the Inspector independent of normal cards). See Update() for
+            // the live re-apply of offset/scale/strength.
+            if (_cardContactShadow[index] != null)
+            {
+                var csSR = _cardContactShadow[index].GetComponent<SpriteRenderer>();
+                var cst  = _cardContactShadow[index].transform;
+                if (isWild)
+                {
+                    // 2026-06-04 Spencer: wild card has NO separate shadow — a glowing tile
+                    // wouldn't cast one, and the edge separation is being baked into the
+                    // wild_swap sprite itself. (Wild-shadow tuning fields kept for later.)
+                    _cardContactShadow[index].SetActive(false);
+                }
+                else
+                {
+                    if (csSR != null) { csSR.sprite = _spriteTileShadow; csSR.sharedMaterial = s_shadowMultiplyMat; }
+                    cst.localPosition = new Vector3(0f, 0f, 0.04f);
+                    cst.localScale    = Vector3.one;
+                    _cardContactShadow[index].SetActive(!isEmpty);
+                }
+            }
 
             // Choose sprite based on mode and selection.
             // Wild slots use the wild@2x sprite (has "?" baked in), so the
             // letter text overlay is suppressed below — the sprite itself is
             // the visual.
+            bool iridWild = isWild && Tile.IridescentWild;
+            // Crystal tint gated separately so we can show white "?" + aura only.
+            if (_cardIrid[index] != null) _cardIrid[index].SetActive(iridWild && Tile.IridescentTileTint);
             if (isWild)
             {
-                _cardSRs[index].sprite = _spriteWild ?? _spriteNormal;
+                // 2026-06-04 Spencer: rack wild uses the SAME normal white glossy tile that
+                // every other card uses (the wild identity reads from the aura + "?" overlay).
+                _cardSRs[index].sprite = _spriteGlossy ?? _spriteNormal;
             }
             else if (_swapModeActive)
             {
@@ -5541,10 +6111,16 @@ namespace WordDrop
             }
             else
             {
-                _cardSRs[index].sprite = isSelected ? _spriteSelected : _spriteNormal;
+                // 2026-06-04 Spencer: normal white card → baked glossy tile (selected
+                // keeps its green sprite until that state is rebaked).
+                _cardSRs[index].sprite = isSelected ? _spriteSelected : (_spriteGlossy ?? _spriteNormal);
             }
 
-            // Update letter text
+            // Update letter text. Default to a flat color + the tile font; the wild
+            // "?" turns on a holographic gradient + the Geometos font below (and we
+            // reset both for normal letters). Font setter is a no-op if unchanged.
+            _cardTexts[index].enableVertexGradient = false;
+            _cardTexts[index].font = GameFont.GetTMP();
             if (isEmpty)
             {
                 _cardTexts[index].text  = "";
@@ -5552,10 +6128,24 @@ namespace WordDrop
             }
             else if (isWild)
             {
-                // Wild slot: "?" is baked into the wild@2x sprite — suppress
-                // text overlay so we don't double-render.
-                _cardTexts[index].text  = "";
-                _cardTexts[index].color = WILD_CARD_COLOR;
+                // Iridescent wild: the white base has no baked "?", so render one.
+                // Hand-drawn wild@2x already bakes the "?" — suppress text there.
+                _cardTexts[index].text  = iridWild ? "?" : "";
+                if (iridWild)
+                {
+                    // 2026-06-04 Spencer: holographic "?" — uses the SAME tile font
+                    // (Avenir, inherited from the default set above) + a violet→magenta
+                    // vertical gradient. Gradient multiplies the base color, keep white.
+                    _cardTexts[index].color = Color.white;
+                    _cardTexts[index].enableVertexGradient = true;
+                    Color top = new Color(0.30f, 0.22f, 0.80f, 1f); // blue-violet
+                    Color bot = new Color(0.82f, 0.14f, 0.55f, 1f); // magenta-pink
+                    _cardTexts[index].colorGradient = new TMPro.VertexGradient(top, top, bot, bot);
+                }
+                else
+                {
+                    _cardTexts[index].color = WILD_CARD_COLOR;
+                }
             }
             else if (_swapModeActive)
             {
@@ -5582,8 +6172,8 @@ namespace WordDrop
                 }
                 else
                 {
-                    int pts = LetterData.GetPoints(letter);
-                    _cardPtsTexts[index].text = pts > 0 ? pts.ToString() : "";
+                    // Point values removed — cleaner RM/CC cards; score still tallies under the hood
+                    _cardPtsTexts[index].text = "";
                 }
             }
         }
@@ -6004,14 +6594,19 @@ namespace WordDrop
             TMPro.TMP_FontAsset tileFont = GameFont.GetTMP();
             if (tileFont != null) tm.font = tileFont;
             tm.text          = "";
-            tm.fontSize      = 5.5f;
-            tm.fontStyle     = TMPro.FontStyles.Normal;
+            tm.fontSize      = 6.3f; // 2026-06-05 Spencer: −10% (was 7.0)
+            tm.fontStyle     = TMPro.FontStyles.Bold; // match board/hand letters
             tm.color         = new Color(0.25f, 0.25f, 0.30f, 1f);
-            tm.alignment     = TMPro.TextAlignmentOptions.Center;
+            tm.alignment     = TMPro.TextAlignmentOptions.Midline; // match board/hand — centers a single capital
             tm.sortingOrder  = 15;
             tm.rectTransform.sizeDelta = new Vector2(2f, 2f);
             tm.enableWordWrapping = false;
             tm.overflowMode  = TMPro.TextOverflowModes.Overflow;
+            // Same letter effects as board/hand/ghost: slight dilate, no underlay.
+            var nextLetterMat = tm.fontMaterial;
+            nextLetterMat.DisableKeyword("UNDERLAY_ON");
+            nextLetterMat.SetFloat("_FaceDilate", 0.05f);
+            tm.UpdateMeshPadding();
             textGO.transform.localScale = new Vector3(invScale, invScale, 1f);
             _nextTileLetter = tm;
 
@@ -6503,6 +7098,7 @@ namespace WordDrop
                                 if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                                 {
                                     int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
+                                    yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
                                     yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
                                 }
 

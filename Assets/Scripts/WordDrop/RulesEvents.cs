@@ -172,6 +172,19 @@ namespace WordDrop
 
         /// <summary>Chain step at which this explosion occurred (0-based).</summary>
         public int              ChainStep    { get; set; }
+
+        /// <summary>EVERY primed word destroyed in this explosion — the directly-triggered word
+        /// AND ones swept in via connected-group expansion or the splash sweep (which never fire
+        /// OnPrimedTriggered). The complete "what actually blew up" list, so objectives can count
+        /// a long word however it detonated. 2026-06-08.</summary>
+        public List<ExplodedWordInfo> ExplodedWords { get; set; }
+    }
+
+    /// <summary>A single primed word that was destroyed in an explosion.</summary>
+    public struct ExplodedWordInfo
+    {
+        public string Word;
+        public int    OwnerPlayerIndex;
     }
 
     /// <summary>

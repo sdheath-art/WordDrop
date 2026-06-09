@@ -38,22 +38,27 @@ namespace WordDrop
         // Each individual hop — fast & snappy
         private const float HOP_AMPLITUDE     = 0.18f;  // visible lift — was 0.08, too subtle
         private const float HOP_UP_DURATION   = 0.12f;  // fast lift
-        private const float HOP_HANG_DURATION = 0.03f;  // brief apex
+        private const float HOP_HANG_DURATION = 0.02f;  // brief apex (snappier — was 0.03, stretch held too long)
         private const float HOP_DOWN_DURATION = 0.10f;  // fast fall
         private const float HOP_SQUASH_DURATION = 0.05f; // quick landing squash
         private const float HOP_REST_DURATION = 0.08f;  // snap back to rest
         private const float HOP_GAP_DURATION  = 0.04f;  // tiny gap between hops in burst
-        // Subtle squash/stretch — letter deformation still visible but not
-        // distracting. Dialed back from 1.10/0.94 to 1.06/0.97.
-        private const float STRETCH_Y         = 1.06f;
+        // Cartoon squash-and-stretch (Royal Match feel): a MODEST stretch up,
+        // then a PRONOUNCED wide squash on landing (the impact beat). 2026-06-02:
+        // stretch eased back (1.06→1.04) and landing squash widened a lot
+        // (1.03/0.97 → 1.14/0.87) so the "hits the surface" moment reads as a
+        // proper cartoon squash instead of a barely-there 3%.
+        private const float STRETCH_Y         = 1.04f;
         private const float STRETCH_X         = 0.97f;
-        private const float SQUASH_Y          = 0.97f;
-        private const float SQUASH_X          = 1.03f;
+        private const float SQUASH_Y          = 0.87f;
+        private const float SQUASH_X          = 1.14f;
 
         // Subtle color tint synced to hop. Brightens at apex, returns at rest.
         // Kept low so the scene's bloom doesn't blow out letters.
         private static readonly Color HINT_GLOW_LOW  = new Color(1f, 1f, 1f, 1f);
-        private static readonly Color HINT_GLOW_HIGH = new Color(1.05f, 1.10f, 1.07f, 1f);
+        // 2026-06-03 Spencer: glint value set to 1.14 (apex brighten). Still under
+        // the 1.30 bloom line, so it brightens without blowing out.
+        private static readonly Color HINT_GLOW_HIGH = new Color(1.14f, 1.14f, 1.14f, 1f);
 
         // PlayerPrefs key for the off/on toggle
         public const string PREF_KEY = "hint_enabled";
@@ -265,10 +270,27 @@ namespace WordDrop
             _bestCardIndex = move.CardIndex;
             _activeStage = 1;
 
-            // Animate both the hand card AND the board tiles together from
-            // the start — single-stage hint, matches CC/RM behavior.
+            // Hand card hops (shows WHICH card to drop). Board letters LIGHT UP
+            // only — glow pulse, no hop/scale (2026-06-03 Spencer). The marching-
+            // ants outline carries "which word"; the glow ties the letters to the
+            // hand-card rhythm.
             AnimateHandCard(move.CardIndex);
             AnimateBoardTiles(move.WordCells, move.Col);
+
+            // 2026-06-03 Spencer: marching-ants outline around the whole word
+            // (WordCells already includes the to-be-dropped cell), shown ON TOP
+            // of the hops. Royal Match-style "here's the word" cue.
+            EnsureOutline();
+            if (_outline != null) _outline.Show(move.WordCells);
+        }
+
+        private WordHintOutline _outline;
+        private void EnsureOutline()
+        {
+            if (_outline != null) return;
+            var go = new GameObject("WordHintOutline");
+            go.transform.SetParent(transform, false);
+            _outline = go.AddComponent<WordHintOutline>();
         }
 
         private void AnimateHandCard(int cardIndex)
@@ -321,14 +343,11 @@ namespace WordDrop
                 Vector3 basePos   = tile.transform.position;
                 Vector3 baseScale = tile.transform.localScale;
 
-                // Board tiles pulse in place (scale + glow only) in sync with
-                // the hand-card hops — no vertical motion to avoid overlap
-                // with tiles above. Stretch is HALVED (0.5x) so they don't
-                // touch neighboring board tiles either. The shared rhythm
-                // (timing + glow) ties them visually to the hand-card hint.
-                var seq = BuildHopSequence(tile.transform, sr, basePos, baseScale,
-                                           useLocalPosition: false, enablePosition: false,
-                                           stretchMultiplier: 0.5f);
+                // Board tiles LIGHT UP only (glow pulse, no hop/scale) in sync with
+                // the hand-card hops. 2026-06-03 Spencer: motion removed from board
+                // letters; the marching-ants outline carries "which word", the glow
+                // ties the letters to the hand-card rhythm.
+                var seq = BuildGlowPulseSequence(sr);
                 _tileSequences.Add(seq);
 
                 _highlightedTiles.Add(tile);
@@ -427,8 +446,38 @@ namespace WordDrop
             return seq;
         }
 
+        /// <summary>Board-tile hint: glow pulse ONLY (no hop, no scale). The colour
+        /// brightens to HINT_GLOW_HIGH and back, on the SAME per-hop rhythm as
+        /// BuildHopSequence (up → hang → down → squash+settle hold → gap), so the
+        /// board letters "light up" in sync with the hand-card hop without moving.
+        /// 2026-06-03 Spencer.</summary>
+        private Sequence BuildGlowPulseSequence(SpriteRenderer sr)
+        {
+            var seq = DOTween.Sequence().SetUpdate(true);
+            for (int h = 0; h < HOPS_PER_BURST; h++)
+            {
+                if (sr != null)
+                    seq.Append(DOTween.To(() => sr.color, c => { if (sr != null) sr.color = c; },
+                                          HINT_GLOW_HIGH, HOP_UP_DURATION).SetEase(Ease.OutSine));
+                seq.AppendInterval(HOP_HANG_DURATION);
+                if (sr != null)
+                    seq.Append(DOTween.To(() => sr.color, c => { if (sr != null) sr.color = c; },
+                                          HINT_GLOW_LOW, HOP_DOWN_DURATION).SetEase(Ease.InSine));
+                // Hold at rest for the span the card spends squashing + settling, so
+                // the glow cycle length matches the hop cycle length (stays in sync).
+                seq.AppendInterval(HOP_SQUASH_DURATION + HOP_REST_DURATION);
+                seq.AppendInterval(HOP_GAP_DURATION);
+            }
+            seq.AppendInterval(BURST_PAUSE_DURATION);
+            seq.SetLoops(-1);
+            return seq;
+        }
+
         public void ClearVisuals()
         {
+            // Hide the marching-ants word outline.
+            if (_outline != null) _outline.Hide();
+
             // Kill card sequence and restore card position + scale
             if (_cardSequence != null && _cardSequence.IsActive()) _cardSequence.Kill();
             _cardSequence = null;

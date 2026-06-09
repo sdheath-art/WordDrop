@@ -177,6 +177,15 @@ namespace WordDrop
             string id = ArmedBooster.Id;
             if (GetCharges(id) <= 0) { AimMode = false; ArmedBooster = null; OnStateChanged?.Invoke(); return; }
 
+            // Invalid target (e.g. Stone Splitter tapped on a non-rock) — ignore the
+            // tap and stay armed so the player can retry. NO charge consumed.
+            if (!ArmedBooster.CanResolveAt(col, row))
+            {
+                Debug.Log($"[Booster] {ArmedBooster.DisplayName} — invalid target ({col},{row}), staying armed (no charge spent)");
+                GameAudio.Instance?.PlayUIClick();
+                return;
+            }
+
             var booster = ArmedBooster;
             _charges[id] = GetCharges(id) - 1;
             AimMode = false;

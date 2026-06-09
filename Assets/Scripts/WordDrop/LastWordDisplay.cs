@@ -14,6 +14,10 @@ namespace WordDrop
     {
         public static LastWordDisplay Instance { get; private set; }
 
+        // 2026-06-04 Spencer: hide the top-center "WORD +score" banner for now.
+        // Flip to false to bring it back.
+        private const bool REMOVE_WORD_SCORE_BANNER = true;
+
         private TextMeshPro _text;
         private Coroutine _waveCoroutine;
         private Coroutine _fadeCoroutine;
@@ -75,6 +79,10 @@ namespace WordDrop
         /// </summary>
         public void ShowWord(string word, int score, bool isPlayer, bool playSound = true)
         {
+            // 2026-06-04 Spencer: top-center "WORD +score" banner removed for now.
+            // Remove this early return to restore it.
+            if (REMOVE_WORD_SCORE_BANNER) return;
+
             if (_text == null) return;
 
             // Reposition to current grid layout (grid changes between modes)

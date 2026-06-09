@@ -51,6 +51,112 @@ namespace WordDrop
         private const int HEADER_H  = 34;
         private const int CONTENT_H = 1900;
 
+        private void Update()
+        {
+            // Hotkey: B fires a tier-3 (12-tile) detonation at screen centre, so
+            // the effect can be triggered with the FX menu hidden/out of the way.
+            if (Input.GetKeyDown(KeyCode.B))
+                FireFakeDetonation(chainStep: 0, fakeTileCount: 12, forceMeltdown: false);
+        }
+
+        // ── FX Bloom isolation tests — fire ONE glow on a live board tile so the
+        //    matching FX-Bloom-Tuning slider can be dialed in isolation. ─────────
+        private Tile FirstLiveTile()
+        {
+            if (GridManager.Instance == null) return null;
+            for (int r = 0; r < RulesEngine.ROWS; r++)
+                for (int c = 0; c < RulesEngine.COLS; c++)
+                {
+                    Tile t = GridManager.Instance.GetTile(c, r);
+                    if (t != null && t.gameObject.activeSelf) return t;
+                }
+            return null;
+        }
+
+        private List<Tile> FirstLiveTiles(int n)
+        {
+            var list = new List<Tile>();
+            if (GridManager.Instance == null) return list;
+            for (int r = 0; r < RulesEngine.ROWS && list.Count < n; r++)
+                for (int c = 0; c < RulesEngine.COLS && list.Count < n; c++)
+                {
+                    Tile t = GridManager.Instance.GetTile(c, r);
+                    if (t != null && t.gameObject.activeSelf) list.Add(t);
+                }
+            return list;
+        }
+
+        private System.Collections.IEnumerator TestGlint()
+        {
+            Tile t = FirstLiveTile(); if (t == null) yield break;
+            var sr = t.GetComponent<SpriteRenderer>(); if (sr == null) yield break;
+            Color orig = sr.color;
+            float cap = WordDropFX.GlintCap;
+            sr.color = new Color(Mathf.Min(orig.r * 1.2f, cap), Mathf.Min(orig.g * 1.2f, cap), Mathf.Min(orig.b * 1.2f, cap), 1f);
+            yield return new WaitForSecondsRealtime(0.7f);
+            if (t != null && sr != null) sr.color = orig;
+        }
+
+        private void TestScoredFlash()
+        {
+            var tiles = FirstLiveTiles(4);
+            if (tiles.Count > 0 && WordDropFX.Instance != null)
+                WordDropFX.Instance.PlayWordScored(tiles, new Color(0.5f, 1f, 0.6f, 1f), 0);
+        }
+
+        private System.Collections.IEnumerator TestPrimedGlow()
+        {
+            Tile t = FirstLiveTile(); if (t == null) yield break;
+            var sr = t.GetComponent<SpriteRenderer>(); if (sr == null) yield break;
+            Color orig = sr.color;
+            float elapsed = 0f;
+            while (elapsed < 2.5f)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                float pulse = Mathf.Abs(Mathf.Sin(elapsed * 3.5f));
+                float tint = 0.35f + pulse * 0.3f;
+                Color pc = Color.Lerp(Color.white, Tile.PRIMED_GLOW, tint);
+                float pmax = Mathf.Max(pc.r, Mathf.Max(pc.g, pc.b));
+                float cap = WordDropFX.PrimedGlowCap;
+                if (pmax > cap) { float k = cap / pmax; pc.r *= k; pc.g *= k; pc.b *= k; }
+                sr.color = pc;
+                yield return null;
+            }
+            if (t != null && sr != null) sr.color = orig;
+        }
+
+        private void TestBubbleGlow()
+        {
+            Tile t = FirstLiveTile();
+            if (t != null && FlipbookExplosion.Instance != null)
+            {
+                var sr = t.GetComponent<SpriteRenderer>();
+                Color tint = sr != null ? sr.color : Color.white;
+                FlipbookExplosion.Instance.PlayBubble(t.transform.position, tint, 1f, 0.35f);
+            }
+        }
+
+        private void TestPopAura()
+        {
+            Tile t = FirstLiveTile();
+            if (t != null && FlipbookExplosion.Instance != null)
+            {
+                var sr = t.GetComponent<SpriteRenderer>();
+                Color tc = sr != null ? sr.color : Color.white;
+                float hdr = WordDropFX.PopAuraHDR;
+                Color squareTint = new Color(tc.r * hdr, tc.g * hdr, tc.b * hdr, 1f);
+                float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                FlipbookExplosion.Instance.PlayPopOverlaySquare(t.transform.position, cell, 0.5f, squareTint);
+            }
+        }
+
+        private void TestSparkle()
+        {
+            Tile t = FirstLiveTile();
+            if (t != null && SparkleSpray.Instance != null)
+                SparkleSpray.Instance.Play(t.transform.position, intensity: 0.5f);
+        }
+
         private void OnGUI()
         {
             EnsureStyles();
@@ -150,6 +256,35 @@ namespace WordDrop
                 RefillAllBoosters(99);
             innerY += BTN_H + GAP;
 
+            // ── Force a WILD into the hand (to test the iridescent wild tile) ────
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Force WILD into hand", _btnStyle))
+                HandManager.Instance?.DebugForceWildIntoHand();
+            innerY += BTN_H + GAP;
+
+            innerY += 14;
+
+            // ── FX Bloom isolation tests — fire each glow alone so its slider
+            //    can be tuned without triggering a whole detonation. ─────────────
+            GUI.Label(new Rect(0, innerY, PANEL_W - 20, HEADER_H), "── FX Bloom Tests ──", _headerStyle);
+            innerY += HEADER_H + 4;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▸ Glint  (Glint Cap)", _btnStyle))
+                StartCoroutine(TestGlint());
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▸ Scored Flash  (Scored Flash Green)", _btnStyle))
+                TestScoredFlash();
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▸ Primed Glow  (Primed Glow Cap)", _btnStyle))
+                StartCoroutine(TestPrimedGlow());
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▸ Bubble Glow  (Bubble Glow HDR)", _btnStyle))
+                TestBubbleGlow();
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▸ Pop Aura  (Pop Aura HDR)", _btnStyle))
+                TestPopAura();
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▸ Sparkle  (Sparkle Bright)", _btnStyle))
+                TestSparkle();
+            innerY += BTN_H + GAP;
             innerY += 14;
 
             // ── Forced full-stack detonations ────────────────────────────────────
@@ -204,6 +339,14 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 12 board tiles (Tier 3 initial)", _btnStyle))
                 DetonateRealBoardTiles(count: 12, chainStep: 0, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            // ── Isolated tier-3 burst: glow+rays+flash ONLY at a known tile ──────
+            // No detonation, no meltdown, no tile destruction — just fires
+            // PlayTier3Burst at the center tile so you can study where the glow
+            // lands and how it reads, without the 8+ meltdown layer burying it.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier-3 BURST ONLY @ center tile", _btnStyle))
+                FireTier3BurstOnly();
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonate 8 board tiles CASCADE (chain=2)", _btnStyle))
@@ -474,7 +617,17 @@ namespace WordDrop
             if (forceMeltdown)
                 StartCoroutine(ForcedMeltdownDetonation(fake, chainStep, fakeTileCount));
             else
-                WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
+                // big_pop + anticipation hold, then explode — mirrors the real
+                // resolvers so the test buttons reproduce the synced timing
+                // (original explosion 8+ tiles booms with the swell building
+                // into the pop; cascade buttons stay silent).
+                StartCoroutine(FakeBigPopThenExplode(fake, chainStep, fakeTileCount));
+        }
+
+        private System.Collections.IEnumerator FakeBigPopThenExplode(List<Tile> fake, int chainStep, int fakeTileCount)
+        {
+            yield return WordDropFX.MaybeBigPopAndHold(fake);
+            WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
         }
 
         /// <summary>
@@ -919,7 +1072,45 @@ namespace WordDrop
                 return;
             }
 
-            StartCoroutine(RealDetonationCoroutine(tiles, chainStep, forceMeltdown));
+            // No real drop happens in a test detonation, so pin the trigger cell to
+            // the top-left-most tile of the set (clearly OFF the cluster centroid).
+            // That makes the tier-3 burst deterministic AND lets you verify it's
+            // honoring LastTriggerCell — if the glow lands here, not the middle, it works.
+            WordDropFX.LastTriggerCell = new Vector2Int(tiles[0].Col, tiles[0].Row);
+            Debug.Log($"[FXTest] LastTriggerCell pinned to ({tiles[0].Col},{tiles[0].Row}) for this test detonation");
+
+            // big_pop + anticipation hold (self-gates: original explosion
+            // chainStep < 2 with 8+ tiles fires; cascade/meltdown buttons pass
+            // chainStep >= 2 and stay silent), then run the real detonation.
+            StartCoroutine(RealBigPopThenDetonate(tiles, chainStep, forceMeltdown));
+        }
+
+        private System.Collections.IEnumerator RealBigPopThenDetonate(List<Tile> tiles, int chainStep, bool forceMeltdown)
+        {
+            yield return WordDropFX.MaybeBigPopAndHold(tiles);
+            yield return StartCoroutine(RealDetonationCoroutine(tiles, chainStep, forceMeltdown));
+        }
+
+        // Isolated tier-3 energy burst (glow + rays + flash) at the board's center
+        // tile — NO detonation, NO meltdown, NO tile destruction. Pure look-test for
+        // the tier-3 layer so you can see exactly where/how the glow reads without
+        // the 8+ meltdown stack on top of it.
+        private void FireTier3BurstOnly()
+        {
+            if (WordDropFX.Instance == null || GridManager.Instance == null)
+            {
+                Debug.LogWarning("[FXTest] WordDropFX or GridManager missing");
+                return;
+            }
+
+            int cCol = RulesEngine.COLS / 2;
+            int cRow = RulesEngine.ROWS / 2;
+            Vector3 center = GridManager.Instance.CellToWorld(cCol, cRow);
+            float cell = GridManager.Instance.CellSize;
+            float span = cell * 3f; // ~3-tile-wide burst
+
+            Debug.Log($"[FXTest] Tier-3 BURST ONLY @ ({cCol},{cRow}) world={center} span={span:F2} scale={WordDropFX.Tier3BurstScale:F2}");
+            WordDropFX.Instance.PlayTier3Burst(center, span);
         }
 
         // ── Tier-1 Candy-Crush-style pop test fire ───────────────────────────

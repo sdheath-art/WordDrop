@@ -50,7 +50,11 @@ namespace WordDrop
         public static readonly Color PRIMED_GOLD_GLOW  = new Color(2.0f, 1.5f, 0.3f, 1f);  // HDR gold — bloom catches this
         // Final-turn warning: primed word has 1 drop left. Shifts to HDR red-orange
         // so the player gets a clear "USE THIS OR LOSE IT" signal on their last chance.
-        public static readonly Color PRIMED_DANGER_GLOW = new Color(2.2f, 0.6f, 0.15f, 1f); // HDR red-orange
+        // 2026-06-03 Spencer: pulled back from (2.2, 0.6, 0.15). At 1.6 the pulse
+        // breathes IN and OUT of the bloom (dim part of the cycle sits under the
+        // 1.30 line, the peak just crosses it) instead of strobing red-hot the
+        // whole time — softer danger flash, still reads as "last chance" at peak.
+        public static readonly Color PRIMED_DANGER_GLOW = new Color(1.6f, 0.55f, 0.2f, 1f); // HDR red-orange (pulled back)
         public static readonly Color PLAYER_GLOW = PRIMED_GLOW;
         public static readonly Color AI_GLOW     = PRIMED_GLOW;
 
@@ -68,7 +72,7 @@ namespace WordDrop
         // change PSD_CELL_PITCH in GridManager, update the denominator here
         // too. (Long-term: refactor so tile size is decoupled from pitch
         // entirely — for now, two-place coupled change.)
-        private const float TILE_DISPLAY_RATIO = 150f / 168f;
+        private const float TILE_DISPLAY_RATIO = 147f / 172f; // 2026-06-05 Spencer: pitch 168→172, tile held at 147 → wider gap (21→25 PSD). (was 147/168.) Keep numerator=147; denom MUST match GridManager.PSD_CELL_PITCH + the hardcoded 147/172 there.
 
         // ---------------------------------------------------------------------------
         // Runtime state
@@ -94,8 +98,20 @@ namespace WordDrop
         // presence as it moves from hand → board.
         private static Sprite   s_wildHaloSprite;
         private static Material s_wildHaloMaterial;
+        private static Sprite   s_wildGlowSprite;   // 2026-06-03: soft VFX_Glow radial behind the rays
         private GameObject      _wildHaloGO;
         private SpriteRenderer  _wildHaloSR;
+
+        // 2026-06-03 Spencer: procedural HOLOGRAPHIC wild tile — a white base +
+        // animated iridescent shader overlay instead of a hand-drawn sprite.
+        // Toggle IridescentWild to A/B against s_spriteWild.
+        public static bool      IridescentWild = true;
+        // 2026-06-03 Spencer: gate the crystal TILE-TINT overlay separately from the
+        // aura. false = white "?" tile + rainbow aura only (no crystal shader on the face).
+        public static bool      IridescentTileTint = false;
+        private GameObject      _iridGO;
+        private SpriteRenderer  _iridSR;
+        private static Material s_iridMaterial;
 
         // Edit-selected halo — reuses the wild-halo radial texture, tinted cyan.
         // Option A "selected" treatment: tile keeps its own face; a cyan glow
@@ -105,6 +121,13 @@ namespace WordDrop
         private static Sprite   s_editHaloSprite;   // Square_aura_invert — rounded-square rim glow
         private static Material s_editHaloMaterial;
         private Vector3         _editBaseScale = Vector3.one;
+        // 2026-06-04 Spencer: the tile's canonical cell-derived rest scale, captured
+        // at setup. Edit pop / diffuse pop / exit ALL snap back to this — never to the
+        // live transform (which can be mid-animation) so rapid toggling can't compound
+        // the tile bigger, and never inferred from the live sprite (which may be the
+        // green edit sprite). _restScaleSet guards against a stale Vector3.one default.
+        private Vector3         _restScale = Vector3.one;
+        private bool            _restScaleSet;
         private bool            _editSelected;
         private static readonly Color EDIT_HALO_CYAN = new Color(0.35f, 0.88f, 0.98f, 1f);
         private const float EDIT_POP_SCALE        = 1.09f; // springy lift on select
@@ -114,6 +137,82 @@ namespace WordDrop
         private const float EDIT_HALO_ALPHA_LOW   = 0.10f;
         private const float EDIT_HALO_ALPHA_HIGH  = 0.26f;
         private const float EDIT_HALO_SIZE        = 1.5f;  // halo footprint as ×cell (rim spills past tile edges)
+        // 2026-06-03 Spencer: edit-selected reads as an HDR cyan glow on the tile
+        // itself (glow-only, like the hint) — no cyan sprite swap, no halo. On click
+        // it SNAPS quickly to the most saturated/glowing cyan ("accessing" feel),
+        // then breathes between that peak and a dimmer cyan so it stays lit. Red is
+        // pulled way down for saturation; green/blue pushed well past the 1.30 bloom
+        // threshold so the peak genuinely blooms. Tune here.
+        private static readonly Color EDIT_GLINT_HIGH = new Color(0.24f, 1.06f, 1.26f, 1f); // peak — saturated cyan, blue just UNDER 1.30 bloom (minimal glow)
+        private static readonly Color EDIT_GLINT_LOW  = new Color(0.42f, 0.98f, 1.18f, 1f); // breathing trough — still cyan-lit
+        private const float EDIT_ACCESS_DUR = 0.13f; // fast snap-to-peak on click
+
+        // ── Glassy sheen highlight (CC-style) — 2026-06-03 Spencer prototype ──
+        // A soft white gloss layered OVER the upper portion of every tile (not
+        // baked), Screen-blended so it brightens toward a wet highlight without
+        // blowing out. Tunables are static so they can be dialed live.
+        private GameObject     _glossGO;
+        private SpriteRenderer _glossSR;
+        private static Sprite   s_glossSprite;
+        private static Sprite   s_dropShadowSprite; // 2026-06-04 Spencer: baked tile_shadow2 drop shadow
+        private static Material s_shadowMultiplyMat; // 2026-06-04 Spencer: MULTIPLY blend so the baked shadow blends like its PS layer
+        private static Material s_glossMaterial;
+        public static bool  GlossEnabled = false; // 2026-06-04 Spencer: off — gloss is baked into the new tile sprite now
+        public static float GlossAlpha   = 0.35f;  // Screen-blend white strength (0 = off)
+        public static float GlossWidth   = 0.62f;  // sheen width  as fraction of tile
+        public static float GlossHeight  = 0.30f;  // sheen height as fraction of tile (flatter = streak)
+        public static float GlossY       = 0.20f;  // upward offset as fraction of tile (toward top)
+
+        // ── Inner shadow (CC-style 3D volume) — soft dark gradient on the LOWER
+        // tile so it reads as a rounded raised form (top gloss + bottom shadow).
+        // Normal alpha-blended dark; sits under the letter, over the face.
+        private GameObject     _innerShadowGO;
+        private SpriteRenderer _innerShadowSR;
+        private static Material s_shadowMaterial;
+        private static Sprite   s_shadowSprite; // vertical gradient (dark bottom → clear top)
+        public static bool   ShadowEnabled = true; // 2026-06-05 Spencer: ON to test the shadowy.psd board shadow (was off — bevel baked into tile sprite)
+        // 2026-06-05 Spencer: BOARD shadow A/B — press \ (handled in GridManager) to flip
+        // A↔B live on the board, with a [BoardShadow] log each press. A = old, B = new.
+        public static string BoardShadowTexA = "Tiles/test_shadow@2x";
+        public static string BoardShadowTexB = "menu psds/shadowy";
+        private static bool   s_useBoardShadowB = false; // 2026-06-08 Spencer: default back to A (test_shadow@2x); \ flips to B
+        private static Sprite s_dropShadowSpriteA, s_dropShadowSpriteB;
+        private static readonly System.Collections.Generic.List<SpriteRenderer> s_boardShadowSRs = new System.Collections.Generic.List<SpriteRenderer>();
+
+        private static Sprite MakeBoardShadow(string resourcePath, float ppu)
+        {
+            if (string.IsNullOrEmpty(resourcePath)) return null;
+            Texture2D t = Resources.Load<Texture2D>(resourcePath);
+            if (t == null) return null;
+            return Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), ppu);
+        }
+
+        /// <summary>2026-06-05 Spencer: flips the BOARD drop shadow between variant A (old)
+        /// and B (new) live across every tile, and logs which is now active. Called from
+        /// GridManager on the \ key.</summary>
+        public static void FlipBoardShadow()
+        {
+            s_useBoardShadowB = !s_useBoardShadowB;
+            s_dropShadowSprite = s_useBoardShadowB ? s_dropShadowSpriteB : s_dropShadowSpriteA;
+            int n = 0;
+            for (int i = 0; i < s_boardShadowSRs.Count; i++)
+            {
+                var sr = s_boardShadowSRs[i];
+                if (sr != null) { sr.sprite = s_dropShadowSprite; n++; }
+            }
+            Debug.Log($"[BoardShadow] FLIP → active={(s_useBoardShadowB ? "B=" + BoardShadowTexB : "A=" + BoardShadowTexA)} (updated {n} tiles)");
+        }
+
+        /// <summary>2026-06-05 Spencer: live board-shadow darkness — driven by the
+        /// GridManager Inspector slider each frame (the multiply material is static here).</summary>
+        public static void SetBoardShadowStrength(float strength)
+        {
+            if (s_shadowMultiplyMat != null) s_shadowMultiplyMat.SetFloat("_Strength", strength);
+        }
+        public static float ShadowAlpha   = 0.30f;  // darkness (0 = off)
+        public static float ShadowWidth   = 0.80f;  // shadow width  as fraction of tile (inset to clear rounded corners)
+        public static float ShadowHeight  = 0.62f;  // shadow height as fraction of tile
+        public static float ShadowY       = -0.16f; // downward offset (toward bottom)
         // ColorState removed (was for Wordle mode)
 
         private SpriteRenderer _spriteRenderer;
@@ -129,6 +228,7 @@ namespace WordDrop
         private bool  _isEditRefill    = false;
         private bool  _isWildRefill   = false;
         private bool  _isStone        = false;
+        private bool  _isAnchored      = false; // Break-Rocks: fixed rock — resists gravity (visual side, mirrors RulesCellData.IsAnchored)
         private bool  _hasPrimedGlow    = false;
         private Color _primedGlowColor  = new Color(0.812f, 0.812f, 0.863f, 1f);
         private Color _currentBorderColor = new Color(0.812f, 0.812f, 0.863f, 1f);
@@ -137,6 +237,18 @@ namespace WordDrop
         private Coroutine _fallCoroutine;
         private Coroutine _flashCoroutine;
         private Coroutine _dissolveCoroutine;
+
+        // 2026-06-04 Spencer: a scored word ALSO primes in the same frame, and
+        // SetPrimedGlow's sprite swap + per-frame magenta pulse used to stomp the green
+        // scored flash within a frame or two ("flash fires very quickly"). While
+        // Time.time < _scoredFlashUntil, the primed VISUAL takeover (sprite swap + pulse
+        // color write) is held so the green scored flash plays through first.
+        private float _scoredFlashUntil = 0f;
+        public void HoldPrimedVisual(float seconds)
+        {
+            float until = Time.time + seconds;
+            if (until > _scoredFlashUntil) _scoredFlashUntil = until;
+        }
 
         // Dissolve shader
         private static Material s_dissolveMaterial;
@@ -232,7 +344,8 @@ namespace WordDrop
             float nativeSize = _spriteRenderer != null && _spriteRenderer.sprite != null
                 ? _spriteRenderer.sprite.bounds.size.x : 1f;
             float scale = displaySize / nativeSize;
-            transform.localScale = new Vector3(scale, scale, 1f);
+            _restScale = new Vector3(scale, scale, 1f); _restScaleSet = true;
+            transform.localScale = _restScale;
             transform.localRotation = Quaternion.identity;
 
             UpdateLetterDisplay(letter);
@@ -256,12 +369,16 @@ namespace WordDrop
             if (_isHighlighted) Highlight(false);
             if (_isGoldBonus) SetGoldBonus(false);
             if (_isStone) SetStoneVisual(false);
+            _isAnchored = false; // clear Break-Rocks anchor on pool reuse
+            if (_isWild) SetWild(false); // also hides the iridescent overlay
+            if (_iridGO != null) _iridGO.SetActive(false); // belt-and-suspenders for pool reuse
             if (_isSwapRefill) SetSwapRefillVisual(false);
             if (_isEditRefill) SetEditRefillVisual(false);
             if (_isWildRefill) SetWildRefillVisual(false);
             if (_isWild) SetWild(false);
 
             IsAnimating = false;
+            _externalScaleControl = false;
             IsDissolving = false;
             _hasPreviewHighlight = false;
             // Clear sticky scored-word flags so a recycled tile doesn't carry
@@ -333,7 +450,8 @@ namespace WordDrop
                 ? _spriteRenderer.sprite.bounds.size.x
                 : texSize / 100f;
             float scale       = displaySize / nativeSize;
-            transform.localScale = new Vector3(scale, scale, 1f);
+            _restScale = new Vector3(scale, scale, 1f); _restScaleSet = true;
+            transform.localScale = _restScale;
 
             float invScale = 1f / Mathf.Max(scale, 0.01f);
 
@@ -341,23 +459,29 @@ namespace WordDrop
             GameObject letterGO = new GameObject("TileLetter");
             letterGO.transform.SetParent(transform, false);
             // Centered on tile face (true center, no offset).
-            letterGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
+            letterGO.transform.localPosition = new Vector3(0f, 0f, -0.1f); // 2026-06-04 Spencer: nudge to re-center Avenir
 
             _letterTMP = letterGO.AddComponent<TextMeshPro>();
             // Load Fredoka Bold TMP font
             TMP_FontAsset tileFont = GameFont.GetTMP();
             if (tileFont != null) _letterTMP.font = tileFont;
             _letterTMP.text           = "";
-            _letterTMP.fontSize       = 6.0f;
+            _letterTMP.fontSize       = 6.84f; // 2026-06-05 Spencer: −10% (was 7.6)
             _letterTMP.fontStyle      = FontStyles.Bold;
             _letterTMP.color          = new Color(0.145f, 0.153f, 0.200f, 1f); // #252733
-            _letterTMP.alignment      = TextAlignmentOptions.Center;
-            _letterTMP.sortingOrder   = 6;
+            _letterTMP.alignment      = TextAlignmentOptions.Midline; // Midline (not Center) so a single capital sits visually centered, not high
+            _letterTMP.sortingOrder   = 7; // above the gloss sheen (6) so the letter stays crisp
             _letterTMP.rectTransform.sizeDelta = new Vector2(2f, 2f);
             _letterTMP.enableWordWrapping = false;
             _letterTMP.overflowMode  = TextOverflowModes.Overflow;
 
-            // No effects — tile sprite already has bevel/shadow baked in
+            // 2026-06-03 Spencer: letter effects REMOVED for now — raw Clarity font,
+            // no underlay drop-shadow, no face dilate. Re-enable the block below
+            // (UNDERLAY_ON + offsets/softness + _FaceDilate 0.27) to restore them.
+            var letterMat = _letterTMP.fontMaterial; // auto-instances from the shared SDF material
+            letterMat.DisableKeyword("UNDERLAY_ON");
+            letterMat.SetFloat("_FaceDilate", 0.05f); // very slight bolden (no shadow); old was 0.27
+            _letterTMP.UpdateMeshPadding();
 
             letterGO.transform.localScale = new Vector3(invScale, invScale, 1f);
 
@@ -376,7 +500,7 @@ namespace WordDrop
             _pointTMP.fontStyle      = FontStyles.Normal;  // Fredoka Bold already bold
             _pointTMP.color          = new Color(0.40f, 0.40f, 0.50f, 1f);
             _pointTMP.alignment      = TextAlignmentOptions.Center;
-            _pointTMP.sortingOrder   = 6;
+            _pointTMP.sortingOrder   = 7; // above the gloss sheen (6)
             _pointTMP.rectTransform.sizeDelta = new Vector2(0.8f, 0.6f);
             _pointTMP.enableWordWrapping = false;
             _pointTMP.overflowMode  = TextOverflowModes.Overflow;
@@ -384,20 +508,132 @@ namespace WordDrop
 
             pointGO.transform.localScale = new Vector3(invScale, invScale, 1f);
 
-            // ── Static drop shadow — child of tile, moves with it, never changes ──
-            // Shadow stays UNLIT (default sprite material) so it doesn't interfere with 2D lighting
-            GameObject shadowGO = new GameObject("TileShadow");
-            shadowGO.transform.SetParent(transform, false);
-            float shadowOffset = nativeSize * 0.04f;
-            shadowGO.transform.localPosition = new Vector3(shadowOffset * 0.6f, -shadowOffset, 0.1f);
-            shadowGO.transform.localScale = Vector3.one;
-            SpriteRenderer shadowSR = shadowGO.AddComponent<SpriteRenderer>();
-            shadowSR.sprite = _spriteRenderer.sprite;
-            shadowSR.color = new Color(0f, 0f, 0f, 0.15f);
-            shadowSR.sortingOrder = 4;
-            // Keep default unlit material — don't convert to SpriteLit2D
-            shadowSR.gameObject.tag = "Untagged"; // mark so ConvertAllSprites skips it
+            // ── Static drop shadow — ONLY the baked tile_shadowbig. No procedural
+            // fallback (2026-06-04 Spencer): if the baked sprite didn't load we render
+            // NO shadow rather than the old black silhouette. Stays UNLIT.
+            if (s_dropShadowSprite != null)
+            {
+                GameObject shadowGO = new GameObject("TileShadow");
+                shadowGO.transform.SetParent(transform, false);
+                shadowGO.transform.localPosition = new Vector3(0f, 0f, 0.1f);
+                shadowGO.transform.localScale = Vector3.one;
+                SpriteRenderer shadowSR = shadowGO.AddComponent<SpriteRenderer>();
+                shadowSR.sprite = s_dropShadowSprite; // baked art defines spread/darkness
+                shadowSR.color = Color.white;
+                // MULTIPLY blend so it darkens the board like the PS Multiply layer
+                // (alpha carries the layer opacity). Default alpha-blend looked flat/gray.
+                if (s_shadowMultiplyMat == null)
+                {
+                    Shader sh = Shader.Find("WordDrop/MultiplySprite");
+                    if (sh != null)
+                    {
+                        s_shadowMultiplyMat = new Material(sh);
+                        s_shadowMultiplyMat.SetFloat("_Strength", 0.48f); // dial back darkness (2026-06-04 Spencer)
+                    }
+                }
+                if (s_shadowMultiplyMat != null) shadowSR.sharedMaterial = s_shadowMultiplyMat;
+                shadowSR.sortingOrder = 4;
+                shadowSR.gameObject.tag = "Untagged"; // skip 2D-light conversion
+                s_boardShadowSRs.Add(shadowSR); // register for the \ A/B flip
+            }
 
+            // ── Glassy sheen highlight (CC-style) — soft white gloss over the
+            // upper portion of the tile face. Screen-blended (brightens toward a
+            // wet highlight, no harsh additive blow-out). Created once; rides the
+            // tile through pooling. 2026-06-03 Spencer prototype.
+            if (GlossEnabled)
+            {
+                if (s_glossSprite == null)
+                {
+                    Texture2D gtex = Resources.Load<Texture2D>("Particles/vfx_glow")
+                                  ?? Resources.Load<Texture2D>("Particles/soft_circle")
+                                  ?? Resources.Load<Texture2D>("Particles/glow");
+                    if (gtex != null)
+                        s_glossSprite = Sprite.Create(gtex, new Rect(0, 0, gtex.width, gtex.height), new Vector2(0.5f, 0.5f), 100f);
+                    Shader scr = Shader.Find("WordDrop/ScreenSprite")
+                              ?? Shader.Find("WordDrop/AdditiveSprite")
+                              ?? Shader.Find("Sprites/Default");
+                    s_glossMaterial = new Material(scr);
+                }
+                if (s_glossSprite != null)
+                {
+                    _glossGO = new GameObject("TileGloss");
+                    _glossGO.transform.SetParent(transform, false);
+                    // world y offset = nativeSize*GlossY*scale = displaySize*GlossY (upper).
+                    // z = -0.05 sits in front of the face, behind the letter (-0.1).
+                    _glossGO.transform.localPosition = new Vector3(0f, nativeSize * GlossY, -0.05f);
+                    _glossSR = _glossGO.AddComponent<SpriteRenderer>();
+                    _glossSR.sprite = s_glossSprite;
+                    if (s_glossMaterial != null) _glossSR.sharedMaterial = s_glossMaterial;
+                    _glossSR.color = new Color(1f, 1f, 1f, GlossAlpha);
+                    _glossSR.sortingOrder = 6; // above tile face (5); SetSortingOrder keeps it at order+1
+                    float gNative = (_glossSR.sprite != null && _glossSR.sprite.bounds.size.x > 0f)
+                        ? _glossSR.sprite.bounds.size.x : 1f;
+                    // Ellipse: same world-size formula as the edit halo — world size
+                    // = displaySize × fraction, counter-scaled for the parent.
+                    float gx = (displaySize * GlossWidth)  / (gNative * Mathf.Max(scale, 0.01f));
+                    float gy = (displaySize * GlossHeight) / (gNative * Mathf.Max(scale, 0.01f));
+                    _glossGO.transform.localScale = new Vector3(gx, gy, 1f);
+                    _glossGO.tag = "Untagged"; // skip 2D-light conversion (stays unlit)
+                }
+            }
+
+            // ── Inner shadow (bottom) — a VERTICAL GRADIENT (dark at the bottom
+            // edge, fading clear toward the top) on the lower tile for rounded-
+            // button volume. A gradient hugs the bottom edge instead of blobbing
+            // at the centre like a radial did. Tinted black + alpha-blended,
+            // sitting over the face and under the letter. 2026-06-03 Spencer.
+            if (ShadowEnabled)
+            {
+                if (s_shadowSprite == null) s_shadowSprite = BuildVerticalGradientSprite();
+                if (s_shadowMaterial == null)
+                    s_shadowMaterial = new Material(Shader.Find("Sprites/Default"));
+                _innerShadowGO = new GameObject("TileInnerShadow");
+                _innerShadowGO.transform.SetParent(transform, false);
+                // z = -0.04 sits just in front of the face, behind the letter (-0.1).
+                _innerShadowGO.transform.localPosition = new Vector3(0f, nativeSize * ShadowY, -0.04f);
+                _innerShadowSR = _innerShadowGO.AddComponent<SpriteRenderer>();
+                _innerShadowSR.sprite = s_shadowSprite; // vertical gradient, tinted dark
+                if (s_shadowMaterial != null) _innerShadowSR.sharedMaterial = s_shadowMaterial;
+                _innerShadowSR.color = new Color(0f, 0f, 0f, ShadowAlpha);
+                _innerShadowSR.sortingOrder = 6; // with the gloss (face+1), under the letter (face+2)
+                float sNative = (_innerShadowSR.sprite != null && _innerShadowSR.sprite.bounds.size.x > 0f)
+                    ? _innerShadowSR.sprite.bounds.size.x : 1f;
+                float sx = (displaySize * ShadowWidth)  / (sNative * Mathf.Max(scale, 0.01f));
+                float sy = (displaySize * ShadowHeight) / (sNative * Mathf.Max(scale, 0.01f));
+                _innerShadowGO.transform.localScale = new Vector3(sx, sy, 1f);
+                _innerShadowGO.tag = "Untagged"; // skip 2D-light conversion (stays unlit)
+            }
+
+        }
+
+        /// <summary>Builds a 1×N vertical-gradient sprite: white RGB, alpha = full at
+        /// the BOTTOM row fading to 0 at the top (squared falloff so the dark
+        /// concentrates near the bottom edge). Tinted black + alpha-blended, it
+        /// reads as a bottom inner-shadow band, not a centre blob. Built once.</summary>
+        private static Sprite BuildVerticalGradientSprite()
+        {
+            const int W = 48, H = 128;
+            var tex = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+            {
+                float t = y / (float)(H - 1);   // 0 at bottom row, 1 at top (Unity tex y=0 is bottom)
+                float av = 1f - t;              // dark at bottom, clear at top
+                av = av * av;                   // square — push the darkness toward the very bottom
+                for (int x = 0; x < W; x++)
+                {
+                    float u = x / (float)(W - 1);
+                    // Horizontal feather — taper the outer ~18% so the band fades
+                    // out at the sides instead of cutting off hard.
+                    float hx = Mathf.SmoothStep(0f, 0.18f, u) * Mathf.SmoothStep(0f, 0.18f, 1f - u);
+                    byte alpha = (byte)(Mathf.Clamp01(av * hx) * 255f);
+                    px[y * W + x] = new Color32(255, 255, 255, alpha);
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply(false, false);
+            return Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0.5f), 100f);
         }
 
         private void SetupAudio()
@@ -416,18 +652,25 @@ namespace WordDrop
         {
             if (_letterTMP != null)
             {
+                // 2026-06-04 Spencer: a wild that lands WITHOUT forming a word stays
+                // unresolved — its cell letter is a sentinel ('*' WILD_CHAR, '\0', or
+                // '?'). NEVER render a sentinel as a literal glyph: '*'/'?' printed
+                // raw, and '\0' showed a missing-glyph box ("weird text"). Blank them
+                // defensively on EVERY path (wild or not) so no garbage ever shows.
+                bool sentinel = (letter == '\0' || letter == TileBag.WILD_CHAR || letter == '?');
                 if (_isWild)
                 {
                     // Board wild uses wild2@2x sprite (blank). Uncommitted = no text;
                     // committed = chosen letter on top of blank wild sprite. No "?"
                     // glyph anymore (was on legacy white tile, now redundant).
-                    bool uncommitted = (letter == '\0' || letter == TileBag.WILD_CHAR);
-                    _letterTMP.text = uncommitted ? "" : letter.ToString().ToUpper();
-                    _letterTMP.color = WILD_LETTER_COLOR;
+                    _letterTMP.text = sentinel ? "" : letter.ToString().ToUpper();
+                    // 2026-06-03 Spencer: black letter (same as normal tiles) — the pink
+                    // WILD_LETTER_COLOR was unreadable on the magenta primed tile.
+                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
                 }
                 else
                 {
-                    _letterTMP.text = letter.ToString().ToUpper();
+                    _letterTMP.text = sentinel ? "" : letter.ToString().ToUpper();
                     _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
                 }
                 // Force visibility — Fake3D or stone may have disabled these
@@ -442,14 +685,14 @@ namespace WordDrop
             {
                 if (_isWild)
                 {
-                    // Corner ★ marker so committed wilds stay identifiable
-                    _pointTMP.text = WILD_GLYPH;
+                    // 2026-06-03 Spencer: no corner "?" marker (it cluttered the tile).
+                    _pointTMP.text = "";
                     _pointTMP.color = WILD_LETTER_COLOR;
                 }
                 else
                 {
                     int pts = LetterData.GetPoints(letter);
-                    _pointTMP.text = pts > 0 ? pts.ToString() : "";
+                    _pointTMP.text = ""; // point values removed — cleaner RM/CC tiles; score still tallies under the hood
                     _pointTMP.color = new Color(0.40f, 0.40f, 0.50f, 1f);
                 }
                 if (!_isStone)
@@ -480,10 +723,24 @@ namespace WordDrop
             {
                 if (active)
                 {
-                    _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
+                    if (IridescentWild)
+                    {
+                        // White base + (optional) crystal overlay. The rainbow aura is
+                        // independent (UpdateWildHalo below). IridescentTileTint gates
+                        // just the crystal tint on the face.
+                        _spriteRenderer.sprite = s_spriteNormal;
+                        _spriteRenderer.color  = Color.white;
+                        UpdateIridescent(IridescentTileTint);
+                    }
+                    else
+                    {
+                        _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
+                        UpdateIridescent(false);
+                    }
                 }
                 else
                 {
+                    UpdateIridescent(false);
                     // Restore to state-appropriate sprite (priority: primed > gold > normal)
                     if (_hasPrimedGlow)
                         _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
@@ -493,10 +750,9 @@ namespace WordDrop
                         _spriteRenderer.sprite = s_spriteNormal;
                 }
             }
-            // Board-tile halo removed (per playtest) — hand card keeps the halo so
-            // the wild reads as special before it's dropped, but once the wild is
-            // on the board the purple "?" / resolved-letter color is enough. Hide
-            // the halo unconditionally in case one was created previously.
+            // 2026-06-03 Spencer: NO rainbow aura on the board wild — the rays+glow
+            // live on the HOLDER card only (HandManager). Once dropped, the board
+            // tile is just the white "?" (its wild identity reads from the "?").
             UpdateWildHalo(false);
         }
 
@@ -518,14 +774,17 @@ namespace WordDrop
                 // Lazy-load the shared sprite + material once per process
                 if (s_wildHaloSprite == null)
                 {
-                    Texture2D tex = Resources.Load<Texture2D>("Particles/wild_halo");
+                    Texture2D tex = Resources.Load<Texture2D>("Particles/vfx_rays_sharp"); // 2026-06-03 Spencer: ray-burst aura
                     if (tex != null)
                     {
                         s_wildHaloSprite = Sprite.Create(
                             tex, new Rect(0, 0, tex.width, tex.height),
                             new Vector2(0.5f, 0.5f), 100f);
-                        Shader addShader = Shader.Find("WordDrop/AdditiveSprite");
-                        if (addShader == null) addShader = Shader.Find("Sprites/Default");
+                        // Rainbow aura material (2026-06-03 Spencer). Falls back to
+                        // plain additive if the aura shader is missing.
+                        Shader addShader = Shader.Find("WordDrop/IridescentAura")
+                                        ?? Shader.Find("WordDrop/AdditiveSprite")
+                                        ?? Shader.Find("Sprites/Default");
                         s_wildHaloMaterial = new Material(addShader);
                     }
                 }
@@ -542,13 +801,73 @@ namespace WordDrop
                 float haloNative = (_wildHaloSR.sprite != null && _wildHaloSR.sprite.bounds.size.x > 0)
                     ? _wildHaloSR.sprite.bounds.size.x : 1f;
                 float tileScale = transform.localScale.x;
-                float haloScale = (_cellSize * 1.2f) / (haloNative * Mathf.Max(tileScale, 0.01f));
+                float haloScale = (_cellSize * 1.8f) / (haloNative * Mathf.Max(tileScale, 0.01f)); // rays spill past edges
                 _wildHaloGO.transform.localScale = new Vector3(haloScale, haloScale, 1f);
                 // Same animator as hand cards — slow rotation + breathing + twinkle.
                 _wildHaloGO.AddComponent<WildHaloAnimator>();
+
+                // Second aura layer — a soft VFX_Glow radial behind the rays for a
+                // fuller, rounder glow. Child of the rays GO so it toggles + cleans
+                // up with it (no extra wiring). 2026-06-03 Spencer.
+                if (s_wildGlowSprite == null)
+                {
+                    Texture2D gtex = Resources.Load<Texture2D>("Particles/vfx_glow");
+                    if (gtex != null)
+                        s_wildGlowSprite = Sprite.Create(gtex, new Rect(0, 0, gtex.width, gtex.height),
+                                                         new Vector2(0.5f, 0.5f), 100f);
+                }
+                if (s_wildGlowSprite != null)
+                {
+                    var glowGO = new GameObject("WildGlow");
+                    glowGO.transform.SetParent(_wildHaloGO.transform, false);
+                    glowGO.transform.localPosition = new Vector3(0f, 0f, 0.05f); // just behind the rays
+                    var glowSR = glowGO.AddComponent<SpriteRenderer>();
+                    glowSR.sprite = s_wildGlowSprite;
+                    if (s_wildHaloMaterial != null) glowSR.sharedMaterial = s_wildHaloMaterial; // same rainbow additive
+                    glowSR.sortingOrder = 2; // behind the rays (3)
+                    glowSR.color = new Color(1f, 1f, 1f, 0.85f);
+                    float glowNative = (glowSR.sprite != null && glowSR.sprite.bounds.size.x > 0)
+                        ? glowSR.sprite.bounds.size.x : 1f;
+                    // Counter the parent's scale so the glow is ~0.85× the rays footprint.
+                    glowGO.transform.localScale = Vector3.one * ((haloNative / glowNative) * 0.85f);
+                }
             }
 
             _wildHaloGO.SetActive(true);
+        }
+
+        /// <summary>Procedural holographic overlay for the wild tile — fills the tile
+        /// face with the animated iridescent shader (masked to the white tile shape),
+        /// sitting over the face and under the gloss/letter. 2026-06-03 Spencer.</summary>
+        private void UpdateIridescent(bool active)
+        {
+            if (!active)
+            {
+                if (_iridGO != null) _iridGO.SetActive(false);
+                return;
+            }
+            if (_iridGO == null)
+            {
+                if (s_iridMaterial == null)
+                {
+                    Shader ish = Shader.Find("WordDrop/IridescentTile")
+                              ?? Shader.Find("WordDrop/IridescentBubble")
+                              ?? Shader.Find("Sprites/Default");
+                    s_iridMaterial = new Material(ish);
+                }
+                _iridGO = new GameObject("TileIridescent");
+                _iridGO.transform.SetParent(transform, false);
+                // z = -0.03 in front of the face (0), behind the gloss (-0.05) and letter (-0.1).
+                _iridGO.transform.localPosition = new Vector3(0f, 0f, -0.03f);
+                _iridSR = _iridGO.AddComponent<SpriteRenderer>();
+                if (s_iridMaterial != null) _iridSR.sharedMaterial = s_iridMaterial;
+                _iridSR.sortingOrder = 6; // over the white face (5), under the letter (7)
+                _iridGO.transform.localScale = Vector3.one; // matches the tile face
+                _iridGO.tag = "Untagged";
+            }
+            // Mask to the white rounded-rect tile shape (its alpha = the tile outline).
+            _iridSR.sprite = s_spriteNormal;
+            _iridGO.SetActive(true);
         }
 
         // ---------------------------------------------------------------------------
@@ -561,15 +880,19 @@ namespace WordDrop
         /// </summary>
         public void SetLetter(char letter)
         {
-            if (letter == '\0')
+            // 2026-06-04 Spencer: treat ALL wild sentinels ('\0', '*' WILD_CHAR, '?')
+            // the same — an unresolved wild used to slip '*'/'?' through here and print
+            // the raw glyph on the tile. On a wild tile, keep it (display blanks it);
+            // on a normal tile, reject so we never stamp a sentinel as a real letter.
+            if (letter == '\0' || letter == TileBag.WILD_CHAR || letter == '?')
             {
                 if (_isWild)
                 {
-                    Letter = '\0';
+                    Letter = letter;
                     UpdateLetterDisplay(letter);
                     return;
                 }
-                Debug.LogWarning($"[Tile] SetLetter called with '\\0' at ({Col},{Row}) — rejected to prevent blank tile.");
+                Debug.LogWarning($"[Tile] SetLetter called with sentinel '{(letter == '\0' ? "\\0" : letter.ToString())}' at ({Col},{Row}) on a non-wild tile — rejected to prevent garbage glyph.");
                 return;
             }
             Letter = letter;
@@ -627,8 +950,12 @@ namespace WordDrop
             {
                 if (!_letterTMP.gameObject.activeSelf) _letterTMP.gameObject.SetActive(true);
                 if (!_letterTMP.enabled) _letterTMP.enabled = true;
-                // If text is blank but Letter is valid, re-set it
-                if (string.IsNullOrEmpty(_letterTMP.text) && Letter != '\0' && Letter != '#')
+                // If text is blank but Letter is valid, re-set it. 2026-06-04 Spencer:
+                // exclude wild sentinels ('*'/'?') too — this "re-set if blank" path was
+                // re-stamping the asterisk back onto an unresolved wild right after the
+                // display guard blanked it.
+                if (string.IsNullOrEmpty(_letterTMP.text) && Letter != '\0' && Letter != '#'
+                    && Letter != TileBag.WILD_CHAR && Letter != '?')
                     _letterTMP.text = Letter.ToString().ToUpper();
             }
             if (_pointTMP != null)
@@ -638,7 +965,7 @@ namespace WordDrop
                 if (string.IsNullOrEmpty(_pointTMP.text) && Letter != '\0' && Letter != '#')
                 {
                     int pts = LetterData.GetPoints(Letter);
-                    _pointTMP.text = pts > 0 ? pts.ToString() : "";
+                    _pointTMP.text = ""; // point values removed — cleaner RM/CC tiles; score still tallies under the hood
                 }
             }
         }
@@ -775,6 +1102,11 @@ namespace WordDrop
         /// P1 color = green, AI color = orange.
         /// </summary>
         private Coroutine _primedPulseCoroutine;
+        // 2026-06-03 Spencer: when true, the primed pulse keeps updating COLOUR but
+        // stops writing transform.localScale, so an external animation (the tier-1
+        // explosion shrink) can drive the scale while the tile holds its exact
+        // primed colour all the way down. Reset to false on pool reuse.
+        private bool _externalScaleControl;
         private float _primedStartTime;
 
         /// <summary>Reset the primed timer so the pulse animation restarts from calm.</summary>
@@ -900,6 +1232,12 @@ namespace WordDrop
         private static readonly Color STONE_TINT = new Color(0.25f, 0.23f, 0.28f, 1f); // much darker — clearly not a normal tile
         public bool IsStone => _isStone;
 
+        // ── Break-Rocks: anchored flag (visual mirror of RulesCellData.IsAnchored). ──
+        // An anchored tile resists gravity — GridManager.ApplyGravity() keeps it at its
+        // found row and compacts other tiles around it (matches ApplyGravityInData).
+        public bool IsAnchored => _isAnchored;
+        public void SetAnchored(bool active) => _isAnchored = active;
+
         public void SetStoneVisual(bool active)
         {
             _isStone = active;
@@ -910,10 +1248,17 @@ namespace WordDrop
                 // Hide letter entirely — the dark tint is enough to identify stones
                 if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
                 if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
+                // Stones are matte obstacles — no glassy sheen / inner shadow.
+                if (_glossGO != null) _glossGO.SetActive(false);
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
             }
             else
             {
                 _spriteRenderer.color = Color.white;
+                // Restore the glass treatment when the tile leaves stone state
+                // (also covers pool reuse via ResetForPool → SetStoneVisual(false)).
+                if (_glossGO != null) _glossGO.SetActive(true);
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(true);
                 if (_letterTMP != null)
                 {
                     _letterTMP.gameObject.SetActive(true);
@@ -1017,7 +1362,10 @@ namespace WordDrop
             // state or coroutine lifecycle. Without this, gold tiles entering
             // primed state didn't show their glow visual until a later frame
             // (Spencer reported 2026-05-19: had to drop another letter first).
-            if (_spriteRenderer != null && s_spriteGold != null)
+            // 2026-06-04 Spencer: but NOT during the green scored-flash window — let the
+            // green flash play first; PrimedPulseLoop swaps to the magenta sprite when
+            // the hold expires.
+            if (_spriteRenderer != null && s_spriteGold != null && Time.time >= _scoredFlashUntil)
                 _spriteRenderer.sprite = s_spriteGold;
 
             // Start subtle primed idle animation
@@ -1027,7 +1375,24 @@ namespace WordDrop
             // Flash + sparkles when first primed
             if (playFlash && !wasAlreadyPrimed)
             {
-                FlashHighlight(glowColor);
+                // 2026-06-04 Spencer: during the green scored-flash window, SKIP the
+                // magenta prime flash — it drives sr.color via _flashCoroutine and would
+                // stomp the green flash. The green scored flash IS the celebration here;
+                // the magenta pulse takes over cleanly once the hold expires.
+                if (Time.time >= _scoredFlashUntil)
+                {
+                    // Flash to a TAMED version of the glow — the raw HDR (PRIMED_GLOW
+                    // 1.8/0.5/1.3) held at peak blooms too hard ("blows out"). Cap each
+                    // channel so the flash glows gently. The STEADY primed glow
+                    // (settleColor, from _primedGlowColor) is computed separately and
+                    // unaffected, so the gameplay cue stays.
+                    Color flashCol = new Color(
+                        Mathf.Min(glowColor.r, 1.28f),
+                        Mathf.Min(glowColor.g, 1.28f),
+                        Mathf.Min(glowColor.b, 1.28f),
+                        glowColor.a);
+                    FlashHighlight(flashCol);
+                }
                 GameParticles.Instance?.PlayPrimed(transform.position);
             }
 
@@ -1119,6 +1484,19 @@ namespace WordDrop
                     continue;
                 }
 
+                // 2026-06-04 Spencer: hold off the magenta takeover until the green
+                // scored flash has played through — don't write color or swap the
+                // sprite yet (the green scored sprite + flash tween own sr.color).
+                if (Time.time < _scoredFlashUntil)
+                {
+                    yield return null;
+                    continue;
+                }
+                // First frame past the hold: make sure the magenta primed sprite is now
+                // showing (the swap in SetPrimedGlow was skipped during the flash window).
+                if (s_spriteGold != null && _spriteRenderer.sprite != s_spriteGold)
+                    _spriteRenderer.sprite = s_spriteGold;
+
                 // Use global Time.time as the pulse clock so all primed tiles
                 // share the same phase — the word pulses as a unit.
                 float baseTime = Time.time;
@@ -1155,8 +1533,24 @@ namespace WordDrop
                 // Face tint — ramps with effective heat (turn heat + time urgency)
                 float baseTint = 0.12f + effectiveHeat * 0.06f; // 12% → 36%
                 float tintAmount = baseTint + pulse * (0.10f + effectiveHeat * 0.05f);
-                tintAmount = Mathf.Max(tintAmount, 0.35f);
-                _spriteRenderer.color = Color.Lerp(Color.white, _primedGlowColor, tintAmount);
+                // 2026-06-04 Spencer: the new glossy primed sprite is ~0.95 brightness,
+                // so the old 0.35 floor (pc.r≈1.28 → ×0.95≈1.22) sat UNDER the 1.30
+                // bloom line at low heat — freshly-primed/calm tiles stopped glowing,
+                // only about-to-expire ones did. Raise the floor so pc.r≈1.46 → rendered
+                // ≈1.39, a soft glow that's present from the moment a word primes.
+                tintAmount = Mathf.Max(tintAmount, 0.58f);
+                // Cap the pulse so the primed glow blooms SOFTLY, not blown out.
+                // Raw peak reached ~1.53 red on PRIMED_GLOW (1.8/0.5/1.3) → hard
+                // bloom. Scale the colour down (preserving hue) if any channel
+                // crosses 1.35 so it sits just over the 1.30 bloom line.
+                Color pc = Color.Lerp(Color.white, _primedGlowColor, tintAmount);
+                float pmax = Mathf.Max(pc.r, Mathf.Max(pc.g, pc.b));
+                // 2026-06-04 Spencer: the new glossy pink primed sprite is darker than
+                // the old flat one, so the multiply rarely crossed the 1.30 bloom line —
+                // the pulse stopped reading as a GLOW. Raise the cap so it blooms again.
+                float primedCap = Mathf.Max(WordDropFX.PrimedGlowCap, 1.55f);
+                if (pmax > primedCap) { float k = primedCap / pmax; pc.r *= k; pc.g *= k; pc.b *= k; }
+                _spriteRenderer.color = pc;
 
                 // Scale: visible breathe at all levels, punchier at high heat
                 float scalePulse = 0.035f + effectiveHeat * 0.015f; // 3.5% → 9.5% scale change
@@ -1170,7 +1564,7 @@ namespace WordDrop
                     scaleMult += jx; // slight asymmetric wobble
                 }
 
-                if (!IsAnimating && _flashCoroutine == null)
+                if (!IsAnimating && !_externalScaleControl && _flashCoroutine == null)
                     transform.localScale = new Vector3(baseScale * scaleMult, baseScale * scaleMult, 1f);
 
                 // Shimmer particles — more frequent at higher urgency
@@ -1232,8 +1626,11 @@ namespace WordDrop
         public void SetSortingOrder(int order)
         {
             if (_spriteRenderer != null) _spriteRenderer.sortingOrder = order;
-            if (_letterTMP != null) _letterTMP.sortingOrder = order + 1;
-            if (_pointTMP != null) _pointTMP.sortingOrder = order + 1;
+            if (_iridSR != null) _iridSR.sortingOrder = order + 1;            // holographic fill, above the face
+            if (_glossSR != null) _glossSR.sortingOrder = order + 1;          // top sheen, above the face
+            if (_innerShadowSR != null) _innerShadowSR.sortingOrder = order + 1; // bottom shadow, above the face
+            if (_letterTMP != null) _letterTMP.sortingOrder = order + 2; // letter crisp ABOVE both
+            if (_pointTMP != null) _pointTMP.sortingOrder = order + 2;
         }
 
         /// <summary>Brief color flash to highlight a scored word tile.</summary>
@@ -1382,6 +1779,12 @@ namespace WordDrop
         /// stopped. Used by WordDropFX.Tier1PopCoroutine to lock the tile's
         /// preserved color through the squeeze→punch→shatter sequence.
         /// </summary>
+        /// <summary>2026-06-03 Spencer: let the primed pulse keep driving COLOUR while
+        /// an external animation (tier-1 explosion shrink) drives the transform scale.
+        /// Suspends only the pulse's localScale write (its sole reader), so the tile
+        /// holds its exact primed colour as it scales down — no clear/repaint needed.</summary>
+        public void SetExternalScaleControl(bool on) { _externalScaleControl = on; }
+
         public void StopVisualPulses()
         {
             if (_goldPulseCoroutine != null)
@@ -1469,6 +1872,11 @@ namespace WordDrop
         {
             if (!_hasPreviewHighlight) return;
             _hasPreviewHighlight = false;
+
+            // 2026-06-03 Spencer: diagnosing "2x tile stuck green after leaving the
+            // preview path". Logs the tile's state + which sprite it restores to.
+            if (_isGoldBonus || _isShowingScoredSprite)
+                Debug.Log($"[PreviewClear] ({Col},{Row}) scored={_isShowingScoredSprite} gold={_isGoldBonus} primed={_hasPrimedGlow} wild={_isWild} → restoring {(_isShowingScoredSprite ? "SCORED(green)" : _hasPrimedGlow ? "PRIMED" : _isGoldBonus ? "GOLD" : _isWild ? "WILD" : "NORMAL")}");
 
             // Swap back to appropriate sprite (canonical priority: scored > primed > gold > wild > normal)
             if (_spriteRenderer != null)
@@ -1735,61 +2143,102 @@ namespace WordDrop
         /// (which read as a glitch). Fully self-contained: start with true,
         /// clear with false.
         /// </summary>
-        public void SetEditSelected(bool active)
+        public void SetEditSelected(bool active, bool popOnExit = false)
         {
             if (active)
             {
-                EnsureEditHalo();
-
-                // Capture the tile's true rest scale ONCE per selection — tiles
-                // rest at a cell-derived scale, not 1.0, so the pop/breath/exit
-                // must all restore to this value.
-                if (!_editSelected) _editBaseScale = transform.localScale;
+                // 2026-06-04 Spencer: base the pop on the CANONICAL rest scale captured
+                // at setup — NOT the live transform (could be mid-pop → compounds bigger
+                // each toggle) and NOT the live sprite bounds (could be the green edit
+                // sprite). This keeps the springy pop exactly as before but makes the
+                // rest size rock-solid no matter how fast you toggle on/off.
+                _editBaseScale = CanonicalRestScale();
                 _editSelected = true;
 
-                // Select-pop → continuous breath that stays slightly enlarged so
-                // the tile keeps reading "lifted / selected" the whole time.
+                // Springy select-pop for tactile feedback, then settle back to rest.
                 transform.DOKill();
                 transform.localScale = _editBaseScale;
                 transform.DOScale(_editBaseScale * EDIT_POP_SCALE, EDIT_POP_DUR)
                     .SetEase(Ease.OutBack, 1.7f)
-                    .OnComplete(() =>
-                    {
-                        transform.DOScale(_editBaseScale * EDIT_BREATH_SCALE, EDIT_BREATH_DUR)
-                            .SetEase(Ease.InOutSine)
-                            .SetLoops(-1, LoopType.Yoyo);
-                    });
+                    .OnComplete(() => { if (this != null) transform.localScale = _editBaseScale; });
 
-                // Swap to the authored cyan_tile sprite (bright candy cyan) so the
-                // tile itself reads "selected". A multiply-tint on the white tile
-                // could only DARKEN it (dull "shaded cyan"); the sprite is the real
-                // vibrant cyan. Keep color white so the sprite shows true.
-                SetRewriteTargetSprite(true);
-                if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
-
-                if (_editHaloGO != null) _editHaloGO.SetActive(true);
-                if (_editHaloSR != null)
+                // 2026-06-03 Spencer: selection reads as an HDR cyan glow on the tile
+                // itself (glow-only, like the hint) — NO cyan sprite swap, NO halo.
+                // Snap quickly to the peak saturated/glowing cyan ("accessing" feel),
+                // THEN breathe between that peak and a dimmer cyan so it stays lit.
+                if (_spriteRenderer != null)
                 {
-                    _editHaloSR.DOKill();
-                    _editHaloSR.color = new Color(EDIT_HALO_CYAN.r, EDIT_HALO_CYAN.g, EDIT_HALO_CYAN.b, EDIT_HALO_ALPHA_LOW);
-                    _editHaloSR.DOFade(EDIT_HALO_ALPHA_HIGH, EDIT_BREATH_DUR)
-                        .SetEase(Ease.InOutSine)
-                        .SetLoops(-1, LoopType.Yoyo);
+                    _spriteRenderer.DOKill();
+                    _spriteRenderer.color = Color.white;
+                    _spriteRenderer.DOColor(EDIT_GLINT_HIGH, EDIT_ACCESS_DUR)
+                        .SetEase(Ease.OutQuad)
+                        .OnComplete(() =>
+                        {
+                            if (_spriteRenderer != null)
+                                _spriteRenderer.DOColor(EDIT_GLINT_LOW, EDIT_BREATH_DUR)
+                                    .SetEase(Ease.InOutSine)
+                                    .SetLoops(-1, LoopType.Yoyo);
+                        });
                 }
             }
             else
             {
-                if (!_editSelected) return;
+                bool wasSelected = _editSelected;
                 _editSelected = false;
+                Vector3 rest = CanonicalRestScale();
+                // ALWAYS snap scale back to canonical rest — even if we think we're
+                // already deselected. A double SetEditSelected(false) or an interrupted
+                // pop used to early-return here and leave the tile stuck inflated.
                 transform.DOKill();
-                transform.localScale = _editBaseScale;
-                // Restore the original sprite + white tint (cleanup also calls
-                // ResetVisuals, but keep this self-contained so nothing lingers).
-                SetRewriteTargetSprite(false);
-                if (_spriteRenderer != null) _spriteRenderer.color = Color.white;
-                if (_editHaloSR != null) _editHaloSR.DOKill();
-                if (_editHaloGO != null) _editHaloGO.SetActive(false);
+                transform.localScale = rest;
+                // Kill the glint pulse + restore white only when we were actually
+                // selected, so we don't stomp a special-tile tint on a stray cleanup
+                // call. (ResetVisuals also covers this, but keep it self-contained.)
+                if (wasSelected && _spriteRenderer != null)
+                {
+                    _spriteRenderer.DOKill();
+                    _spriteRenderer.color = Color.white;
+                }
+                // 2026-06-03 Spencer: on toggle-off / expiry, fire the SAME springy
+                // pop as on select so turning it off feels symmetric. (Not on commit
+                // or board-shift reposition — those pass popOnExit=false.)
+                if (popOnExit && wasSelected)
+                {
+                    transform.DOScale(rest * EDIT_POP_SCALE, EDIT_POP_DUR)
+                        .SetEase(Ease.OutBack, 1.7f)
+                        .OnComplete(() => { if (this != null) transform.localScale = rest; });
+                }
             }
+        }
+
+        /// <summary>2026-06-03 Spencer: the same springy "pop" used on edit toggle-off,
+        /// fired when a primed word DIFFUSES back to a normal tile (it didn't detonate
+        /// — fuse expired or letters changed). Gives the player a visual cue that the
+        /// tile reverted. Pops up from the current rest scale and settles back.</summary>
+        public void PlayDiffusePop()
+        {
+            // 2026-06-04 Spencer: pop from the CANONICAL rest, not the live transform,
+            // so a diffuse landing mid-animation can't leave the tile inflated.
+            Vector3 baseScale = CanonicalRestScale();
+            transform.DOKill();
+            transform.localScale = baseScale;
+            transform.DOScale(baseScale * EDIT_POP_SCALE, EDIT_POP_DUR)
+                .SetEase(Ease.OutBack, 1.7f)
+                .OnComplete(() => { if (this != null) transform.localScale = baseScale; });
+        }
+
+        /// <summary>2026-06-04 Spencer: the tile's canonical cell-derived rest scale.
+        /// Prefers the value captured at setup; falls back to a fresh cell computation
+        /// if setup hasn't run yet. NEVER reads the live transform (which may be mid
+        /// animation) so edit/diffuse pops can't compound the tile bigger.</summary>
+        private Vector3 CanonicalRestScale()
+        {
+            if (_restScaleSet) return _restScale;
+            float native = (_spriteRenderer != null && _spriteRenderer.sprite != null
+                && _spriteRenderer.sprite.bounds.size.x > 0.0001f)
+                ? _spriteRenderer.sprite.bounds.size.x : 1f;
+            float s = (_cellSize * TILE_DISPLAY_RATIO) / native;
+            return new Vector3(s, s, 1f);
         }
 
         /// <summary>Lazily build the cyan edit halo child using the rounded-square
@@ -1872,10 +2321,11 @@ namespace WordDrop
         public void SetScrabbleStyle(char letter, int pointValue)
         {
             Letter = letter;
+            bool sentinel = (letter == '\0' || letter == TileBag.WILD_CHAR || letter == '?');
             if (_letterTMP != null)
-                _letterTMP.text = letter.ToString().ToUpper();
+                _letterTMP.text = sentinel ? "" : letter.ToString().ToUpper();
             if (_pointTMP != null)
-                _pointTMP.text = pointValue > 0 ? pointValue.ToString() : "";
+                _pointTMP.text = ""; // point values removed — cleaner tiles; score still tallies under the hood
         }
 
         // ---------------------------------------------------------------------------
@@ -1915,10 +2365,58 @@ namespace WordDrop
 
             // Try loading hand-drawn sprites from Resources/Tiles
             Sprite loadedNormal = Resources.Load<Sprite>("Tiles/white5@2x");
+
+            // 2026-06-04 Spencer: board white tile → baked glossy sprite. Built from the
+            // 1024px texture's TILE region (80% fill) at a PPU that matches white5's tile
+            // bounds, so it's a true drop-in (board sizes by sprite bounds). Replaces
+            // loadedNormal so every white state below picks it up.
+            Texture2D glossyTex = Resources.Load<Texture2D>("Tiles/white_glossy@2x");
+            if (glossyTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+            {
+                const float GLOSSY_FILL = 0.80f;
+                float whiteBounds = loadedNormal.bounds.size.x;
+                float ppu = glossyTex.width / (whiteBounds / GLOSSY_FILL);
+                float m = (1f - GLOSSY_FILL) * 0.5f * glossyTex.width;
+                float cw = GLOSSY_FILL * glossyTex.width;
+                loadedNormal = Sprite.Create(glossyTex, new Rect(m, m, cw, cw), new Vector2(0.5f, 0.5f), ppu);
+                // Baked drop shadow (tile_shadow2) at the SAME PPU → bounds ≈ 1.25× the
+                // tile, so a child at scale 1.0 feathers just past the tile edge.
+                // 2026-06-05 Spencer: build BOTH board-shadow variants so \ can flip them
+                // live on the board. s_dropShadowSprite = the currently active one.
+                s_dropShadowSpriteA = MakeBoardShadow(BoardShadowTexA, ppu);
+                s_dropShadowSpriteB = MakeBoardShadow(BoardShadowTexB, ppu);
+                s_dropShadowSprite  = s_useBoardShadowB ? s_dropShadowSpriteB : s_dropShadowSpriteA;
+                Debug.Log($"[BoardShadow] A='{BoardShadowTexA}'(loaded={s_dropShadowSpriteA != null}) " +
+                          $"B='{BoardShadowTexB}'(loaded={s_dropShadowSpriteB != null}) active={(s_useBoardShadowB ? "B" : "A")} ShadowEnabled={ShadowEnabled}");
+            }
+
             Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/pink_tile@2x");
+            // 2026-06-04 Spencer: new glossy primed (pink) tile — same content-rect/PPU
+            // drop-in treatment as the white tile (1024px, 80% fill). Replaces loadedPrimed
+            // so all primed/heat states below pick it up.
+            Texture2D primedTex = Resources.Load<Texture2D>("Tiles/primed_tile@2x");
+            if (primedTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+            {
+                const float PRIMED_FILL = 0.80f;
+                float targetBounds = loadedNormal.bounds.size.x; // = the (glossy) tile size
+                float pppu = primedTex.width / (targetBounds / PRIMED_FILL);
+                float pm = (1f - PRIMED_FILL) * 0.5f * primedTex.width;
+                float pcw = PRIMED_FILL * primedTex.width;
+                loadedPrimed = Sprite.Create(primedTex, new Rect(pm, pm, pcw, pcw), new Vector2(0.5f, 0.5f), pppu);
+            }
             Sprite loadedAI     = Resources.Load<Sprite>("Tiles/ai_tile");
 
             Sprite loadedScored = Resources.Load<Sprite>("Tiles/green_tile2@2x");
+            // 2026-06-04 Spencer: new glossy green tile (greeny). It's trimmed to the
+            // tile (100% fill), so use the FULL rect at a PPU that matches the white
+            // tile's bounds — true drop-in, same size as the rest.
+            Texture2D greenyTex = Resources.Load<Texture2D>("Tiles/greeny@2x");
+            if (greenyTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+            {
+                float gppu = greenyTex.width / loadedNormal.bounds.size.x;
+                loadedScored = Sprite.Create(greenyTex, new Rect(0, 0, greenyTex.width, greenyTex.height),
+                                             new Vector2(0.5f, 0.5f), gppu);
+            }
             Sprite loadedCyan   = Resources.Load<Sprite>("Tiles/cyan_tile@2x");
             Sprite loadedGolden = Resources.Load<Sprite>("Tiles/golden_tile2@2x");
             Sprite loadedWild   = Resources.Load<Sprite>("Tiles/wild2@2x");
@@ -2116,7 +2614,12 @@ namespace WordDrop
         private IEnumerator LandingSquishCoroutine(bool playSound = true)
         {
             IsAnimating = true;
-            Vector3 baseScale = transform.localScale;
+            // 2026-06-05 Spencer: base the squish on the CANONICAL rest scale, NOT the live
+            // transform. An edit committed mid-pop left the tile inflated, and capturing
+            // that as baseScale baked the inflated size in permanently (tile no longer
+            // matched its neighbours). Tiles always land at rest, so rest is the correct
+            // base for every caller — and it makes the mid-pop inflation impossible.
+            Vector3 baseScale = CanonicalRestScale();
             if (playSound) PlayLandSound();
 
             float squishDur = 0.18f;
@@ -2182,7 +2685,10 @@ namespace WordDrop
 
         private IEnumerator GravitySquishCoroutine()
         {
-            Vector3 baseScale = transform.localScale;
+            // 2026-06-05 Spencer: settle to the CANONICAL rest scale (same fix as the
+            // landing squish) so a tile that squishes during gravity/cascade while
+            // mid-pop can't bake an inflated size in as its new rest.
+            Vector3 baseScale = CanonicalRestScale();
 
             float squishDur = 0.14f;
             float elapsed = 0f;
@@ -2296,7 +2802,7 @@ namespace WordDrop
 
             _bakedRenderer = bakedGO.AddComponent<SpriteRenderer>();
             _bakedRenderer.sprite = bakedSprite;
-            _bakedRenderer.sortingOrder = _spriteRenderer.sortingOrder + 1;
+            _bakedRenderer.sortingOrder = _spriteRenderer.sortingOrder + 2; // above the gloss sheen (face+1)
 
             // Load shader
             if (s_fake3DMaterial == null)

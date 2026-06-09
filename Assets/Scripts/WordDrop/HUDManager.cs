@@ -60,6 +60,24 @@ namespace WordDrop
         // AI/MOVES counters — Survival's HideAIScore() makes room for it.
         private TextMeshProUGUI _coinCounterText;
 
+        // ── Top-out danger indicator (Survival) ───────────────────────────────────
+        // Countdown of MOVES until the board tops out (rises × cadence). A white
+        // bubble loops behind it (same "pop" language as tier-1 explosions) only when
+        // imminent. Created in BuildHUD, refreshed each frame in Update().
+        private TextMeshProUGUI _topOutNumText;
+        private Image           _topOutBubble;
+        private Coroutine       _topOutBubbleLoop;
+        private int             _topOutLastShown = int.MinValue;
+        private Sprite          _bubbleSpriteCache;
+        private int             _topOutDisplay   = int.MaxValue; // monotonic-clamped value actually shown
+        private int             _topOutLastStrict = -1;          // last headroom; an increase = a clear → allow the count to rise
+        private const int       TOPOUT_DANGER_THRESHOLD = 4; // moves; bubble fires at/under this
+
+        // ── Objective readout (the level's goal + progress) ───────────────────────
+        private TextMeshProUGUI _objectiveText;
+        private Image           _objectiveCheck;     // green check, pops in on objective complete
+        private Sprite          _checkSpriteCache;
+
         // ── Word-found overlay ────────────────────────────────────────────────────
 
         private GameObject _wordFoundOverlay;
@@ -92,7 +110,7 @@ namespace WordDrop
         private static readonly Color SWAP_COLOR      = new Color(0.63f, 0.53f, 0.75f, 0.8f); // light purple #A088C0
         private static readonly Color WORD_POPUP_P1   = new Color(1.00f, 0.84f, 0.42f, 1f);   // gold (match player)
         private static readonly Color WORD_POPUP_AI   = new Color(1.00f, 0.56f, 0.67f, 1f);   // pink (match AI)
-        private static readonly Color BAR_BG          = new Color(0.2228f, 0.1134f, 0.4716f, 1.0f); // #391D78 — held at original while Spencer reworks HUD look in Photoshop. UIConfig overrides at runtime.
+        private static readonly Color BAR_BG          = new Color(0.10f, 0.27f, 0.50f, 1.0f); // 2026-06-02: deep ocean blue (was #391D78 purple) — candy-palette chrome, cohesive with cyan bg + blue board
         private static readonly Color RESET_NORMAL    = new Color(0.18f, 0.18f, 0.23f, 1f);
         private static readonly Color RESET_HIGHLIGHT = new Color(0.32f, 0.32f, 0.40f, 1f);
         private static readonly Color RESET_PRESSED   = new Color(0.10f, 0.10f, 0.14f, 1f);
@@ -303,6 +321,68 @@ namespace WordDrop
             // the older HUD layout is no longer needed.
             if (_playerScoreText != null) _playerScoreText.gameObject.SetActive(false);
             if (_playerScoreNum  != null) _playerScoreNum.gameObject.SetActive(false);
+
+            // ── Top-out danger indicator (Survival) — moves-to-top-out + white pulse ──
+            // Sits in the freed top-left slot. Bubble created FIRST so it renders behind
+            // the number. Both start hidden; Update() shows them in Survival mode.
+            {
+                var bubbleGO = new GameObject("TopOutDangerBubble", typeof(RectTransform), typeof(Image));
+                bubbleGO.transform.SetParent(barGO.transform, false);
+                var bubRT = bubbleGO.GetComponent<RectTransform>();
+                bubRT.anchorMin = new Vector2(0.085f, 0.5f);
+                bubRT.anchorMax = new Vector2(0.085f, 0.5f);
+                bubRT.pivot     = new Vector2(0.5f, 0.5f);
+                bubRT.sizeDelta = new Vector2(70f, 70f);
+                _topOutBubble = bubbleGO.GetComponent<Image>();
+                _topOutBubble.sprite        = LoadBubbleSprite();
+                _topOutBubble.raycastTarget = false;
+                _topOutBubble.color         = new Color(1f, 1f, 1f, 0f);
+                bubbleGO.SetActive(false);
+
+                _topOutNumText = MakeLabel(barGO.transform, "TopOutNum",
+                    anchorMin: new Vector2(0.02f, 0.05f),
+                    anchorMax: new Vector2(0.15f, 0.95f),
+                    pivot:     new Vector2(0.5f, 0.5f),
+                    offMin:    Vector2.zero, offMax: Vector2.zero,
+                    text:      "",
+                    size:      28,
+                    style:     FontStyle.Bold,
+                    color:     Color.white,
+                    align:     TextAnchor.MiddleCenter);
+                _topOutNumText.gameObject.SetActive(false);
+            }
+
+            // ── Objective readout — the level goal + progress, just below the bar ──
+            _objectiveText = MakeLabel(barGO.transform, "ObjectiveText",
+                anchorMin: new Vector2(0.1f, -1.05f),
+                anchorMax: new Vector2(0.9f, -0.15f),
+                pivot:     new Vector2(0.5f, 0.5f),
+                offMin:    Vector2.zero, offMax: Vector2.zero,
+                text:      "",
+                size:      20,
+                style:     FontStyle.Bold,
+                color:     Color.white,
+                align:     TextAnchor.MiddleCenter);
+            _objectiveText.gameObject.SetActive(false);
+
+            // Objective-complete check icon — hidden until the goal is met, then a green
+            // big→small pop next to the words. Positioned right-of-center for now (Spencer
+            // can nudge the anchor later). 2026-06-09.
+            {
+                var checkGO = new GameObject("ObjectiveCheck", typeof(RectTransform), typeof(Image));
+                checkGO.transform.SetParent(barGO.transform, false);
+                var checkRT = checkGO.GetComponent<RectTransform>();
+                checkRT.anchorMin = checkRT.anchorMax = new Vector2(0.93f, -0.6f);
+                checkRT.pivot     = new Vector2(0.5f, 0.5f);
+                checkRT.sizeDelta = new Vector2(34f, 34f);
+                checkRT.anchoredPosition = Vector2.zero;
+                _objectiveCheck = checkGO.GetComponent<Image>();
+                _objectiveCheck.sprite        = LoadCheckSprite();
+                _objectiveCheck.color         = new Color(0.4f, 1f, 0.45f); // green
+                _objectiveCheck.preserveAspect = true;
+                _objectiveCheck.raycastTarget  = false;
+                checkGO.SetActive(false);
+            }
 
             // ── Center: Stage label + progress bar ───────────────────────────────
             // 2026-05-28: replaced "S1 204/400" text readout with a horizontal
@@ -1305,6 +1385,231 @@ namespace WordDrop
             // Turn counter
             if (_turnCounterText != null)
                 _turnCounterText.fontSize = cfg.hudTurnFontSize;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // TOP-OUT DANGER INDICATOR (Survival)
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        private void Update()
+        {
+            RefreshTopOutDanger();
+        }
+
+        /// <summary>Kill any in-flight WildCardPop and snap the counter back to rest scale/rotation.
+        /// The pop (scale + DOPunchRotation) leaves the transform mid-state if interrupted by a
+        /// level transition; without this the counter starts the next level stuck big + rotated.
+        /// 2026-06-09 Spencer.</summary>
+        private void ResetTopOutNumTransform()
+        {
+            if (_topOutNumText == null) return;
+            _topOutNumText.transform.DOKill();
+            _topOutNumText.transform.localScale    = Vector3.one;
+            _topOutNumText.transform.localRotation = Quaternion.identity;
+        }
+
+        private void RefreshTopOutDanger()
+        {
+            if (_topOutNumText == null) return;
+
+            bool survival = SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null;
+            if (!survival)
+            {
+                if (_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(false);
+                ResetTopOutNumTransform();
+                _topOutDisplay = int.MaxValue; _topOutLastStrict = -1; // re-seed clamp for next run
+                HideTopOutBubble();
+                return;
+            }
+
+            var sm = SurvivalManager.Instance;
+            // Topped out (CONTINUE modal up, or forced game over) → you're out of turns:
+            // FORCE "0" instead of letting the post-overflow turnsSinceRise=0 reset
+            // recompute it to "2" (Spencer's repro). The CONTINUE modal is the real
+            // top-out signal — IsGameOver only fires after the continue cap.
+            bool toppedOut = sm.IsGameOver
+                || (ContinueModal.Instance != null && ContinueModal.Instance.IsShowing);
+            if (toppedOut)
+            {
+                ResetTopOutNumTransform(); // clear any mid-flight pop so "0" isn't stuck big/rotated
+                _topOutNumText.text = "0";
+                _topOutLastShown = 0;
+                _topOutDisplay = int.MaxValue; _topOutLastStrict = -1; // reset clamp for the next run
+                if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
+                HideTopOutBubble();
+                return;
+            }
+            // Non-death overlay (stage-clear transition) → hide so it doesn't flash a
+            // mid-shift value; reappears when play resumes.
+            if (sm.IsOverlayPaused)
+            {
+                if (_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(false);
+                ResetTopOutNumTransform();
+                _topOutDisplay = int.MaxValue; _topOutLastStrict = -1; // re-seed on resume
+                HideTopOutBubble();
+                return;
+            }
+
+            // Monotonic clamp: the raw value can jump UP mid-cadence (the rise-schedule
+            // resets the turn counter before the board actually changes). The player should
+            // only ever see it tick DOWN — UNLESS they genuinely clear space, which raises
+            // the headroom (strictRises). So allow an increase only when strictRises grows.
+            int raw    = sm.GetMovesUntilTopOut();
+            int strict = (RulesEngine.Instance != null) ? RulesEngine.Instance.GetRisesUntilTopOut() + 1 : raw;
+            if (strict > _topOutLastStrict) _topOutDisplay = raw;             // cleared / fresh board → allow up
+            else                            _topOutDisplay = Mathf.Min(_topOutDisplay, raw); // else monotonic down
+            _topOutLastStrict = strict;
+            int moves = _topOutDisplay;
+
+            if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
+            if (moves != _topOutLastShown)
+            {
+                // 2026-06-08 Spencer: when the count ticks UP (you cleared space → bought
+                // turns), celebrate it with the wild card's scale-up + wiggle pop.
+                bool wentUp = _topOutLastShown != int.MinValue && moves > _topOutLastShown;
+                _topOutLastShown = moves;
+                _topOutNumText.text = moves.ToString();
+                if (wentUp) UIAnimations.WildCardPop(_topOutNumText.transform, Vector3.one);
+            }
+
+            if (moves <= TOPOUT_DANGER_THRESHOLD) ShowTopOutBubble();
+            else HideTopOutBubble();
+        }
+
+        private void ShowTopOutBubble()
+        {
+            if (_topOutBubble == null) return;
+            if (!_topOutBubble.gameObject.activeSelf) _topOutBubble.gameObject.SetActive(true);
+            if (_topOutBubbleLoop == null) _topOutBubbleLoop = StartCoroutine(TopOutBubbleLoop());
+        }
+
+        private void HideTopOutBubble()
+        {
+            if (_topOutBubbleLoop != null) { StopCoroutine(_topOutBubbleLoop); _topOutBubbleLoop = null; }
+            if (_topOutBubble != null && _topOutBubble.gameObject.activeSelf)
+                _topOutBubble.gameObject.SetActive(false);
+        }
+
+        /// <summary>Mirrors the tier-1 pop bubble: a white bubble expanding small→big
+        /// while fading, on a continuous loop. Period tightens as danger rises (fewer
+        /// moves → faster pulse). Unscaled time so it animates through pauses.</summary>
+        private IEnumerator TopOutBubbleLoop()
+        {
+            var rt = _topOutBubble.rectTransform;
+            while (true)
+            {
+                int moves = (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                    ? SurvivalManager.Instance.GetMovesUntilTopOut() : TOPOUT_DANGER_THRESHOLD;
+                float period = moves <= 1 ? 0.55f : (moves <= 2 ? 0.75f : 0.95f);
+                float t = 0f;
+                while (t < period)
+                {
+                    t += Time.unscaledDeltaTime;
+                    float n = Mathf.Clamp01(t / period);
+                    float s = Mathf.Lerp(0.45f, 1.2f, n);
+                    rt.localScale = new Vector3(s, s, 1f);
+                    var c = _topOutBubble.color;
+                    c.a = Mathf.Lerp(0.5f, 0f, n);
+                    _topOutBubble.color = c;
+                    yield return null;
+                }
+            }
+        }
+
+        private Sprite LoadBubbleSprite()
+        {
+            if (_bubbleSpriteCache != null) return _bubbleSpriteCache;
+            Texture2D tex = Resources.Load<Texture2D>("Particles/bubble@2x");
+            if (tex != null)
+                _bubbleSpriteCache = Sprite.Create(
+                    tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 200f);
+            return _bubbleSpriteCache;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // OBJECTIVE READOUT
+        // ═══════════════════════════════════════════════════════════════════════════
+
+        /// <summary>Show/refresh the level objective (title + progress). Null hides it.
+        /// Called by ObjectiveManager whenever the active objective changes or progresses.</summary>
+        public void SetObjective(Objective obj)
+        {
+            if (_objectiveText == null) return;
+            if (obj == null)
+            {
+                if (_objectiveText.gameObject.activeSelf) _objectiveText.gameObject.SetActive(false);
+                ResetObjectiveTextTransform();
+                HideObjectiveCheck();
+                return;
+            }
+            if (!_objectiveText.gameObject.activeSelf) _objectiveText.gameObject.SetActive(true);
+            _objectiveText.text  = $"{obj.Title}   {obj.ProgressText}";
+            _objectiveText.color = obj.IsComplete ? new Color(0.4f, 1f, 0.45f) : Color.white;
+            // While the goal is unmet: snap text back to rest (in case a prior completion pop was
+            // interrupted by a level transition) and hide the check. FlashObjectiveComplete pops
+            // both in on the completion edge; they persist (no further SetObjective) through the modal.
+            if (!obj.IsComplete) { ResetObjectiveTextTransform(); HideObjectiveCheck(); }
+        }
+
+        private void ResetObjectiveTextTransform()
+        {
+            if (_objectiveText == null) return;
+            _objectiveText.transform.DOKill();
+            _objectiveText.transform.localScale    = Vector3.one;
+            _objectiveText.transform.localRotation = Quaternion.identity;
+        }
+
+        /// <summary>Celebrate the objective completing — green text pop + the check icon scaling
+        /// in big→small beside it.</summary>
+        public void FlashObjectiveComplete()
+        {
+            if (_objectiveText == null) return;
+            _objectiveText.color = new Color(0.4f, 1f, 0.45f);
+            UIAnimations.WildCardPop(_objectiveText.transform, Vector3.one);
+            ShowObjectiveCheck();
+        }
+
+        /// <summary>Quick pop on the objective readout — fired each time progress ticks (e.g. a
+        /// drop-target is collected) so the counter visibly reacts. 2026-06-09.</summary>
+        public void PulseObjective()
+        {
+            if (_objectiveText == null) return;
+            var t = _objectiveText.transform;
+            t.DOKill();
+            t.localScale = Vector3.one;
+            t.DOPunchScale(Vector3.one * 0.28f, 0.30f, 6, 0.8f);
+        }
+
+        private void ShowObjectiveCheck()
+        {
+            if (_objectiveCheck == null) return;
+            _objectiveCheck.gameObject.SetActive(true);
+            _objectiveCheck.color = new Color(0.4f, 1f, 0.45f); // green
+            var t = _objectiveCheck.transform;
+            t.DOKill();
+            t.localScale = Vector3.one * 2.2f;                  // start BIG
+            t.DOScale(Vector3.one, 0.45f).SetEase(Ease.OutBack); // settle to small with a pop
+        }
+
+        private void HideObjectiveCheck()
+        {
+            if (_objectiveCheck == null) return;
+            _objectiveCheck.transform.DOKill();
+            if (_objectiveCheck.gameObject.activeSelf) _objectiveCheck.gameObject.SetActive(false);
+        }
+
+        private Sprite LoadCheckSprite()
+        {
+            if (_checkSpriteCache != null) return _checkSpriteCache;
+            _checkSpriteCache = Resources.Load<Sprite>("Tiles/icon_check");
+            if (_checkSpriteCache == null)
+            {
+                Texture2D tex = Resources.Load<Texture2D>("Tiles/icon_check");
+                if (tex != null)
+                    _checkSpriteCache = Sprite.Create(
+                        tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            return _checkSpriteCache;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
