@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using DG.Tweening;
@@ -57,7 +58,23 @@ namespace WordDrop
         private static bool _skipForSession = false;
         private bool _transitioning = false;
 
-        public bool IsActive => _step != TutorialStep.Inactive && _step != TutorialStep.Done;
+        public bool IsActive => (_step != TutorialStep.Inactive && _step != TutorialStep.Done) || _gateScript != null;
+
+        // ── Gated-level coaching (2026-06-25) — input gating + hand_point on a REAL level ──
+        private struct GateDrop { public char Letter; public int Col; public bool Charge; public Vector2Int[] Cells; }
+        // Level 1 solution (drop letter → column). Charge=true forms a word that charges; false detonates.
+        // Cells = the word's cells (for the marching-ants hint outline, so it follows our order).
+        private static readonly GateDrop[] LEVEL1_SCRIPT =
+        {
+            new GateDrop { Letter='C', Col=3, Charge=true,  Cells=new[]{ new Vector2Int(3,1), new Vector2Int(4,1), new Vector2Int(5,1) } }, // CAT  (row 1)
+            new GateDrop { Letter='P', Col=5, Charge=false, Cells=new[]{ new Vector2Int(5,1), new Vector2Int(5,2), new Vector2Int(5,3) } }, // PIT  (col 5)
+            new GateDrop { Letter='L', Col=0, Charge=true,  Cells=new[]{ new Vector2Int(0,1), new Vector2Int(0,2), new Vector2Int(0,3), new Vector2Int(0,4) } }, // LAND (col 0)
+            new GateDrop { Letter='O', Col=1, Charge=false, Cells=new[]{ new Vector2Int(0,2), new Vector2Int(1,2), new Vector2Int(2,2) } }, // NOT  (row 2)
+        };
+        private GateDrop[] _gateScript;
+        private int  _gateStep = -1;
+        private bool _gateAdvancing;
+        public bool IsGating => _gateScript != null;
 
         // ── Level 1: target = "Explode 4 words", taught as 4 gated charge→explode cycles ──
         // Each cycle authors a fresh board: drop Drop1 into col 2 → Charge word (horizontal, row 0)
@@ -119,12 +136,15 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
+            LevelIntroModal.OnPlayStarted += OnLevelPlayStarted;   // start gated coaching when a level begins
         }
 
         private void OnDestroy()
         {
             if (Instance == this) Instance = null;
+            LevelIntroModal.OnPlayStarted -= OnLevelPlayStarted;
             UnsubscribeEvents();
+            if (RulesEngine.Instance != null) RulesEngine.Instance.OnTileDropped -= OnGatedTileDropped;
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -133,10 +153,13 @@ namespace WordDrop
 
         public static bool ShouldRunTutorial()
         {
-            // Re-enabled 2026-06-25 (was hard-stubbed to false "for testing", which silently
-            // shipped the eased tutorial levels with NO interactive coaching — new players got
-            // no teaching). Runs the first-time coaching until it's been completed or skipped.
-            return PlayerPrefs.GetInt("tutorial_complete", 0) == 0 && !_skipForSession;
+            // RETIRED 2026-06-25 — the tutorial is being rebuilt as REAL gated LEVELS at the front of
+            // the level list (LevelTable + ObjectiveManager.InstallLevel), NOT this separate flow. So
+            // this old intercept is OFF: the game now flows straight into the real levels (tutorial
+            // Level 1 = Spencer's fixed board). The gating + hand_point coaching will be re-layered
+            // onto those real levels (this class's AllowedColumn/RigNextDraw/hand_point helpers get
+            // reused). See [[project_wordrop_tutorial_levels_2026_06_25]].
+            return false;
         }
 
         public void BeginTutorial()
@@ -244,19 +267,18 @@ namespace WordDrop
         /// computed from real world positions (more robust than hardcoded viewport fractions).</summary>
         private void ShowDragGestureToColumn(int cardIndex, int col)
         {
-            var cam  = Camera.main;
             var grid = GridManager.Instance;
             var hand = HandManager.Instance;
-            if (cam == null || grid == null || hand == null)
-            {
-                TutorialSpotlight.ShowDragGesture(new Vector2(0.30f, 0.22f), new Vector2(0.45f, 0.45f));
-                return;
-            }
+            if (grid == null || hand == null) return;
+
+            // Aim at the ACTUAL landing cell for this column (where the dropped tile comes to rest).
+            // World-space cursor → the fingertip lands exactly here, no screen conversion needed.
+            int landRow = RulesEngine.Instance != null ? RulesEngine.Instance.GetLowestEmptyRow(col) : 1;
+            if (landRow < 0) landRow = RulesEngine.ROWS - 1;
+
             Vector3 cardW = new Vector3(hand.GetCardWorldX(cardIndex), hand.GetCardWorldY(), 0f);
-            Vector3 colW  = new Vector3(grid.GetColumnCenterX(col), grid.GridBottom + grid.CellSize * 1.5f, 0f);
-            Vector3 fromVP = cam.WorldToViewportPoint(cardW);
-            Vector3 toVP   = cam.WorldToViewportPoint(colW);
-            TutorialSpotlight.ShowDragGesture(new Vector2(fromVP.x, fromVP.y), new Vector2(toVP.x, toVP.y));
+            Vector3 colW  = grid.CellToWorld(col, landRow);
+            TutorialSpotlight.ShowDragGesture(cardW, colW);
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -528,6 +550,119 @@ namespace WordDrop
 //             Debug.Log("[TutorialManager] Starting normal game after tutorial.");
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
+        }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // GATED-LEVEL COACHING — training wheels on a REAL level (the level owns the
+        // goal/modal/advance; this only rigs the hand, gates each drop, and guides with hand_point).
+        // ══════════════════════════════════════════════════════════════════════════
+
+        private void OnLevelPlayStarted()
+        {
+            if (IsGating) return;
+            if (!SurvivalManager.IsSurvivalMode || SurvivalManager.Instance == null) return;
+            int stage = SurvivalManager.Instance.CurrentStageIndex;
+            if (!LevelTable.Get(stage).Gated) return;
+            var script = GetGateScript(stage);
+            if (script == null || script.Length == 0) return;
+            BeginGatedLevel(script);
+        }
+
+        // Only Level 1 is gated for now. (When more gated levels land, map stage → script here.)
+        private GateDrop[] GetGateScript(int stage) => stage == 1 ? LEVEL1_SCRIPT : null;
+
+        private void BeginGatedLevel(GateDrop[] script)
+        {
+            _gateScript = script;
+            _gateStep = 0;
+            _gateAdvancing = false;
+            BlockShuffleAndSwap = true;
+            if (RulesEngine.Instance != null)
+            {
+                RulesEngine.Instance.OnTileDropped -= OnGatedTileDropped;
+                RulesEngine.Instance.OnTileDropped += OnGatedTileDropped;
+            }
+            Debug.Log($"[TutorialGate] BEGIN gated level — {script.Length} guided drops.");
+            SetupGateStep(0);
+        }
+
+        private void SetupGateStep(int i)
+        {
+            if (_gateScript == null) return;
+            if (i >= _gateScript.Length) { EndGatedLevel(); return; }
+
+            GateDrop drop = _gateScript[i];
+
+            if (MatchController.Instance != null)
+                MatchController.Instance.CurrentPlayer = MatchController.PLAYER_HUMAN;
+
+            // Slot 0 holds THIS drop's letter: set the whole hand on the first step; each later letter
+            // arrives via the previous step's RigNextDraw refill into slot 0.
+            if (i == 0)
+                SetPlayerHand(new char[] { drop.Letter, 'X', 'R', 'E', 'L' });
+
+            AllowedColumn = drop.Col;
+            AllowedCardIndex = 0;
+
+            if (i + 1 < _gateScript.Length)
+            {
+                RigNextDraw(_gateScript[i + 1].Letter);
+                NextPreviewLetter = _gateScript[i + 1].Letter;
+            }
+            else NextPreviewLetter = '\0';
+            // Refresh the NEXT preview so it shows the rigged upcoming letter, not the stale bag letter.
+            if (HandManager.Instance != null) HandManager.Instance.UpdateNextTilePreview();
+
+            ShowInstruction(drop.Charge ? "MAKE A WORD" : "EXPLODE IT");
+            ShowCardHighlight(0);
+            ShowDragGestureToColumn(0, drop.Col);
+            // Pin the idle marching-ants hint to THIS step's word, so it follows CAT→PIT→LAND→NOT.
+            if (HintManager.Instance != null && drop.Cells != null)
+                HintManager.Instance.SetForcedHint(0, drop.Col, new List<Vector2Int>(drop.Cells));
+
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
+            _gateAdvancing = false;
+            Debug.Log($"[TutorialGate] step {i}: drop '{drop.Letter}' → col {drop.Col} ({(drop.Charge ? "charge" : "explode")}).");
+        }
+
+        private void OnGatedTileDropped(TileDroppedEvent evt)
+        {
+            if (_gateScript == null || _gateAdvancing) return;
+            _gateAdvancing = true;
+
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(false);
+            HideCardHighlight();
+            HideInstruction();
+            TutorialSpotlight.Hide();   // stop the hand_point while the drop resolves
+            HintManager.Instance?.ClearForcedHint();
+
+            _gateStep++;
+            StartCoroutine(AdvanceGateAfterResolution());
+        }
+
+        private IEnumerator AdvanceGateAfterResolution()
+        {
+            // Let the drop resolve (charge or explode + cascade) and slot 0 refill before the next step.
+            yield return new WaitForSeconds(1.4f);
+            SetupGateStep(_gateStep);
+        }
+
+        private void EndGatedLevel()
+        {
+            _gateScript = null;
+            _gateStep = -1;
+            _gateAdvancing = false;
+            BlockShuffleAndSwap = false;
+            AllowedColumn = -1;
+            AllowedCardIndex = -1;
+            NextPreviewLetter = '\0';
+            if (RulesEngine.Instance != null) RulesEngine.Instance.OnTileDropped -= OnGatedTileDropped;
+            HideCardHighlight();
+            HideInstruction();
+            TutorialSpotlight.Hide();
+            HintManager.Instance?.ClearForcedHint();
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
+//             Debug.Log("[TutorialGate] gated level complete — coaching released.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════

@@ -32,9 +32,11 @@ namespace WordDrop
         private Canvas _scrimCanvas;   // ScreenSpaceCamera full-screen scrim (board bumped above it)
         private Canvas _overlayCanvas; // ScreenSpaceOverlay: HUD dim strip + cursor
         private Image  _hudDim;
-        private RectTransform _cursor;
+        private Transform _cursor;          // hand_point is a WORLD-space sprite (same space as the board)
+        private SpriteRenderer _cursorSR;
         private Sequence _cursorSeq;
         private bool _boardBumped;
+        private const float CURSOR_Z = -5f;  // in front of the board tiles
 
         private static TutorialSpotlight Ensure()
         {
@@ -167,64 +169,59 @@ namespace WordDrop
             if (Instance._overlayCanvas != null) Instance._overlayCanvas.enabled = false;
         }
 
-        // ── Drag-gesture cursor (hand_point sprite, on the overlay layer) ─────────────
-        public static void ShowDragGesture(Vector2 fromVP, Vector2 toVP)
+        // ── Drag-gesture cursor (hand_point WORLD sprite — same coordinate space as the board, so the
+        //    fingertip lands EXACTLY on its target with no screen/canvas conversion) ──────────────────
+        /// <summary>Loop a hand_point drag from one WORLD position to another.</summary>
+        public static void ShowDragGesture(Vector3 fromWorld, Vector3 toWorld)
         {
             var inst = Ensure();
-            if (inst._overlayCanvas != null) inst._overlayCanvas.enabled = true;
-            inst.BuildCursorGesture(fromVP, toVP);
+            inst.BuildCursorGesture(fromWorld, toWorld);
         }
 
-        private void BuildCursorGesture(Vector2 fromVP, Vector2 toVP)
+        private void BuildCursorGesture(Vector3 fromWorld, Vector3 toWorld)
         {
             if (_cursor == null)
             {
-                var go = new GameObject("DragCursor", typeof(RectTransform), typeof(Image));
-                go.transform.SetParent(_overlayCanvas.transform, false);
-                var img = go.GetComponent<Image>();
-                img.sprite = GetHandSprite();
-                img.raycastTarget = false;
-                img.preserveAspect = true;
-                _cursor = go.GetComponent<RectTransform>();
-                _cursor.sizeDelta = new Vector2(CURSOR_PX, CURSOR_PX);
-                _cursor.anchorMin = _cursor.anchorMax = Vector2.zero;
-                _cursor.pivot = new Vector2(0.3f, 0.85f); // fingertip near top-left of the sprite
+                var go = new GameObject("DragCursor");
+                _cursorSR = go.AddComponent<SpriteRenderer>();
+                _cursorSR.sprite = GetHandSprite();   // pivot baked at the fingertip
+                _cursorSR.sortingOrder = 120;          // above the board tiles
+                _cursor = go.transform;
             }
             _cursor.gameObject.SetActive(true);
 
-            _cursorSeq?.Kill();
-            Vector2 a = ViewportToCanvas(fromVP);
-            Vector2 b = ViewportToCanvas(toVP);
+            // Scale so the hand is ~1.2 cells tall.
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 1f;
+            float nativeH = (_cursorSR != null && _cursorSR.sprite != null) ? _cursorSR.sprite.bounds.size.y : 1f;
+            float scale = (cell * 1.2f) / Mathf.Max(nativeH, 0.001f);
 
+            fromWorld.z = CURSOR_Z; toWorld.z = CURSOR_Z;
+
+            _cursorSeq?.Kill();
             _cursorSeq = DOTween.Sequence().SetUpdate(true);
-            _cursorSeq.AppendCallback(() => { _cursor.anchoredPosition = a; _cursor.localScale = Vector3.one; });
-            _cursorSeq.Append(_cursor.DOScale(0.85f, 0.18f).SetEase(Ease.OutQuad));
-            _cursorSeq.Append(_cursor.DOAnchorPos(b, DRAG_SECONDS).SetEase(Ease.InOutSine));
-            _cursorSeq.Append(_cursor.DOScale(1f, 0.15f));
+            _cursorSeq.AppendCallback(() => { _cursor.position = fromWorld; _cursor.localScale = new Vector3(scale, scale, 1f); });
+            _cursorSeq.Append(_cursor.DOScale(scale * 0.85f, 0.18f).SetEase(Ease.OutQuad));
+            _cursorSeq.Append(_cursor.DOMove(toWorld, DRAG_SECONDS).SetEase(Ease.InOutSine));
+            _cursorSeq.Append(_cursor.DOScale(scale, 0.15f));
             _cursorSeq.AppendInterval(0.35f);
             _cursorSeq.SetLoops(-1);
         }
 
-        private Vector2 ViewportToCanvas(Vector2 vp)
-        {
-            var canvasRT = _overlayCanvas != null ? _overlayCanvas.transform as RectTransform : null;
-            Vector2 size = canvasRT != null ? canvasRT.rect.size : new Vector2(Screen.width, Screen.height);
-            return new Vector2(vp.x * size.x, vp.y * size.y);
-        }
-
-        // ── hand_point sprite (Resources/Tiles/hand_point) ───────────────────────────
+        // ── hand_point sprite (Resources/Tiles/hand_point) — pivot baked at the FINGERTIP, measured
+        //    from the art: opaque pixel (40,16) of 133² → (0.301, 0.880). So transform.position == tip. ──
         private static Sprite _handSprite;
         private static Sprite GetHandSprite()
         {
             if (_handSprite != null) return _handSprite;
-            _handSprite = Resources.Load<Sprite>("Tiles/hand_point");
-            if (_handSprite == null)
+            var tex = Resources.Load<Texture2D>("Tiles/hand_point");
+            if (tex == null)
             {
-                var tex = Resources.Load<Texture2D>("Tiles/hand_point");
-                if (tex != null)
-                    _handSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
-                                                new Vector2(0.3f, 0.85f), 100f);
+                var s = Resources.Load<Sprite>("Tiles/hand_point");
+                if (s != null) tex = s.texture;
             }
+            if (tex != null)
+                _handSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                            new Vector2(0.301f, 0.880f), 100f); // pivot = fingertip
             return _handSprite;
         }
     }

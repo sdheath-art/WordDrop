@@ -29,6 +29,11 @@ namespace WordDrop
         // JSON. Flip false / replace with per-level objectives once the framework is proven.
         private const bool DEBUG_AUTO_OBJECTIVE = true;
 
+        // Tutorial counting: when true, the connecting/trigger word in a detonation ALSO counts toward
+        // the active objective (read in RulesEngine.DoExplode). Set per-level in InstallLevel — OFF for
+        // every normal level, so existing objective balance is unchanged. 2026-06-25 Spencer.
+        public static bool CountConnectingWords = false;
+
         private RulesEngine _subscribedTo;
         private bool _firedComplete;
         private bool _retired;          // complete + consumed, holding on HUD until modal closes
@@ -96,13 +101,50 @@ namespace WordDrop
             SurvivalManager.SetRiseCadenceOverride(e.RiseCadence);
             // Vault move budget for THIS level (only read on a move-cap/vault level).
             SurvivalManager.Instance?.SetVaultMoveBudgetOverride(e.VaultMoves);
+            // Authored/tutorial levels: rising rows OFF + a custom move budget. Force rises back ON for
+            // normal non-Vault levels so a prior tutorial level's "off" can't leak forward; Vault keeps
+            // its own rises-off handling. 2026-06-25 Spencer.
+            if (e.RisesOff)                     RisingRowManager.Enabled = false;
+            else if (e.Mode != LevelMode.Vault) RisingRowManager.Enabled = true;
+            SurvivalManager.Instance?.SetStageMoveBudgetOverride(e.MoveBudget);
+            // Tutorial: count the connecting word toward the goal on this level (OFF for normal levels).
+            CountConnectingWords = e.CountConnecting;
 
+            // ── Starting board ──
+            // Tutorial / authored levels place an EXACT hand-built board (FixedBoard) verbatim and skip
+            // the random reseed. Everything else keeps the existing behavior. 2026-06-25 Spencer.
+            if (e.FixedBoard != null && e.FixedBoard.Length > 0)
+            {
+                var rules = RulesEngine.Instance;
+                if (rules != null)
+                {
+                    rules.ClearBoard();
+                    int h = e.FixedBoard.Length;
+                    for (int i = 0; i < h; i++)
+                    {
+                        string row = e.FixedBoard[i];
+                        if (string.IsNullOrEmpty(row)) continue;
+                        int boardRow = (h - 1) - i;   // FixedBoard[0] = TOP row; last row → bottom (row 0)
+                        for (int col = 0; col < row.Length && col < RulesEngine.COLS; col++)
+                        {
+                            char ch = row[col];
+                            if (ch == '.' || ch == '_' || ch == ' ') continue;
+                            rules.SetCell(col, boardRow, new RulesCellData
+                            {
+                                Letter = char.ToUpper(ch), Col = col, Row = boardRow, PlayerIndex = -1
+                            });
+                        }
+                    }
+                    MatchController.Instance?.ResetTurnCounter();
+                    GridManager.Instance?.RebuildFromRulesEngine(rules);
+                }
+            }
             // ── Fresh, fuller starting board per level ──
             // Vault + Ice levels self-seed a full board (SeedVaultBoard in their objective Tick). The
             // other modes (LongWord / HeroWord) would otherwise inherit the PREVIOUS level's DEPLETED
             // board → a barren start with almost no word possibilities (Spencer saw an L3 LongWord with
             // ~3 tiles). Reseed a fuller board here for those modes. 2026-06-15 Spencer.
-            if (e.Mode != LevelMode.Vault && e.Mode != LevelMode.Ice)
+            else if (e.Mode != LevelMode.Vault && e.Mode != LevelMode.Ice)
             {
                 var rules = RulesEngine.Instance;
                 if (rules != null)

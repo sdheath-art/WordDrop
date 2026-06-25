@@ -241,11 +241,17 @@ namespace WordDrop
             else Hide();
         }
 
+        /// <summary>Fires when the goal modal is dismissed → gameplay begins. The tutorial gating layer
+        /// uses this to start its coaching at the moment the board becomes interactive. 2026-06-25.</summary>
+        public static event System.Action OnPlayStarted;
+
         private void Hide()
         {
+            bool wasPresenting = _isPresenting;
             if (SurvivalManager.Instance != null) SurvivalManager.Instance.SetOverlayPaused(false);
             if (_canvas != null) _canvas.gameObject.SetActive(false);
             _isPresenting = false;
+            if (wasPresenting) OnPlayStarted?.Invoke();
         }
 
         // ── Entrance state helpers (mirror StageClearModal) ───────────────────────

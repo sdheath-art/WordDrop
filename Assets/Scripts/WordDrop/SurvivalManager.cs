@@ -281,8 +281,10 @@ namespace WordDrop
 
         /// <summary>Current stage target.</summary>
         public int CurrentStageTarget => ComputeStageTarget(_currentStageIndex);
-        /// <summary>Current stage move budget.</summary>
-        public int CurrentStageMoveBudget => ComputeStageMoves(_currentStageIndex);
+        /// <summary>Current stage move budget. Authored/tutorial levels can override it
+        /// (SetStageMoveBudgetOverride); otherwise the per-stage ComputeStageMoves curve.</summary>
+        public int CurrentStageMoveBudget =>
+            _stageMoveBudgetOverride > 0 ? _stageMoveBudgetOverride : ComputeStageMoves(_currentStageIndex);
         /// <summary>
         /// Progress toward current stage's chip target. Derived from PlayerScore
         /// minus the score at stage-start — so EVERY source that adds to the
@@ -312,6 +314,14 @@ namespace WordDrop
         // (tighten the triage as the run escalates). 2026-06-15 (validation MVP).
         private int _vaultMoveBudgetOverride = -1;
         public void SetVaultMoveBudgetOverride(int moves) => _vaultMoveBudgetOverride = moves < 1 ? -1 : moves;
+        // Per-level move-budget override for NON-vault authored/tutorial levels (e.g. Level 1 = 30).
+        // Mirrors the vault override; set by the level sequencer each InstallLevel (<1 = no override
+        // → use the ComputeStageMoves curve). 2026-06-25 Spencer.
+        private int _stageMoveBudgetOverride = -1;
+        public void SetStageMoveBudgetOverride(int moves) => _stageMoveBudgetOverride = moves < 1 ? -1 : moves;
+        /// <summary>This level runs on a fixed move budget (authored/tutorial) instead of the rise/
+        /// top-out clock → the MOVES HUD shows budget-remaining, not moves-to-top-out. 2026-06-25.</summary>
+        public bool UsesStageMoveBudget => _stageMoveBudgetOverride > 0;
         /// <summary>Flat move budget for the active vault/loot level (0 if not one).</summary>
         public int VaultMoveCap => IsMoveCapLevel ? (_vaultMoveBudgetOverride > 0 ? _vaultMoveBudgetOverride : _vaultMoveBudget) : 0;
         /// <summary>Moves left this vault level.</summary>

@@ -2073,6 +2073,19 @@ namespace WordDrop
                 return;
             }
 
+            // Authored/tutorial levels run on a fixed MOVE BUDGET with rises OFF — show budget-remaining
+            // (ticks down per move) instead of the meaningless rise/top-out countdown. 2026-06-25 Spencer.
+            if (sm.UsesStageMoveBudget)
+            {
+                _topOutDisplay = Mathf.Min(_topOutDisplay, sm.CurrentStageMovesRemaining);
+                int left = _topOutDisplay;
+                if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
+                if (left != _topOutLastShown) { _topOutLastShown = left; _topOutNumText.text = left.ToString(); }
+                if (left <= TOPOUT_DANGER_THRESHOLD) ShowTopOutBubble();
+                else HideTopOutBubble();
+                return;
+            }
+
             // Monotonic clamp: the raw value can jump UP mid-cadence (the rise-schedule
             // resets the turn counter before the board actually changes). The player should
             // only ever see it tick DOWN — UNLESS they genuinely clear space, which raises
@@ -2124,7 +2137,9 @@ namespace WordDrop
                 int moves = (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
                     ? (SurvivalManager.Instance.IsMoveCapLevel
                         ? SurvivalManager.Instance.VaultMovesRemaining
-                        : SurvivalManager.Instance.GetMovesUntilTopOut())
+                        : SurvivalManager.Instance.UsesStageMoveBudget
+                            ? SurvivalManager.Instance.CurrentStageMovesRemaining
+                            : SurvivalManager.Instance.GetMovesUntilTopOut())
                     : TOPOUT_DANGER_THRESHOLD;
                 float period = moves <= 1 ? 0.55f : (moves <= 2 ? 0.75f : 0.95f);
                 float t = 0f;

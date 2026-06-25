@@ -4679,6 +4679,11 @@ namespace WordDrop
                         for (int tc = 0; tc < trigWord.Cells.Count; tc++)
                             formedWordCells.Add(trigWord.Cells[tc]);
                         if (trigWord.Word != null) keyWordLen = Mathf.Max(keyWordLen, trigWord.Word.Length); // trigger word is also a chest "key"
+                        // Tutorial counting: the connecting word visibly blows up too — count it toward the
+                        // objective so a "2 explosions of 4 words" board reads 4. Scoped to gated tutorial
+                        // levels (flag OFF for every normal level). 2026-06-25 Spencer.
+                        if (ObjectiveManager.CountConnectingWords && trigWord.Word != null)
+                            ObjectiveManager.Instance?.NotifyWordExploded(trigWord.Word, MatchController.PLAYER_HUMAN);
                     }
             }
 

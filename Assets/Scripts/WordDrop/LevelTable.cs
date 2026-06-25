@@ -85,6 +85,17 @@ namespace WordDrop
         public float AssistFreq;     // SURVIVAL_BOARD_ASSIST_BASE override (0.5 high → 0.2 low)
         public int  RiseCadence;     // turns-per-rise (bigger = slower/easier; Vault ignores — rises OFF)
 
+        // ── TUTORIAL / authored level (2026-06-25) ──
+        public string[] FixedBoard;  // null = normal procedural/seeded board (every existing level).
+                                     // Non-null = an EXACT hand-authored starting board placed verbatim
+                                     // (top-down rows; '.'/'_'/' ' = empty; last row sits on the bottom).
+                                     // Read in ObjectiveManager.InstallLevel — replaces the random reseed.
+        public bool RisesOff;        // tutorial/authored: run with rising rows OFF (board stays put).
+        public int  MoveBudget;      // tutorial/authored: move budget for THIS level (0 = default curve).
+        public bool Gated;           // tutorial: run the input-gating + hand_point coaching on this level.
+        public bool CountConnecting; // tutorial: also count the connecting/trigger word toward the goal,
+                                     // so a "2 explosions of 4 words" board reads 4 on the TARGET.
+
         public string Why;           // one-line rationale (dip/peak/Kishōtenketsu beat) — for logging
     }
 
@@ -127,6 +138,29 @@ namespace WordDrop
         {
             return new[]
             {
+                // ════════════════════════════════════════════════════════════════════════════════
+                //  TUTORIAL LEVELS (2026-06-25 Spencer) — inserted at the FRONT; everything below
+                //  slides back a number (old L1 → L2, etc.) but is otherwise untouched. These teach
+                //  ONE mechanic each on a FIXED, gated board, but run as REAL levels (real TARGET,
+                //  real win modal, real advance). More tutorial levels get added here over time.
+                // ════════════════════════════════════════════════════════════════════════════════
+
+                // TUTORIAL L1 — teaches PRIME → EXPLODE. Spencer's authored board: two spaced
+                //   "CAT-style" instances that don't interfere. The gated 4-drop solution:
+                //     C→col3 (CAT charges) · P→col5 (PIT, explodes CAT) ·
+                //     L→col0 (LAND charges) · O→col1 (NOT, explodes LAND).
+                //   Goal "explode 4 words". (NEXT STEPS, not yet wired: count the connecting words so
+                //   the target reads 4, a 30-move budget, rises OFF, and the input gating + hand_point.)
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:4,
+                    fixedBoard: new[] {
+                        "A.....",   // row 3 (top of the cluster)
+                        "N.T.SI",   // row 2
+                        "DRW.AT",   // row 1
+                        "NGZYEX",   // row 0 (bottom)
+                    },
+                    risesOff:true, moveBudget:30, gated:true, countConnecting:true,
+                    why:"TUTORIAL L1 — prime→explode on a fixed gated board (CAT/PIT + LAND/NOT)."),
+
                 // L1 — LongWord Ki. Knife-through-butter hook: explode 3 ANY words, every helper ON. VALLEY (run floor).
                 Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
                     why:"L1 VALLEY — LongWord Ki: 3 any-words, all helpers ON. Feel-good fast start."),
@@ -205,7 +239,8 @@ namespace WordDrop
         private static LevelEntry Entry(
             LevelMode mode, DifficultyProfile profile, string why,
             int longMin = 3, int longGoal = 3, int hero = 2, int ice = 4,
-            int vChests = 5, int vMoves = 8, string hidden = null)
+            int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
+            bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -223,6 +258,11 @@ namespace WordDrop
                 DetonSeed   = d.deton,
                 AssistFreq  = d.freq,
                 RiseCadence = d.rise,
+                FixedBoard  = fixedBoard,
+                RisesOff    = risesOff,
+                MoveBudget  = moveBudget,
+                Gated           = gated,
+                CountConnecting = countConnecting,
                 Why = why,
             };
         }

@@ -7078,7 +7078,7 @@ namespace WordDrop
             return Mathf.Abs(worldPos.x - p.x) < radius && Mathf.Abs(worldPos.y - p.y) < radius;
         }
 
-        private void UpdateNextTilePreview()
+        public void UpdateNextTilePreview()
         {
             if (_nextTileLetter == null) return;
 

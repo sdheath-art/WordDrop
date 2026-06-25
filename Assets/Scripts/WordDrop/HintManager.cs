@@ -124,6 +124,24 @@ namespace WordDrop
             RefreshHint();
         }
 
+        // ── Forced hint (tutorial) ────────────────────────────────────────────────
+        // The gating layer pins the idle hint to the CURRENT scripted move, so the marching-ants
+        // outline follows CAT → PIT → LAND → NOT instead of auto-picking the highest-scoring move.
+        // Still fires on the normal idle timer; it just shows OUR target. 2026-06-25 Spencer.
+        private bool     _forcedActive;
+        private BestMove _forcedMove;
+        public void SetForcedHint(int cardIndex, int col, List<Vector2Int> wordCells)
+        {
+            _forcedActive = true;
+            _forcedMove = new BestMove { CardIndex = cardIndex, Col = col, WordCells = wordCells, Score = 1 };
+        }
+        public void ClearForcedHint()
+        {
+            if (!_forcedActive) return;
+            _forcedActive = false;
+            ClearVisuals();
+        }
+
         /// <summary>
         /// Call when the board state changes (row rise, cascade settle, etc.)
         /// but the player has NOT interacted. Clears stale visuals so the hint
@@ -255,7 +273,11 @@ namespace WordDrop
         private void RefreshHint()
         {
             BestMove move;
-            if (!TryFindBestMove(out move))
+            if (_forcedActive)
+            {
+                move = _forcedMove;   // tutorial: show OUR scripted target, not the auto-best move
+            }
+            else if (!TryFindBestMove(out move))
             {
                 ClearVisuals();
                 return;
