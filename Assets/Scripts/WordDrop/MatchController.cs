@@ -133,6 +133,17 @@ namespace WordDrop
 
         public int  CurrentTurn       => _currentTurn;
         public int  CurrentPlayer     { get => _currentPlayer; set => _currentPlayer = value; }
+
+        /// <summary>Zero the turn counter AND RulesEngine.GlobalTurn together (mirrors StartMatch's
+        /// dual reset). Call this whenever a level RE-SEEDS the board MID-RUN (e.g. vault levels
+        /// ClearBoard): otherwise MatchController's cached _currentTurn (still high from the prior
+        /// level) overwrites the freshly-reset globalTurn on the next drop and poisons the new
+        /// board's primed tiles (fuse 0 / heat 10). 2026-06-10.</summary>
+        public void ResetTurnCounter()
+        {
+            _currentTurn = 0;
+            if (RulesEngine.Instance != null) RulesEngine.Instance.GlobalTurn = 0;
+        }
         public bool IsMatchActive     => _isMatchActive;
         public bool IsGameOver        => _isGameOver;
         public bool IsProcessing      => _isProcessing;
@@ -1059,6 +1070,7 @@ namespace WordDrop
             if (HUDManager.Instance != null)
                 HUDManager.Instance.ShowSwapCount(_swapsRemaining[player]);
 
+            HapticsManager.SwapConfirm(); // 0.30/0.75 — crisp UI feel, mirrors EditConfirm (was unwired) 2026-06-10
             AnalyticsManager.ButtonTap("swap");
 
             return true;

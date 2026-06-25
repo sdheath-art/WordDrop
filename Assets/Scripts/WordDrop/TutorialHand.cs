@@ -200,15 +200,6 @@ namespace WordDrop
                 DroughtAssist.DetonationSeeding = !DroughtAssist.DetonationSeeding;
                 Debug.Log($"[Seeding] length {(DroughtAssist.OpportunitySeeding ? "ON" : "OFF")} | detonation {(DroughtAssist.DetonationSeeding ? "ON" : "OFF")}");
             }
-            if (Input.GetKeyDown(KeyCode.K))   // Break-Rocks feel-test: drop 2 anchored rocks (temporary debug)
-            {
-                if (RulesEngine.Instance != null)
-                {
-                    RulesEngine.Instance.SpawnRocks(2);
-                    GridManager.Instance?.SyncToRulesState(RulesEngine.Instance);
-                    Debug.Log("[BreakRocks] Debug K — spawned 2 anchored rocks (clear beneath them; they should NOT fall).");
-                }
-            }
         }
     }
 }

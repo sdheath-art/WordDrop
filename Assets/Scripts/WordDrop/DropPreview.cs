@@ -196,7 +196,7 @@ namespace WordDrop
         {
             Vector3 pos = grid.CellToWorld(col, row);
             float cellSize = grid.CellSize;
-            float displaySize = cellSize * 0.88f;
+            float displaySize = cellSize * Tile.DisplayRatio; // 2026-06-16 Spencer: match the board tile size (was hardcoded 0.88)
 
             if (_ghostTile == null)
             {
@@ -208,16 +208,19 @@ namespace WordDrop
             _ghostTile.transform.position = pos;
             _ghostTile.SetActive(true);
 
-            // Wild ghost: iridescent wild uses the white tile (+ "?" below) instead of
-            // the old wild2@2x painted sprite. Non-wild uses green_tile2. 2026-06-03 Spencer.
-            string spritePath = _isWild
-                ? (Tile.IridescentWild ? "Tiles/white5@2x" : "Tiles/wild2@2x")
-                : "Tiles/green_tile2@2x";
-            Sprite selectedSprite = Resources.Load<Sprite>(spritePath);
+            // Non-wild ghost: show the LIVE tile (test_tile) with a green TINT, instead of the
+            // old separate green sprite — matches the new scored-green look. 2026-06-10 Spencer.
+            // Wild still uses its own sprites.
+            Sprite selectedSprite = _isWild
+                ? Resources.Load<Sprite>(Tile.IridescentWild ? "Tiles/white5@2x" : "Tiles/wild2@2x")
+                : Tile.NormalSprite;
             if (selectedSprite != null)
             {
                 _ghostSR.sprite = selectedSprite;
-                _ghostSR.color = new Color(1f, 1f, 1f, 0.5f); // semi-transparent
+                // green-tinted + semi-transparent for non-wild; plain semi-transparent for wild.
+                _ghostSR.color = _isWild
+                    ? new Color(1f, 1f, 1f, 0.5f)
+                    : new Color(Tile.SCORED_TINT.r, Tile.SCORED_TINT.g, Tile.SCORED_TINT.b, 0.5f);
                 float nativeSize = selectedSprite.bounds.size.x;
                 float scale = displaySize / nativeSize;
                 _ghostTile.transform.localScale = new Vector3(scale, scale, 1f);
@@ -357,6 +360,20 @@ namespace WordDrop
                     _highlightedPrimedTiles[i].ClearPreviewHighlight();
             }
             _highlightedPrimedTiles.Clear();
+
+            // Safety net (2026-06-16 Spencer): a preview-highlighted tile can slip out of the tracked
+            // lists when the preview recomputes mid-drag ("finding paths"), leaving it stuck green.
+            // Sweep the whole grid and clear any STRAY highlight. ClearPreviewHighlight is idempotent
+            // (no-op unless the tile actually has a preview highlight) and keeps genuinely-scored tiles
+            // green, so this is safe + cheap (~one small grid).
+            var grid = GridManager.Instance;
+            if (grid != null)
+                for (int col = 0; col < GridManager.COLS; col++)
+                    for (int row = 0; row < GridManager.ROWS; row++)
+                    {
+                        var t = grid.GetTile(col, row);
+                        if (t != null) t.ClearPreviewHighlight();
+                    }
         }
 
         private Texture2D CreateGhostTexture(int size, int radius, int border)

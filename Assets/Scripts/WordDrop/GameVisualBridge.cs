@@ -605,7 +605,17 @@ namespace WordDrop
                                             maxAge: 0f);
                                 }
 
-                                // Primed sound — plays every time a word is scored/primed
+                                // HiddenWord polish: any letter in this word that matches a still-hidden
+                                // slot pops + flies up to its blank in the Target panel with a sparkle
+                                // trail (the letter "escapes the blast"). Cosmetic — the rock→letter reveal
+                                // is driven by the objective on detonation. 2026-06-17 Spencer.
+                                // (HiddenWord fly-up is triggered in WordDropFX.PlayWordScored — the single
+                                // chokepoint every scoring path calls — so it's not duplicated here.)
+
+                                // Primed sound — the "you armed a word" feedback, plays every time a word
+                                // is scored/primed (cascade words included). 2026-06-23: reverted a change
+                                // that suppressed it on cascades — Spencer wanted the WAIT trimmed, not the
+                                // primed SFX removed.
                                 GameAudio.Instance?.PlayTilePrimed();
 
                                 // Haptic feedback — light tap on word scored
@@ -627,17 +637,14 @@ namespace WordDrop
 
                                 if (detonationComing)
                                 {
-                                    // Layer 1 (player's own trigger): 0.15s is enough —
-                                    // the player already saw the tile form their word.
-                                    // Layer 2+ (gravity-formed cascade word): hold 0.40s
-                                    // so the pink primed glow + pulse is visible before
-                                    // the cell detonates. Phase 10.5g+ telegraph — the
-                                    // cascade used to feel "random" at 0.12s because the
-                                    // primed state was barely visible. Now each cascade
-                                    // word lights up, pulses, THEN explodes so the player
-                                    // can track which word formed and see it prime.
-                                    // Applied to Survival too for consistency.
-                                    float primeFlash = hasExplodedThisDrop ? 0.40f : 0.15f;
+                                    // 2026-06-23 Spencer: the old 0.40s cascade telegraph hurt the
+                                    // feel — it froze the board to "let you read the word," but the
+                                    // pause cost more than it gave (Game Feel: latency = sluggish).
+                                    // Word-readability now lives in the green cascade-flash. The flash's
+                                    // own beat (CASCADE_FLASH_BEAT, at the explode chokepoint) gives the
+                                    // "flash → pop" timing, so cascades need ~no extra pre-pop wait here.
+                                    // Player's own word keeps its brief 0.15s. 2026-06-23 Spencer.
+                                    float primeFlash = hasExplodedThisDrop ? 0.02f : 0.15f;
                                     yield return WaitCache.Get(primeFlash);
                                 }
                                 else
@@ -741,6 +748,22 @@ namespace WordDrop
                     //        but STILL call grid.RemoveTiles (with empty list is safe).
                     case RulesEngine.ResolutionPhase.Exploding:
                     {
+                        // ICE: frozen tiles caught in this detonation THAWED (data already cleared their
+                        // IsFrozen in DoExplode/TryThawCell) — they SURVIVE on the board, so they are NOT
+                        // in ExplodedCells and must NOT be routed through the explode animation. Play the
+                        // defrost VFX + clear the frost overlay, leaving the (now normal) letter tile. 2026-06-12.
+                        if (step.ThawedCells != null && step.ThawedCells.Count > 0)
+                        {
+                            for (int i = 0; i < step.ThawedCells.Count; i++)
+                            {
+                                Tile thawed = null;
+                                try { thawed = grid.GetTile(step.ThawedCells[i].x, step.ThawedCells[i].y); }
+                                catch { /* ignore */ }
+                                if (thawed != null) thawed.PlayDefrost(); // ice-shatter burst + clears overlay; tile stays
+                            }
+                            HapticsManager.ExplosionImpact();
+                        }
+
                         // Null-safe: treat null ExplodedCells as empty list
                         int explodeCount = (step.ExplodedCells != null) ? step.ExplodedCells.Count : 0;
 //                         Debug.Log($"[GameVisualBridge] Phase=Exploding: {explodeCount} cell(s) to remove.");
@@ -758,6 +781,9 @@ namespace WordDrop
                                 catch { /* ignore */ }
                             }
 
+                            // (Vault reward coins are awarded in WordDropFX.PlayExplosion — the single
+                            // explode chokepoint that ALL detonations route through. 2026-06-18 Spencer.)
+
                             // Chain counter — persistent on-screen combo display
                             if (ChainCounter.Instance != null)
                                 ChainCounter.Instance.OnDetonation(step.ChainDepth);
@@ -768,8 +794,9 @@ namespace WordDrop
                                 if (dyingTiles[d] != null) center += dyingTiles[d].transform.position;
                             center /= Mathf.Max(1, dyingTiles.Count);
 
-                            // Haptic feedback — strong impact on detonation explosion
-                            HapticsManager.Strong();
+                            // Haptic feedback — strong impact on detonation explosion (debounced so it
+                            // pairs cleanly with the WordDropFX tier/cascade-pop call below). 2026-06-11.
+                            HapticsManager.ExplosionImpact();
 
                             // Named Meltdown — build-up + stamp BEFORE explosion
                             // 2026-05-15: gated to step.ChainDepth == 0 (initial detonation only).
@@ -804,16 +831,29 @@ namespace WordDrop
                                     BonusPopup.Instance.ShowHeatBonus(step.DetonationHeat, center, isPlayer);
                             }
 
-                            if (_deferredScoredWords != null && BonusPopup.Instance != null)
+                            // Build the authoritative WORD-cell set for this detonation from the scored
+                            // words (+ trigger groups). This is the reliable word-vs-splash discriminator —
+                            // works for drop, cascade, AND rise-formed words (none of which depend on
+                            // priming). Splash/collateral cells are simply NOT in this set. 2026-06-23.
+                            var wordCells = new HashSet<Vector2Int>();
+                            if (_deferredScoredWords != null)
                             {
                                 float yOffset = 0.5f;
                                 foreach (var sw in _deferredScoredWords)
                                 {
-                                    BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, center + Vector3.up * yOffset, isPlayer);
-                                    yOffset += 0.35f;
+                                    if (BonusPopup.Instance != null)
+                                    {
+                                        BonusPopup.Instance.ShowWordScore(sw.Word, sw.FinalScore, center + Vector3.up * yOffset, isPlayer);
+                                        yOffset += 0.35f;
+                                    }
+                                    if (sw.Cells != null)
+                                        for (int sc = 0; sc < sw.Cells.Count; sc++) wordCells.Add(sw.Cells[sc]);
                                 }
                                 _deferredScoredWords = null;
                             }
+                            if (_triggerWordGroups != null)
+                                for (int g = 0; g < _triggerWordGroups.Count; g++)
+                                    for (int c = 0; c < _triggerWordGroups[g].Count; c++) wordCells.Add(_triggerWordGroups[g][c]);
 
                             // Explosion — sequential per word if we have groups, otherwise all at once
                             if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
@@ -862,13 +902,54 @@ namespace WordDrop
                                         if (t != null) remainingTiles.Add(t);
                                     }
                                     if (remainingTiles.Count > 0)
-                                        yield return WordDropFX.Instance.PlayExplosion(remainingTiles, wordIndex, remainingTiles.Count);
+                                        // Splash/collateral + stones — NO green word-flash (stays white per design). 2026-06-23.
+                                        yield return WordDropFX.Instance.PlayExplosion(remainingTiles, wordIndex, remainingTiles.Count, wordFlash: false);
                                 }
                                 else
                                 {
-                                    // Single word or no groups — explode all at once
+                                    // Single word (or no group info), which may carry big-moment SPLASH
+                                    // collateral mixed in. Split by the authoritative wordCells set so the
+                                    // WORD flashes green and splash stays WHITE — this is what fixes the
+                                    // rise-formed-word case (trigger groups can be empty there, but the
+                                    // scored-word cells in wordCells still identify the word). Only with
+                                    // NO word info at all do we flash everything. 2026-06-23 Spencer.
                                     int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
-                                    yield return WordDropFX.Instance.PlayExplosion(dyingTiles, wordIndex, wLen);
+                                    if (wordCells.Count > 0)
+                                    {
+                                        var wordTiles = new List<Tile>();
+                                        var splashTiles = new List<Tile>();
+                                        for (int i = 0; i < step.ExplodedCells.Count; i++)
+                                        {
+                                            var cell = step.ExplodedCells[i];
+                                            Tile t = grid.GetTile(cell.x, cell.y);
+                                            if (t == null) continue;
+                                            if (wordCells.Contains(cell)) wordTiles.Add(t); else splashTiles.Add(t);
+                                        }
+                                        if (wordTiles.Count > 0)
+                                            yield return WordDropFX.Instance.PlayExplosion(wordTiles, wordIndex, wLen); // green word flash
+                                        if (splashTiles.Count > 0)
+                                            yield return WordDropFX.Instance.PlayExplosion(splashTiles, wordIndex, splashTiles.Count, wordFlash: false); // splash stays white
+                                    }
+                                    else
+                                    {
+                                        // No scored-word data at all (wordCells empty). Fall back to PRIMED
+                                        // state to tell word from splash: primed tiles WERE a word; big-moment
+                                        // row/column splash collateral is NEVER primed → stays white. This was
+                                        // the leak — the old code dumped ALL dying tiles in with wordFlash:true,
+                                        // so FlashCascadeGreen greened the splash too. 2026-06-23 Spencer.
+                                        var wordTiles = new List<Tile>();
+                                        var splashTiles = new List<Tile>();
+                                        for (int i = 0; i < dyingTiles.Count; i++)
+                                        {
+                                            var t = dyingTiles[i];
+                                            if (t == null) continue;
+                                            if (t.HasPermanentGlow) wordTiles.Add(t); else splashTiles.Add(t);
+                                        }
+                                        if (wordTiles.Count > 0)
+                                            yield return WordDropFX.Instance.PlayExplosion(wordTiles, wordIndex, wLen); // green word flash
+                                        if (splashTiles.Count > 0)
+                                            yield return WordDropFX.Instance.PlayExplosion(splashTiles, wordIndex, splashTiles.Count, wordFlash: false); // splash stays white
+                                    }
                                 }
                                 _triggerWordGroups = null;
                             }

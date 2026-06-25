@@ -176,6 +176,7 @@ namespace WordDrop
         public void PlayWordScored(List<Tile> tiles, Color color, int chainStep)
         {
             if (tiles == null || tiles.Count == 0) return;
+            Debug.Log($"[ScoredFlash] PlayWordScored fired: {tiles.Count} tile(s) arg3={chainStep} first='{(tiles[0] != null ? tiles[0].Letter.ToString() : "?")}'"); // TEMP cascade diagnostic 2026-06-11
 
             // Feel-pass 2026-05-16: cap punch at 0.18 (1.18× peak).
             // Was uncapped — chain 6 reached 0.42 (1.42×), bigger than the
@@ -219,24 +220,34 @@ namespace WordDrop
                 // Flash white → fade to normal over staggered timing
                 if (sr != null)
                 {
-                    sr.color = Color.white;
-                    // 2026-06-04 Spencer: the green scored sprite is ~0.894 bright, so
-                    // green×1.3 (old slider) = 1.16 sat UNDER the 1.30 bloom line — the
-                    // flash stopped glowing. Floor the green at 1.62 (×0.894 ≈ 1.45) so
-                    // it reliably blooms; the slider can still push it HIGHER.
-                    Color flashGreen = new Color(1.12f, Mathf.Max(ScoredFlashGreen, 1.62f), 1.12f, 1f);
+                    sr.color = Color.white; // start white; the green comes from the flash peak below
+                    // 2026-06-10 Spencer: base tile is now the LIGHT test_tile (not the green
+                    // sprite), so the old R/B of 1.12 washed the flash toward white-green.
+                    // Drop R/B so the peak reads as a vivid green bloom on a light base; green
+                    // channel still floored at 1.62 for the glow.
+                    Color flashGreen = new Color(0.30f, Mathf.Max(ScoredFlashGreen, 1.45f), 0.30f, 1f);
                     // 2026-06-04 Spencer: snap to bright green, HOLD at peak so the bloom
                     // actually reads, THEN settle. Was a 0.15s fade with no hold → far too
                     // quick to see, and the tile primes magenta the same frame which used
                     // to stomp it entirely. HoldPrimedVisual below defers that takeover.
                     const float SCORE_FLASH_HOLD = 0.12f;
                     const float SCORE_FLASH_FADE = 0.22f;
+                    Tile flashTile = tile; // capture for the overlay callbacks
                     DOTween.Sequence()
                         .AppendInterval(delay)
-                        .AppendCallback(() => { if (sr != null) sr.color = flashGreen; }) // green-biased flash; green peak is the bloom lever (FX Bloom Tuning slider)
+                        .AppendCallback(() => {
+                            if (sr != null) sr.color = flashGreen; // green-biased flash; green peak is the bloom lever (FX Bloom Tuning slider)
+                            // MOBILE bloom: sr.color clamps to 1.0 on iOS/Metal, so the green
+                            // never crosses the 1.30 bloom line on device. Drive the additive
+                            // overlay with the same HDR green so it glows on the phone. No-op on
+                            // desktop (sr.color HDR already blooms there).
+                            if (flashTile != null) flashTile.SetBloomGlow(flashGreen, 0.90f);
+                        })
                         .AppendInterval(SCORE_FLASH_HOLD)
                         .Append(DOTween.To(() => sr.color, c => { if (sr != null) sr.color = c; },
-                            Color.white, SCORE_FLASH_FADE).SetEase(DG.Tweening.Ease.OutQuad));
+                            Color.white, SCORE_FLASH_FADE).SetEase(DG.Tweening.Ease.OutQuad)) // settle to WHITE so the magenta primed-sprite handoff isn't muddied dark by a lingering green tint
+                        .Join(DG.Tweening.DOVirtual.Float(0.90f, 0f, SCORE_FLASH_FADE,
+                            a => { if (flashTile != null) flashTile.SetBloomGlow(flashGreen, a); })); // fade the mobile overlay out with the flash
                     // Hold the magenta primed takeover (sprite swap + per-frame pulse) until
                     // this tile's green flash has played through, so it doesn't get stomped.
                     tile.HoldPrimedVisual(delay + SCORE_FLASH_HOLD + SCORE_FLASH_FADE + 0.02f);
@@ -554,6 +565,9 @@ namespace WordDrop
         public void QueueDiffusePops(List<Tile> tiles)
         {
             if (tiles == null || tiles.Count == 0) return;
+            // Mark NOW (before the rebuild's ClearPrimedGlow runs) so each tile keeps its primed look
+            // through the deferral instead of reverting early — the pop reverts it at its tail.
+            for (int i = 0; i < tiles.Count; i++) tiles[i]?.MarkPendingDiffusePop();
             StartCoroutine(DiffusePopsDeferred(tiles));
         }
 
@@ -620,6 +634,97 @@ namespace WordDrop
                 center, new Color(0.55f, 0.8f, 1f), 2.6f * b, spanUnits * 1.1f, 0.28f);
             // Sparkle burst — the signature twinkle stars.
             GameParticles.Instance?.PlayShimmerBurst(center, 16);
+        }
+
+        /// <summary>Gold "tier-3 style" energy burst centered on a cracked CHEST — same composition as
+        /// PlayTier3Burst (core + rays + flash light + sparkles) but tinted YELLOW/GOLD to match the coin
+        /// trail (no green accent). 2026-06-18 Spencer.</summary>
+        public void PlayChestCoinBurst(Vector3 center, float spanUnits)
+        {
+            // Self-contained per-chest gold glow (a FRESH renderer each time) — NOT FlipbookExplosion's
+            // shared _tier3Core (which overwrites itself when several chests crack at once → only one glow),
+            // and NOT GameParticles.PlayShimmerBurst (those systems are green/cyan). Full colour control:
+            // white glow sprite × HDR gold → blooms yellow. 2026-06-18 Spencer.
+            EnsureChestGlowAssets();
+            if (_chestGlowSprite != null) StartCoroutine(ChestGlowCoroutine(center, spanUnits));
+            if (_chestBubbleSprite != null) StartCoroutine(ChestBubblePop(center, spanUnits)); // bubble@2x, tier-1 style
+            LightingSetup.Instance?.SpawnFlashLight(center, new Color(1f, 0.8f, 0.3f), 2.6f, spanUnits * 1.6f, 0.28f);
+        }
+
+        /// <summary>bubble@2x rendered with the TIER-1 pop feel: a fast OutQuart scale-up + a snap-on then
+        /// InCubic fade-out. Additive + HDR gold so it blooms gold. 2026-06-18 Spencer.</summary>
+        private IEnumerator ChestBubblePop(Vector3 center, float span)
+        {
+            var go = new GameObject("ChestBubble");
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = _chestBubbleSprite;                 // bubble@2x
+            if (_chestGlowMat != null) sr.sharedMaterial = _chestGlowMat; // additive → blooms
+            sr.sortingOrder = 57;
+            go.transform.position = new Vector3(center.x, center.y, -1.6f);
+            float spriteWorld = _chestBubbleSprite.bounds.size.x;
+            float endScale   = (span * 1.6f) / Mathf.Max(0.01f, spriteWorld);
+            float startScale = endScale * 0.30f;
+            const float DUR = 0.22f;
+            Color gold = new Color(2.6f, 2.0f, 0.6f);       // HDR gold (additive) → blooms
+
+            go.transform.localScale = Vector3.one * startScale;
+            sr.color = new Color(gold.r, gold.g, gold.b, 0f);
+            // Scale: OutQuart — fast front-loaded expansion (like tier-1's "fast pop").
+            go.transform.DOScale(Vector3.one * endScale, DUR).SetEase(DG.Tweening.Ease.OutQuart);
+            // Alpha: snap on (~6%) then InCubic fade-out across the rest.
+            var seq = DOTween.Sequence();
+            seq.Append(DOTween.ToAlpha(() => sr.color, c => sr.color = c, 0.85f, DUR * 0.06f).SetEase(DG.Tweening.Ease.OutQuad));
+            seq.Append(DOTween.ToAlpha(() => sr.color, c => sr.color = c, 0f, DUR * 0.94f).SetEase(DG.Tweening.Ease.InCubic));
+
+            yield return new WaitForSeconds(DUR);
+            if (go != null) { go.transform.DOKill(); if (sr != null) sr.DOKill(); Destroy(go); }
+        }
+
+        private Sprite _chestGlowSprite; private Sprite _chestBubbleSprite; private Material _chestGlowMat; private bool _chestGlowTried;
+        private void EnsureChestGlowAssets()
+        {
+            if (_chestGlowTried) return;
+            _chestGlowTried = true;
+            // Use the project's CLEAN glow asset (Particles/vfx_glow) — a white soft radial gradient
+            // (bright centre, soft falloff, no organic shape). It's white so it tints cleanly to gold.
+            // NOT bubble@2x — that's a soap bubble (hard rim + iridescent green edge); the tier-3 only
+            // gets away with it at ppu 200 + a tiny scale, but blown up it reads as a bubble. 2026-06-18.
+            var tex = Resources.Load<Texture2D>("Particles/glow")        // the glow the tier-3 burst uses
+                   ?? Resources.Load<Texture2D>("Particles/vfx_glow")
+                   ?? Resources.Load<Texture2D>("Particles/glowfree1");
+            if (tex != null)
+                _chestGlowSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            var btex = Resources.Load<Texture2D>("Particles/bubble@2x");
+            if (btex != null)
+                _chestBubbleSprite = Sprite.Create(btex, new Rect(0, 0, btex.width, btex.height), new Vector2(0.5f, 0.5f), 100f);
+            var sh = Shader.Find("WordDrop/AdditiveSprite") ?? Shader.Find("Legacy Shaders/Particles/Additive") ?? Shader.Find("Sprites/Default");
+            if (sh != null) _chestGlowMat = new Material(sh);
+        }
+
+        private IEnumerator ChestGlowCoroutine(Vector3 center, float span)
+        {
+            var go = new GameObject("ChestGlow");
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = _chestGlowSprite;
+            if (_chestGlowMat != null) sr.sharedMaterial = _chestGlowMat;
+            sr.sortingOrder = 56;
+            go.transform.position = new Vector3(center.x, center.y, -1.6f);
+            float spriteWorld = _chestGlowSprite.bounds.size.x;
+            float maxScale = (span * 2.6f) / Mathf.Max(0.01f, spriteWorld);
+            Color gold = new Color(7.5f, 4.2f, 0.1f); // HDR warm gold (red highest, blue ~0) → blooms yellow
+            float dur = 0.45f, t = 0f; // lingers longer (Spencer 2026-06-18)
+            while (t < dur && go != null)
+            {
+                t += Time.unscaledDeltaTime;
+                float k  = Mathf.Clamp01(t / dur);
+                float se = 1f - (1f - k) * (1f - k);                 // ease-out scale
+                float s  = Mathf.Lerp(maxScale * 0.35f, maxScale, se);
+                go.transform.localScale = new Vector3(s, s, 1f);
+                float a = k < 0.22f ? 1f : 1f - ((k - 0.22f) / 0.78f); // hold bright, then fade
+                sr.color = new Color(gold.r, gold.g, gold.b, a);
+                yield return null;
+            }
+            if (go != null) Destroy(go);
         }
 
         /// <summary>
@@ -710,14 +815,126 @@ namespace WordDrop
             }
         }
 
-        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3)
+        // wordFlash: true for tiles that form a detonating WORD (they get the green cascade-flash);
+        // false for pure splash/collateral tiles (they stay white per design). 2026-06-23.
+        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true)
         {
             if (tiles == null || tiles.Count == 0) return null;
-            return StartCoroutine(ExplosionCoroutineTracked(tiles, chainStep, wordLength));
+
+            // HiddenWord polish: WHEN A WORD EXPLODES, every detonating letter that matches a still-hidden
+            // slot pops + flies up to its blank in the Target panel with a sparkle trail ("escapes the
+            // blast"). Fired here (the explode chokepoint) so it triggers on detonation, not on prime.
+            // Claiming is reveal-order-independent so each slot flies exactly once. 2026-06-17 Spencer.
+            if (ObjectiveManager.Instance != null
+                && ObjectiveManager.Instance.Active is HiddenWordObjective hiddenObj
+                && HUDManager.Instance != null)
+            {
+                int flyOrder = 0; // stagger so multiple matched letters launch + land one-by-one (sequentially)
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    var ft = tiles[i];
+                    if (ft == null) continue;
+                    int slot = hiddenObj.ClaimSlotForLetter(ft.Letter);
+                    if (slot < 0) continue;
+                    int capturedSlot = slot;
+                    var capturedObj = hiddenObj;
+                    // The fly-up REVEALS its slot when it lands (keeps fly + reveal in lockstep, and the
+                    // slot fills exactly when the letter arrives). NotifyHiddenReveal refreshes the HUD +
+                    // fires stage-clear if the word's now complete.
+                    HUDManager.Instance.FlyHiddenLetterToSlot(ft.transform.position, ft.Letter, slot, () =>
+                    {
+                        bool wasComplete = capturedObj.IsComplete;
+                        capturedObj.RevealSlot(capturedSlot);
+                        ObjectiveManager.Instance?.NotifyHiddenReveal(wasComplete);
+                    }, flyOrder * 0.35f);
+                    flyOrder++;
+                }
+            }
+
+            // Vault REWARD coins: when a CHEST detonates, bank its tier coins and spit a coin burst that
+            // scatters then gathers to the REWARD counter. SAME chokepoint as the HiddenWord fly-up —
+            // player detonations route through PlayExplosion, NOT the live GameVisualBridge Exploding
+            // phase. 2026-06-18 Spencer.
+            if (ObjectiveManager.Instance != null
+                && ObjectiveManager.Instance.Active is VaultObjective vaultObj
+                && HUDManager.Instance != null)
+            {
+                int vaultsHit = 0;
+                float span = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    var ft = tiles[i];
+                    if (ft == null || !ft.IsVault) continue;
+                    vaultsHit++;
+                    int coins = VaultObjective.CoinsForTier(ft.VaultRequiredLen);
+                    vaultObj.AddRewardCoins(coins);                                  // bank now (data truth)
+                    HUDManager.Instance.SpawnRewardCoinBurst(ft.transform.position, coins, ft.VaultRequiredLen);
+                    // Tier-2 hero bubble + a layered GOLD GLOW behind it. Coins unchanged. 2026-06-18 Spencer.
+                    float t2scale = Mathf.Max(0.5f, BigBubbleScale);
+                    FlipbookExplosion.Instance?.PlayBigBubble(ft.transform.position, span * 3f * t2scale, 0.20f);
+                    EnsureChestGlowAssets();
+                    if (_chestGlowSprite != null) StartCoroutine(ChestGlowCoroutine(ft.transform.position, span * 1.4f)); // gold glow
+                }
+                if (vaultsHit > 0)
+                {
+                    GameAudio.Instance?.PlayBigPop();          // tier-2 boom
+                    GameAudio.Instance?.PlayCoinExplodeBlip(); // 0.232s jackpot coin "ding"
+                    GridManager.Instance?.ShakeBoard(0.09f, 0.18f); // subtle board-tile shake (not the hand rack)
+                }
+            }
+
+            return StartCoroutine(ExplosionCoroutineTracked(tiles, chainStep, wordLength, wordFlash));
         }
 
-        private IEnumerator ExplosionCoroutineTracked(List<Tile> tiles, int chainStep, int wordLength)
+        // Quick green pulse for cascade words — short, simultaneous (no stagger), so it
+        // reads as a snappy "scored!" beat right before the boom, not the slower full
+        // PlayWordScored flash the player's dropped word gets.
+        private const float CASCADE_FLASH_BEAT = 0.08f; // how long the green shows before the explosion (kept short to keep chains fast)
+
+        /// <summary>Flat scored-green on cascade/detonating word tiles (the plain SetScoredSprite tint —
+        /// pool-reset-safe, no bloom/glow/decay). Reverted from the brighter glow-flash version per Spencer
+        /// 2026-06-23. Splash tiles are never passed here, so green only ever marks a formed word.</summary>
+        private void FlashCascadeGreen(List<Tile> tiles)
         {
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                var tile = tiles[i];
+                if (tile == null) continue;
+                if (!tile.IsShowingScoredSprite) tile.SetScoredSprite(true);
+                // Saturated ADDITIVE green glow on top of the flat scored tint so the cascade flash
+                // actually reads (the flat green alone was too subtle). forceDesktop → shows in the
+                // editor too; blooms on device. Cleared on pool via ResetForPool→ClearBloomGlow.
+                tile.SetBloomGlow(Tile.SCORED_GLOW_HDR, 0.9f, forceDesktop: true);
+            }
+        }
+
+        private IEnumerator ExplosionCoroutineTracked(List<Tile> tiles, int chainStep, int wordLength, bool wordFlash = true)
+        {
+            // CASCADE GREEN (consistency fix 2026-06-23): the player's word greens via WordsScored→
+            // PlayWordScored; gravity-formed CASCADE/rise words don't, so they used to pop white. This is
+            // the single explode chokepoint, so greening WORD calls here makes every word read the same.
+            // wordFlash is the caller's word-vs-splash verdict (GVB sends word tiles with wordFlash:true and
+            // splash with wordFlash:false), so splash never greens. Skip tiles already scored (no double-set).
+            if (wordFlash)
+            {
+                List<Tile> cascadeFlash = null;
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    var t = tiles[i];
+                    // Flash word tiles. Word-vs-splash is decided by the CALLER via wordFlash (callers split
+                    // dying tiles into a word call [wordFlash:true] and a splash call [wordFlash:false] using
+                    // the step's word-cell set) — NOT by primed state, because cascade words detonate unprimed.
+                    // Skip the player's own word (already scored-green) so it isn't double-set. 2026-06-23.
+                    if (t != null && !t.IsShowingScoredSprite)
+                        (cascadeFlash ??= new List<Tile>()).Add(t);
+                }
+                if (cascadeFlash != null && cascadeFlash.Count > 0)
+                {
+                    FlashCascadeGreen(cascadeFlash);
+                    yield return WaitCache.Get(CASCADE_FLASH_BEAT); // let the green read before the boom
+                }
+            }
+
             ActiveExplosions++;
             // Wrap in try/finally semantics via two yield phases — Unity
             // doesn't support try/finally with yield, so we structure as
@@ -1824,8 +2041,11 @@ namespace WordDrop
                 //     visual peak shifts to ~t=60ms → haptic needs -80ms
                 //     offset to land at t=40ms, in sync with the visual.
                 // Without this offset, cascade haptics felt 60ms late.
-                float hapticOffset = isCascadePop ? -0.08f : 0f;
-                StartCoroutine(Tier1PopHaptic(chainStep, hapticOffset));
+                // Detonation haptic for the tier-1 / cascade pop path — IMMEDIATE (not the old
+                // delayed +120ms hit). Debounced in ExplosionImpact, so when this blast ALSO went
+                // through GameVisualBridge's Strong() it stays ONE buzz; when it only goes through
+                // here (the case that was silent after removing Tier1PopHaptic) it still fires. 2026-06-11.
+                HapticsManager.ExplosionImpact();
                 yield return WaitCache.Get(0.25f);
                 yield break;
             }
@@ -2376,6 +2596,9 @@ namespace WordDrop
 
                     Tile neighbor = grid.GetTile(col, row);
                     if (neighbor == null) continue;
+                    // Escort drop-targets (chickens) and vaults must NOT bounce/pop from a neighbor's word —
+                    // the DOPunchPosition + DOComplete also stomps their gravity tween. 2026-06-19 Spencer.
+                    if (neighbor.IsDropTargetVisual || neighbor.IsVault) continue;
 
                     // Check if adjacent to any scored tile (8-directional)
                     bool isAdjacent = false;

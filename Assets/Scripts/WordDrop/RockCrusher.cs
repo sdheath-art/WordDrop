@@ -4,35 +4,35 @@ using UnityEngine;
 namespace WordDrop
 {
     /// <summary>
-    /// Path A (2026-05-28) — "Stone Splitter" booster. Player taps a rock tile;
-    /// that rock AND all 4-cardinal connected rocks are crushed (cluster destroy).
-    /// Triggers gravity so adjacent letter tiles fall into the cleared gap.
+    /// "Stone Splitter" booster. 2026-06-24 (Spencer): now an UNTARGETED, board-wide
+    /// clear — tap the booster and EVERY rock on the board shatters at once (was a
+    /// tap-a-rock connected-cluster destroy). Triggers gravity so letter tiles fall
+    /// into the cleared gaps and the normal cascade resolves any words formed.
     ///
-    /// If the player taps a non-stone tile, the booster bails silently without
-    /// consuming the charge — wait, charges are consumed in BoosterManager
-    /// BEFORE ResolveWithTarget is called. To avoid wasted charges on misclicks,
-    /// the HUD/aim layer should ideally pre-filter taps to stone tiles only.
-    /// For MVP we accept the wasted-charge edge case (Royal Match's rocket
-    /// has the same forgiveness gap and players adapt fast).
+    /// Vault chests (anchored), HeroWord escort drop-targets, and frozen ICE are
+    /// stones under the hood but are LEVEL OBJECTIVES — StripObjectiveTiles protects
+    /// them so the splitter can't trivialize an objective.
     ///
-    /// File + Id are new (no legacy class to inherit from). Internal name
-    /// matches BoosterManager.ID_ROCK_CRUSHER ("stone_splitter").
+    /// Internal Id matches BoosterManager.ID_ROCK_CRUSHER ("stone_splitter").
     /// </summary>
     public class RockCrusher : Booster
     {
         public override string Id               => "stone_splitter";
         public override string DisplayName      => "Stone Splitter";
         public override string ShortDescription
-            => "Tap a rock — shatter it and all connected rocks.";
+            => "Shatter every rock on the board.";
+        // 2026-06-24 (Spencer): TARGETED activation even though the effect is board-wide — tapping the
+        // slot only ARMS aim mode (no charge spent); the player taps the board to CONFIRM. This way an
+        // accidental slot tap doesn't drain a charge (they can cancel aim instead), and we refuse to
+        // spend when there are no rocks. The tapped cell is ignored — every rock shatters.
         public override bool NeedsTarget     => true;
         public override bool TriggersGravity => true;
 
-        /// <summary>Only a stone tile is a valid target — taps elsewhere keep the
-        /// booster armed instead of wasting the charge. 2026-06-03 Spencer.</summary>
+        /// <summary>Any board tap CONFIRMS, but only if there's at least one crushable rock — otherwise
+        /// the tap is ignored and the booster stays armed (no wasted charge).</summary>
         public override bool CanResolveAt(int col, int row)
         {
-            var cell = RulesEngine.Instance?.GetCell(col, row);
-            return cell != null && cell.IsStone;
+            return CollectCrushableRocks().Count > 0;
         }
 
         public override void ResolveWithTarget(int col, int row, System.Action onComplete)
@@ -41,63 +41,34 @@ namespace WordDrop
             var grid  = GridManager.Instance;
             if (rules == null || grid == null) { onComplete?.Invoke(); return; }
 
-            // Validate the target IS a stone tile. Non-stone taps bail without
-            // crushing anything — the charge was already consumed by BoosterManager
-            // before we got here, so this is the "user misclicked" case.
-            var targetCell = rules.GetCell(col, row);
-            if (targetCell == null || !targetCell.IsStone)
-            {
-                Debug.Log($"[StoneSplitter] Tap at ({col},{row}) not a stone — booster fizzled");
-                GameAudio.Instance?.PlayUIClick();
-                onComplete?.Invoke();
-                return;
-            }
+            // Tapped cell is ignored — clear EVERY crushable rock on the board. Same data+visual sync
+            // pattern as the other destructive boosters (ClearCell on rules, RemoveTiles on grid).
+            var toRemove = CollectCrushableRocks();
+            for (int i = 0; i < toRemove.Count; i++)
+                rules.ClearCell(toRemove[i].x, toRemove[i].y);
+            grid.RemoveTiles(toRemove);
 
-            // BFS flood-fill — find all 4-cardinal-connected stones starting
-            // from the target. Diagonals NOT included (matches Candy Crush /
-            // Royal Match cluster expectations).
-            var cluster = new List<Vector2Int>();
-            var visited = new HashSet<Vector2Int>();
-            var queue   = new Queue<Vector2Int>();
-            queue.Enqueue(new Vector2Int(col, row));
-            visited.Add(new Vector2Int(col, row));
-
-            int[] dx = { 0, 0, -1, 1 };
-            int[] dy = { 1, -1, 0, 0 };
-
-            while (queue.Count > 0)
-            {
-                var p = queue.Dequeue();
-                var cell = rules.GetCell(p.x, p.y);
-                if (cell == null || !cell.IsStone) continue;
-
-                cluster.Add(p);
-
-                for (int i = 0; i < 4; i++)
-                {
-                    int nc = p.x + dx[i];
-                    int nr = p.y + dy[i];
-                    if (nc < 0 || nc >= RulesEngine.COLS) continue;
-                    if (nr < 0 || nr >= RulesEngine.ROWS) continue;
-                    var neighbor = new Vector2Int(nc, nr);
-                    if (visited.Contains(neighbor)) continue;
-                    visited.Add(neighbor);
-
-                    var neighborCell = rules.GetCell(nc, nr);
-                    if (neighborCell != null && neighborCell.IsStone)
-                        queue.Enqueue(neighbor);
-                }
-            }
-
-            // Crush all stones in the cluster. Same data+visual sync pattern
-            // as Bloomburst — ClearCell on rules layer, RemoveTiles on grid.
-            for (int i = 0; i < cluster.Count; i++)
-                rules.ClearCell(cluster[i].x, cluster[i].y);
-            grid.RemoveTiles(cluster);
-
-            Debug.Log($"[StoneSplitter] Crushed {cluster.Count} stone(s) connected to ({col},{row})");
+            Debug.Log($"[StoneSplitter] Shattered {toRemove.Count} rock(s) board-wide");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
+        }
+
+        /// <summary>All stone cells that may be crushed — excludes level objectives (vault chests,
+        /// HeroWord drop-targets, frozen ICE) via StripObjectiveTiles.</summary>
+        private static System.Collections.Generic.List<Vector2Int> CollectCrushableRocks()
+        {
+            var rules = RulesEngine.Instance;
+            var list  = new System.Collections.Generic.List<Vector2Int>();
+            if (rules == null) return list;
+            for (int c = 0; c < RulesEngine.COLS; c++)
+                for (int r = 0; r < RulesEngine.ROWS; r++)
+                {
+                    var cell = rules.GetCell(c, r);
+                    if (cell != null && cell.IsStone)
+                        list.Add(new Vector2Int(c, r));
+                }
+            StripObjectiveTiles(list); // never crush objectives — they resolve by their own mechanic
+            return list;
         }
     }
 }

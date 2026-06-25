@@ -105,6 +105,36 @@ namespace WordDrop
         public enum TopOutMode { Strict, Lenient }
         [SerializeField] public TopOutMode topOutMode = TopOutMode.Lenient;
 
+        // ── Vault levels (rises OFF, move cap) — Inspector-tunable. Cap = buffer + perVault×count.
+        // 3 + 4×3 = 15 moves for 3 vaults (generous). Tighten late-run for difficulty. 2026-06-09.
+        [Header("Vault (loot) levels — move budget")]
+        // Deliberately SHORT: ~enough to crack 2-3 of the chests, NOT all. The triage decision
+        // (which chests to spend moves on; gamble for the high special one) IS the level. Flat,
+        // NOT scaled by chest count. Tighten this / raise chest count for difficulty. 2026-06-09.
+        [SerializeField] private int _vaultMoveBudget = 6;
+
+        // ── Vault starting-board seed (density + height) — Inspector-tunable; Spencer feel-dials.
+        // Bottom rows seeded with gaps (denser = letters to build words against the chests); top
+        // rows left clear as drop headroom; vaults scattered across a height band, 1 biased high.
+        [Header("Vault levels (starting board)")]
+        [SerializeField] private int   _vaultStartFillRows = 7;     // target stack height (board is 8 rows); RulesEngine hard-caps the top 2 rows as headroom
+        [SerializeField, Range(0f, 1f)] private float _vaultFillDensity = 0.85f; // fraction of startFillRows each column reaches → fuller board buries chests; top stays clear
+        [SerializeField] private int   _vaultHeightSpread  = 4;     // height band the vaults spread across
+        [SerializeField] private int   _vaultChestMinSpacing = 3;   // min Chebyshev gap between chests (full-width spread, no clustering)
+
+        // ── Chest TIERS (2026-06-12): chests crack only when the exploding word's LENGTH meets the
+        // tier's requirement (the word is the "key"). Telegraphed bronze/silver/gold. Total chests
+        // = regular + mid + high. Tune counts + required lengths for feel.
+        [Header("Vault levels (chest tiers)")]
+        [SerializeField] private int _vaultRegularCount = 3;   // crack on ANY word (req 0)
+        [SerializeField] private int _vaultMidCount     = 1;   // need a mid-length word
+        [SerializeField] private int _vaultMidWordLen   = 4;   // mid requirement (≥ N letters)
+        [SerializeField] private int _vaultHighCount    = 1;   // the jackpot chest(s)
+        [SerializeField] private int _vaultHighWordLen  = 5;   // high requirement (≥ N letters)
+
+        [Header("Ice (clear-the-blocker) levels")]
+        [SerializeField] private int _iceTileCount = 7;        // how many letter tiles start frozen (IceObjective spawns this many)
+
         // ── Debug: no-assist playtest toggle ──────────────────────────────────────
         // Toggle with the N key (main menu OR gameplay — persists across scenes).
         // When ON: disables opening seed, first-word guarantee, board-aware draws,
@@ -204,11 +234,22 @@ namespace WordDrop
         }
 
         /// <summary>
+        /// Per-level rise cadence override set by the level sequencer (LevelTable via
+        /// ObjectiveManager). Turns-per-rise: bigger = slower/easier; 1 = full pressure.
+        /// &lt; 0 = "no override, use the default onboarding ramp below". 2026-06-15 (validation MVP).
+        /// </summary>
+        private static int _riseCadenceOverride = -1;
+        public static void SetRiseCadenceOverride(int turnsPerRise)
+            => _riseCadenceOverride = turnsPerRise < 1 ? -1 : turnsPerRise;
+
+        /// <summary>
         /// Onboarding ramp for turn-based rises (RisePerMoveDebug = true). Stages 1-4
         /// rise every 2 turns to let new players get a feel for the board. Stages 5+
-        /// rise every turn (full pressure).
+        /// rise every turn (full pressure). The level sequencer can OVERRIDE this per level
+        /// (SetRiseCadenceOverride) so a Boss level can rise faster than its stage number implies.
         /// </summary>
-        public static int GetTurnsPerRiseForStage(int stage) => stage <= 4 ? 2 : 1;
+        public static int GetTurnsPerRiseForStage(int stage)
+            => _riseCadenceOverride > 0 ? _riseCadenceOverride : (stage <= 4 ? 2 : 1);
 
         /// <summary>
         /// Estimated player MOVES until the board tops out, given the current board
@@ -259,6 +300,34 @@ namespace WordDrop
         }
         /// <summary>Moves remaining in the current stage.</summary>
         public int CurrentStageMovesRemaining => Mathf.Max(0, CurrentStageMoveBudget - _currentStageMovesUsed);
+
+        // ── Vault-level rules (read from the active objective). ──
+        private Objective ActiveObjective => ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
+        /// <summary>The active level runs rises OFF (e.g. a vault level).</summary>
+        public bool ActiveRisesOff { get { var o = ActiveObjective; return o != null && o.RisesOff; } }
+        /// <summary>The active level uses a move budget instead of the rise clock (vault/loot levels).</summary>
+        public bool IsMoveCapLevel { get { var o = ActiveObjective; return o != null && o.UsesMoveCap; } }
+        // Per-level vault move budget override set by the level sequencer (LevelTable). < 0 = use the
+        // Inspector default (_vaultMoveBudget). Lets each Vault level in the run set its own budget
+        // (tighten the triage as the run escalates). 2026-06-15 (validation MVP).
+        private int _vaultMoveBudgetOverride = -1;
+        public void SetVaultMoveBudgetOverride(int moves) => _vaultMoveBudgetOverride = moves < 1 ? -1 : moves;
+        /// <summary>Flat move budget for the active vault/loot level (0 if not one).</summary>
+        public int VaultMoveCap => IsMoveCapLevel ? (_vaultMoveBudgetOverride > 0 ? _vaultMoveBudgetOverride : _vaultMoveBudget) : 0;
+        /// <summary>Moves left this vault level.</summary>
+        public int VaultMovesRemaining => Mathf.Max(0, VaultMoveCap - _currentStageMovesUsed);
+        // Vault starting-board seed params (read by VaultObjective.Tick → RulesEngine.SeedVaultBoard).
+        public int   VaultStartFillRows   => _vaultStartFillRows;
+        public float VaultFillDensity     => _vaultFillDensity;
+        public int   VaultHeightSpread    => _vaultHeightSpread;
+        public int   VaultChestMinSpacing => _vaultChestMinSpacing;
+        public int   VaultRegularCount    => _vaultRegularCount;
+        public int   VaultMidCount        => _vaultMidCount;
+        public int   VaultMidWordLen      => _vaultMidWordLen;
+        public int   VaultHighCount       => _vaultHighCount;
+        public int   VaultHighWordLen     => _vaultHighWordLen;
+        public int   VaultTotalChests     => Mathf.Max(1, _vaultRegularCount + _vaultMidCount + _vaultHighCount);
+        public int   IceTileCount         => Mathf.Max(1, _iceTileCount); // ICE objective: tiles to freeze
         /// <summary>True if the current stage's target has been hit.</summary>
         public bool IsCurrentStageCleared => _currentStageCleared;
         /// <summary>Current stage number (1, 2, 3, … unbounded).</summary>
@@ -351,7 +420,7 @@ namespace WordDrop
             // detonations, gravity), so we defer the rise via a wait-coroutine
             // until processing clears.
             Debug.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused} clearedThisDrop={clearedStageThisDrop}");
-            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused && !clearedStageThisDrop)
+            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused && !clearedStageThisDrop && !ActiveRisesOff)
             {
                 // Onboarding ramp: stages 1-4 rise every 2 turns, stages 5+ every turn.
                 _turnsSinceLastTurnRise++;
@@ -466,8 +535,21 @@ namespace WordDrop
                 // target). Clear only when it's complete; otherwise the score target gates the
                 // clear (endless mode with no objective).
                 bool objMode = ObjectiveManager.Instance != null && ObjectiveManager.Instance.HasObjective;
-                if (objMode) { if (!ObjectiveManager.Instance.Active.IsComplete) return; }
-                else         { if (CurrentStageScore < CurrentStageTarget) return; }
+                if (objMode)
+                {
+                    if (IsMoveCapLevel)
+                    {
+                        // Vault (loot) level: a NO-FAIL triage beat. It ADVANCES (banks loot →
+                        // next level) when the player runs OUT OF MOVES or has looted everything —
+                        // never gated on "crack them all". Reuses this whole advance path (coins,
+                        // AdvanceToNextStage, stage-clear modal) — NOT a run-end. 2026-06-09.
+                        bool outOfMoves = _currentStageMovesUsed >= VaultMoveCap;
+                        bool allLooted  = RulesEngine.Instance != null && RulesEngine.Instance.CountAnchoredCells() == 0;
+                        if (!outOfMoves && !allLooted) return;
+                    }
+                    else if (!ObjectiveManager.Instance.Active.IsComplete) return;
+                }
+                else { if (CurrentStageScore < CurrentStageTarget) return; }
                 safety++;
 
                 // Capture everything we need BEFORE mutating state or calling handlers,
@@ -592,6 +674,20 @@ namespace WordDrop
             // playable minimum. Fires in Update() over subsequent frames.
             int rows = CountPopulatedRows();
             _stageStartRisesPending = Mathf.Max(0, STAGE_START_MIN_ROWS - rows);
+        }
+
+        /// <summary>DEBUG/TEST: jump straight to a stage and install its level (objective + board) so a
+        /// specific level can be tested without playing up to it. Wired to the FX Test Menu. 2026-06-17.</summary>
+        public void DebugJumpToStage(int stage)
+        {
+            _currentStageIndex      = Mathf.Max(1, stage);
+            _currentStageMovesUsed  = 0;
+            _currentStageCleared    = false;
+            _movesSinceLastRise     = 0;
+            _turnsSinceLastTurnRise = 0;
+            _riseTimerSeconds       = 0f;
+            ObjectiveManager.Instance?.InstallLevel(_currentStageIndex);
+            Debug.Log($"[DebugJump] Jumped to stage {_currentStageIndex}");
         }
 
         /// <summary>True if any tile on the board is currently mid-animation.
@@ -969,6 +1065,9 @@ namespace WordDrop
             _appPaused = pause;
         }
 
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // 2026-06-24: the no-assist debug banner is a DEV-ONLY overlay — gated so it strips from
+        // release/playtest builds (testers shouldn't see "N = no-assist playtest"). 2026-06-24 Spencer.
         private static GUIStyle _noAssistStyle;
         private static GUIStyle _noAssistHintStyle;
 
@@ -1004,6 +1103,7 @@ namespace WordDrop
                 GUI.Label(new Rect(10, 10, 400, 20), "N = no-assist playtest", _noAssistHintStyle);
             }
         }
+#endif
 
         private void UpdateSurvival()
         {
@@ -1044,6 +1144,10 @@ namespace WordDrop
             // Overlay pause (stage-clear modal, etc.) uses the same gate — any
             // full-screen UI that should freeze gameplay timers sets this.
             if (_appPaused || _isOverlayPaused) return;
+
+            // Vault (loot) levels: out-of-moves does NOT end the run — it's a no-fail loot/triage
+            // beat. The level just ENDS → bank → advance, handled by CheckStageClear (called from
+            // NotifyDropCommitted). No continue, no top-out. See CheckStageClear's vault gate.
 
             _elapsedTime += Time.deltaTime;
 
@@ -1093,7 +1197,7 @@ namespace WordDrop
             // fire extra rising rows to bring it up to the minimum. Consume
             // one pending rise per Update frame so animations complete between
             // them (feels like a dramatic "board fills up, new stage ready").
-            if (_stageStartRisesPending > 0)
+            if (_stageStartRisesPending > 0 && !ActiveRisesOff)
             {
                 if (!IsBoardAnimating())
                 {
@@ -1109,7 +1213,7 @@ namespace WordDrop
             // or resolution is in flight). When it crosses CurrentSecondsPerRise
             // and the board isn't mid-animation, a rise fires + timer resets.
             // Move counter is kept vestigially for analytics compat.
-            if (!inBonusMode && _riseTimerSeconds >= CurrentSecondsPerRise)
+            if (!inBonusMode && !ActiveRisesOff && _riseTimerSeconds >= CurrentSecondsPerRise)
             {
                 if (!IsBoardAnimating())
                 {
@@ -1168,6 +1272,11 @@ namespace WordDrop
 
             // Reset stage chip-target state
             _currentStageIndex      = 1;
+            // Clear any objective left over from the previous run / a debug stage-jump, so the level-1
+            // objective re-installs fresh. The auto-installer (ObjectiveManager.Update) only fires when
+            // Active == null, so without this the stale objective sticks while the level number shows 1.
+            // 2026-06-18 Spencer.
+            ObjectiveManager.Instance?.ClearObjective();
             _stageStartScore        = 0;
             _currentStageMovesUsed  = 0;
             _currentStageCleared    = false;
@@ -1178,6 +1287,13 @@ namespace WordDrop
             _stagesCleared          = 0;
             _biggestWordScore       = 0;
             _stageStartRisesPending = 0;
+
+            // Validation MVP (2026-06-15): clear any leftover level-sequencer dial overrides from a
+            // prior run so level 1 starts from defaults until ObjectiveManager.InstallLevel(1) applies
+            // L1's dials. Belt-and-suspenders — the install fires immediately, but no stale Boss
+            // cadence/assist can leak into the first frame.
+            _riseCadenceOverride    = -1;   // static — restore default onboarding ramp
+            _vaultMoveBudgetOverride = -1;  // restore Inspector default vault budget
 
             // MVP P3 Path B: continue ladder resets on each new run.
             _continuesInRun         = 0;
@@ -1384,10 +1500,10 @@ namespace WordDrop
                     _isAutoDropping = false;
                     yield break; // no drop — nothing placed on board
                 }
-                // Rare drop: wild or gold
+                // Rare drop: wild or gold (gold gated by the 2x kill-switch; if off, drops a plain letter)
                 if (Random.value < WILD_DROP_CHANCE)
                     isWildRefill = true;
-                else
+                else if (RulesEngine.GoldTilesEnabled)
                     isGold = true;
             }
             else if (editsLeft <= 0 && swapsLeft <= 0)
@@ -1592,6 +1708,19 @@ namespace WordDrop
                 yield break;
             }
 
+            // Objective already met → the stage is WON; don't let a row rise after a win. POLL-BASED
+            // objectives (ice/vault) complete a frame AFTER the drop that scheduled this rise, so the
+            // schedule-time !clearedStageThisDrop gate misses them — freeze the rise here. 2026-06-15 Spencer.
+            // EscortWinPending: HeroWord wins lock in the instant the last chicken is collected, but
+            // IsComplete only flips when its fly-up lands — block the rise across that window too. 2026-06-23.
+            if (ObjectiveManager.Instance != null && ObjectiveManager.Instance.Active != null
+                && (ObjectiveManager.Instance.Active.IsComplete || ObjectiveManager.Instance.EscortWinPending))
+            {
+                Debug.Log("[RisePerMove/Execute] blocked: objective complete / escort-win pending (stage won) — freezing the rise");
+                _isRisingRow = false;
+                yield break;
+            }
+
 //             Debug.Log($"[SurvivalManager] Rising row at {_elapsedTime:F1}s");
 
             bool overflowed = false;
@@ -1723,7 +1852,7 @@ namespace WordDrop
 
             if (TopOutPanel.Instance != null)
             {
-                TopOutPanel.Instance.SetText("TOP OUT!");
+                TopOutPanel.Instance.SetText("Out Of Moves!");
                 TopOutPanel.Instance.Show(ShowContinueOrFinalize);
             }
             else
@@ -1798,8 +1927,13 @@ namespace WordDrop
                 {
                     for (int col = 0; col < RulesEngine.COLS; col++)
                     {
-                        if (RulesEngine.Instance.GetCell(col, row) != null)
-                            toRemove.Add(new Vector2Int(col, row));
+                        var c = RulesEngine.Instance.GetCell(col, row);
+                        if (c == null) continue;
+                        // SPARE objective tiles: HeroWord escort drop-targets, vaults (anchored chests),
+                        // and ice — the continue frees space by clearing NORMAL tiles only, it must not
+                        // wipe out the things the player is working toward. 2026-06-15 Spencer.
+                        if (c.IsDropTarget || c.IsAnchored || c.IsFrozen) continue;
+                        toRemove.Add(new Vector2Int(col, row));
                     }
                 }
                 // Clear board-side state first so GridManager.RemoveTiles' grid
@@ -1809,6 +1943,16 @@ namespace WordDrop
             }
             if (GridManager.Instance != null && toRemove.Count > 0)
                 GridManager.Instance.RemoveTiles(toRemove);
+
+            // 1b) SETTLE the board so SPARED objective tiles (HeroWord escort drop-targets) fall down
+            // onto the stack instead of hanging in midair where the cleared rows used to be — the same
+            // gravity pass every explosion runs. The continue-clear was missing it. 2026-06-18 Spencer.
+            if (toRemove.Count > 0 && RulesEngine.Instance != null && GridManager.Instance != null)
+            {
+                var gravityMoves = RulesEngine.Instance.ApplyGravityInDataPublic();
+                if (gravityMoves != null && gravityMoves.Count > 0)
+                    GridManager.Instance.StartCoroutine(GridManager.Instance.ApplyGravityFromEvents(gravityMoves));
+            }
 
             // 2) Refill edits + swaps using the existing stage-clear helper.
             MatchController.StageClearRefillSummary summary = default;

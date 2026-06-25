@@ -37,14 +37,20 @@ namespace WordDrop
 
         // Theme colors — Glimbloom mystical-forest palette.
         private static readonly Color SCRIM_COLOR     = new Color(0f, 0f, 0f, 0.55f);
-        private static readonly Color PANEL_BG        = new Color(0.20f, 0.13f, 0.32f, 0.98f);
-        private static readonly Color PANEL_FRAME     = new Color(0.62f, 0.45f, 0.85f, 1f);   // purple highlight
-        private static readonly Color HEADER_GOLD     = new Color(1.00f, 0.84f, 0.42f, 1f);
-        private static readonly Color TAB_BG          = new Color(0.30f, 0.20f, 0.45f, 1f);
-        private static readonly Color TAB_BG_ACTIVE   = new Color(0.55f, 0.40f, 0.78f, 1f);
-        private static readonly Color SLIDER_TRACK    = new Color(0.10f, 0.08f, 0.18f, 1f);
-        private static readonly Color SLIDER_FILL     = new Color(0.40f, 0.90f, 0.95f, 1f);
+        // 2026-06-19 TEMP candy-unification (Spencer will revisit the final palette):
+        // re-skinned the settings panel from dark-purple to the candy cream/pink/gold
+        // of the objectives modal (LevelIntroModal) so the menus read as one game.
+        // Text colors below were flipped to dark in lockstep so nothing goes invisible
+        // on the cream panel. Buttons keep their saturated colors (white labels still read).
+        private static readonly Color PANEL_BG        = new Color(0.99f, 0.95f, 0.86f, 0.98f); // warm cream (matches LevelIntroModal CARD_BG)
+        private static readonly Color PANEL_FRAME     = new Color(0.93f, 0.45f, 0.62f, 1f);    // candy pink
+        private static readonly Color HEADER_GOLD     = new Color(0.82f, 0.28f, 0.46f, 1f);    // candy berry accent — title/underline/section labels, reads on cream
+        private static readonly Color TAB_BG          = new Color(0.92f, 0.50f, 0.64f, 1f);    // candy pink (inactive tab)
+        private static readonly Color TAB_BG_ACTIVE   = new Color(1.00f, 0.78f, 0.30f, 1f);    // warm gold (active tab)
+        private static readonly Color SLIDER_TRACK    = new Color(0.80f, 0.72f, 0.62f, 1f);    // warm tan track (on cream); also the toggle-OFF pill
+        private static readonly Color SLIDER_FILL     = new Color(0.40f, 0.90f, 0.95f, 1f);    // cyan — ties to the level background
         private static readonly Color SAVE_BTN_COLOR  = new Color(0.30f, 0.62f, 0.95f, 1f);
+        private static readonly Color RESTART_BTN_COLOR = new Color(0.95f, 0.62f, 0.20f, 1f); // amber
         private static readonly Color QUIT_BTN_COLOR  = new Color(0.92f, 0.30f, 0.55f, 1f);
         private static readonly Color CLOSE_BTN_COLOR = new Color(0.92f, 0.22f, 0.30f, 1f);
 
@@ -67,6 +73,11 @@ namespace WordDrop
         private GameObject _canvasGO;
         private GameObject _panelGO;
         private GameObject _contentRoot;
+
+        // Lazily-built "are you sure?" overlay (scrim + card) for destructive actions
+        // like Restart run. Lives inside this modal's own canvas so it layers above
+        // the settings panel without a new MonoBehaviour. 2026-06-23.
+        private GameObject _confirmOverlay;
 
         // Tab buttons
         private Image[] _tabImages;
@@ -146,6 +157,8 @@ namespace WordDrop
 
         public void Hide()
         {
+            DismissConfirm(); // tear down any open confirm overlay so it can't outlive the modal
+
             // Reverse of the converge-out animation in Show — booster bench
             // AND hand tiles expand back to rest as the modal flies away.
             // Whoosh accompanies the pop-back-in.
@@ -406,7 +419,7 @@ namespace WordDrop
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
             rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
 
-            BuildContentLabel(go.transform, "Haptics", anchorY: 0.82f);
+            BuildContentLabel(go.transform, "Vibration", anchorY: 0.82f);
 
             // ON/OFF toggle styled as a pill switch.
             var toggleGO = new GameObject("HapticsToggle",
@@ -434,7 +447,7 @@ namespace WordDrop
             ltmp.text = HapticsManager.Enabled ? "ON" : "OFF";
             ltmp.fontSize = 52;
             ltmp.alignment = TextAlignmentOptions.Center;
-            ltmp.color = Color.white;
+            ltmp.color = new Color(0.30f, 0.22f, 0.28f, 1f); // dark — reads on cyan(ON)/tan(OFF) pill
             ltmp.raycastTarget = false;
 
             toggleGO.GetComponent<Button>().onClick.AddListener(() =>
@@ -569,7 +582,7 @@ namespace WordDrop
             if (font != null) pctTmp.font = font;
             pctTmp.fontSize = 44;
             pctTmp.alignment = TextAlignmentOptions.Center;
-            pctTmp.color = new Color(0.95f, 0.92f, 0.86f, 0.9f);
+            pctTmp.color = new Color(0.32f, 0.24f, 0.30f, 0.92f); // dark — reads on cream
             pctTmp.raycastTarget = false;
             pctTmp.text = $"{Mathf.RoundToInt(slider.value * 100)}%";
             slider.onValueChanged.AddListener(v => pctTmp.text = $"{Mathf.RoundToInt(v * 100)}%");
@@ -604,7 +617,7 @@ namespace WordDrop
                 "Detonate them by playing a word that touches their tiles.";
             bTmp.fontSize = 32;
             bTmp.alignment = TextAlignmentOptions.TopLeft;
-            bTmp.color = new Color(0.95f, 0.92f, 0.86f, 0.9f);
+            bTmp.color = new Color(0.32f, 0.24f, 0.30f, 0.92f); // dark — reads on cream
             bTmp.enableWordWrapping = true;
             bTmp.raycastTarget = false;
             return go;
@@ -635,14 +648,17 @@ namespace WordDrop
 
         private void BuildBottomButtons(Transform panel)
         {
+            // Three pills fit by going a touch shorter (100 tall) so they stay inside the panel.
             BuildPillButton(panel, "Save progress", SAVE_BTN_COLOR,
-                anchorY: -940f, onClick: OnSaveProgressTapped);
+                anchorY: -930f, onClick: OnSaveProgressTapped, height: 100f);
+            BuildPillButton(panel, "Restart run", RESTART_BTN_COLOR,
+                anchorY: -1042f, onClick: OnRestartRunTapped, height: 100f);
             BuildPillButton(panel, "Quit level", QUIT_BTN_COLOR,
-                anchorY: -1075f, onClick: OnQuitLevelTapped);
+                anchorY: -1154f, onClick: OnQuitLevelTapped, height: 100f);
         }
 
         private void BuildPillButton(Transform panel, string label, Color color,
-                                     float anchorY, System.Action onClick)
+                                     float anchorY, System.Action onClick, float height = 120f)
         {
             var btnGO = new GameObject(label + "Btn",
                 typeof(RectTransform), typeof(Image), typeof(Button));
@@ -651,7 +667,7 @@ namespace WordDrop
             rt.anchorMin = new Vector2(0.5f, 1f);
             rt.anchorMax = new Vector2(0.5f, 1f);
             rt.pivot     = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(680f, 120f);
+            rt.sizeDelta = new Vector2(680f, height);
             rt.anchoredPosition = new Vector2(0f, anchorY);
             var img = btnGO.GetComponent<Image>();
             img.sprite = GetPillSprite();
@@ -694,6 +710,165 @@ namespace WordDrop
             PlayerPrefs.Save();
             Debug.Log("[SettingsModal] Save progress tapped — preferences flushed.");
             Hide();
+        }
+
+        private void OnRestartRunTapped()
+        {
+            // Guard the destructive action behind a confirm — an accidental tap here
+            // wipes the whole run. The actual restart runs only on explicit confirm.
+            // 2026-06-23 Spencer.
+            ShowConfirm(
+                title: "Restart run?",
+                body: "You'll lose your current run and\nstart over from the beginning.",
+                confirmLabel: "Restart",
+                confirmColor: RESTART_BTN_COLOR,
+                onConfirm: DoRestartRun);
+        }
+
+        private void DoRestartRun()
+        {
+            // Restart the run in-place from level 1 — same path the GameState.Playing entry uses for PLAY
+            // (MatchController.StartMatch rebuilds the board + StartSurvival, which resets to level 1 and
+            // clears the objective). No menu round-trip. 2026-06-18 Spencer.
+            Hide();
+            DetonationRecorder.Instance?.Reset();
+            LastWordDisplay.Instance?.Clear();
+            MatchController.Instance?.StartMatch();
+            // StartMatch fills the LOGICAL hand + repositions UI, but does NOT bind tiles
+            // into the visible holder — InitialiseHand does. The PLAY-AGAIN and ↺-reset
+            // paths both call it (see GameManager.RequestReset); this direct-StartMatch path
+            // skipped it, so the holder rendered empty after a Settings "Restart run". 2026-06-23.
+            HandManager.Instance?.InitialiseHand();
+            HandManager.Instance?.SetInteractable(true);
+        }
+
+        /// <summary>
+        /// Shows a candy-styled "are you sure?" overlay inside this modal's canvas.
+        /// Cancel (or tapping the scrim) dismisses; confirm runs <paramref name="onConfirm"/>.
+        /// Reusable for any destructive Settings action (Restart run, Quit level…).
+        /// </summary>
+        private void ShowConfirm(string title, string body, string confirmLabel,
+                                 Color confirmColor, System.Action onConfirm)
+        {
+            if (_canvasGO == null) { onConfirm?.Invoke(); return; } // fail-open: never trap the action
+            DismissConfirm(); // never stack two overlays
+
+            // ── Full-screen scrim (dims the panel, blocks taps behind, tap-to-cancel) ──
+            _confirmOverlay = new GameObject("RestartConfirmScrim",
+                typeof(RectTransform), typeof(Image), typeof(Button));
+            _confirmOverlay.transform.SetParent(_canvasGO.transform, false);
+            var srt = _confirmOverlay.GetComponent<RectTransform>();
+            srt.anchorMin = Vector2.zero; srt.anchorMax = Vector2.one;
+            srt.offsetMin = Vector2.zero; srt.offsetMax = Vector2.zero;
+            _confirmOverlay.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
+            _confirmOverlay.transform.SetAsLastSibling(); // render above the settings panel
+            _confirmOverlay.GetComponent<Button>().onClick.AddListener(() =>
+            {
+                GameAudio.Instance?.PlayUIClick();
+                DismissConfirm(); // scrim tap = cancel (de-emphasized, no destructive default)
+            });
+
+            // ── Centered card ──
+            var card = new GameObject("ConfirmCard", typeof(RectTransform), typeof(Image));
+            card.transform.SetParent(_confirmOverlay.transform, false);
+            var crt = card.GetComponent<RectTransform>();
+            crt.anchorMin = new Vector2(0.5f, 0.5f);
+            crt.anchorMax = new Vector2(0.5f, 0.5f);
+            crt.pivot     = new Vector2(0.5f, 0.5f);
+            crt.sizeDelta = new Vector2(820f, 520f);
+            crt.anchoredPosition = Vector2.zero;
+            var cimg = card.GetComponent<Image>();
+            cimg.sprite = GetPillSprite();
+            cimg.type   = Image.Type.Sliced;
+            cimg.color  = PANEL_BG;
+
+            // Title
+            var titleGO = new GameObject("Title", typeof(RectTransform), typeof(TextMeshProUGUI));
+            titleGO.transform.SetParent(card.transform, false);
+            var trt = titleGO.GetComponent<RectTransform>();
+            trt.anchorMin = new Vector2(0.5f, 1f); trt.anchorMax = new Vector2(0.5f, 1f);
+            trt.pivot = new Vector2(0.5f, 1f);
+            trt.sizeDelta = new Vector2(740f, 110f);
+            trt.anchoredPosition = new Vector2(0f, -50f);
+            var ttmp = titleGO.GetComponent<TextMeshProUGUI>();
+            var dispFont = GameFont.GetDisplayTMP();
+            if (dispFont != null) ttmp.font = dispFont;
+            ttmp.text = title;
+            ttmp.fontSize = 64;
+            ttmp.alignment = TextAlignmentOptions.Center;
+            ttmp.color = HEADER_GOLD;
+            ttmp.raycastTarget = false;
+
+            // Body
+            var bodyGO = new GameObject("Body", typeof(RectTransform), typeof(TextMeshProUGUI));
+            bodyGO.transform.SetParent(card.transform, false);
+            var brt = bodyGO.GetComponent<RectTransform>();
+            brt.anchorMin = new Vector2(0.5f, 0.5f); brt.anchorMax = new Vector2(0.5f, 0.5f);
+            brt.pivot = new Vector2(0.5f, 0.5f);
+            brt.sizeDelta = new Vector2(720f, 180f);
+            brt.anchoredPosition = new Vector2(0f, 30f);
+            var btmp = bodyGO.GetComponent<TextMeshProUGUI>();
+            if (dispFont != null) btmp.font = dispFont;
+            btmp.text = body;
+            btmp.fontSize = 40;
+            btmp.alignment = TextAlignmentOptions.Center;
+            btmp.color = new Color(0.30f, 0.22f, 0.18f, 1f); // dark warm text (reads on cream)
+            btmp.raycastTarget = false;
+
+            // Buttons row: Cancel (left, de-emphasized) + Confirm (right, destructive color)
+            BuildConfirmButton(card.transform, "Cancel", SLIDER_TRACK, new Vector2(-200f, 90f),
+                               () => DismissConfirm());
+            BuildConfirmButton(card.transform, confirmLabel, confirmColor, new Vector2(200f, 90f),
+                               () => { DismissConfirm(); onConfirm?.Invoke(); });
+        }
+
+        /// <summary>A compact pill button for the confirm card (side-by-side sized).
+        /// Mirrors BuildPillButton's multipop press/release feel.</summary>
+        private void BuildConfirmButton(Transform parent, string label, Color color,
+                                        Vector2 anchoredPos, System.Action onClick)
+        {
+            var btnGO = new GameObject(label + "ConfirmBtn",
+                typeof(RectTransform), typeof(Image), typeof(Button));
+            btnGO.transform.SetParent(parent, false);
+            var rt = btnGO.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, 0f); rt.anchorMax = new Vector2(0.5f, 0f);
+            rt.pivot = new Vector2(0.5f, 0f);
+            rt.sizeDelta = new Vector2(360f, 120f);
+            rt.anchoredPosition = anchoredPos;
+            var img = btnGO.GetComponent<Image>();
+            img.sprite = GetPillSprite();
+            img.type = Image.Type.Sliced;
+            img.color = color;
+
+            var lblGO = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI));
+            lblGO.transform.SetParent(btnGO.transform, false);
+            var lrt = lblGO.GetComponent<RectTransform>();
+            lrt.anchorMin = Vector2.zero; lrt.anchorMax = Vector2.one;
+            lrt.offsetMin = Vector2.zero; lrt.offsetMax = Vector2.zero;
+            var ltmp = lblGO.GetComponent<TextMeshProUGUI>();
+            var font = GameFont.GetDisplayTMP();
+            if (font != null) ltmp.font = font;
+            ltmp.text = label;
+            ltmp.fontSize = 48;
+            ltmp.alignment = TextAlignmentOptions.Center;
+            ltmp.color = Color.white;
+            ltmp.raycastTarget = false;
+
+            var trig = btnGO.AddComponent<EventTrigger>();
+            var down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+            down.callback.AddListener((_) => GameAudio.Instance?.PlayMultiPopPress());
+            trig.triggers.Add(down);
+
+            btnGO.GetComponent<Button>().onClick.AddListener(() =>
+            {
+                GameAudio.Instance?.PlayMultiPopRelease();
+                onClick?.Invoke();
+            });
+        }
+
+        private void DismissConfirm()
+        {
+            if (_confirmOverlay != null) { Destroy(_confirmOverlay); _confirmOverlay = null; }
         }
 
         private void OnQuitLevelTapped()

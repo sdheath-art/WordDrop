@@ -56,6 +56,9 @@ namespace WordDrop
                 }
             }
 
+            // Never smash level objectives (escort drop-targets / ice / chests). 2026-06-15 Spencer.
+            StripObjectiveTiles(toRemove);
+
             // Sync RulesEngine + GridManager (same pattern as ApplyContinueRescue).
             for (int i = 0; i < toRemove.Count; i++)
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);

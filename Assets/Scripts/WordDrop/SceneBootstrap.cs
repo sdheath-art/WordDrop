@@ -29,7 +29,7 @@ namespace WordDrop
         // 2026-06-08 Spencer: TEMP on-screen bloom/HDR diagnostic for the iOS build (can't
         // read device logs from the dev box, so put the state on screen). Flip to false /
         // delete once the no-glow-on-mobile cause is found.
-        private const bool SHOW_BLOOM_DEBUG = false;
+        private const bool SHOW_BLOOM_DEBUG = false; // on-device bloom/HDR diagnostic — bloom resolved 2026-06-19, left wired for future use
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
         // Phase 0 of Survival→Level migration: placeholder until GameMode enum lands in Phase 2.
@@ -69,6 +69,17 @@ namespace WordDrop
 
         private void Start()
         {
+#if WORDROP_PLAYTEST
+            // PLAYTEST-ONLY coin grant. Gated behind the custom WORDROP_PLAYTEST scripting define
+            // (Player Settings → Scripting Define Symbols) — it must NOT be set for the real launch
+            // build, or every player would start rich and the economy breaks. Tops up to a floor each
+            // launch so testers always have plenty to exercise the Continue / buy flows, while still
+            // letting them spend down within a session. 2026-06-24 Spencer.
+            const int PLAYTEST_COIN_FLOOR = 9999;
+            if (CoinWallet.Balance < PLAYTEST_COIN_FLOOR)
+                CoinWallet.Add(PLAYTEST_COIN_FLOOR - CoinWallet.Balance);
+#endif
+
             // Show menu instead of auto-starting — let the player choose when to play
             if (MenuUI.Instance != null)
             {
@@ -137,8 +148,6 @@ namespace WordDrop
             // Vertical gradient background.
             // 2026-06-02: candy-bright CYAN per Spencer's Royal-Match/Candy-Crush
             // reference — vivid sky-cyan at top → mint-teal toward the board.
-            // (Just the gradient; the reference's light rays / bokeh / dot pattern
-            // would need a painted background asset.)
             Color bgTop    = new Color(0.40f, 0.82f, 0.96f, 1f); // vivid sky cyan (top)
             Color bgBottom = new Color(0.50f, 0.90f, 0.84f, 1f); // bright mint-teal (toward the board)
             Sprite bgGrad = TileRenderer.CreateGradientRect(4, 128, bgBottom, bgTop);
@@ -267,6 +276,7 @@ namespace WordDrop
             new GameObject("LevelSelectScreen").AddComponent<LevelSelectScreen>();
             new GameObject("LevelCompletedModal").AddComponent<LevelCompletedModal>();
             new GameObject("StageClearModal").AddComponent<StageClearModal>();
+            new GameObject("LevelIntroModal").AddComponent<LevelIntroModal>();
             new GameObject("TopOutPanel").AddComponent<TopOutPanel>();
             new GameObject("BoosterManager").AddComponent<BoosterManager>();
             new GameObject("BoosterHUDSlot").AddComponent<BoosterHUDSlot>();

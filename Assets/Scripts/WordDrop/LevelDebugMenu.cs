@@ -186,6 +186,7 @@ namespace WordDrop
                 CoinWallet.ResetAll();
                 HeartsManager.ResetAll();
                 TutorialProgression.ResetTutorialState();
+                TutorialManager.ResetTutorial(); // also clear interactive-coaching flag ("tutorial_complete") so it re-fires
                 StarterPackModal.ResetState();
                 DailyDropManager.ResetAll();
                 PlayerPrefs.DeleteKey("wd_hearts_last_ad_grant_ticks");

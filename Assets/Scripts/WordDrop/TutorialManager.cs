@@ -6,24 +6,22 @@ using DG.Tweening;
 namespace WordDrop
 {
     /// <summary>
-    /// First-time tutorial that teaches the game one concept at a time:
+    /// First-time tutorial = LEVEL 1. Target: "Explode 4 words" (LongWordObjective(2,4) shown in the
+    /// HUD TARGET box). Taught as 4 gated, guided charge→explode cycles, drop-only. Reworked 2026-06-25.
     ///
-    ///   STEP 1 — "DRAG UP TO DROP"
-    ///     Board: empty. Hand: O, X, R, E, L
-    ///     Player drags O up to column 3 (center). Letter falls. No word formed.
-    ///     Teaches the core input: drag card up → letter falls into column.
+    /// Each cycle (see CYCLES[]) authors a FRESH full board (deterministic; nothing auto-drops):
+    ///   CHARGE step (state WaitForWord): drop Drop1 into the gap (col 2) → the Charge word forms
+    ///     across row 0 → it CHARGES. (Cycle 0 then names the state once: "THE FUSE IS LIT".)
+    ///   EXPLODE step (state WaitForDetonation): drop Drop2 into col 4 → the Blast word forms
+    ///     vertically on the pre-placed tile, crossing the charged word's shared (Link) tile →
+    ///     DETONATION → +1 toward the target.
+    /// After each blast: count it, tick the TARGET badge down, then either re-author the next cycle
+    /// ("AGAIN!") or, at 4/4, flash complete → "LEVEL COMPLETE!" → mark tutorial done → normal game.
     ///
-    ///   STEP 2 — "NOW MAKE A WORD"
-    ///     Board: O at (3,0), G at (4,0) placed by setup. Hand: D, X, R, E, L
-    ///     Player drags D to column 2. D(2,0) O(3,0) G(4,0) = DOG. Tiles prime (glow).
+    /// Cycles: CAT→TIP, DOG→GAP, SUN→NET, BUG→GAS (all words + safety bounds dictionary-verified).
+    /// While IsActive, ObjectiveManager stands down so the tutorial owns the TARGET + completion.
     ///
-    ///   STEP 3 — "THOSE TILES ARE LIVE" (no action — just a beat)
-    ///     Pause to let the player see the glowing primed tiles. Name the state.
-    ///
-    ///   STEP 4 — "ONE MORE"
-    ///     Board: DOG primed + I placed at (4,1) above G. Hand: P, X, R, E, L
-    ///     Player drags P to column 4. P(4,2) I(4,1) G(4,0) = PIG vertically.
-    ///     Overlaps G at (4,0) → DETONATION. Tutorial complete.
+    /// (SetupStep2 + the WaitForDrop state are legacy from an earlier flow — no longer in the path.)
     /// </summary>
     public class TutorialManager : MonoBehaviour
     {
@@ -60,6 +58,33 @@ namespace WordDrop
         private bool _transitioning = false;
 
         public bool IsActive => _step != TutorialStep.Inactive && _step != TutorialStep.Done;
+
+        // ── Level 1: target = "Explode 4 words", taught as 4 gated charge→explode cycles ──
+        // Each cycle authors a fresh board: drop Drop1 into col 2 → Charge word (horizontal, row 0)
+        // CHARGES; drop Drop2 into col 4 → Blast word (vertical, on the pre-placed Pre tile above
+        // Link) crosses the charged word's Link tile → DETONATION (+1 toward the target). All words +
+        // bounds dictionary-verified scan-safe (LBound+Charge and Charge+RBound are non-words).
+        private struct WordCycle
+        {
+            public string Charge, Blast;   // Charge = Drop1 + Mid + Link  ;  Blast(vertical) = Link + Pre + Drop2
+            public char Drop1, Mid, Link;  // Mid at (3,0), Link at (4,0)
+            public char Pre, Drop2;        // Pre pre-placed at (4,1); Drop2 lands at (4,2)
+            public char LBound, RBound;    // safe filler at (1,0)/(5,0) that can't extend Charge
+        }
+        private static readonly WordCycle[] CYCLES =
+        {
+            new WordCycle { Charge="CAT", Blast="TIP", Drop1='C', Mid='A', Link='T', Pre='I', Drop2='P', LBound='B', RBound='W' },
+            new WordCycle { Charge="DOG", Blast="GAP", Drop1='D', Mid='O', Link='G', Pre='A', Drop2='P', LBound='X', RBound='X' },
+            new WordCycle { Charge="SUN", Blast="NET", Drop1='S', Mid='U', Link='N', Pre='E', Drop2='T', LBound='X', RBound='X' },
+            new WordCycle { Charge="BUG", Blast="GAS", Drop1='B', Mid='U', Link='G', Pre='A', Drop2='S', LBound='X', RBound='X' },
+        };
+        private const int GOAL_WORDS = 4;
+        private int _cycleIndex = 0;
+        private int _wordsExploded = 0;
+        private LongWordObjective _levelObjective;
+
+        private static RulesCellData NewCell(char letter, int col, int row)
+            => new RulesCellData { Letter = letter, Col = col, Row = row, PlayerIndex = -1 };
 
         // ── Visual elements ───────────────────────────────────────────────────────
 
@@ -108,8 +133,10 @@ namespace WordDrop
 
         public static bool ShouldRunTutorial()
         {
-            // Tutorial disabled for testing — always skip
-            return false;
+            // Re-enabled 2026-06-25 (was hard-stubbed to false "for testing", which silently
+            // shipped the eased tutorial levels with NO interactive coaching — new players got
+            // no teaching). Runs the first-time coaching until it's been completed or skipped.
+            return PlayerPrefs.GetInt("tutorial_complete", 0) == 0 && !_skipForSession;
         }
 
         public void BeginTutorial()
@@ -122,22 +149,32 @@ namespace WordDrop
 
 //             Debug.Log("[TutorialManager] === TUTORIAL BEGIN ===");
 
-            _step = TutorialStep.WaitForDrop;
+            // Level 1 target: explode 4 words. Taught as gated charge→explode cycles.
+            _cycleIndex = 0;
+            _wordsExploded = 0;
+            _levelObjective = new LongWordObjective(2, GOAL_WORDS);
+
+            _step = TutorialStep.WaitForWord;
             AllowedColumn = -1;
             AllowedCardIndex = -1;
             BlockShuffleAndSwap = true;
+            _transitioning = false;
 
             SubscribeEvents();
             ShowSkipButton();
-            StartCoroutine(SetupStep1());
+            // Show the TARGET box ("Explode 4 words"). The tutorial OWNS this objective + completion;
+            // ObjectiveManager stands down while IsActive (see ObjectiveManager.Update guard).
+            HUDManager.Instance?.SetObjective(_levelObjective);
+            StartCoroutine(SetupCharge(0));
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 1 — "DRAG UP TO DROP"
-        // Learn the core input: drag a card up, letter falls into a column.
+        // CHARGE STEP — "MAKE A WORD"  (state: WaitForWord)
+        // Author a fresh full board for this cycle; the player drops Drop1 into col 2 to complete
+        // the Charge word across row 0, which CHARGES. Nothing auto-drops — every tile is pre-placed.
         // ══════════════════════════════════════════════════════════════════════════
 
-        private IEnumerator SetupStep1()
+        private IEnumerator SetupCharge(int cycleIndex)
         {
             yield return null; // wait a frame for everything to settle
 
@@ -145,33 +182,81 @@ namespace WordDrop
             var grid  = GridManager.Instance;
             if (rules == null || grid == null) { EndTutorial(); yield break; }
 
-            // Clear the board completely
+            var cyc = CYCLES[cycleIndex];
+
+            // Fresh, full, fixed board (deterministic + gated). Layout (row 0 = bottom):
+            //   row2:  F  F  .  .  .  .
+            //   row1:  F  F  .  F  Pre  F
+            //   row0:  F  L  .  Mid Link R     (col 2 = Drop1 gap; col 4 above Pre = Drop2 gap)
+            // Scan-safe: the scanner only reads the run through the DROPPED cell; L/R bound the Charge
+            // word so no longer/other word can form through it; drop lanes + margins stay empty.
             rules.ClearBoard();
             grid.ClearAllCells();
+            // Board-reset path → reset BOTH turn counters (HANDOFF §4.5): zeroing only GlobalTurn lets
+            // MatchController._currentTurn slam a stale value back on the next drop, giving the fresh
+            // charged word a bad fuse (primes RED / diffuses immediately) on later cycles.
+            if (MatchController.Instance != null)
+                MatchController.Instance.ResetTurnCounter();
 
-            // Empty board — just learning to drop
+            // — target words —
+            rules.SetCell(3, 0, NewCell(cyc.Mid,  3, 0));
+            rules.SetCell(4, 0, NewCell(cyc.Link, 4, 0));
+            rules.SetCell(4, 1, NewCell(cyc.Pre,  4, 1)); // pre-placed; nothing auto-drops
+
+            // — bounds + decorative filler (gravity-stable; never seeded by the two gated drops) —
+            rules.SetCell(1, 0, NewCell(cyc.LBound, 1, 0)); // left bound of the Charge word
+            rules.SetCell(5, 0, NewCell(cyc.RBound, 5, 0)); // right bound of the Charge word
+            rules.SetCell(0, 0, NewCell('R', 0, 0));
+            rules.SetCell(0, 1, NewCell('N', 0, 1));
+            rules.SetCell(0, 2, NewCell('G', 0, 2));
+            rules.SetCell(1, 1, NewCell('E', 1, 1));
+            rules.SetCell(1, 2, NewCell('L', 1, 2));
+            rules.SetCell(3, 1, NewCell('S', 3, 1));
+            rules.SetCell(5, 1, NewCell('O', 5, 1));
+
             grid.RebuildFromRulesEngine(rules);
 
-            // Hand: O, X, R, E, L
-            SetPlayerHand(new char[] { 'O', 'X', 'R', 'E', 'L' });
-
-            // Restrict to column 3 (center), card 0 only
-            AllowedColumn = 3;
+            // Hand: Drop1 in slot 0 (the only playable card); slot 0 refills to Drop2 after the drop.
+            SetPlayerHand(new char[] { cyc.Drop1, 'X', 'R', 'E', 'L' });
+            AllowedColumn = 2;
             AllowedCardIndex = 0;
+            RigNextDraw(cyc.Drop2);
+            NextPreviewLetter = cyc.Drop2;
 
-            // Rig the next card deal so slot 0 refills with D after the O drop
-            RigNextDraw('D');
-            NextPreviewLetter = 'D';
+            if (MatchController.Instance != null)
+                MatchController.Instance.CurrentPlayer = MatchController.PLAYER_HUMAN;
 
-            ShowInstruction("DRAG UP TO DROP");
-            ShowArrow(3);
+            ShowInstruction(cycleIndex == 0 ? "DRAG TO MAKE A WORD" : "MAKE ANOTHER WORD");
             ShowCardHighlight(0);
             DimShuffle(true);
+            // SPOTLIGHT DIM still shelved — reworking into a SELECTIVE spotlight is a later pass. The
+            // guiding cursor + input-gating (which actually teach) stay on.
+            ShowDragGestureToColumn(0, 2);
 
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(true);
 
-//             Debug.Log("[TutorialManager] Step 1 ready — waiting for O drop at column 3.");
+            _transitioning = false;
+//             Debug.Log($"[TutorialManager] Cycle {cycleIndex} charge ready — drop {cyc.Drop1} at col 2 → {cyc.Charge}.");
+        }
+
+        /// <summary>Loops the hand-point hint dragging from a hand card up into a board column,
+        /// computed from real world positions (more robust than hardcoded viewport fractions).</summary>
+        private void ShowDragGestureToColumn(int cardIndex, int col)
+        {
+            var cam  = Camera.main;
+            var grid = GridManager.Instance;
+            var hand = HandManager.Instance;
+            if (cam == null || grid == null || hand == null)
+            {
+                TutorialSpotlight.ShowDragGesture(new Vector2(0.30f, 0.22f), new Vector2(0.45f, 0.45f));
+                return;
+            }
+            Vector3 cardW = new Vector3(hand.GetCardWorldX(cardIndex), hand.GetCardWorldY(), 0f);
+            Vector3 colW  = new Vector3(grid.GetColumnCenterX(col), grid.GridBottom + grid.CellSize * 1.5f, 0f);
+            Vector3 fromVP = cam.WorldToViewportPoint(cardW);
+            Vector3 toVP   = cam.WorldToViewportPoint(colW);
+            TutorialSpotlight.ShowDragGesture(new Vector2(fromVP.x, fromVP.y), new Vector2(toVP.x, toVP.y));
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -191,6 +276,7 @@ namespace WordDrop
             HideArrow();
             HideCardHighlight();
             HideInstruction();
+            TutorialSpotlight.Hide();   // Step 2 will re-show its own focus once it's built out
 
             // Brief pause to let the drop settle
             yield return new WaitForSeconds(1.0f);
@@ -225,10 +311,10 @@ namespace WordDrop
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 3 — "THOSE TILES ARE LIVE" (no action — naming the glow)
+        // AFTER CHARGE — verify the word charged; on the FIRST cycle, name the state.
         // ══════════════════════════════════════════════════════════════════════════
 
-        private IEnumerator SetupStep3()
+        private IEnumerator AfterCharge()
         {
             var rules = RulesEngine.Instance;
             var grid  = GridManager.Instance;
@@ -240,64 +326,58 @@ namespace WordDrop
             HideArrow();
             HideCardHighlight();
             HideInstruction();
+            TutorialSpotlight.Hide();   // stop the charge-step hand_point
 
             // Wait for word scoring animation
             yield return new WaitForSeconds(1.2f);
 
-            // Sync primed glow visuals
+            // Sync charged glow visuals
             grid.SyncToRulesState(rules);
             ApplyPrimedGlow(rules, grid);
 
-            // BUG-07: Verify DOG is actually primed before proceeding
+            // Verify the word actually charged before asking for the blast.
             if (rules.PrimedRegistry == null || rules.PrimedRegistry.Count == 0)
             {
-                Debug.LogError("[TutorialManager] Step 3: DOG not primed — aborting tutorial.");
+                Debug.LogError($"[TutorialManager] Cycle {_cycleIndex}: {CYCLES[_cycleIndex].Charge} not charged — aborting tutorial.");
                 _transitioning = false;
                 EndTutorial();
                 StartNormalGame();
                 yield break;
             }
 
-            yield return new WaitForSeconds(0.3f);
+            // Teach the "charged" state once (first cycle only); later cycles go straight to the blast.
+            if (_cycleIndex == 0)
+            {
+                yield return new WaitForSeconds(0.3f);
+                ShowInstruction("THE FUSE IS LIT");
+                yield return new WaitForSeconds(2.0f);
+                HideInstruction();
+                yield return new WaitForSeconds(0.3f);
+            }
 
-            // Name the state — no action required
-            ShowInstruction("THE FUSE IS LIT");
-
-            // Hold for a beat so the player sees the glow + reads the text
-            yield return new WaitForSeconds(2.0f);
-
-            HideInstruction();
-            yield return new WaitForSeconds(0.3f);
-
-            // Move to step 4
             _step = TutorialStep.WaitForDetonation;
-            StartCoroutine(SetupStep4());
+            StartCoroutine(SetupExplode(_cycleIndex));
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // STEP 4 — "ONE MORE"
-        // Board: DOG primed + I at (4,1). Player drops P at column 4 → PIG → BOOM.
+        // EXPLODE STEP — "EXPLODE IT"  (state: WaitForDetonation)
+        // The Pre tile is already above Link. Player drops Drop2 into col 4 → Blast word (vertical)
+        // crosses the CHARGED word's Link → DETONATION. Nothing auto-drops.
         // ══════════════════════════════════════════════════════════════════════════
 
-        private IEnumerator SetupStep4()
+        private IEnumerator SetupExplode(int cycleIndex)
         {
-            var rules = RulesEngine.Instance;
-            var grid  = GridManager.Instance;
-            if (rules == null || grid == null) { EndTutorial(); yield break; }
+            HideInstruction();
+            TutorialSpotlight.Hide();
+            yield return new WaitForSeconds(0.2f);
 
-            // Place I at (4,1) above G — animate it dropping in like an AI move
-            rules.SetCell(4, 1, new RulesCellData { Letter = 'I', Col = 4, Row = 1, PlayerIndex = -1 });
-            grid.DropTile(4, 'I', TileOwner.AI);
-
-            yield return new WaitForSeconds(0.5f);
-
-            // Restrict to column 4, card 0 only
+            // Restrict to column 4, card 0 only (slot 0 was refilled with Drop2 after the first drop).
             AllowedColumn = 4;
             AllowedCardIndex = 0;
 
-            ShowInstruction("YOUR MOVE");
-            ShowArrow(4);
+            ShowInstruction(cycleIndex == 0 ? "NOW EXPLODE IT" : "EXPLODE IT");
             ShowCardHighlight(0);
+            ShowDragGestureToColumn(0, 4);   // hand_point guides to the detonating drop
 
             // Force current player back to human
             if (MatchController.Instance != null)
@@ -307,7 +387,7 @@ namespace WordDrop
                 HandManager.Instance.SetInteractable(true);
 
             _transitioning = false;
-//             Debug.Log("[TutorialManager] Step 4 ready — waiting for P drop at column 4 to form PIG → detonation.");
+//             Debug.Log($"[TutorialManager] Cycle {cycleIndex} explode ready — drop Drop2 at col 4 → Blast → detonation.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -352,12 +432,10 @@ namespace WordDrop
             if (_step != TutorialStep.WaitForWord) return;
             if (_transitioning) return;
 
-//             Debug.Log($"[TutorialManager] Word scored during step 2: '{evt.Word}'");
-
-            // Step 2 complete — word formed, now show primed state
+            // The Charge word formed → verify + (first cycle) name the charged state, then ask for the blast.
             _step = TutorialStep.ShowPrimed;
             _transitioning = true;
-            StartCoroutine(SetupStep3());
+            StartCoroutine(AfterCharge());
         }
 
         private void OnPrimedTriggered(PrimedTriggeredEvent evt)
@@ -365,45 +443,64 @@ namespace WordDrop
             if (_step != TutorialStep.WaitForDetonation) return;
             if (_transitioning) return;
 
-//             Debug.Log($"[TutorialManager] DETONATION during step 4! " +
-                      // $"Triggered='{evt.TriggeredWord}' by '{evt.TriggerWord}'");
-
             _step = TutorialStep.ShowBoom;
             _transitioning = true;
-            StartCoroutine(ShowBoomAndEnd());
+            StartCoroutine(AfterBlast());
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // BOOM + END
+        // AFTER BLAST — count it toward the target; loop to the next cycle, or finish at 4/4.
         // ══════════════════════════════════════════════════════════════════════════
 
-        private IEnumerator ShowBoomAndEnd()
+        private IEnumerator AfterBlast()
         {
             HideArrow();
             HideCardHighlight();
             HideInstruction();
+            TutorialSpotlight.Hide();
 
             if (HandManager.Instance != null)
                 HandManager.Instance.SetInteractable(false);
 
-            // Let the explosion speak for itself
-            yield return new WaitForSeconds(1.5f);
+            // Count this explosion toward the level target + tick the TARGET badge down.
+            _wordsExploded++;
+            if (_levelObjective != null)
+            {
+                _levelObjective.OnWordExploded(CYCLES[_cycleIndex].Charge, MatchController.PLAYER_HUMAN);
+                HUDManager.Instance?.SetObjective(_levelObjective);
+                HUDManager.Instance?.PulseObjective();
+            }
+//             Debug.Log($"[TutorialManager] Cycle {_cycleIndex} blast — exploded {_wordsExploded}/{GOAL_WORDS}.");
 
-            // Brief celebration text
-            ShowInstruction("NICE.");
-            yield return new WaitForSeconds(1.2f);
+            // Let the explosion read.
+            yield return new WaitForSeconds(1.3f);
 
-            HideInstruction();
+            if (_wordsExploded >= GOAL_WORDS)
+            {
+                HUDManager.Instance?.FlashObjectiveComplete();
+                ShowInstruction("LEVEL COMPLETE!");
+                yield return new WaitForSeconds(1.6f);
+                HideInstruction();
 
-            _skipForSession = true;
-            PlayerPrefs.SetInt("tutorial_complete", 1);
-            PlayerPrefs.Save();
-//             Debug.Log("[TutorialManager] Tutorial complete — PlayerPrefs saved.");
+                _skipForSession = true;
+                PlayerPrefs.SetInt("tutorial_complete", 1);
+                PlayerPrefs.Save();
 
-            EndTutorial();
+                EndTutorial();
+                yield return new WaitForSeconds(0.3f);
+                StartNormalGame();
+            }
+            else
+            {
+                // Quick "again!" beat, then the next cycle on a fresh board.
+                ShowInstruction("AGAIN!");
+                yield return new WaitForSeconds(0.9f);
+                HideInstruction();
 
-            yield return new WaitForSeconds(0.3f);
-            StartNormalGame();
+                _cycleIndex++;
+                _step = TutorialStep.WaitForWord;
+                StartCoroutine(SetupCharge(_cycleIndex));
+            }
         }
 
         private void EndTutorial()
@@ -421,6 +518,7 @@ namespace WordDrop
             HideInstruction();
             HideSkipButton();
             DimShuffle(false);
+            TutorialSpotlight.Hide();   // never leave the dim stuck on screen (skip / end / abort)
 
 //             Debug.Log("[TutorialManager] === TUTORIAL END ===");
         }

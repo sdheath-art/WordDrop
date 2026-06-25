@@ -23,32 +23,32 @@ namespace WordDrop
         // Colors — read from UIConfig if available, otherwise use hardcoded defaults
         private static Color PANEL_BG
         {
-            get { return new Color(0.22f, 0.14f, 0.38f, 0.97f); } // medium purple — distinct from dark background
+            get { return new Color(0.99f, 0.95f, 0.86f, 0.97f); } // TEMP candy-unification
         }
         private static readonly Color OVERLAY_COLOR   = new Color(0.05f, 0.02f, 0.12f, 0.75f); // dark purple overlay
         private static Color PLAYER_GREEN
         {
-            get { return new Color(1.00f, 0.84f, 0.42f, 1f); } // gold (match player)
+            get { return new Color(0.80f, 0.52f, 0.10f, 1f); } // deep amber (readable gold on cream)
         }
         private static Color AI_ORANGE
         {
-            get { return new Color(1.00f, 0.56f, 0.67f, 1f); } // pink (match AI)
+            get { return new Color(0.88f, 0.35f, 0.52f, 1f); } // deeper pink (readable on cream)
         }
         private static Color GOLD
         {
-            get { return new Color(1.00f, 0.84f, 0.42f, 1f); } // warm gold
+            get { return new Color(0.80f, 0.52f, 0.10f, 1f); } // deep amber (readable gold on cream)
         }
         private static Color DEFEAT_RED
         {
-            get { return new Color(1.00f, 0.40f, 0.40f, 1f); } // soft red
+            get { return new Color(0.85f, 0.28f, 0.28f, 1f); } // coral (readable on cream)
         }
         private static Color TEXT_WHITE
         {
-            get { return new Color(0.94f, 0.90f, 0.84f, 1f); } // warm white
+            get { return new Color(0.32f, 0.24f, 0.30f, 1f); } // dark text on cream
         }
         private static Color TEXT_DIM
         {
-            get { return new Color(0.63f, 0.53f, 0.75f, 0.8f); } // light purple
+            get { return new Color(0.50f, 0.42f, 0.48f, 0.8f); } // dim-dark text on cream
         }
         private static Color BTN_COLOR
         {
@@ -194,7 +194,7 @@ namespace WordDrop
             // Daily streak text (hidden in classic mode)
             _dailyStreakText = MakeLabel(_panel.transform, "DailyStreak",
                 new Vector2(0.05f, 0.22f), new Vector2(0.95f, 0.28f),
-                "", bestFS, FontStyle.Normal, new Color(0.40f, 0.70f, 1f, 1f), TextAnchor.MiddleCenter);
+                "", bestFS, FontStyle.Normal, new Color(0.20f, 0.45f, 0.85f, 1f), TextAnchor.MiddleCenter);
             _dailyStreakText.gameObject.SetActive(false);
             stagger.Add(_dailyStreakText.gameObject);
 
@@ -331,7 +331,7 @@ namespace WordDrop
                 TMP_FontAsset displayFont = GameFont.GetDisplayTMP();
                 if (_titleText != null)
                 {
-                    _titleText.text = "TOP OUT";
+                    _titleText.text = "Out Of Moves!";
                     _titleText.color = DEFEAT_RED;
                     if (displayFont != null) _titleText.font = displayFont;
                 }

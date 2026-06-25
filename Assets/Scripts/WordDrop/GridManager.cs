@@ -48,9 +48,11 @@ namespace WordDrop
         // a SINGLE solid panel (no visible inner frame). Same pattern as the
         // original dark-navy panel — just at a different value.
         // See project_wordrop_visual_direction_2026_05_30.
-        private static readonly Color FRAME_OUTER    = new Color(0f, 0.463f, 0.690f, 1f);  // #0076b0 (2026-06-04 Spencer) — matches BOARD_INNER, single panel
+        // 2026-06-24 Spencer: shifted from cyan #0076b0 to a softer CORNFLOWER blue to match the Candy Crush
+        // board (their blue is less green/cyan, more periwinkle).
+        private static readonly Color FRAME_OUTER    = new Color(0.20f, 0.38f, 0.62f, 1f);  // deeper cornflower — matches BOARD_INNER
         private static readonly Color FRAME_EDGE     = new Color(0.220f, 0.270f, 0.540f, 1f);  // brighter top lip — sculpted
-        private static readonly Color BOARD_INNER    = new Color(0f, 0.463f, 0.690f, 1f);  // #0076b0 (2026-06-04 Spencer)
+        private static readonly Color BOARD_INNER    = new Color(0.20f, 0.38f, 0.62f, 1f);  // deeper cornflower (darkened from too-light 0.27/0.45/0.70)
 
         // Cells: readable against board — lighter face, dark inset border
         private static readonly Color CELL_FILL_COLOR   = new Color(0.150f, 0.190f, 0.410f, 1f);  // slightly brighter than board inner
@@ -131,6 +133,52 @@ namespace WordDrop
             _allTileObjects.Remove(tile.gameObject);
             tile.ResetForPool();
             _tilePool.Push(tile);
+        }
+
+        // ── Board shake (chest crack) — jiggles the board frame + the loose board tiles together, but
+        // NOT the hand rack (it isn't in _allTileObjects / under _gridRoot, so it stays still). Decaying
+        // Perlin offset; doesn't hard-restore tiles so a tile pooled mid-shake can't get snapped back.
+        // 2026-06-18 Spencer.
+        public void ShakeBoard(float magnitude, float duration)
+        {
+            if (_gridRoot == null || magnitude <= 0f || duration <= 0f) return;
+            StartCoroutine(ShakeBoardCoroutine(magnitude, duration));
+        }
+
+        private System.Collections.IEnumerator ShakeBoardCoroutine(float mag, float dur)
+        {
+            // Shake the board letter tiles via an ADDITIVE per-frame DELTA (not a captured base) so it
+            // rides ON TOP of gravity/cascade motion instead of fighting it — fighting made the shake
+            // invisible during cascade/edit detonations (gravity overwrote the offset). Board area only
+            // (Y filter) → the hand rack stays still. 2026-06-18 Spencer.
+            float boardBottom = GridBottom - CellSize * 0.5f;
+            var ts = new System.Collections.Generic.List<Transform>();
+            for (int i = 0; i < _allTileObjects.Count; i++)
+            {
+                var go = _allTileObjects[i];
+                if (go == null || go.transform.position.y < boardBottom) continue;
+                ts.Add(go.transform);
+            }
+            if (ts.Count == 0) yield break;
+            float seedX = Random.value * 100f, seedY = Random.value * 100f + 50f;
+            float t = 0f;
+            Vector3 prevOff = Vector3.zero;
+            while (t < dur)
+            {
+                t += Time.unscaledDeltaTime;
+                float decay = 1f - Mathf.Clamp01(t / dur);                 // ease the shake out to zero
+                float nx = (Mathf.PerlinNoise(seedX, t * 38f) * 2f - 1f) * mag * decay;
+                float ny = (Mathf.PerlinNoise(seedY, t * 38f) * 2f - 1f) * mag * decay;
+                Vector3 off = new Vector3(nx, ny, 0f);
+                Vector3 delta = off - prevOff;                              // apply only the CHANGE this frame
+                prevOff = off;
+                for (int i = 0; i < ts.Count; i++)
+                    if (ts[i] != null) ts[i].position += delta;
+                yield return null;
+            }
+            if (prevOff != Vector3.zero)                                    // remove residual so tiles end at rest
+                for (int i = 0; i < ts.Count; i++)
+                    if (ts[i] != null) ts[i].position -= prevOff;
         }
 
         // ---------------------------------------------------------------------------
@@ -366,8 +414,8 @@ namespace WordDrop
                 // PSD-pinned 1110×1420, whose ~51 PSD side margin was fatter than the
                 // 21 PSD tile gap.) The outer tile is already inset half-a-gap from the
                 // cell-area edge, so half-gap padding makes board→tile == one full gap.
-                // gap = CellSize*(1 - TILE_DISPLAY_RATIO) where ratio = 147/172.
-                float halfGapPad = CellSize * (1f - 147f / 172f) * 0.5f;
+                // gap = CellSize*(1 - TILE_DISPLAY_RATIO) where ratio = 158/172 (tightened 2026-06-16).
+                float halfGapPad = CellSize * (1f - 154f / 172f) * 0.5f; // 2026-06-24: 158→154 (a hair more spacing + margin)
                 CreateBackgroundPanel((GridRight - GridLeft) + halfGapPad * 2f,
                                       (GridTop   - GridBottom) + halfGapPad * 2f);
             }
@@ -470,7 +518,7 @@ namespace WordDrop
             // world size = CellSize * TILE_DISPLAY_RATIO (147/172). If the match looks
             // off, tweak TILE_CORNER_FRAC.
             const float TILE_CORNER_FRAC = 0.283f;
-            float tileRadiusWorld = CellSize * (147f / 172f) * TILE_CORNER_FRAC;
+            float tileRadiusWorld = CellSize * (154f / 172f) * TILE_CORNER_FRAC; // 2026-06-24: synced with TILE_DISPLAY_RATIO (158→154)
             float texelsPerWorld  = bgTexW / Mathf.Max(bgW, 0.0001f);
             int bgRadius = Mathf.Clamp(
                 Mathf.RoundToInt(tileRadiusWorld * texelsPerWorld),
@@ -507,6 +555,51 @@ namespace WordDrop
             float nativeW = bgTexW / 100f;
             float nativeH = bgTexH / 100f;
             bgGO.transform.localScale = new Vector3(bgW / nativeW, bgH / nativeH, 1f);
+
+            // 2026-06-24 Spencer: depth pass — overlay a subtle vertical gradient (soft sheen at the
+            // top, grounding shade at the bottom) so the flat board reads as a LIT panel, not a blue
+            // div. Generated as a ROUNDED-RECT matching the board (same texW/texH/radius) so its corners
+            // follow the board's rounded corners — NOT a square overlay. Same scale as the board sprite
+            // → aligns exactly. Sits over the fill, UNDER cells/tiles. Touches no tile/colour state.
+            var gradGO = new GameObject("GridBackgroundGradient");
+            gradGO.transform.SetParent(_gridRoot.transform, false);
+            gradGO.transform.position = bgGO.transform.position + new Vector3(0f, 0f, -0.01f);
+            var gradSR = gradGO.AddComponent<SpriteRenderer>();
+            gradSR.sprite       = BuildBoardGradientSprite(bgTexW, bgTexH, bgRadius);
+            gradSR.sortingOrder = bgSR.sortingOrder + 1;
+            gradGO.transform.localScale = new Vector3(bgW / nativeW, bgH / nativeH, 1f); // same as board bg
+        }
+
+        /// <summary>Vertical-gradient board-depth sprite, generated as a ROUNDED-RECT (same texW/texH/
+        /// radius as the board background) so its corners match — soft white sheen near the top,
+        /// transparent middle, dark grounding shade near the bottom, transparent outside the corners.</summary>
+        private static Sprite BuildBoardGradientSprite(int texW, int texH, int radius)
+        {
+            var tex = new Texture2D(texW, texH, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            var px = new Color32[texW * texH];
+            for (int y = 0; y < texH; y++)
+            {
+                float t = y / (float)(texH - 1); // 0 = bottom, 1 = top
+                Color g;
+                if (t > 0.74f)      g = new Color(1f, 1f, 1f, Mathf.InverseLerp(0.74f, 1f, t) * 0.10f); // top sheen (tamer)
+                else if (t < 0.30f) g = new Color(0f, 0f, 0f, Mathf.InverseLerp(0.30f, 0f, t) * 0.12f); // bottom shade — softer falloff
+                else                g = new Color(0f, 0f, 0f, 0f);
+                for (int x = 0; x < texW; x++)
+                {
+                    // Rounded-corner coverage so the overlay follows the board's rounded corners.
+                    float dx = 0f, dy = 0f;
+                    if (x < radius) dx = radius - 0.5f - x; else if (x > texW - 1 - radius) dx = x - (texW - 0.5f - radius);
+                    if (y < radius) dy = radius - 0.5f - y; else if (y > texH - 1 - radius) dy = y - (texH - 0.5f - radius);
+                    float cov = 1f;
+                    if (dx > 0f && dy > 0f) { float d = Mathf.Sqrt(dx * dx + dy * dy); cov = Mathf.Clamp01(radius - d + 0.5f); }
+                    Color c = g; c.a *= cov;
+                    px[y * texW + x] = (Color32)c;
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, texW, texH), new Vector2(0.5f, 0.5f), 100f);
         }
 
         // ---------------------------------------------------------------------------
@@ -770,8 +863,11 @@ namespace WordDrop
                     };
 
                     // Special tile visuals
-                    if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
-                    tile.SetAnchored(rulesCell.IsAnchored); // Break-Rocks: mirror fixed-rock flag
+                    tile.SetAnchored(rulesCell.IsAnchored);
+                    if (rulesCell.IsAnchored) { tile.SetVaultRequirement(rulesCell.RequiredWordLength); tile.SetVaultVisual(true); } // anchored = treasure vault
+                    else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
+                    else if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                    if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
                     if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                     if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
                     if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
@@ -799,6 +895,32 @@ namespace WordDrop
             }
 
 //             Debug.Log($"[GridManager] RebuildFromRulesEngine — created {created} tiles.");
+        }
+
+        /// <summary>Self-heal for the HeroWord escort object ("drop to the bottom"). A drop-target is
+        /// a STONE (IsStone=true) under the hood, so a resolution path that pools + re-checks-out the
+        /// tile on a frame where the data flag reads momentarily off can re-stone it grey — and no later
+        /// sync re-ambers it before the player sees it (Spencer caught one sitting dark). This sweep
+        /// re-applies the amber to any drop-target data cell whose tile lost the visual. Cheap
+        /// (COLS×ROWS) and a no-op on non-HeroWord boards. Logs each heal so the root path can be
+        /// pinned from a playtest log. 2026-06-15 Spencer. </summary>
+        public void EnsureDropTargetVisuals(RulesEngine rules)
+        {
+            if (rules == null) return;
+            for (int col = 0; col < COLS; col++)
+                for (int row = 0; row < ROWS; row++)
+                {
+                    var cell = rules.GetCell(col, row);
+                    if (cell == null || !cell.IsDropTarget) continue;
+                    var tile = _tiles[col, row];
+                    if (tile == null) continue;
+                    if (!tile.IsDropTargetVisual)
+                        Debug.LogWarning($"[DropTargetHeal] re-ambering escort at ({col},{row}) — its drop-target flag was cleared.");
+                    // Force amber EVERY frame an escort exists — covers BOTH a cleared flag AND the
+                    // case where a path overwrote the sprite colour grey while LEAVING the flag set
+                    // (which the flag check above would miss). Cheap (≤ a couple tiles). 2026-06-15.
+                    tile.SetDropTargetVisual(true);
+                }
         }
 
         /// <summary>
@@ -859,6 +981,38 @@ namespace WordDrop
                             visualTile.SetLetter(rulesCell.Letter);
                             fixed_count++;
                         }
+                        // Vaults: a live letter tile can be converted into a vault in-place
+                        // (SeedVaultBoard flips IsStone+IsAnchored on an existing cell). Reflect it —
+                        // anchored → treasure chest, plain stone → grey.
+                        if (rulesCell.IsAnchored && !visualTile.IsVault)
+                        {
+                            visualTile.SetVaultRequirement(rulesCell.RequiredWordLength);
+                            visualTile.SetVaultVisual(true); // also sets IsStone
+                            fixed_count++;
+                        }
+                        else if (rulesCell.IsDropTarget && !visualTile.IsDropTargetVisual)
+                        {
+                            visualTile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
+                            fixed_count++;
+                        }
+                        else if (rulesCell.IsStone && !visualTile.IsStone)
+                        {
+                            visualTile.SetStoneVisual(true);
+                            fixed_count++;
+                        }
+                        if (visualTile.IsAnchored != rulesCell.IsAnchored)
+                        {
+                            visualTile.SetAnchored(rulesCell.IsAnchored);
+                            fixed_count++;
+                        }
+                        // ICE: frost overlay tracks RulesCellData.IsFrozen. Covers both freeze
+                        // (objective spawn) and thaw (data cleared in DoExplode) — though thaw normally
+                        // routes through GameVisualBridge's defrost VFX first; this is the safety sync.
+                        if (visualTile.IsFrozen != rulesCell.IsFrozen)
+                        {
+                            visualTile.SetFrozenVisual(rulesCell.IsFrozen);
+                            fixed_count++;
+                        }
                     }
                     else if (rulesCell != null && visualTile == null
                              && (rulesCell.Letter != '\0' || rulesCell.IsWild))
@@ -871,8 +1025,11 @@ namespace WordDrop
                         Tile tile = CheckoutTile(displayLetter, col, row, CellSize, rulesCell.PlayerIndex);
                         tile.transform.position = worldPos;
 
-                        if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
-                        tile.SetAnchored(rulesCell.IsAnchored); // Break-Rocks: mirror fixed-rock flag
+                        tile.SetAnchored(rulesCell.IsAnchored);
+                        if (rulesCell.IsAnchored) tile.SetVaultVisual(true);   // anchored = treasure vault (chest)
+                        else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
+                        else if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                        if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
                         if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                         if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
                         if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
@@ -1353,9 +1510,12 @@ namespace WordDrop
                     }
                     if (isStone)
                     {
-                        tile.SetStoneVisual(true);
                         var rockCell = RulesEngine.Instance?.GetCell(col, 0);
-                        tile.SetAnchored(rockCell != null && rockCell.IsAnchored); // Break-Rocks
+                        bool anchored = rockCell != null && rockCell.IsAnchored;
+                        tile.SetAnchored(anchored);
+                        if (anchored) { tile.SetVaultRequirement(rockCell != null ? rockCell.RequiredWordLength : 0); tile.SetVaultVisual(true); } // anchored = treasure vault
+                        else if (rockCell != null && rockCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
+                        else          tile.SetStoneVisual(true);
                     }
                     else if (letter == '\0' || letter == '#')
                     {

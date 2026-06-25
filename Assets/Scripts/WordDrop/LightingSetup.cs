@@ -144,10 +144,31 @@ namespace WordDrop
             // Real values restored 2026-06-08 (the device-glow diagnostics — threshold 0,
             // 0.85, 0.7 — confirmed bloom RENDERS on iOS but the whole scene is dimmed/clamped
             // below ~0.7 there; root cause being chased separately). These are the editor look.
-            bloom.threshold.value = 1.30f;
-            bloom.intensity.value = 0.20f;
+            // 2026-06-19 Spencer: iOS clamps the whole scene below ~0.7 (confirmed by
+            // the 2026-06-08 device-glow diagnostics), so HDR content authored at 1.3-2.2
+            // NEVER reaches the 1.30 threshold on device → nothing blooms. The editor is
+            // NOT clamped, so it needs the high threshold to avoid blowing out. Split the
+            // threshold per-platform: mobile catches the clamped bright range, editor/desktop
+            // keeps the authored look. Combined with MSAA off (the post-process renderpass
+            // was crashing on Metal with a sample-count mismatch, killing the bloom blit).
+            // 2026-06-19: switching the project to LINEAR color space fixed the iOS HDR
+            // clamp (Gamma was compressing the whole post chain ~sub-1.0, so authored HDR
+            // never crossed the threshold). With HDR now preserved on device, mobile uses
+            // the SAME selective threshold as desktop — the old 0.55 workaround made it
+            // bloom everything as a weak wash instead of glowing the bright cores. Mobile
+            // intensity is nudged slightly above desktop to read strongly on the phone display.
+            if (Application.isMobilePlatform)
+            {
+                bloom.threshold.value = 1.30f;   // selective glow, matches desktop
+                bloom.intensity.value = 0.28f;   // a touch hotter than desktop for the phone screen
+            }
+            else
+            {
+                bloom.threshold.value = 1.30f;
+                bloom.intensity.value = 0.20f;
+            }
             bloom.scatter.value   = 0.30f;
-            Debug.Log($"[LightingSetup] Bloom configured: threshold={bloom.threshold.value} intensity={bloom.intensity.value} scatter={bloom.scatter.value}");
+            Debug.Log($"[LightingSetup] Bloom configured (mobile={Application.isMobilePlatform}): threshold={bloom.threshold.value} intensity={bloom.intensity.value} scatter={bloom.scatter.value}");
 
             // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
             // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams

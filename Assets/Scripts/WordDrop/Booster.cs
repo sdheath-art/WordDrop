@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace WordDrop
@@ -78,5 +79,21 @@ namespace WordDrop
         /// (any tap is valid). Override for boosters that only work on specific tiles
         /// (e.g. Stone Splitter → only a stone). 2026-06-03 Spencer.</summary>
         public virtual bool CanResolveAt(int col, int row) => true;
+
+        /// <summary>Remove LEVEL-OBJECTIVE tiles from a booster's cleared-cell list so boosters can
+        /// NEVER blow up an objective (Spencer 2026-06-15: "boosters can't just blow up objectives").
+        /// Protects the HeroWord escort drop-targets, frozen ICE tiles, and anchored VAULT chests —
+        /// those must be resolved by their intended mechanic (escorted down / worded through / cracked
+        /// by a word splash), not smashed. Call this on the to-remove list before ClearCell/RemoveTiles.</summary>
+        protected static void StripObjectiveTiles(List<Vector2Int> cells)
+        {
+            var rules = RulesEngine.Instance;
+            if (rules == null || cells == null) return;
+            cells.RemoveAll(c =>
+            {
+                var cell = rules.GetCell(c.x, c.y);
+                return cell != null && (cell.IsDropTarget || cell.IsFrozen || cell.IsAnchored);
+            });
+        }
     }
 }

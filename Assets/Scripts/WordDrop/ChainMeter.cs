@@ -129,9 +129,12 @@ namespace WordDrop
 
             if (_fill >= CAPACITY && prev < CAPACITY)
             {
-                Debug.Log($"[ChainMeter] FILLED (+{amount:F2}) — arming BonusMode.");
+                // BONUS-MOVE MODE DISABLED (Spencer 2026-06-15): we're not using the "BONUS! N FREE
+                // MOVES" mode — don't arm it when the chain meter fills. EnterOnDrop() is gated on
+                // Armed, so leaving this off disables the whole mode. Re-enable by un-commenting Arm().
+                Debug.Log($"[ChainMeter] FILLED (+{amount:F2}) — BonusMode arming DISABLED (not used).");
                 OnMeterFilled?.Invoke();
-                BonusMode.Instance?.Arm();
+                // BonusMode.Instance?.Arm();
             }
             else
             {

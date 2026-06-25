@@ -86,7 +86,7 @@ namespace WordDrop
         public Vector2 menuPlayAnchorMin = new Vector2(0.10f, 0.42f);
         public Vector2 menuPlayAnchorMax = new Vector2(0.90f, 0.52f);
         public int menuPlayFontSize      = 40;
-        public Color menuPlayBgColor     = new Color(0.20f, 0.72f, 0.35f, 1f);
+        public Color menuPlayBgColor     = new Color(0.96f, 0.63f, 0.16f, 1f); // 2026-06-24: warm orange CTA (was green)
 
         [Header("Menu — Daily Button")]
         public Vector2 menuDailyAnchorMin     = new Vector2(0.05f, 0.28f);

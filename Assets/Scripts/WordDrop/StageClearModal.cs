@@ -57,6 +57,16 @@ namespace WordDrop
         private GameObject _btnContinue;
         private CanvasGroup _btnContinueGroup; // for fading the button in/out independently
 
+        // Royal-Match-style celebration: a single big golden star drops into the center where the
+        // score used to be, over a golden glow, with golden particles + the personal_best SFX. 2026-06-23.
+        private Image _heroStarImage;
+        private RectTransform _heroStarRect;
+        private Image _heroGlowImage;
+        private RectTransform _heroGlowRect;
+        private Coroutine _starDropCoroutine;
+        private static readonly Color HERO_STAR_GOLD = new Color(1.00f, 0.84f, 0.25f, 1f);
+        private static readonly Color HERO_GLOW_GOLD = new Color(1.00f, 0.82f, 0.22f, 0.80f);
+
         // Tweens we may need to kill mid-flight (Dismiss / OnDestroy) so a rapid
         // open→close sequence doesn't leave runaway tweens writing to dead refs.
         private Sequence _entranceSequence;
@@ -101,10 +111,10 @@ namespace WordDrop
         private bool _isSubscribed;
 
         private static readonly Color PANEL_BG = new Color(0.05f, 0.04f, 0.12f, 0.80f);
-        private static readonly Color CARD_BG  = new Color(0.16f, 0.14f, 0.30f, 0.98f);
-        private static readonly Color TITLE    = new Color(1.00f, 0.84f, 0.25f, 1f);
-        private static readonly Color SUBTITLE = new Color(0.85f, 0.80f, 0.92f, 1f);
-        private static readonly Color REFILL_GREEN = new Color(0.45f, 1.00f, 0.55f, 1f);
+        private static readonly Color CARD_BG  = new Color(0.99f, 0.95f, 0.86f, 0.98f); // TEMP candy-unification
+        private static readonly Color TITLE    = new Color(0.82f, 0.28f, 0.46f, 1f);
+        private static readonly Color SUBTITLE = new Color(0.32f, 0.24f, 0.30f, 1f);
+        private static readonly Color REFILL_GREEN = new Color(0.20f, 0.65f, 0.35f, 1f);
 
         private void Awake()
         {
@@ -419,6 +429,12 @@ namespace WordDrop
             // OnDestroy, so they need explicit kills here too.
             if (_panel != null) _panel.transform.DOKill();
             if (_btnContinue != null) _btnContinue.transform.DOKill();
+
+            // Hero star/glow tweens — the glow has an ENDLESS pulse, so it must be killed or it leaks.
+            if (_starDropCoroutine != null) { StopCoroutine(_starDropCoroutine); _starDropCoroutine = null; }
+            if (_heroStarRect != null) _heroStarRect.DOKill();
+            if (_heroGlowRect != null) _heroGlowRect.DOKill();
+            if (_heroGlowImage != null) _heroGlowImage.DOKill();
         }
 
         /// <summary>Reset all animated entrance properties to their pre-Show state.
@@ -440,7 +456,12 @@ namespace WordDrop
             {
                 _panel.transform.localScale = Vector3.one;
                 var rt = _panel.transform as RectTransform;
-                if (rt != null) rt.anchoredPosition = Vector2.zero;
+                // 2026-06-23: park the panel OFF-SCREEN (above) so the card is NOT visible at rest
+                // during the 0.12s backdrop fade. The drop callback in AnimateEntrance resets it to
+                // rest (0,0) right before DropInWithBounce runs, so the modal only appears via its
+                // drop-in animation — never as a static card before it. (Spencer: "the modal should
+                // not be showing before the modal show animation happens.")
+                if (rt != null) rt.anchoredPosition = new Vector2(0f, UIAnimations.DROP_OFFSCREEN_OFFSET + 400f);
             }
             SetTextAlpha(_titleText, 0f);
             SetTextAlpha(_scoreLabelText, 0f);
@@ -449,6 +470,16 @@ namespace WordDrop
             if (_refillRowGroup != null) _refillRowGroup.alpha = 0f;
             if (_btnContinueGroup != null) _btnContinueGroup.alpha = 0f;
             if (_btnContinue != null) _btnContinue.transform.localScale = Vector3.one;
+            // 2026-06-23: the hero star + glow must NOT be attached/visible on the modal during the
+            // entrance — they appear only via AnimateStarDrop AFTER the panel has settled. BuildUI
+            // disables them initially, but AnimateStarDrop re-enables the star, so on a re-show we
+            // must hide them again here (this runs at every Show). Otherwise the star sits on the
+            // card at rest from the previous clear.
+            if (_starDropCoroutine != null) { StopCoroutine(_starDropCoroutine); _starDropCoroutine = null; }
+            if (_heroStarRect != null) { _heroStarRect.DOKill(); _heroStarRect.localScale = Vector3.one; _heroStarRect.anchoredPosition = Vector2.zero; }
+            if (_heroGlowRect != null) _heroGlowRect.DOKill();
+            if (_heroGlowImage != null) { _heroGlowImage.DOKill(); _heroGlowImage.enabled = false; }
+            if (_heroStarImage != null) _heroStarImage.enabled = false;
         }
 
         /// <summary>
@@ -488,7 +519,10 @@ namespace WordDrop
                 {
                     if (_panel == null) return;
                     var rt = _panel.transform as RectTransform;
-                    if (rt != null) UIAnimations.DropInWithBounce(rt, speedMult: DROP_SPEED);
+                    // Panel was parked off-screen in ResetEntranceState so it stayed hidden during the
+                    // backdrop fade. Restore rest (0,0) so DropInWithBounce reads the correct rest, then
+                    // it snaps the panel above and drops it in — all on this same frame (no rest flash).
+                    if (rt != null) { rt.anchoredPosition = Vector2.zero; UIAnimations.DropInWithBounce(rt, speedMult: DROP_SPEED); }
                 });
                 // 2026-06-01: extended post-drop buffer 0.05 → 0.25s per Spencer.
                 // The title toss-in was firing while the panel's settle phase was
@@ -502,26 +536,26 @@ namespace WordDrop
             // Title gets the Candy-Crush-style "object toss" — scale-overshoot
             // + rotation wobble + alpha fade all in parallel, ~0.40s.
             seq.AppendCallback(() => TossInTitle());
-            seq.AppendInterval(0.08f);
-            seq.AppendCallback(() => FadeInText(_scoreLabelText, 0.18f));
-            seq.AppendInterval(0.06f);
-            // Score value: fade-in + count-up start simultaneously (count-up
-            // runs longer than fade so the number is visibly tallying).
+            // Hold so the modal + title are fully settled and still BEFORE the star arrives —
+            // the star should read as a separate beat dropping ONTO a shown modal, not part of
+            // the entrance. 2026-06-23 Spencer.
+            seq.AppendInterval(0.32f);
+            // Celebration star drops into the center (replaces the old score-tally reveal): golden star
+            // lowers with an overshoot+bounce settle and a little rotation, golden glow scales in behind,
+            // golden particles burst, and the personal_best SFX plays on landing. 2026-06-23 Spencer.
             seq.AppendCallback(() =>
             {
-                FadeInText(_scoreValueText, 0.12f);
-                StartScoreCountUp(ctx.StageScore, 0.55f);
+                if (_starDropCoroutine != null) StopCoroutine(_starDropCoroutine);
+                _starDropCoroutine = StartCoroutine(AnimateStarDrop());
             });
             seq.AppendInterval(0.10f);
+            // Refill chips (edit/swap) still fade in if this clear granted any. Coin count-up removed
+            // (no gold count on the modal anymore).
             seq.AppendCallback(() =>
             {
                 FadeInText(_refillText, 0.18f);
                 if (_refillRowGroup != null)
                     _refillRowGroup.DOFade(1f, 0.18f).SetEase(Ease.OutQuad);
-                // Start coin count-up at the same moment the chips fade in.
-                // Duration 0.55s — matches the score count-up rhythm so the
-                // two tallies finish together. Skips if no coins to count.
-                if (_coinCountTarget > 0) StartCoinCountUp(_coinCountTarget, 0.55f);
             });
             seq.AppendInterval(0.08f);
             // Continue button — fade then start the idle pulse.
@@ -597,6 +631,220 @@ namespace WordDrop
             // Alpha fades in quickly so the punch lands at full visibility.
             Color c = _titleText.color;
             _titleText.DOColor(new Color(c.r, c.g, c.b, 1f), 0.12f).SetEase(Ease.OutQuad);
+        }
+
+        /// <summary>
+        /// <summary>Loads a soft radial glow sprite (reuses the same one the chest/tier-3 FX use).</summary>
+        private static Sprite _glowSpriteCache; private static bool _glowSpriteTried;
+        private Sprite LoadGlowSprite()
+        {
+            if (_glowSpriteTried) return _glowSpriteCache;
+            _glowSpriteTried = true;
+            _glowSpriteCache = Resources.Load<Sprite>("Particles/glow")
+                            ?? Resources.Load<Sprite>("Particles/soft_circle")
+                            ?? Resources.Load<Sprite>("Particles/vfx_glow")
+                            ?? Resources.Load<Sprite>("Particles/glowfree1");
+            if (_glowSpriteCache != null) return _glowSpriteCache;
+            // The glow textures are imported as Default (not Sprite), so Resources.Load<Sprite>
+            // returns null — load the raw Texture2D and wrap it in a runtime Sprite instead.
+            Texture2D tex = Resources.Load<Texture2D>("Particles/glow")
+                         ?? Resources.Load<Texture2D>("Particles/soft_circle")
+                         ?? Resources.Load<Texture2D>("Particles/vfx_glow")
+                         ?? Resources.Load<Texture2D>("Particles/glowfree1");
+            if (tex != null)
+                _glowSpriteCache = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                                                 new Vector2(0.5f, 0.5f), 100f);
+            return _glowSpriteCache;
+        }
+
+        /// <summary>Additive material for the hero glow — makes it ADD light to what's behind (fake bloom,
+        /// since Overlay UI can't receive real post-process bloom). Falls back to the default sprite shader.</summary>
+        private static Material _addGlowMat;
+        private Material LoadAdditiveGlowMaterial()
+        {
+            if (_addGlowMat != null) return _addGlowMat;
+            Shader s = Shader.Find("WordDrop/AdditiveSprite") ?? Shader.Find("Sprites/Default");
+            if (s != null) _addGlowMat = new Material(s);
+            return _addGlowMat;
+        }
+
+        /// <summary>The glow behind the hero star is Particles/Star02 (Spencer's pick), scaled up in
+        /// gold. Imported as Default, so wrap the raw Texture2D in a runtime Sprite like the others.</summary>
+        private static Sprite _glowStarCache; private static bool _glowStarTried;
+        private Sprite LoadGlowStarSprite()
+        {
+            if (_glowStarTried) return _glowStarCache;
+            _glowStarTried = true;
+            _glowStarCache = Resources.Load<Sprite>("Particles/Star02");
+            if (_glowStarCache != null) return _glowStarCache;
+            Texture2D tex = Resources.Load<Texture2D>("Particles/Star02");
+            if (tex != null)
+                _glowStarCache = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                                               new Vector2(0.5f, 0.5f), 100f);
+            return _glowStarCache;
+        }
+
+        /// <summary>Loads the gold star sprite for the hero celebration. The Star01 textures are
+        /// imported as Default (not Sprite), so Resources.Load&lt;Sprite&gt; returns null — we fall back
+        /// to loading the raw Texture2D and wrapping it in a runtime Sprite, which works regardless of
+        /// import type. (This is why the star was invisible: the sound fired but the Image had no sprite.)</summary>
+        private static Sprite _starSpriteCache; private static bool _starSpriteTried;
+        private Sprite LoadStarSprite()
+        {
+            if (_starSpriteTried) return _starSpriteCache;
+            _starSpriteTried = true;
+            _starSpriteCache = Resources.Load<Sprite>("Tiles/Icon_ImageIcon_Star01_On")
+                            ?? Resources.Load<Sprite>("Particles/Star01");
+            if (_starSpriteCache != null) return _starSpriteCache;
+            Texture2D tex = Resources.Load<Texture2D>("Tiles/Icon_ImageIcon_Star01_On")
+                         ?? Resources.Load<Texture2D>("Particles/Star01");
+            if (tex != null)
+                _starSpriteCache = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                                                 new Vector2(0.5f, 0.5f), 100f);
+            return _starSpriteCache;
+        }
+
+        /// <summary>Royal-Match-style celebration: the golden star DROPS into the center with an
+        /// overshoot+bounce settle and a little rotation, a golden glow scales/pulses in behind it,
+        /// a burst of golden UI sparkles flies out, and the personal_best SFX plays on landing.
+        /// 2026-06-23 Spencer.</summary>
+        private IEnumerator AnimateStarDrop()
+        {
+            if (_heroStarRect == null) yield break;
+            if (_heroStarImage != null) _heroStarImage.enabled = _heroStarImage.sprite != null;
+            // Glow / layered effects disabled for now — building this piece by piece. Star only.
+            if (_heroGlowImage != null) _heroGlowImage.enabled = false;
+
+            _heroStarRect.DOKill();
+            if (_heroGlowRect != null) _heroGlowRect.DOKill();
+            if (_heroGlowImage != null) _heroGlowImage.DOKill();
+
+            // ReducedMotion: snap to rest, sound, done.
+            if (UIAnimations.ReducedMotion)
+            {
+                _heroStarRect.anchoredPosition = Vector2.zero;
+                _heroStarRect.localScale = Vector3.one;
+                _heroStarRect.localRotation = Quaternion.identity;
+                if (_heroGlowRect != null) { _heroGlowRect.localScale = Vector3.one; _heroGlowRect.localRotation = Quaternion.identity; }
+                if (_heroGlowImage != null) { _heroGlowImage.enabled = true; _heroGlowImage.color = HERO_GLOW_GOLD; }
+                GameAudio.Instance?.PlayPersonalBest();
+                yield break;
+            }
+
+            // Perspective settle: star starts BIG (as if close to the camera) at center and
+            // scales DOWN to its rest size — no vertical drop. Quick fade so it doesn't hard-pop.
+            // It also starts slightly TILTED and rotates UPRIGHT as it lands (a bit of spin-in).
+            _heroStarRect.anchoredPosition = Vector2.zero;
+            _heroStarRect.localRotation = Quaternion.Euler(0f, 0f, -70f);
+            _heroStarRect.localScale = Vector3.one * 2.4f;
+            if (_heroStarImage != null)
+                _heroStarImage.color = new Color(HERO_STAR_GOLD.r, HERO_STAR_GOLD.g, HERO_STAR_GOLD.b, 0f);
+
+            // Glow (Particles/Star01) starts tiny + transparent behind the star; it scales up in gold
+            // only AFTER the star has landed (appended below). Keep it hidden during the star's scale-in.
+            if (_heroGlowRect != null)
+            {
+                _heroGlowRect.localRotation = Quaternion.identity;
+                _heroGlowRect.localScale = Vector3.zero; // start from NOTHING and grow
+            }
+            if (_heroGlowImage != null)
+            {
+                _heroGlowImage.enabled = false;
+                _heroGlowImage.color = HERO_GLOW_GOLD; // starts visible, fades out as it scales up
+            }
+
+            Sequence seq = DOTween.Sequence();
+            // Big -> small with a multi-bounce settle, like it drops onto a surface (eagle-eye view)
+            // and jiggles to rest. OutBounce gives the diminishing-bounce feel.
+            seq.Join(_heroStarRect.DOScale(1f, 0.60f).SetEase(Ease.OutBounce));
+            // ...and a bit of rotation that settles UPRIGHT (lands straight at the resting spot).
+            seq.Join(_heroStarRect.DORotate(Vector3.zero, 0.50f, RotateMode.Fast).SetEase(Ease.OutCubic));
+            if (_heroStarImage != null)
+                seq.Join(_heroStarImage.DOFade(HERO_STAR_GOLD.a, 0.18f).SetEase(Ease.OutCubic));
+            seq.InsertCallback(0.10f, () => GameAudio.Instance?.PlayPersonalBest());
+            // Sparkles pop from behind the star right as it lands.
+            seq.InsertCallback(0.30f, () => SpawnStarSparkles());
+
+            // After the star has settled, the gold glow-star scales up behind it (then a gentle pulse).
+            if (_heroGlowRect != null && _heroGlowImage != null)
+            {
+                seq.AppendCallback(() => { if (_heroGlowImage != null) _heroGlowImage.enabled = true; });
+                // Grow from nothing to full size at full brightness and STAY (no fade-out). It's hidden /
+                // killed on dismiss + re-show by ResetEntranceState, so it won't persist past the modal.
+                seq.Append(_heroGlowRect.DOScale(1f, 0.55f).SetEase(Ease.OutCubic));
+            }
+        }
+
+        /// <summary>Sparkle sprites — same ones the in-game pop FX (SparkleSpray) use: a 4-pointed
+        /// flare star + a small soft dot ("twinkle"). Loaded as Texture2D + Sprite.Create (Default import).</summary>
+        private static Sprite _flareSprite; private static bool _flareTried;
+        private static Sprite _twinkleSprite; private static bool _twinkleTried;
+        private Sprite LoadFlareSprite()
+        {
+            if (_flareTried) return _flareSprite;
+            _flareTried = true;
+            Texture2D tex = Resources.Load<Texture2D>("Particles/flare")
+                         ?? Resources.Load<Texture2D>("Particles/flare_star");
+            if (tex != null)
+                _flareSprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            return _flareSprite ?? LoadGlowSprite();
+        }
+        private Sprite LoadTwinkleSprite()
+        {
+            if (_twinkleTried) return _twinkleSprite;
+            _twinkleTried = true;
+            Texture2D tex = Resources.Load<Texture2D>("Particles/point1")
+                         ?? Resources.Load<Texture2D>("Particles/soft_circle");
+            if (tex != null)
+                _twinkleSprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            return _twinkleSprite ?? LoadFlareSprite();
+        }
+
+        /// <summary>A burst of golden sparkles popping out from BEHIND the hero star — same flare/twinkle
+        /// sprites as the in-game pop FX. UI-space (children of the card) so they render over the overlay,
+        /// inserted BEHIND the star so they appear to emerge from behind it, then fly out + spin + fade.
+        /// 2026-06-23 Spencer.</summary>
+        private void SpawnStarSparkles()
+        {
+            if (_panel == null || _heroStarRect == null) return;
+            Sprite flare = LoadFlareSprite();
+            Sprite twinkle = LoadTwinkleSprite();
+            if (flare == null && twinkle == null) return;
+            const int COUNT = 14;
+            int behindStar = _heroStarRect.GetSiblingIndex(); // insert sparkles here → render BEHIND the star
+            Vector2 center = _heroStarRect.anchoredPosition;
+            for (int i = 0; i < COUNT; i++)
+            {
+                bool isFlare = (i % 2 == 0); // alternate big 4-point flares and small twinkles
+                var sGO = new GameObject("StarSparkle", typeof(RectTransform), typeof(Image));
+                sGO.transform.SetParent(_panel.transform, false);
+                var rt = (RectTransform)sGO.transform;
+                rt.SetSiblingIndex(behindStar);
+                rt.anchorMin = _heroStarRect.anchorMin; rt.anchorMax = _heroStarRect.anchorMax;
+                rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+                float baseSize = isFlare ? (52f + (i % 3) * 14f) : (22f + (i % 3) * 8f);
+                rt.sizeDelta = new Vector2(baseSize, baseSize);
+                rt.anchoredPosition = center;
+                var img = sGO.GetComponent<Image>();
+                img.sprite = isFlare ? flare : twinkle;
+                img.color = isFlare ? new Color(1f, 0.90f, 0.45f, 1f) : new Color(1f, 0.97f, 0.80f, 1f);
+                img.raycastTarget = false;
+                img.preserveAspect = true;
+                var addMat = LoadAdditiveGlowMaterial();
+                if (addMat != null) img.material = addMat; // additive → reads brighter, like the pop sparkles
+                // Radial spread (varied so it's not perfectly even), then fly out + spin + fade.
+                float ang = (i / (float)COUNT) * Mathf.PI * 2f + (i % 2 == 0 ? 0.35f : -0.42f);
+                float dist = 110f + (i % 4) * 34f;
+                Vector2 target = center + new Vector2(Mathf.Cos(ang), Mathf.Sin(ang)) * dist;
+                float spin = (i % 2 == 0 ? 1f : -1f) * (90f + (i % 3) * 60f);
+                rt.localScale = Vector3.one * 0.15f;
+                var sq = DOTween.Sequence();
+                sq.Append(rt.DOScale(1f, 0.16f).SetEase(Ease.OutBack, 2.2f));     // pop
+                sq.Join(rt.DOAnchorPos(target, 0.55f).SetEase(Ease.OutCubic));    // fly out
+                sq.Join(rt.DOLocalRotate(new Vector3(0f, 0f, spin), 0.55f, RotateMode.LocalAxisAdd).SetEase(Ease.OutCubic)); // spin
+                sq.Insert(0.20f, img.DOFade(0f, 0.40f).SetEase(Ease.InQuad));     // fade out
+                sq.OnComplete(() => { if (sGO != null) Destroy(sGO); });
+            }
         }
 
         /// <summary>
@@ -820,6 +1068,9 @@ namespace WordDrop
             pRT.offsetMax = Vector2.zero;
             Image pImg = _panel.AddComponent<Image>();
             pImg.color = CARD_BG;
+            // Cartoonish rounded corners on the card (9-sliced, bigger radius than buttons).
+            pImg.sprite = MenuUI.GetRoundedRectSprite(44);
+            pImg.type = Image.Type.Sliced;
 
             // Title — top section of the larger panel
             _titleText = CreateLabel(_panel.transform, "Title",
@@ -828,16 +1079,47 @@ namespace WordDrop
             _titleText.fontStyle = FontStyle.Bold;
             _titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
 
-            // Score label
-            _scoreLabelText = CreateLabel(_panel.transform, "ScoreLabel",
-                new Vector2(0.10f, 0.62f), new Vector2(0.90f, 0.70f),
-                "Level Score", 20, SUBTITLE);
+            // CELEBRATION STAR (replaces the old "Level Score" + number tally). A golden radial glow
+            // behind a single big golden star, centered where the score used to be. Both start hidden/
+            // small and are animated in by AnimateStarDrop. 2026-06-23 Spencer.
+            Sprite starSprite = LoadStarSprite();
+            Vector2 heroAnchor = new Vector2(0.5f, 0.60f); // upper-middle of the card, where the score was
 
-            // Score value — hero element, bigger font fills the new space
-            _scoreValueText = CreateLabel(_panel.transform, "ScoreValue",
-                new Vector2(0.10f, 0.44f), new Vector2(0.90f, 0.62f),
-                "0", 56, Color.white);
-            _scoreValueText.fontStyle = FontStyle.Bold;
+            // Glow behind = a BIGGER gold star01 (same sprite) that scales up behind the hero star —
+            // a golden star-shaped halo, per Spencer 2026-06-23 (instead of a soft radial glow).
+            GameObject glowGO = new GameObject("HeroGlow");
+            glowGO.transform.SetParent(_panel.transform, false);
+            _heroGlowRect = glowGO.AddComponent<RectTransform>();
+            _heroGlowRect.anchorMin = heroAnchor;
+            _heroGlowRect.anchorMax = heroAnchor;
+            _heroGlowRect.pivot = new Vector2(0.5f, 0.5f);
+            _heroGlowRect.sizeDelta = new Vector2(640f, 640f); // big gold Star02 glow well past the 190 star
+            _heroGlowRect.anchoredPosition = Vector2.zero;
+            _heroGlowImage = glowGO.AddComponent<Image>();
+            _heroGlowImage.sprite = LoadGlowStarSprite() ?? starSprite; // Particles/Star02, scaled up in gold behind
+            _heroGlowImage.color = HERO_GLOW_GOLD;
+            // Fake-bloom: additive blend so the glow ADDS light to what's behind it (Overlay UI can't
+            // receive real post-process bloom). 2026-06-23 Spencer.
+            Material addMat = LoadAdditiveGlowMaterial();
+            if (addMat != null) _heroGlowImage.material = addMat;
+            _heroGlowImage.preserveAspect = true;
+            _heroGlowImage.raycastTarget = false;
+
+            // Hero star — in front, centered, drops in.
+            GameObject starGO = new GameObject("HeroStar");
+            starGO.transform.SetParent(_panel.transform, false);
+            _heroStarRect = starGO.AddComponent<RectTransform>();
+            _heroStarRect.anchorMin = heroAnchor;
+            _heroStarRect.anchorMax = heroAnchor;
+            _heroStarRect.pivot = new Vector2(0.5f, 0.5f);
+            _heroStarRect.sizeDelta = new Vector2(190f, 190f);
+            _heroStarRect.anchoredPosition = Vector2.zero;
+            _heroStarImage = starGO.AddComponent<Image>();
+            _heroStarImage.sprite = starSprite;
+            _heroStarImage.color = HERO_STAR_GOLD;
+            _heroStarImage.preserveAspect = true;
+            _heroStarImage.raycastTarget = false;
+            _heroStarImage.enabled = false; // hidden until AnimateStarDrop reveals it mid-animation
 
             // Refill summary — horizontal row of 3 icon+amount chips
             // 2026-06-01: replaced the single text line ("Edits 3 • Swaps 2 • +26¢")
@@ -865,13 +1147,15 @@ namespace WordDrop
 
             _editChip  = CreateRefillChip(_refillRow.transform, "EditChip",  editSprite, REFILL_GREEN, out _editIcon, out _editLabel);
             _swapChip  = CreateRefillChip(_refillRow.transform, "SwapChip",  swapSprite, REFILL_GREEN, out _swapIcon, out _swapLabel);
-            _coinChip  = CreateCoinChip (_refillRow.transform, "CoinChip",  new Color(1f, 0.85f, 0.30f, 1f), out _coinLabel);
+            // Coin/gold count chip removed per Spencer 2026-06-23 (clean Royal-Match celebration — no
+            // numbers). _coinChip/_coinLabel stay null; coins are still AWARDED elsewhere, just not shown
+            // here, and the count-up code is null-guarded so it no-ops.
 
             // Continue button — bigger, sits in bottom 25% of panel
             int childCountBefore = _panel.transform.childCount;
             MenuUI.CreateButton(_panel.transform, "BtnContinue",
                 new Vector2(0.18f, 0.08f), new Vector2(0.82f, 0.22f),
-                "CONTINUE", new Color(0.25f, 0.75f, 0.40f, 1f), Color.white, 28,
+                "CONTINUE", new Color(0.96f, 0.63f, 0.16f, 1f), Color.white, 28, // 2026-06-24: warm orange CTA (was green)
                 OnContinuePressed);
             if (_panel.transform.childCount > childCountBefore)
             {
@@ -894,6 +1178,12 @@ namespace WordDrop
                 pdEntry.callback.AddListener((_) => GameAudio.Instance?.PlayMultiPopPress());
                 trigger.triggers.Add(pdEntry);
             }
+
+            // 2026-06-23: the "LEVEL N CLEARED!" title is created BEFORE the hero glow, so the big glow
+            // (a later sibling) was rendering on top of the title text. Promote the title to the top of
+            // the sibling order so it always sits ABOVE the glow. (It doesn't overlap the button/chips,
+            // so being topmost is harmless.)
+            if (_titleText != null) _titleText.transform.SetAsLastSibling();
         }
 
         private static Text CreateLabel(Transform parent, string name,

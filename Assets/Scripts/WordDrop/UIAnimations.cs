@@ -188,6 +188,10 @@ namespace WordDrop
         {
             if (target == null) { onComplete?.Invoke(); return null; }
 
+            // Haptic on every button press. Debounced in ButtonTap so buttons that ALSO call
+            // PlayButtonClick don't double-buzz, and buttons that only animate are still covered. 2026-06-10.
+            HapticsManager.ButtonTap();
+
             Sequence seq = DOTween.Sequence();
             if (ReducedMotion)
             {
@@ -618,6 +622,11 @@ namespace WordDrop
             }
 
             target.DOKill();
+            // Reset rotation to rest FIRST. DOPunchRotation returns to whatever rotation the transform
+            // had at tween-start, so if a prior pop was interrupted and left the target tilted, every
+            // later pop would punch from — and settle back to — that tilt, freezing it slanted (the HUD
+            // target icon bug). Starting from identity guarantees it returns to identity. 2026-06-18 Spencer.
+            target.localRotation = Quaternion.identity;
             target.localScale = targetScale * 0.25f;
             Sequence seq = DOTween.Sequence();
             // Grow well past rest with an anticipatory back-ease.

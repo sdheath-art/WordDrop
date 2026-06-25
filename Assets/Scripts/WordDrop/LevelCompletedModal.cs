@@ -178,7 +178,7 @@ namespace WordDrop
                 OnReplayClicked);
             _btnNext = CreateButton(_panel.transform, "BtnNext",
                 new Vector2(0.68f, btnY0), new Vector2(0.94f, btnY1),
-                "NEXT ▶", new Color(0.25f, 0.75f, 0.40f, 1f), Color.white, 22,
+                "NEXT ▶", new Color(0.96f, 0.63f, 0.16f, 1f), Color.white, 22, // 2026-06-24: warm orange CTA
                 OnNextClicked);
         }
 

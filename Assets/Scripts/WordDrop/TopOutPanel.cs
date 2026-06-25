@@ -66,6 +66,10 @@ namespace WordDrop
         private Canvas _canvas;
         private RectTransform _panel;
         private TextMeshProUGUI _titleText;
+        // 2026-06-24 Spencer: cream pill under the title holding the remaining-objective icon + count.
+        private GameObject _objectivePill;
+        private GameObject _objectiveIconHolder;
+        private GameObject _objectiveIconGO;
 
         private Vector2 _settlePos;  // anchoredPosition at rest (visually centered)
         private Vector2 _abovePos;   // off-screen above
@@ -78,10 +82,12 @@ namespace WordDrop
         // 2026-05-29: re-skinned for Glimbloom — mystical-forest purple +
         // warm gold accents. Mirrors SettingsModal / BoosterHUDSlot bench
         // colors. Was pink (Candy Crush style) which didn't fit the theme.
-        private static readonly Color PANEL_BG      = new Color(0.20f, 0.13f, 0.32f, 0.98f);  // deep mystical purple
-        private static readonly Color PANEL_STRIPE  = new Color(0.62f, 0.45f, 0.85f, 1f);    // brighter purple stripe
-        private static readonly Color TITLE_COLOR   = new Color(1.00f, 0.84f, 0.42f, 1f);    // warm gold (header)
-        private static readonly Color SUBTITLE_COL  = new Color(0.95f, 0.92f, 0.86f, 0.92f); // warm cream
+        // 2026-06-19 TEMP candy-unification (Spencer will revisit): cream banner +
+        // candy-pink stripes + coral title, to match the settings/objectives/modal set.
+        private static readonly Color PANEL_BG      = new Color(0.99f, 0.95f, 0.86f, 0.98f);  // warm cream banner
+        private static readonly Color PANEL_STRIPE  = new Color(0.93f, 0.45f, 0.62f, 1f);    // candy-pink stripe
+        private static readonly Color TITLE_COLOR   = new Color(0.86f, 0.30f, 0.32f, 1f);    // coral (matches OutOfMoves title) — reads on cream
+        private static readonly Color SUBTITLE_COL  = new Color(0.32f, 0.24f, 0.30f, 0.92f); // dark — reads on cream
 
         private void Awake()
         {
@@ -176,6 +182,7 @@ namespace WordDrop
             // the rest position and offset above. Helper sets the actual
             // start (above) position synchronously when called.
             _panel.anchoredPosition = _settlePos;
+            RefreshObjectivePill(); // populate the cream pill with the live remaining-objective icon + count
             _canvas.gameObject.SetActive(true);
 
             _sequence = DOTween.Sequence();
@@ -271,11 +278,47 @@ namespace WordDrop
             // and bloated rendering (lesson learned 2026-04 — see
             // feedback_lessons_learned.md "Typography / TextMeshPro").
             _titleText = CreateTMPLabel(_panel, "Title",
-                new Vector2(0.05f, 0.18f), new Vector2(0.95f, 0.82f),
-                "TOP OUT!", 60, TITLE_COLOR);
+                new Vector2(0.05f, 0.50f), new Vector2(0.95f, 0.84f), // top portion — pill sits below
+                "Out Of Moves", 34, TITLE_COLOR); // 2026-06-24: smaller font so the pill fits the original-height banner
             _titleText.fontStyle = FontStyles.Normal;
             _titleText.enableWordWrapping = false;
             _titleText.overflowMode = TextOverflowModes.Overflow;
+
+            // 2026-06-24 Spencer: cream objective PILL beneath the title — holds the remaining-objective
+            // icon + count (Candy-Crush "out of moves" layout). Populated on Show() from the live objective.
+            var pillGO = new GameObject("ObjectivePill", typeof(RectTransform), typeof(Image));
+            pillGO.transform.SetParent(_panel, false);
+            _objectivePill = pillGO;
+            var pillRT = pillGO.GetComponent<RectTransform>();
+            pillRT.anchorMin = pillRT.anchorMax = new Vector2(0.5f, 0.30f);
+            pillRT.pivot     = new Vector2(0.5f, 0.5f);
+            pillRT.sizeDelta = new Vector2(150f, 50f);  // fits under the smaller title in the original-height banner
+            var pillImg = pillGO.GetComponent<Image>();
+            pillImg.sprite = MenuUI.GetRoundedRectSprite(24); // capsule
+            pillImg.type   = Image.Type.Sliced;
+            pillImg.color  = new Color(0.93f, 0.45f, 0.62f, 1f); // 2026-06-24: candy PINK — stands out on the beige panel (matches the stripes)
+            pillImg.raycastTarget = false;
+
+            var holderGO = new GameObject("ObjectiveIconHolder", typeof(RectTransform));
+            holderGO.transform.SetParent(pillGO.transform, false);
+            _objectiveIconHolder = holderGO;
+            var holdRT = holderGO.GetComponent<RectTransform>();
+            holdRT.anchorMin = holdRT.anchorMax = new Vector2(0.5f, 0.5f);
+            holdRT.pivot     = new Vector2(0.5f, 0.5f);
+            holdRT.sizeDelta = new Vector2(10f, 10f); // point; the built icon sizes itself
+        }
+
+        /// <summary>(Re)build the remaining-objective icon + count inside the cream pill from the live
+        /// objective. Hides the pill if there's no icon-type objective. 2026-06-24 Spencer.</summary>
+        private void RefreshObjectivePill()
+        {
+            if (_objectiveIconGO != null) { Destroy(_objectiveIconGO); _objectiveIconGO = null; }
+            var obj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
+            bool show = obj != null && obj.Icon != Objective.HudIcon.None && _objectiveIconHolder != null;
+            if (show)
+                _objectiveIconGO = ObjectiveIconBuilder.Build(
+                    obj.Icon, _objectiveIconHolder.transform, 36f, obj.RemainingCount, obj.IconWord);
+            if (_objectivePill != null) _objectivePill.SetActive(show);
         }
 
         private static void CreateStripe(RectTransform parent, string name, float yMin, float yMax)

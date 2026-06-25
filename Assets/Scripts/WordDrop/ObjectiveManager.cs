@@ -32,6 +32,12 @@ namespace WordDrop
         private RulesEngine _subscribedTo;
         private bool _firedComplete;
         private bool _retired;          // complete + consumed, holding on HUD until modal closes
+
+        // HeroWord (chicken) win-lock: set the instant the LAST escort is collected (cell cleared),
+        // even though IsComplete only flips when its fly-up animation lands. A rising row must not fire
+        // during that fly-up window once the win is locked in. 2026-06-23 Spencer.
+        private bool _escortWinPending;
+        public bool EscortWinPending => _escortWinPending;
         private bool _modalWasShowing;  // edge-detect the stage-clear modal closing
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -53,6 +59,7 @@ namespace WordDrop
             Active = obj;
             _firedComplete = false;
             _retired = false;
+            _escortWinPending = false;
             obj?.Reset();
             PushHud();
             Debug.Log($"[Objective] Set: {(obj != null ? obj.Title : "none")}");
@@ -63,6 +70,77 @@ namespace WordDrop
             Active = null;
             _retired = false;
             PushHud();
+        }
+
+        /// <summary>
+        /// VALIDATION MVP (2026-06-15): install the level for a 1-based level index (=
+        /// SurvivalManager.CurrentStageIndex) from the hardcoded LevelTable — the simple run
+        /// sequencer that stands in for the full procedural pickLevel(n) generator (deferred).
+        /// Reads LevelTable.Get(n), installs its mode via SetObjective, and applies that level's
+        /// difficulty dials: length/detonation seeding toggles, board-assist frequency, rise
+        /// cadence, and (vault levels) the move budget. Any randomness inside the modes routes
+        /// through SurvivalRng already — this only flips deterministic per-level dials.
+        /// </summary>
+        public void InstallLevel(int levelIndex)
+        {
+            var e = LevelTable.Get(levelIndex);
+
+            // ── Difficulty dials ──
+            // Seeding toggles: OpportunitySeeding (length, anti-frustration, peel LAST) +
+            // DetonationSeeding (the "easy mode", peel FIRST). Static — apply before the draw runs.
+            DroughtAssist.OpportunitySeeding = e.LengthSeed;
+            DroughtAssist.DetonationSeeding  = e.DetonSeed;
+            // Board-assist frequency (0.5 high → 0.2 low).
+            PlayerHand.SetBoardAssistBase(e.AssistFreq);
+            // Rise cadence (turns per rise; bigger = slower). Vault levels run rises OFF regardless.
+            SurvivalManager.SetRiseCadenceOverride(e.RiseCadence);
+            // Vault move budget for THIS level (only read on a move-cap/vault level).
+            SurvivalManager.Instance?.SetVaultMoveBudgetOverride(e.VaultMoves);
+
+            // ── Fresh, fuller starting board per level ──
+            // Vault + Ice levels self-seed a full board (SeedVaultBoard in their objective Tick). The
+            // other modes (LongWord / HeroWord) would otherwise inherit the PREVIOUS level's DEPLETED
+            // board → a barren start with almost no word possibilities (Spencer saw an L3 LongWord with
+            // ~3 tiles). Reseed a fuller board here for those modes. 2026-06-15 Spencer.
+            if (e.Mode != LevelMode.Vault && e.Mode != LevelMode.Ice)
+            {
+                var rules = RulesEngine.Instance;
+                if (rules != null)
+                {
+                    // Per-mode STARTING DENSITY (Spencer 2026-06-15): Ice + Vault self-seed a NEARLY-FULL
+                    // board (they need letters packed around the ice/chests). LongWord/HeroWord want a
+                    // LESS-packed board — LongWord room to maneuver, HeroWord drop HEADROOM so the escort
+                    // tiles can actually fall to the bottom. Starting values; tune by feel.
+                    int fillRows; float density;
+                    switch (e.Mode)
+                    {
+                        case LevelMode.HeroWord: fillRows = 6; density = 0.80f; break; // 2026-06-15 Spencer: FULLER board so the escort takes longer to reach the bottom
+                        default:                 fillRows = 5; density = 0.65f; break; // LongWord: room to maneuver
+                    }
+                    rules.SeedVaultBoard(fillRows, density, 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
+                    MatchController.Instance?.ResetTurnCounter();                 // ClearBoard zeroed GlobalTurn; reset the cached _currentTurn too (the trap)
+                    GridManager.Instance?.RebuildFromRulesEngine(rules);          // full rebuild wipes stale per-tile visual state
+                }
+            }
+
+            // ── Install the mode ──
+            SetObjective(LevelTable.MakeObjective(in e));
+
+            // ── Per-level music ── treasure-chest reward levels get their signature track (Glitter Blast);
+            // every other mode uses the normal gameplay rotation. Both calls are idempotent, so this is a
+            // safe no-op when the right music is already playing. 2026-06-17 Spencer.
+            if (e.Mode == LevelMode.Vault)
+                GameAudio.Instance?.PlayChestMusic();
+            else
+                GameAudio.Instance?.PlaySurvivalMusic();
+
+            Debug.Log($"[LevelTable] Install L{levelIndex} → {e.Mode} ({e.Profile}) " +
+                      $"len-seed:{e.LengthSeed} deton-seed:{e.DetonSeed} assist:{e.AssistFreq:0.00} " +
+                      $"rise:{e.RiseCadence} | {e.Why}");
+
+            // Pre-level "here's your goal" modal — pauses gameplay until the player taps PLAY so a
+            // fresh tester always knows the objective before the board starts moving. 2026-06-15 Spencer.
+            LevelIntroModal.Instance?.Show(Active, levelIndex);
         }
 
         /// <summary>Stage cleared via this objective: keep showing it (3/3) but stop it being the
@@ -102,25 +180,47 @@ namespace WordDrop
                 ClearObjective(); // → auto-install fires below for the fresh stage
             _modalWasShowing = modalShowing;
 
-            // Feel-test auto-install: once we're in a live Survival run with no objective set,
-            // drop in a long-word goal so it shows on the HUD and tracks.
+            // ── LEVEL-SEQUENCER INSTALL (validation MVP, 2026-06-15) ──
+            // Once we're in a live Survival run with no objective set, install the level keyed off
+            // the current stage index. The survival STAGE system already advances stage→stage; on
+            // each new stage Active goes null (RetireForStageClear → ClearObjective on modal close),
+            // so this fires once per level. LevelTable.Get(n) returns the mode + difficulty dials;
+            // we install the mode AND apply that level's dials (seeding toggles, assist freq, rise
+            // cadence, vault move budget). Replaces the old single hardcoded SetObjective(new IceObjective(4)).
             if (DEBUG_AUTO_OBJECTIVE && Active == null
                 && SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                 && !SurvivalManager.Instance.IsGameOver)
             {
-                // Feel-test objective. Swap the line below to try each type:
-                //   new LongWordObjective(minLen, goal)  — explode `goal` words of `minLen`+ letters
-                //   new ChainObjective(k)                — land a k-chain cascade
-                //   new HeroWordObjective(n)             — escort n drop-targets to the bottom (FLAGSHIP)
-                SetObjective(new HeroWordObjective(3));
+                InstallLevel(SurvivalManager.Instance.CurrentStageIndex);
             }
 
-            // Per-frame hook (e.g. HeroWordObjective spawns its drop-targets once the board's ready).
-            Active?.Tick();
+            // Per-frame hook: HeroWord spawns its drop-targets, BreakRocks spawns + polls its rocks.
+            // POLL-BASED objectives (BreakRocks) update their progress and reach IsComplete INSIDE
+            // Tick — there's no event — so we must wrap Tick to refresh the HUD and fire the win on
+            // the rising edge, or the objective would silently complete but never win. The
+            // _firedComplete guard inside FireCompleteIfJust makes this safe for event-driven
+            // objectives too (no double-fire). 2026-06-09.
+            if (Active != null)
+            {
+                bool   wasComplete  = Active.IsComplete;
+                string prevProgress = Active.ProgressText;
+                Active.Tick();
+                PushHud();
+                // Poll-based progress changed this Tick (a vault cracked) → pop the counter. The
+                // crack itself already plays the stone-splash FX; this is the HUD reaction.
+                if (!wasComplete && Active.ProgressText != prevProgress)
+                    HUDManager.Instance?.PulseObjective();
+                FireCompleteIfJust(wasComplete);
+            }
 
             // Backup poll: catch any drop-target sitting at row 0 before a rising row shoves it
             // back up. The timing-safe collect is on OnResolutionComplete; this mops up stragglers.
             CollectBottomDropTargets();
+
+            // Self-heal: keep escort objects amber even if a resolution path momentarily re-stoned one
+            // grey (Spencer caught a dark escort). Cheap sweep; no-op unless drop-targets exist. 2026-06-15.
+            if (Active != null)
+                GridManager.Instance?.EnsureDropTargetVisuals(RulesEngine.Instance);
         }
 
         private void HandleResolutionComplete(ResolutionCompleteEvent evt) => CollectBottomDropTargets();
@@ -156,12 +256,31 @@ namespace WordDrop
             if (collected == null) return;
 
             grid?.RemoveTiles(collected);   // visuals for just these cells
-            GameAudio.Instance?.PlayScorePowerup();
-            bool wasComplete = Active.IsComplete;
-            Active.OnDropTargetCollected(collected.Count);
-            PushHud();
-            HUDManager.Instance?.PulseObjective();   // counter reacts to each collect
-            FireCompleteIfJust(wasComplete);
+            GameAudio.Instance?.PlayChickenCluck(); // rubber chicken hit the bottom row — first 1.5s cluck
+            HapticsManager.Strong();         // solid impact buzz to match the chicken landing. 2026-06-24 Spencer
+
+            // Each collected escort FLIES UP to the Target icon (same animation as the HiddenWord letters).
+            // The decrement + completion check happen when it LANDS, so the counter ticks as each one
+            // arrives. Staggered so multiples pop together then land one-by-one. 2026-06-17 Spencer.
+            var obj = Active;
+            for (int i = 0; i < collected.Count; i++)
+            {
+                Vector3 startWorld = grid != null ? grid.CellToWorld(collected[i].x, collected[i].y) : Vector3.zero;
+                HUDManager.Instance?.FlyEscortToTarget(startWorld, () =>
+                {
+                    if (obj == null) return;
+                    bool wasComplete = obj.IsComplete;
+                    obj.OnDropTargetCollected(1);
+                    PushHud();
+                    HUDManager.Instance?.PulseObjective();   // counter reacts to each collect
+                    FireCompleteIfJust(wasComplete);
+                }, i * 0.25f);
+            }
+
+            // Win-lock: HeroWord spawns ALL escorts upfront, so once none remain on the board, every
+            // chicken has been collected and the level WILL be won when the fly-ups land. Flag it now so
+            // a rising row can't sneak in during the fly-up window (IsComplete hasn't flipped yet). 2026-06-23.
+            if (!rules.HasAnyDropTarget()) _escortWinPending = true;
         }
 
         /// <summary>Notify the active objective of a word scored via a path that does NOT
@@ -176,9 +295,6 @@ namespace WordDrop
 
         private void HandleWordScored(WordScoredEvent evt)
         {
-            // [ObjectiveTrace] TEMP — confirm what OnWordScored delivers vs the objective filter.
-            Debug.Log($"[ObjectiveTrace] OnWordScored '{evt?.Word}' len={(evt?.Word != null ? evt.Word.Length : -1)} " +
-                      $"player={evt?.PlayerIndex} (need player={MatchController.PLAYER_HUMAN}, len>=5) active={(Active != null ? Active.Title : "none")}");
             if (Active == null) return;
             bool wasComplete = Active.IsComplete;
             Active.OnWordScored(evt);
@@ -194,9 +310,6 @@ namespace WordDrop
         public void NotifyWordExploded(string word, int ownerPlayerIndex)
         {
             if (Active == null || string.IsNullOrEmpty(word)) return;
-            // [ObjectiveTrace] TEMP — confirm exploded words reach the objective.
-            Debug.Log($"[ObjectiveTrace] NotifyWordExploded '{word}' len={word.Length} " +
-                      $"owner={ownerPlayerIndex} (need owner={MatchController.PLAYER_HUMAN}) active={Active.Title}");
             bool wasComplete = Active.IsComplete;
             Active.OnWordExploded(word, ownerPlayerIndex);
             PushHud();
@@ -213,9 +326,6 @@ namespace WordDrop
             for (int i = 0; i < evt.ExplodedWords.Count; i++)
             {
                 var w = evt.ExplodedWords[i];
-                // [ObjectiveTrace] TEMP — confirm every exploded word reaches the objective.
-                Debug.Log($"[ObjectiveTrace] OnWordExploded '{w.Word}' len={(w.Word != null ? w.Word.Length : -1)} " +
-                          $"owner={w.OwnerPlayerIndex} (need owner={MatchController.PLAYER_HUMAN}) active={Active.Title}");
                 Active.OnWordExploded(w.Word, w.OwnerPlayerIndex);
             }
             PushHud();
@@ -231,6 +341,11 @@ namespace WordDrop
                 OnObjectiveComplete?.Invoke(Active);
                 GameAudio.Instance?.PlayBing();                 // objective-complete "bing"
                 HUDManager.Instance?.FlashObjectiveComplete();
+                // Drive the stage clear the instant the objective completes. POLL-BASED objectives
+                // (BreakRocks) finish inside Tick with no score delta, so the normal CheckStageClear
+                // callers (per-drop / per-score) would otherwise miss it until the next drop.
+                // CheckStageClear is idempotent + guarded, so this is safe for every objective type.
+                SurvivalManager.Instance?.CheckStageClear();
             }
         }
 
@@ -238,6 +353,16 @@ namespace WordDrop
         {
             if (HUDManager.Instance != null)
                 HUDManager.Instance.SetObjective(Active);
+        }
+
+        /// <summary>Called by a HiddenWord fly-up when its letter LANDS in the Target panel: the slot has
+        /// just been revealed, so refresh the HUD (rock→letter) and fire stage-clear if the word's now
+        /// complete. `wasComplete` is the objective's IsComplete state captured BEFORE this reveal.
+        /// 2026-06-17 Spencer.</summary>
+        public void NotifyHiddenReveal(bool wasComplete)
+        {
+            PushHud();
+            FireCompleteIfJust(wasComplete);
         }
 
         private void OnDestroy()

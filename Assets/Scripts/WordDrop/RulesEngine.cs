@@ -158,6 +158,11 @@ namespace WordDrop
 
         // ── Board Blessing: bonus cells that double word scores ──────────────────
 
+        // 2026-06-23 Spencer: 2× (gold) tiles temporarily REMOVED from play until a clear
+        // purpose is defined. Master kill-switch — flip to true to re-enable everywhere
+        // (initial placement, rising-row drops, and survival auto-drops all gate on this).
+        public static bool GoldTilesEnabled = false;
+
         private bool[,] _bonusCells = new bool[COLS, MAX_ROWS];
 
         // ── Cyan tiles: edit-refund on detonation (Survival mode) ────────────────
@@ -224,6 +229,7 @@ namespace WordDrop
         public List<Vector2Int> PlaceInitialBonusCells()
         {
             var positions = new List<Vector2Int>();
+            if (!GoldTilesEnabled) return positions; // 2x tiles removed from play (2026-06-23)
             // MVP P3.5: SurvivalRng for gameplay-affecting random (Daily Seeded Survival).
             int count = SurvivalRng.Range(1, 3); // 1 or 2 starting bonus cells (rarer = more exciting)
             var available = new List<Vector2Int>();
@@ -259,6 +265,7 @@ namespace WordDrop
         public List<int> PlaceBonusCellsOnBottomRow()
         {
             var bonusCols = new List<int>();
+            if (!GoldTilesEnabled) return bonusCols; // 2x tiles removed from play (2026-06-23)
 
             // MVP P3.5: SurvivalRng for gameplay-affecting random (Daily Seeded Survival).
             // 40% chance to place a gold tile on a rising row (was 100% with 1-2 tiles)
@@ -483,6 +490,20 @@ namespace WordDrop
             return _board[col, row];
         }
 
+        /// <summary>True if any HeroWord escort (drop-target) tile remains anywhere on the board.
+        /// Used to detect "all escorts collected → level win is locked in" before the collect fly-up
+        /// animation finishes (IsComplete only flips on landing). 2026-06-23 Spencer.</summary>
+        public bool HasAnyDropTarget()
+        {
+            for (int c = 0; c < COLS; c++)
+                for (int r = 0; r < ROWS; r++)
+                {
+                    var cell = _board[c, r];
+                    if (cell != null && cell.IsDropTarget) return true;
+                }
+            return false;
+        }
+
         public void ClearCell(int col, int row)
         {
             if (!InBounds(col, row)) return;
@@ -525,47 +546,238 @@ namespace WordDrop
             }
         }
 
-        /// <summary>Break-Rocks: drop `count` anchored rocks onto distinct columns. Rocks are
-        /// IsStone (non-matchable, break on adjacent detonation) + IsAnchored (resist gravity —
-        /// they float in place while tiles around them fall). Placed just above each tall column's
-        /// stack and clamped off the top row so a rising row can't shove them off before the player
-        /// reaches them (Q2 caveat). Auto-placement is the feel-test atom; authored positions come
-        /// with the per-level config. 2026-06-09.</summary>
-        public void SpawnRocks(int count)
+        // Weighted letter bag, built once from the game's canonical letter distribution.
+        private static char[] s_letterBag;
+        private static char DrawWeightedLetter()
         {
-            var cols = new System.Collections.Generic.List<Vector2Int>(); // x=col, y=height
-            for (int c = 0; c < COLS; c++)
+            if (s_letterBag == null)
             {
-                int h = 0;
-                for (int r = 0; r < ROWS; r++)
-                    if (_board[c, r] != null) h = r + 1;
-                if (h > 0) cols.Add(new Vector2Int(c, h));
+                var list = new System.Collections.Generic.List<char>();
+                foreach (var kv in LetterData.GetDistribution())
+                    for (int i = 0; i < kv.Value; i++) list.Add(char.ToUpper(kv.Key));
+                s_letterBag = list.Count > 0 ? list.ToArray() : new[] { 'E' };
             }
-            cols.Sort((a, b) => b.y.CompareTo(a.y)); // tallest first = distinct, well-supported columns
-            int n = Mathf.Min(count, cols.Count);
-            for (int i = 0; i < n; i++)
-            {
-                int col     = cols[i].x;
-                int restRow = Mathf.Clamp(cols[i].y, 0, ROWS - 2); // just above the stack, never the top row
-                _board[col, restRow] = new RulesCellData
-                {
-                    Letter     = '#',
-                    Col        = col,
-                    Row        = restRow,
-                    IsStone    = true,
-                    IsAnchored = true,
-                };
-            }
-            Debug.Log($"[BreakRocks] SpawnRocks placed {n} anchored rock(s).");
+            return s_letterBag[SurvivalRng.Range(0, s_letterBag.Length)];
         }
 
-        /// <summary>Break-Rocks: how many anchored rocks remain on the board (objective polls this).</summary>
+        private static void ShuffleCells(System.Collections.Generic.List<Vector2Int> list)
+        {
+            for (int i = list.Count - 1; i > 0; i--)
+            {
+                int j = SurvivalRng.Range(0, i + 1);
+                (list[i], list[j]) = (list[j], list[i]);
+            }
+        }
+
+        /// <summary>Vault levels: build the STARTING BOARD. (1) Densify the bottom `startFillRows`
+        /// rows to ~`fillDensity` — fill EMPTY cells only (preserves the opening) and KEEP GAPS so
+        /// gravity + word-forming have room; the top rows stay CLEAR as drop headroom. (2) Place
+        /// `vaultCount` FIXED treasure vaults across the fill band, biasing ONE notably HIGHER
+        /// (mid-board) — the reach-it-with-a-chain/splash skill moment — the rest spaced ≥3 apart
+        /// (relaxed if the board is tight). Vaults are IsStone (crack via adjacent detonation) +
+        /// IsAnchored (don't fall, don't rise; chest sprite; Rock-Crusher-immune). All three knobs
+        /// are generator parameters (SurvivalManager exposes them in the Inspector). 2026-06-09.</summary>
+        public void SeedVaultBoard(int startFillRows, float fillDensity, int vaultCount, int vaultHeightSpread, int chestMinSpacing,
+                                   int midCount, int midWordLen, int highCount, int highWordLen)
+        {
+            startFillRows = Mathf.Clamp(startFillRows, 1, ROWS);
+            fillDensity   = Mathf.Clamp01(fillDensity);
+
+            // 0. Fresh board each loot level — clears any carryover from the previous level so the
+            // player judges a clean board, not a crowded one. (The Chunk-3 generator owns level
+            // boundaries later; this is the stop-gap so a run feel-tests cleanly.) 2026-06-09.
+            ClearBoard();
+
+            // 1. Fill each column BOTTOM-UP to a jagged target height ≈ fillDensity × startFillRows
+            // (±1 jitter for a ragged surface). Raising EITHER dial raises the stack. Gaps live ONLY
+            // at the column tops, never internal (random per-cell holes would float tiles that
+            // collapse on the first gravity pass). HARD CAP: the top VAULT_TOP_HEADROOM rows always
+            // stay clear (drop headroom) no matter how high the dials go — this is a drop game, so a
+            // brim-full board would have nowhere to drop. 2026-06-09.
+            const int VAULT_TOP_HEADROOM = 2;
+            int fillCap = Mathf.Clamp(ROWS - VAULT_TOP_HEADROOM, 1, ROWS);
+            int minH = int.MaxValue, maxH = 0;
+            for (int c = 0; c < COLS; c++)
+            {
+                int targetH = Mathf.Clamp(
+                    Mathf.RoundToInt(fillDensity * startFillRows) + SurvivalRng.Range(-1, 2),
+                    1, fillCap);
+                minH = Mathf.Min(minH, targetH); maxH = Mathf.Max(maxH, targetH);
+                for (int r = 0; r < targetH; r++)
+                    if (_board[c, r] == null)
+                        _board[c, r] = new RulesCellData { Letter = DrawWeightedLetter(), Col = c, Row = r, PlayerIndex = -1 };
+            }
+
+            // 2. Gather plain candidate cells in the fill band; flag a HIGH band for the bias.
+            int highMin = Mathf.Clamp(startFillRows - Mathf.Max(1, vaultHeightSpread), 0, startFillRows - 1);
+            var all  = new System.Collections.Generic.List<Vector2Int>();
+            var high = new System.Collections.Generic.List<Vector2Int>();
+            for (int c = 0; c < COLS; c++)
+                for (int r = 0; r < startFillRows; r++)
+                {
+                    var cell = _board[c, r];
+                    if (cell == null) continue;
+                    if (cell.IsStone || cell.IsAnchored || cell.IsDropTarget) continue;
+                    if (cell.IsWild || cell.IsCyan || cell.IsSwapRefill || cell.IsEditRefill || cell.IsWildRefill) continue;
+                    if (cell.Letter == '\0' || IsBonusCell(c, r)) continue;
+                    var primed = _primedRegistry.GetPrimedWordsContaining(new Vector2Int(c, r));
+                    if (primed != null && primed.Count > 0) continue;
+                    var p = new Vector2Int(c, r);
+                    all.Add(p);
+                    if (r >= highMin) high.Add(p);
+                }
+            ShuffleCells(all);
+
+            var chosen = new System.Collections.Generic.List<Vector2Int>();
+
+            // (a) One HIGH vault first: the HIGHEST candidate in the high band — the
+            //     reach-it-with-a-chain/splash skill target. (Position only — NOT the special chest.)
+            if (vaultCount > 0 && high.Count > 0)
+            {
+                Vector2Int top = high[0];
+                foreach (var p in high) if (p.y > top.y) top = p;
+                _board[top.x, top.y].IsStone = true; _board[top.x, top.y].IsAnchored = true;
+                chosen.Add(top);
+            }
+
+            // (b) The rest: SPREAD across the full width — one chest per DISTINCT column, visiting
+            //     evenly-sampled columns first so they reach the edges/corners instead of clustering
+            //     in the letter mass (a couple end up in isolated pockets that cost setup to reach =
+            //     the triage). Keep a min Chebyshev gap, relaxing only down to 2 (never adjacent).
+            int minSpace = Mathf.Clamp(chestMinSpacing, 2, COLS);
+            var byCol = new System.Collections.Generic.List<Vector2Int>[COLS];
+            for (int c = 0; c < COLS; c++) byCol[c] = new System.Collections.Generic.List<Vector2Int>();
+            foreach (var p in all) byCol[p.x].Add(p);
+            for (int c = 0; c < COLS; c++) ShuffleCells(byCol[c]);
+
+            var colOrder = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < vaultCount; i++) // evenly-spaced anchor columns across the width
+            {
+                int tc = Mathf.RoundToInt(i * (COLS - 1f) / Mathf.Max(1, vaultCount - 1));
+                if (!colOrder.Contains(tc)) colOrder.Add(tc);
+            }
+            for (int c = 0; c < COLS; c++) if (!colOrder.Contains(c)) colOrder.Add(c); // then any remaining columns
+
+            for (int minDist = minSpace; minDist >= 2 && chosen.Count < vaultCount; minDist--)
+                foreach (int c in colOrder)
+                {
+                    if (chosen.Count >= vaultCount) break;
+                    bool colUsed = false;
+                    foreach (var q in chosen) if (q.x == c) { colUsed = true; break; } // one chest per column
+                    if (colUsed) continue;
+                    foreach (var p in byCol[c])
+                    {
+                        if (_board[p.x, p.y].IsAnchored) continue;
+                        bool far = true;
+                        foreach (var q in chosen)
+                            if (Mathf.Max(Mathf.Abs(p.x - q.x), Mathf.Abs(p.y - q.y)) < minDist) { far = false; break; }
+                        if (!far) continue;
+                        _board[p.x, p.y].IsStone = true; _board[p.x, p.y].IsAnchored = true;
+                        chosen.Add(p); break;
+                    }
+                }
+
+            // (c) Fallback (tight board / more chests than columns): drop the one-per-column rule,
+            //     place any remaining at distance ≥2, then ≥1, so we always place the full set.
+            for (int minDist = 2; minDist >= 1 && chosen.Count < vaultCount; minDist--)
+                foreach (var p in all)
+                {
+                    if (chosen.Count >= vaultCount) break;
+                    if (_board[p.x, p.y].IsAnchored) continue;
+                    bool far = true;
+                    foreach (var q in chosen)
+                        if (Mathf.Max(Mathf.Abs(p.x - q.x), Mathf.Abs(p.y - q.y)) < minDist) { far = false; break; }
+                    if (!far) continue;
+                    _board[p.x, p.y].IsStone = true; _board[p.x, p.y].IsAnchored = true;
+                    chosen.Add(p);
+                }
+
+            // Assign chest TIERS by the word-LENGTH key needed to crack them (telegraphed on the
+            // tile). The HIGH-tier chest(s) get the elevated reach-it position (placed first in
+            // `chosen`) AND the hardest requirement = the telegraphed jackpot. A random subset of
+            // the rest get the MID requirement; the remainder stay regular (RequiredWordLength=0 =
+            // any word). SurvivalRng keeps the mid pick daily-seed-deterministic. 2026-06-12.
+            int hi = Mathf.Clamp(highCount, 0, chosen.Count);
+            for (int i = 0; i < hi; i++)
+                _board[chosen[i].x, chosen[i].y].RequiredWordLength = Mathf.Max(2, highWordLen);
+
+            var rest = new System.Collections.Generic.List<int>();
+            for (int i = hi; i < chosen.Count; i++) rest.Add(i);
+            for (int i = rest.Count - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); (rest[i], rest[j]) = (rest[j], rest[i]); }
+            int mid = Mathf.Clamp(midCount, 0, rest.Count);
+            for (int i = 0; i < mid; i++)
+                _board[chosen[rest[i]].x, chosen[rest[i]].y].RequiredWordLength = Mathf.Max(2, midWordLen);
+            // Remaining chests keep RequiredWordLength = 0 (regular — crack on any word).
+
+            Debug.Log($"[Vault] SeedVaultBoard: startFillRows={startFillRows} density={fillDensity:0.00} → column heights {minH}-{maxH} of {ROWS} (cap {fillCap}); placed {chosen.Count}/{vaultCount} — {hi} high(≥{highWordLen}) {mid} mid(≥{midWordLen}) {Mathf.Max(0, chosen.Count - hi - mid)} regular.");
+        }
+
+        /// <summary>Vaults: how many anchored vaults remain on the board (objective polls this).</summary>
         public int CountAnchoredCells()
         {
             int n = 0;
             for (int c = 0; c < COLS; c++)
                 for (int r = 0; r < ROWS; r++)
                     if (_board[c, r] != null && _board[c, r].IsAnchored) n++;
+            return n;
+        }
+
+        // ── FROZEN / ICE objective (2026-06-12) ──────────────────────────────────────
+        // Letters that are too rare to reliably re-use in a word — freezing one of these
+        // would make the ice frustrating to clear (e.g. a lone frozen Q). Skip them.
+        private static bool IsRareLetterForFreeze(char letter)
+        {
+            char u = char.ToUpper(letter);
+            return u == 'Q' || u == 'Z' || u == 'X'; // skip the rarest letters (a lone frozen Q is frustrating)
+        }
+
+        /// <summary>ICE objective: freeze up to `count` existing OCCUPIED letter tiles (ice overlay).
+        /// A frozen tile is a NORMAL, MATCHABLE letter (IsStone=false, real Letter) — it participates
+        /// in word detection exactly like any other tile. To clear the ice it must be included in a
+        /// detonated word, at which point it THAWS and survives (see DoExplode/TryThawCell). Picks
+        /// common-letter, non-special cells at random via SurvivalRng (daily-seed deterministic).
+        /// v1 = single layer. Returns the number actually frozen.</summary>
+        public int SpawnFrozenTiles(int count)
+        {
+            if (count <= 0) return 0;
+
+            // Gather eligible cells: occupied, real common letter, not a stone/anchor/drop-target/
+            // vault/special/wild/gold, and not already frozen. Avoid the very top row (a rise could
+            // push it off before it can be cleared).
+            var eligible = new System.Collections.Generic.List<Vector2Int>();
+            for (int c = 0; c < COLS; c++)
+            {
+                for (int r = 0; r < ROWS; r++)
+                {
+                    var cell = _board[c, r];
+                    if (cell == null) continue;
+                    if (cell.IsStone || cell.IsAnchored || cell.IsDropTarget) continue; // non-letter / blocker tiles
+                    if (cell.IsWild || cell.Letter == '\0') continue;                    // unresolved wilds
+                    if (cell.IsSwapRefill || cell.IsEditRefill || cell.IsWildRefill) continue; // protect specials
+                    if (cell.IsFrozen) continue;                                         // already frozen
+                    if (IsRareLetterForFreeze(cell.Letter)) continue;                    // skip Q/Z/X
+                    if (r >= ROWS - 1) continue;                                          // not the top row (a rise could push it off)
+                    eligible.Add(new Vector2Int(c, r));
+                }
+            }
+
+            ShuffleCells(eligible); // SurvivalRng-backed (daily-seed deterministic)
+
+            int n = Mathf.Min(count, eligible.Count);
+            for (int i = 0; i < n; i++)
+            {
+                var p = eligible[i];
+                _board[p.x, p.y].IsFrozen = true;
+            }
+            return n;
+        }
+
+        public int CountFrozenCells()
+        {
+            int n = 0;
+            for (int c = 0; c < COLS; c++)
+                for (int r = 0; r < ROWS; r++)
+                    if (_board[c, r] != null && _board[c, r].IsFrozen) n++;
             return n;
         }
 
@@ -697,7 +909,9 @@ namespace WordDrop
             {
                 for (int col = 0; col < COLS; col++)
                 {
-                    if (_board[col, row] != null) { highestOccupiedRow = row; break; }
+                    // Break-Rocks: anchored rocks are fixed obstacles, not the player's playable
+                    // stack — exclude them so the top-out counter reflects real pressure. 2026-06-09.
+                    if (_board[col, row] != null && !_board[col, row].IsAnchored) { highestOccupiedRow = row; break; }
                 }
                 if (highestOccupiedRow >= 0) break;
             }
@@ -2119,6 +2333,7 @@ namespace WordDrop
                                     var cell = new Vector2Int(sweepCol, row);
                                     if (allCellsToRemove.Contains(cell)) continue;
                                     if (!InBounds(sweepCol, row) || _board[sweepCol, row] == null) continue;
+                                    if (_board[sweepCol, row].IsFrozen) continue; // STRICT ICE: collateral splash never clears frozen tiles — only a word detonation does. 2026-06-23
 
                                     var data = _board[sweepCol, row];
                                     splashBaseBonus += LetterData.GetPoints(data.Letter) * (_bonusCells[sweepCol, row] ? 2 : 1);
@@ -2140,6 +2355,7 @@ namespace WordDrop
                                     var cell = new Vector2Int(sc, sweepRow);
                                     if (allCellsToRemove.Contains(cell)) continue;
                                     if (!InBounds(sc, sweepRow) || _board[sc, sweepRow] == null) continue;
+                                    if (_board[sc, sweepRow].IsFrozen) continue; // STRICT ICE: collateral splash never clears frozen tiles — only a word detonation does. 2026-06-23
 
                                     var data = _board[sc, sweepRow];
                                     splashBaseBonus += LetterData.GetPoints(data.Letter) * (_bonusCells[sc, sweepRow] ? 2 : 1);
@@ -3365,6 +3581,16 @@ namespace WordDrop
             public List<WordScoredEvent> ScoredWords;
             public List<PrimedTriggeredEvent> Triggers;
             public List<Vector2Int> ExplodedCells;
+            // FORMED word cells for this detonation step: the player's scored word and/or
+            // gravity-formed cascade words that CAUSED the detonation. Distinct from
+            // detonating primed words and all collateral splash cells. Added so the live
+            // HandManager Exploding path can color word tiles green and collateral white.
+            public List<Vector2Int> FormedWordCells;
+            // FROZEN / ICE (2026-06-12): cells that were caught in a detonation while frozen and
+            // THAWED instead of being destroyed — they survive on the board (ice cleared). The
+            // visual layer reads this to play a defrost VFX + clear the frost overlay, and must
+            // NOT route these through the explode animation. Never overlaps ExplodedCells.
+            public List<Vector2Int> ThawedCells;
             public Dictionary<Vector2Int, Vector2Int> GravityMoves;
             public int TotalScore;
             public bool ChainContinues;
@@ -4117,13 +4343,9 @@ namespace WordDrop
             if (_primedRegistry == null) return;
             int turn = currentTurn >= 0 ? currentTurn : _globalTurn;
 
-            // DIAGNOSTIC — kept silent in normal play, uncomment to re-enable.
-            // Debug.Log($"[RefreshPrimed] called at turn={turn}, globalTurn={_globalTurn}, registryCount={_primedRegistry.Count}");
-
             for (int p = 0; p < _primedRegistry.Count; p++)
             {
                 var pw = _primedRegistry.GetByIndex(p);
-                // Debug.Log($"[RefreshPrimed] pw='{pw.Word}' expiresOnTurn={pw.ExpiresOnTurn} primedOnTurn={pw.PrimedOnTurn} → fuseRemaining={Mathf.Max(0, pw.ExpiresOnTurn - turn)}");
                 RefreshPrimedWordTiles(pw, turn);
             }
         }
@@ -4378,15 +4600,51 @@ namespace WordDrop
             };
         }
 
+        // FROZEN / ICE (2026-06-12): a frozen tile caught in a detonation THAWS instead of being
+        // destroyed — it survives in place with its ice cleared. Returns true if the cell was frozen
+        // (caller must NOT null the board cell and must NOT add it to allExplodedCells — the tile
+        // stays). Returns false for normal cells (caller proceeds with the usual destroy). v1 clears
+        // the single ice layer outright; a future multi-layer would decrement a counter and only
+        // return true (skip destroy) once it reaches 0 — but ALWAYS skip destroy while frozen.
+        private bool TryThawCell(Vector2Int cell, List<Vector2Int> thawed)
+        {
+            if (!InBounds(cell.x, cell.y)) return false;
+            var data = _board[cell.x, cell.y];
+            if (data != null && data.IsFrozen)
+            {
+                data.IsFrozen = false;          // thaw: ice cleared, tile becomes a normal letter
+                thawed.Add(cell);               // surface to the visual layer for the defrost VFX
+                return true;                    // tile survives — NOT destroyed, NOT in allExplodedCells
+            }
+            // Already thawed earlier THIS resolution (by the word) — a later splash sweep must not
+            // then destroy the surviving letter. Strict: a once-frozen tile is NEVER destroyed.
+            if (thawed.Contains(cell)) return true;
+            return false;
+        }
+
+        // STRICT ICE (2026-06-15 Spencer): collateral AREA splash (column/row sweeps, junk-splash, the
+        // 7-letter jackpot row) must NEVER touch ice — a still-frozen tile stays frozen, an already-
+        // thawed survivor stays put. ONLY a WORD detonation (TryThawCell at the word-cell sites) clears
+        // ice. Returns true = the caller skips this cell entirely (no thaw, no destroy).
+        private bool IsIceProtected(Vector2Int cell, List<Vector2Int> thawed)
+        {
+            if (!InBounds(cell.x, cell.y)) return false;
+            var data = _board[cell.x, cell.y];
+            return (data != null && data.IsFrozen) || thawed.Contains(cell);
+        }
+
         private StepResult DoExplode()
         {
             var allExplodedCells = new List<Vector2Int>();
+            var formedWordCells = new HashSet<Vector2Int>();
+            var thawedCells = new List<Vector2Int>(); // frozen tiles caught in this detonation → survive + defrost
             int detonationBonus = 0;
             int totalHeat = 0;
             int swapRefillCount = 0;
             int editRefillCount = 0;
             int wildRefillCount = 0;
             int longestPrimedWord = 0; // track for splash scaling
+            int keyWordLen = 0; // longest word (primed OR trigger) detonated this resolution = chest-tier "key" (2026-06-12)
             // Per-cluster-word chain depth inflation. Reverted 2026-05-04 —
             // the per-word increment is load-bearing for the game's reward
             // economy: splash gates, meltdown thresholds, big-moment burst
@@ -4416,7 +4674,12 @@ namespace WordDrop
             {
                 foreach (var trigWord in _stepTriggerWords)
                     if (trigWord?.Cells != null && trigWord.Cells.Count > 0)
+                    {
                         primedSplashSources.Add(new List<Vector2Int>(trigWord.Cells));
+                        for (int tc = 0; tc < trigWord.Cells.Count; tc++)
+                            formedWordCells.Add(trigWord.Cells[tc]);
+                        if (trigWord.Word != null) keyWordLen = Mathf.Max(keyWordLen, trigWord.Word.Length); // trigger word is also a chest "key"
+                    }
             }
 
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
@@ -4430,12 +4693,16 @@ namespace WordDrop
 
                 if (pw.Word.Length > longestPrimedWord)
                     longestPrimedWord = pw.Word.Length;
+                keyWordLen = Mathf.Max(keyWordLen, pw.Word.Length); // primed word counts as a chest "key" too
 
                 for (int c = 0; c < pw.Cells.Count; c++)
                 {
                     Vector2Int cell = pw.Cells[c];
                     if (InBounds(cell.x, cell.y) && _board[cell.x, cell.y] != null)
                     {
+                        // ICE: a frozen tile in the detonating word thaws + survives (never destroyed).
+                        if (TryThawCell(cell, thawedCells)) continue;
+
                         // Check for refill tiles before destroying
                         var cellData = _board[cell.x, cell.y];
                         if (cellData.IsSwapRefill) swapRefillCount++;
@@ -4505,6 +4772,15 @@ namespace WordDrop
                             if (alreadyExploded.Contains(cell)) continue;
                             if (InBounds(cell.x, cell.y) && _board[cell.x, cell.y] != null)
                             {
+                                // Escort drop-targets (rubber chickens) only ever leave at the bottom row —
+                                // they must NEVER be destroyed as trigger-word collateral, or the HeroWord
+                                // level becomes uncompletable. The two splash sweeps below already guard this;
+                                // this block was missing the guard, so a chicken caught here blew up. 2026-06-23.
+                                if (_board[cell.x, cell.y].IsDropTarget) continue;
+
+                                // ICE: a frozen tile in the trigger word thaws + survives (never destroyed).
+                                if (TryThawCell(cell, thawedCells)) { alreadyExploded.Add(cell); continue; }
+
                                 _board[cell.x, cell.y] = null;
                                 _bonusCells[cell.x, cell.y] = false;
                                 _cyanCells[cell.x, cell.y] = false;
@@ -4603,6 +4879,8 @@ namespace WordDrop
                                 if (alreadyExploded.Contains(cell)) continue;
                                 if (!InBounds(col, row) || _board[col, row] == null) continue;
                                 if (_board[col, row].IsDropTarget) continue; // drop-targets only exit at the bottom
+                                // ICE (strict): collateral splash never touches a frozen OR already-thawed tile — only a word detonation clears ice.
+                                if (IsIceProtected(cell, thawedCells)) continue;
 
                                 var data = _board[col, row];
                                 int letterPts = LetterData.GetPoints(data.Letter);
@@ -4634,6 +4912,8 @@ namespace WordDrop
                                 if (alreadyExploded.Contains(cell)) continue;
                                 if (!InBounds(col, row) || _board[col, row] == null) continue;
                                 if (_board[col, row].IsDropTarget) continue; // drop-targets only exit at the bottom
+                                // ICE (strict): collateral splash never touches a frozen OR already-thawed tile — only a word detonation clears ice.
+                                if (IsIceProtected(cell, thawedCells)) continue;
 
                                 var data = _board[col, row];
                                 int letterPts = LetterData.GetPoints(data.Letter);
@@ -4678,6 +4958,8 @@ namespace WordDrop
                                 {
                                     if (alreadyExploded.Contains(cell)) continue;
                                     if (!InBounds(cell.x, cell.y) || _board[cell.x, cell.y] == null) continue;
+                                    // ICE: a frozen tile in a splash-detonated primed word thaws + survives.
+                                    if (TryThawCell(cell, thawedCells)) { alreadyExploded.Add(cell); continue; }
                                     _board[cell.x, cell.y] = null;
                                     _bonusCells[cell.x, cell.y] = false;
                                     _cyanCells[cell.x, cell.y] = false;
@@ -4745,7 +5027,11 @@ namespace WordDrop
                         var adj = _board[sx, sy];
                         // Drop-targets (scrappy prototype) are stone-like but must
                         // SURVIVE detonations — the only way to move them is gravity.
-                        if (adj != null && adj.IsStone && !adj.IsDropTarget)
+                        // CHEST TIERS (2026-06-12): a vault only cracks if the longest word that
+                        // detonated this resolution meets its RequiredWordLength "key" (regular=0=any,
+                        // mid≥4, high≥5). A too-short word leaves the chest intact for a bigger word.
+                        if (adj != null && adj.IsStone && !adj.IsDropTarget
+                            && keyWordLen >= adj.RequiredWordLength)
                         {
                             _board[sx, sy] = null;
                             stoneCleared.Add(stonePos);
@@ -4802,6 +5088,7 @@ namespace WordDrop
                         var jCell = _board[jx, jy];
                         if (jCell == null) continue;
                         if (jCell.IsStone) continue; // stones handled separately
+                        if (IsIceProtected(jPos, thawedCells)) continue; // ICE (strict): never destroy a frozen OR already-thawed tile via junk-splash
                         if (jCell.IsSwapRefill || jCell.IsEditRefill || jCell.IsWildRefill) continue; // protect specials
                         if (_bonusCells[jx, jy]) continue; // protect gold
 
@@ -4860,6 +5147,8 @@ namespace WordDrop
                     {
                         var pos = new Vector2Int(col, clearRow);
                         if (alreadyExploded.Contains(pos)) continue;
+                        // ICE (strict): the jackpot row clear never touches a frozen OR already-thawed tile.
+                        if (IsIceProtected(pos, thawedCells)) continue;
                         if (_board[col, clearRow] != null && !_board[col, clearRow].IsDropTarget) // drop-targets survive the jackpot too
                         {
                             _board[col, clearRow] = null;
@@ -4887,6 +5176,8 @@ namespace WordDrop
             {
                 Phase = ResolutionPhase.Exploding,
                 ExplodedCells = allExplodedCells,
+                FormedWordCells = formedWordCells.Count > 0 ? new List<Vector2Int>(formedWordCells) : null,
+                ThawedCells = thawedCells,
                 TotalScore = _stepTotalScore,
                 DetonationBonus = detonationBonus,
                 DetonationHeat = totalHeat,
@@ -4996,6 +5287,18 @@ namespace WordDrop
         // its cell so it can be placed anywhere (e.g. near the top) as a "break the box" obstacle.
         // Breaks like any stone (adjacent detonation). Other tiles fall around it.
         public bool IsAnchored    { get; set; }
+        // FROZEN / ICE (2026-06-12): a NORMAL, MATCHABLE letter tile covered in ice. It participates
+        // in word detection exactly like any other letter (word detection only walls off IsStone cells).
+        // To clear the ice it must be included in a word that DETONATES — the tile then THAWS (IsFrozen
+        // cleared) and SURVIVES in place while the rest of the word explodes. A frozen tile is NEVER
+        // destroyed (mirrors the drop-target survive-explosion precedent). v1 = single layer. A future
+        // multi-layer is an easy add: replace this bool with an IceLayers int and decrement per detonation.
+        public bool IsFrozen      { get; set; }
+        // CHEST TIER (2026-06-12): the word-LENGTH "key" required to crack this vault via the
+        // adjacent-detonation stone-splash. 0 = regular (any word), 4 = mid, 5 = high (the
+        // telegraphed jackpot). Gated in DoExplode; telegraphed on the tile (bronze/silver/gold).
+        // Replaces the old random IsSpecialVault.
+        public int RequiredWordLength { get; set; }
     }
 
     public enum WordDirection

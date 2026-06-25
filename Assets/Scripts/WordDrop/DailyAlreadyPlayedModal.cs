@@ -25,8 +25,8 @@ namespace WordDrop
         private Coroutine _tickCoroutine;
 
         private static readonly Color PANEL_BG = new Color(0.10f, 0.08f, 0.20f, 0.95f);
-        private static readonly Color CARD_BG  = new Color(0.14f, 0.20f, 0.30f, 1f);
-        private static readonly Color TITLE    = new Color(0.60f, 0.85f, 1.00f, 1f);
+        private static readonly Color CARD_BG  = new Color(0.99f, 0.95f, 0.86f, 1f); // TEMP candy-unification
+        private static readonly Color TITLE    = new Color(0.22f, 0.52f, 0.82f, 1f);
 
         private void Awake()
         {
@@ -162,20 +162,20 @@ namespace WordDrop
 
             _scoreText = CreateLabel(card.transform, "Score",
                 new Vector2(0.05f, 0.60f), new Vector2(0.95f, 0.72f),
-                "Today's score: 0", 24, Color.white);
+                "Today's score: 0", 24, new Color(0.32f, 0.24f, 0.30f, 1f));
 
             _streakText = CreateLabel(card.transform, "Streak",
                 new Vector2(0.05f, 0.50f), new Vector2(0.95f, 0.60f),
-                "", 20, UILayout.Gold);
+                "", 20, new Color(0.80f, 0.52f, 0.10f, 1f));
 
             CreateLabel(card.transform, "CountdownLabel",
                 new Vector2(0.05f, 0.34f), new Vector2(0.95f, 0.42f),
                 "A new puzzle drops at UTC midnight", 16,
-                new Color(0.75f, 0.80f, 0.90f, 1f));
+                new Color(0.50f, 0.42f, 0.48f, 1f));
 
             _countdownText = CreateLabel(card.transform, "Countdown",
                 new Vector2(0.05f, 0.24f), new Vector2(0.95f, 0.34f),
-                "--:--:--", 26, Color.white);
+                "--:--:--", 26, new Color(0.32f, 0.24f, 0.30f, 1f));
             _countdownText.fontStyle = FontStyle.Bold;
 
             MenuUI.CreateButton(card.transform, "BtnClose",

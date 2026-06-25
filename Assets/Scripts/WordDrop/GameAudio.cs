@@ -83,6 +83,11 @@ namespace WordDrop
         private AudioClip _personalBest;
         private AudioClip _goldSpawn;
         private AudioClip _line; // SFX/line — wild-award chime
+        private AudioClip _line2; // SFX/line2 — HiddenWord letter lands on its Target slot
+        private AudioClip _asmr4; // SFX/asmr4 — escort objective hits the bottom row
+        private AudioClip _chickenCluck; // SFX/ribhavagrawal — rubber chicken reaches the bottom (first 1.5s)
+        private AudioClip _coins2, _coins3, _coins4; // SFX/Coins2-4 — reward-coin land "tings"
+        private AudioClip _coinJackpot; // SFX/floraphonic jackpot coin loop — first 0.232s on each chest crack
         private AudioClip _bing; // SFX/bing — objective-complete cue
 
         // ── New SFX (April 7, 2026) ──────────────────────────────────────────
@@ -136,6 +141,10 @@ namespace WordDrop
 
         private AudioSource _source;
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
+        private AudioSource _line2Source;   // dedicated source for the HiddenWord hit chime (own pitch, no warp)
+        private AudioSource _coinSource;    // dedicated source for coin-land tings (own pitch climb, no warp)
+        private AudioSource _coinExplodeSource; // dedicated source for the 0.232s chest-crack coin blip
+        private AudioSource _chickenCluckSource; // dedicated source for the 1.5s rubber-chicken cluck snippet
         private AudioSource _musicSource;   // looping music layer (Survival BGM)
 
         // ── AudioMixer routing (Phase 11g) ─────────────────────────────────────
@@ -243,7 +252,9 @@ namespace WordDrop
         // 2026-05-16: upgraded from 2 fixed survival tracks + 1 menu track
         // to folder-based pools loaded via Resources.LoadAll.
         // Drop new MP3s into the folders and they're auto-included on next build.
-        private AudioClip[] _survivalMusicPool;   // Resources/Music/Gameplay/ — random pick per track, infinite rotation
+        private AudioClip[] _survivalMusicPool;   // Resources/Music/Gameplay/ — shuffle-bag rotation (all play before any repeat)
+        private System.Collections.Generic.List<AudioClip> _survivalBag; // remaining shuffled tracks to play before reshuffle
+        private AudioClip   _chestMusicClip;      // "Glitter Blast" — reserved for treasure-chest reward levels, pulled OUT of the rotation pool
         private AudioClip[] _menuMusicPool;       // Resources/Music/Menu/ — main_menu is signature
         private AudioClip[] _victoryMusicPool;    // Resources/Music/Victory/ — Skybound is canonical
         private AudioClip   _menuSignatureClip;   // cached "main_menu" track for signature-priority menu playback
@@ -315,6 +326,16 @@ namespace WordDrop
             _source.playOnAwake = false;
             _pitchedSource = gameObject.AddComponent<AudioSource>();
             _pitchedSource.playOnAwake = false;
+            // Dedicated source for the HiddenWord "hit target" chime so its per-hit pitch climb doesn't
+            // bend other pitched SFX (the shared _pitchedSource was warping them). 2026-06-17 Spencer.
+            _line2Source = gameObject.AddComponent<AudioSource>();
+            _line2Source.playOnAwake = false;
+            _coinSource = gameObject.AddComponent<AudioSource>();
+            _coinSource.playOnAwake = false;
+            _coinExplodeSource = gameObject.AddComponent<AudioSource>();
+            _coinExplodeSource.playOnAwake = false;
+            _chickenCluckSource = gameObject.AddComponent<AudioSource>();
+            _chickenCluckSource.playOnAwake = false;
             // Dedicated music layer — looped, non-pitched, own volume.
             _musicSource = gameObject.AddComponent<AudioSource>();
             _musicSource.playOnAwake = false;
@@ -352,6 +373,10 @@ namespace WordDrop
             }
             _source.outputAudioMixerGroup        = _sfxGroup;
             _pitchedSource.outputAudioMixerGroup = _sfxGroup;
+            if (_line2Source != null) _line2Source.outputAudioMixerGroup = _sfxGroup;
+            if (_coinSource != null) _coinSource.outputAudioMixerGroup = _sfxGroup;
+            if (_coinExplodeSource != null) _coinExplodeSource.outputAudioMixerGroup = _sfxGroup;
+            if (_chickenCluckSource != null) _chickenCluckSource.outputAudioMixerGroup = _sfxGroup;
             _musicSource.outputAudioMixerGroup   = _musicGroup;
             _rumbleSource.outputAudioMixerGroup  = _sfxGroup;
             _bigPopSource.outputAudioMixerGroup  = _sfxGroup;
@@ -414,6 +439,13 @@ namespace WordDrop
             _personalBest    = Resources.Load<AudioClip>("SFX/personal_best");
             _goldSpawn       = Resources.Load<AudioClip>("SFX/gold_spawn");
             _line            = Resources.Load<AudioClip>("SFX/line");
+            _line2           = Resources.Load<AudioClip>("SFX/line2");
+            _asmr4           = Resources.Load<AudioClip>("SFX/asmr4");
+            _chickenCluck    = Resources.Load<AudioClip>("SFX/ribhavagrawal-chicken-cluking-type-3-293320");
+            _coins2          = Resources.Load<AudioClip>("SFX/Coins2");
+            _coins3          = Resources.Load<AudioClip>("SFX/Coins3");
+            _coins4          = Resources.Load<AudioClip>("SFX/Coins4");
+            _coinJackpot     = Resources.Load<AudioClip>("SFX/floraphonic-jackpot-slot-machine-coin-loop-6-216072");
             _bing            = Resources.Load<AudioClip>("SFX/bing");
 
             // Music tracks (2026-05-16): folder-based pools. Each folder loads
@@ -426,6 +458,10 @@ namespace WordDrop
             _survivalMusicPool = Resources.LoadAll<AudioClip>("Music/Gameplay");
             _menuMusicPool     = Resources.LoadAll<AudioClip>("Music/Menu");
             _victoryMusicPool  = Resources.LoadAll<AudioClip>("Music/Victory");
+
+            // "Glitter Blast" is the signature treasure-chest reward-level track — pull it OUT of the
+            // general gameplay rotation so it ONLY plays on chest levels (PlayChestMusic). 2026-06-17 Spencer.
+            _chestMusicClip = ExtractClip(ref _survivalMusicPool, "Glitter Blast");
 
             // Cache the signature/canonical tracks for priority playback.
             // Names must match the file basenames in their respective folders.
@@ -916,16 +952,40 @@ namespace WordDrop
                 _musicSequenceRoutine = null;
             }
 
-            // Random pick from the pool — Candy-Crush-style rotation.
-            // Each track plays once (loop=false), then SurvivalMusicSequence
-            // picks a fresh random track from the pool indefinitely.
-            _musicSource.clip = PickRandomClip(_survivalMusicPool, exclude: null);
+            // Shuffle-bag rotation: each track plays once (loop=false), then SurvivalMusicSequence
+            // pulls the next from the bag — all tracks play before any repeats, never two in a row.
+            _musicSource.clip = PickNextSurvivalClip(_musicSource.clip);
             _musicSource.loop = false;
             _musicSource.Play();
 
             // Always start rotation coroutine — even with 1 track it'll re-pick
             // the same one when it ends, giving consistent loop behavior.
             _musicSequenceRoutine = StartCoroutine(SurvivalMusicSequence());
+        }
+
+        /// <summary>
+        /// Plays the dedicated treasure-chest reward-level track ("Glitter Blast"), LOOPED. Idempotent —
+        /// if it's already playing, leaves it untouched (so back-to-back chest levels don't restart it).
+        /// Stops the survival rotation while it's up; leaving a chest level (PlaySurvivalMusic) swaps back
+        /// to the rotation automatically since this clip isn't in the pool. 2026-06-17 Spencer.
+        /// </summary>
+        public void PlayChestMusic()
+        {
+            if (_musicSource == null) return;
+            if (_chestMusicClip == null) { PlaySurvivalMusic(); return; } // no dedicated track → fall back to rotation
+
+            // Idempotent — already on the chest track.
+            if (_musicSource.isPlaying && _musicSource.clip == _chestMusicClip) return;
+
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
+
+            _musicSource.clip = _chestMusicClip;
+            _musicSource.loop = true; // loop the signature track for the whole chest level
+            _musicSource.Play();
         }
 
         /// <summary>
@@ -952,8 +1012,8 @@ namespace WordDrop
                     yield break;
                 }
 
-                // Pick a fresh random clip, avoiding immediate repeat when possible.
-                AudioClip nextClip = PickRandomClip(_survivalMusicPool, exclude: _musicSource.clip);
+                // Next from the shuffle bag (all play before any repeat; never two in a row).
+                AudioClip nextClip = PickNextSurvivalClip(_musicSource.clip);
                 _musicSource.clip = nextClip;
                 _musicSource.loop = false;
                 _musicSource.Play();
@@ -1177,6 +1237,110 @@ namespace WordDrop
             Play(_line, 0.9f);
         }
 
+        /// <summary>SFX/line2 — used when a HiddenWord letter lands on its Target slot. `pitch` lets the
+        /// staggered landings step up a little. 2026-06-17 Spencer.</summary>
+        private static int   _line2BurstStep = 0;
+        private static float _line2BurstLastTime = -10f;
+        private const float  LINE2_BURST_WINDOW = 0.85f; // consecutive landings (~0.35s apart) keep climbing; resets between words
+
+        public void PlayLine2()
+        {
+            var clip = _line2 != null ? _line2 : _line;
+            if (clip == null) return;
+
+            // Per-HIT pitch climb (rising arpeggio as the word fills), reset after a gap. On its OWN source
+            // so changing pitch never bends other pitched SFX. 2026-06-17 Spencer.
+            float now = Time.unscaledTime;
+            if (now - _line2BurstLastTime > LINE2_BURST_WINDOW) _line2BurstStep = 0;
+            else _line2BurstStep++;
+            _line2BurstLastTime = now;
+
+            int step = Mathf.Clamp(_line2BurstStep, 0, 7);
+            float pitch = Mathf.Pow(2f, step * 2f / 12f); // 2 semitones per hit
+
+            var src = _line2Source != null ? _line2Source : _pitchedSource;
+            if (src == null) { Play(clip, 0.9f); return; }
+            src.pitch = pitch;
+            src.PlayOneShot(clip, _volume * 0.9f);
+        }
+
+        // ── Reward-coin land "ting" ──────────────────────────────────────────────
+        private static int   _coinBurstStep = 0;
+        private static float _coinBurstLastTime = -10f;
+        private static float _coinThrottleTime = -10f;
+        private const float  COIN_BURST_WINDOW = 0.6f;  // gap that resets the pitch ramp (between chests)
+        private const float  COIN_THROTTLE     = 0.05f; // min gap between AUDIBLE ticks — collapses the machine-gun
+
+        /// <summary>Coin lands on the REWARD counter. Uses the audible line2 ting with two anti-machine-gun
+        /// fixes: (1) per-hit pitch CLIMB → a rising "ka-ching" run; (2) THROTTLE — drop landings <50ms after
+        /// the last audible tick, so a 9-coin burst becomes ~5 rising tones, not 9 flat ticks. Own source so
+        /// the pitch never warps other SFX. (The Coins2/3/4 samples were too quiet.) 2026-06-18 Spencer.</summary>
+        public void PlayCoinLand()
+        {
+            float now = Time.unscaledTime;
+            if (now - _coinThrottleTime < COIN_THROTTLE) return; // (3) throttle — skip this tick (no step advance)
+            _coinThrottleTime = now;
+
+            if (now - _coinBurstLastTime > COIN_BURST_WINDOW) _coinBurstStep = 0; // (1) ramp resets after a gap
+            else _coinBurstStep++;                                                //     else climbs per audible tick
+            _coinBurstLastTime = now;
+
+            var clip = _line2 != null ? _line2 : _line; // the audible "other sound" (line2), not the quiet Coins
+            if (clip == null) return;
+
+            int step = Mathf.Clamp(_coinBurstStep, 0, 8);
+            float pitch = Mathf.Pow(2f, step * 1f / 12f); // 1 semitone per hit — gentle rise
+
+            var src = _coinSource != null ? _coinSource : _pitchedSource;
+            if (src == null) { Play(clip, 0.9f); return; }
+            src.pitch = pitch;
+            src.PlayOneShot(clip, _volume * 0.9f);
+        }
+
+        /// <summary>Chest crack: play ONLY the first 0.232s of the jackpot coin-loop clip (a single coin
+        /// "ding" snipped out of the loop). Sample-accurate cutoff via PlayScheduled + SetScheduledEndTime,
+        /// on its own source. 2026-06-18 Spencer.</summary>
+        public void PlayCoinExplodeBlip()
+        {
+            if (_coinJackpot == null) return;
+            var src = _coinExplodeSource;
+            if (src == null) { Play(_coinJackpot, 0.9f); return; } // fallback: whole clip (rare)
+            StartCoroutine(CoinBlipCoroutine(src));
+        }
+
+        private System.Collections.IEnumerator CoinBlipCoroutine(AudioSource src)
+        {
+            src.Stop();
+            src.clip   = _coinJackpot;   // Play() loads the (non-preloaded) clip and starts from 0
+            src.pitch  = 1f;
+            src.volume = _volume;
+            src.Play();
+            yield return new WaitForSecondsRealtime(0.232f); // realtime so hitstop/pause can't stretch it
+            if (src.clip == _coinJackpot) src.Stop();
+        }
+
+        /// <summary>First 1.5s of the rubber-chicken cluck — plays when an escort
+        /// (rubber chicken) reaches the bottom row. Own source + realtime cutoff so
+        /// hitstop/pause can't stretch the snippet. 2026-06-19 Spencer.</summary>
+        public void PlayChickenCluck()
+        {
+            if (_chickenCluck == null) { PlayAsmr4(); return; } // fallback to the old escort thud if the clip didn't load
+            var src = _chickenCluckSource;
+            if (src == null) { Play(_chickenCluck, 0.9f); return; } // fallback: whole clip (rare)
+            StartCoroutine(ChickenCluckCoroutine(src));
+        }
+
+        private System.Collections.IEnumerator ChickenCluckCoroutine(AudioSource src)
+        {
+            src.Stop();
+            src.clip   = _chickenCluck;
+            src.pitch  = 1f;
+            src.volume = _volume; // full SFX volume — cluck was at 0.9×, bumped up so it lands on the bottom hit. 2026-06-23
+            src.Play();
+            yield return new WaitForSecondsRealtime(1.5f); // first 1.5s only; realtime so hitstop/pause can't stretch it
+            if (src.clip == _chickenCluck) src.Stop();
+        }
+
         // ── New play methods (April 7) ────────────────────────────────────────
 
         private AudioClip PickRandom(AudioClip[] variants)
@@ -1239,6 +1403,12 @@ namespace WordDrop
         }
 
         /// <summary>Power-up confirm sound — for big score moments / chain cash-out.</summary>
+        /// <summary>SFX/asmr4 — an escort objective falling and hitting the bottom row.</summary>
+        public void PlayAsmr4()
+        {
+            Play(_asmr4 != null ? _asmr4 : PickRandom(_scorePowerupVariants), 0.9f);
+        }
+
         public void PlayScorePowerup()
         {
             Play(PickRandom(_scorePowerupVariants), 0.8f);
@@ -1414,12 +1584,21 @@ namespace WordDrop
         public void PlayButtonClick()
         {
             Play(PickRandom(_buttonClickVariants), 0.5f);
+            HapticsManager.ButtonTap(); // pair haptic with the click sound (debounced, see ButtonTap)
         }
 
         /// <summary>Zippy confirm — for starting a new game.</summary>
         public void PlayConfirmNewGame()
         {
             Play(PickRandom(_confirmNewgame, _confirmNewgameAlt), 0.7f);
+        }
+
+        /// <summary>Confirm-choice sting — used for the level-intro PLAY button. 2026-06-15 Spencer.</summary>
+        private AudioClip _confirmChoice;
+        public void PlayConfirmChoice()
+        {
+            if (_confirmChoice == null) _confirmChoice = Resources.Load<AudioClip>("SFX/confirmchoice");
+            if (_confirmChoice != null) Play(_confirmChoice, 0.75f);
         }
 
         /// <summary>Whoosh suction — for score points flying into HUD total.</summary>
@@ -1588,6 +1767,40 @@ namespace WordDrop
         /// has 2+ entries, avoids picking the same clip as exclude (so two-in-a-row
         /// repetition is dodged for variety). Returns null only if pool is empty.
         /// </summary>
+        /// <summary>Shuffle-bag pick for survival BGM: every track plays exactly once before any
+        /// repeats, and the same track never plays twice in a row (even across bag refills). Replaces
+        /// the old pure-random pick that could repeat a song two levels running. 2026-06-23 Spencer.</summary>
+        private AudioClip PickNextSurvivalClip(AudioClip lastPlayed)
+        {
+            var pool = _survivalMusicPool;
+            if (pool == null || pool.Length == 0) return null;
+            if (pool.Length == 1) return pool[0];
+
+            if (_survivalBag == null) _survivalBag = new System.Collections.Generic.List<AudioClip>();
+
+            if (_survivalBag.Count == 0)
+            {
+                // Refill the bag with the whole pool, Fisher-Yates shuffled.
+                _survivalBag.AddRange(pool);
+                for (int i = _survivalBag.Count - 1; i > 0; i--)
+                {
+                    int j = Random.Range(0, i + 1);
+                    AudioClip tmp = _survivalBag[i]; _survivalBag[i] = _survivalBag[j]; _survivalBag[j] = tmp;
+                }
+                // Prevent a back-to-back repeat across the bag boundary: if the first track up is the
+                // one we just finished, swap it deeper into the bag.
+                if (_survivalBag.Count > 1 && _survivalBag[0] == lastPlayed)
+                {
+                    int s = Random.Range(1, _survivalBag.Count);
+                    AudioClip tmp = _survivalBag[0]; _survivalBag[0] = _survivalBag[s]; _survivalBag[s] = tmp;
+                }
+            }
+
+            AudioClip next = _survivalBag[0];
+            _survivalBag.RemoveAt(0);
+            return next;
+        }
+
         private static AudioClip PickRandomClip(AudioClip[] pool, AudioClip exclude)
         {
             if (pool == null || pool.Length == 0) return null;
@@ -1611,6 +1824,23 @@ namespace WordDrop
             for (int i = 0; i < pool.Length; i++)
                 if (pool[i] == clip) return true;
             return false;
+        }
+
+        /// <summary>Finds the clip named <paramref name="clipName"/> in <paramref name="pool"/>, REMOVES it
+        /// from the pool (so it won't be picked by the rotation), and returns it. Null if not found.
+        /// Clip.name is the file basename, e.g. "Glitter Blast". 2026-06-17 Spencer.</summary>
+        private static AudioClip ExtractClip(ref AudioClip[] pool, string clipName)
+        {
+            if (pool == null) return null;
+            AudioClip found = null;
+            var remaining = new System.Collections.Generic.List<AudioClip>(pool.Length);
+            foreach (var c in pool)
+            {
+                if (found == null && c != null && c.name == clipName) found = c;
+                else remaining.Add(c);
+            }
+            if (found != null) pool = remaining.ToArray();
+            return found;
         }
 
         /// <summary>

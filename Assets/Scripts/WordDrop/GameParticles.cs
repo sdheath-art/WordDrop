@@ -469,6 +469,15 @@ namespace WordDrop
             EmitAt(_glowSystem, worldPos, 2);
         }
 
+        /// <summary>ICE shatter / defrost burst when a frozen tile thaws (clear-the-ice objective).
+        /// Reuses the shimmer + sparkle systems for a crisp "ice cracks" sparkle — the tile SURVIVES
+        /// (it's not destroyed), so this is a celebratory shatter, not the detonation burst. 2026-06-12.</summary>
+        public void PlayDefrost(Vector3 worldPos)
+        {
+            EmitAt(_shimmerSystem, worldPos, 10); // cold sparkle scatter
+            EmitAt(_sparkleSystem, worldPos, 6);  // a few stars for the "crack"
+        }
+
         /// <summary>
         /// Scatter flare_star sparkles along a line segment with per-particle size
         /// variation. Used by BigBurstFlash so the blast line has big, varied stars

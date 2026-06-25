@@ -100,9 +100,36 @@ namespace WordDrop
                 int texW = 1024;
                 int texH = Mathf.RoundToInt(texW * (BENCH_H / BENCH_W));
                 _benchSprite = TileRenderer.CreateSolidRoundedRect(
-                    texW, texH, texH / 4, Color.white);
+                    texW, texH, 0, Color.white); // 2026-06-24 Spencer: square corners on the bottom bench (was rounded)
             }
             return _benchSprite;
+        }
+
+        // Soft radial glow + additive material for the EDITS pip restore burst (fake bloom over the
+        // dark navy panel). Glow textures import as Default → load Texture2D + Sprite.Create. 2026-06-24.
+        private static Sprite _pipGlowSprite; private static bool _pipGlowTried;
+        private Sprite LoadGlowSprite()
+        {
+            if (_pipGlowTried) return _pipGlowSprite;
+            _pipGlowTried = true;
+            _pipGlowSprite = Resources.Load<Sprite>("Particles/glow")
+                          ?? Resources.Load<Sprite>("Particles/soft_circle");
+            if (_pipGlowSprite != null) return _pipGlowSprite;
+            Texture2D tex = Resources.Load<Texture2D>("Particles/glow")
+                         ?? Resources.Load<Texture2D>("Particles/soft_circle")
+                         ?? Resources.Load<Texture2D>("Particles/vfx_glow");
+            if (tex != null)
+                _pipGlowSprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            return _pipGlowSprite;
+        }
+
+        private static Material _pipAddMat;
+        private Material LoadAdditiveGlowMaterial()
+        {
+            if (_pipAddMat != null) return _pipAddMat;
+            Shader s = Shader.Find("WordDrop/AdditiveSprite") ?? Shader.Find("Sprites/Default");
+            if (s != null) _pipAddMat = new Material(s);
+            return _pipAddMat;
         }
 
         private static Sprite _lockSprite;
@@ -144,17 +171,56 @@ namespace WordDrop
             public string   PlaceholderChar;
         }
 
-        // 7-slot row: tools (Edit, Bag) left → 4 boosters middle → Settings right.
+        // 2026-06-24 layout (Spencer): Edit + Bag moved OUT of the bench row and up to
+        // FLANK the tile holder (Edit left, Bag right). The bench row is now the 5
+        // boosters + Settings, evenly spaced full-width. Mallet is the new 5th booster.
+        // Edit/Bag are still listed here (so they keep their slot wiring/charges/locks);
+        // their positions are computed specially in BuildSlotCanvas — see FLANK_* below.
         private static readonly SlotSpec[] DISPLAY_ORDER = new[]
         {
             new SlotSpec { Type = SlotType.Edit,                                                  PlaceholderChar = "E" },
-            new SlotSpec { Type = SlotType.TileBag,                                               PlaceholderChar = "" }, // bag sprite, no letter
+            // 2026-06-24 (Spencer): Tile Bag swap CUT for launch — rarely used, non-obvious, and the
+            // Mallet booster covers "ditch a bad tile." Swap code left dormant (IsScreenPointOverTileBag
+            // returns false with no bag slot, so drag-onto-bag simply never triggers). Re-add this
+            // SlotSpec line to bring it back.
+            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_MALLET,        PlaceholderChar = "M" }, // 2026-06-24: Mallet first
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_ROCK_CRUSHER,  PlaceholderChar = "S" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BRAMBLE_SWEEP, PlaceholderChar = "C" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BLOOMBURST,    PlaceholderChar = "B" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_WISPWHIRL,     PlaceholderChar = "J" },
             new SlotSpec { Type = SlotType.Settings,                                              PlaceholderChar = "⚙" },
         };
+
+        // ── 2026-06-24 layout constants ─────────────────────────────────────────
+        // Bench row now holds 6 slots (5 boosters + Settings) evenly spaced across the
+        // SAME usable span the old 7-slot row used (left margin 37.98, span 1103.04),
+        // so the bench backdrop still frames them.
+        private const int   BENCH_SLOT_COUNT = 6;
+        private const float BENCH_ROW_SPAN   = 1103.04f; // 1179 - 2*37.98
+        private const float SLOT_STEP_BENCH  = (BENCH_ROW_SPAN - BENCH_SLOT_COUNT * SLOT_SIZE) / (BENCH_SLOT_COUNT - 1) + SLOT_SIZE; // ≈193.61
+        // 2026-06-24 (Spencer): Edit is a rounded-SQUARE TOOL attached UNDER the tile holder
+        // panel's bottom edge, CENTRED (Bag cut for launch), distinct from the round consumable
+        // boosters. Holder raised 45 PSD → pill now spans Y 1888..2088; the tab tucks up ~12px
+        // under the bottom edge so it reads as attached and hangs into the gap above the boosters.
+        // FLANK_Y_PSD is the slot's PSD top edge. BAG_X_PSD kept for the dormant swap-X fallback.
+        private const float FLANK_SIZE  = 120f;
+        private const float FLANK_Y_PSD = 2114f;   // 2026-06-24: lowered ~38 PSD (was 2076, tucked under the pill) — drops the SWAPS panel into the gap
+        private const float EDIT_X_PSD  = 529.5f;  // (legacy) single-square Edit left edge — superseded by the panel
+        private const float BAG_X_PSD   = 889f;    // (dormant) swap-X fallback only — Bag slot removed
+        // "EDITS" pip panel (replaces the Edit square): wide rounded panel, label + 3 gold pips.
+        private const float EDIT_PANEL_W = 340f;
+        private const float EDIT_PANEL_H = 100f;   // condensed height (was 150 → 120 → 100)
+        private const int   EDIT_PIP_COUNT = 3;    // matches the survival rewrite cap of 3
+        private static readonly Color PIP_FULL  = new Color(0.95f, 0.48f, 0.64f, 1f);   // 2026-06-24: candy pink (matches HUD/modal/stripe pink) — was gold, off vs the cool palette
+        private static readonly Color PIP_EMPTY = new Color(0.30f, 0.36f, 0.46f, 0.85f); // dim = used
+        private Image[]         _editPips;
+        private RectTransform[] _editPipRects;
+        private GameObject      _editPanelSlot;
+        private CanvasGroup     _editPanelGroup; // dims the whole panel when out of edits
+        private TextMeshProUGUI _editAdHint;     // "▶ FREE +3" shown when out + a rewarded ad is offered
+        private Tween           _editPulseTween; // gentle pulse inviting the ad tap
+        private bool            _swapAdInFlight; // guards double-tap while a rewarded ad is showing
+        private int             _lastPipCount = -1;
 
         private GameObject[]      _slotButtons;
         private Image[]           _slotImages;
@@ -299,6 +365,7 @@ namespace WordDrop
             {
                 _lastEditCount = editCount;
                 RefreshDisplay();
+                RefreshEditPips(editCount); // update + animate the EDITS pips (glow burst on gain)
             }
 
             // Aim-mode board-tap polling.
@@ -400,13 +467,37 @@ namespace WordDrop
 
             var displayFont = GameFont.GetDisplayTMP();
 
+            int benchIdx = 0; // counts only the bench-row slots (boosters + Settings)
             for (int i = 0; i < slotCount; i++)
             {
                 int slotIndex = i;
                 var spec = DISPLAY_ORDER[i];
 
-                float xPsd = SLOT_LEFT_X + i * SLOT_STEP;
-                Vector2 anchored = PsdAnchoredCenter(xPsd, SLOT_TOP_Y, SLOT_SIZE, SLOT_SIZE);
+                // Edit is the wide "EDITS" pip panel centred under the holder; everything else
+                // sits in the evenly spaced bench row along the bottom (full size).
+                Vector2 anchored;
+                float slotSize;     // square size for round slots
+                Vector2 slotDim;    // actual RectTransform sizeDelta
+                if (spec.Type == SlotType.Edit)
+                {
+                    slotSize = FLANK_SIZE;
+                    slotDim  = new Vector2(EDIT_PANEL_W, EDIT_PANEL_H);
+                    anchored = PsdAnchoredCenter(CANVAS_W * 0.5f - EDIT_PANEL_W * 0.5f, FLANK_Y_PSD, EDIT_PANEL_W, EDIT_PANEL_H);
+                }
+                else if (spec.Type == SlotType.TileBag)
+                {
+                    slotSize = FLANK_SIZE;
+                    slotDim  = new Vector2(FLANK_SIZE, FLANK_SIZE);
+                    anchored = PsdAnchoredCenter(BAG_X_PSD, FLANK_Y_PSD, FLANK_SIZE, FLANK_SIZE);
+                }
+                else
+                {
+                    slotSize = SLOT_SIZE;
+                    slotDim  = new Vector2(SLOT_SIZE, SLOT_SIZE);
+                    float xPsd = SLOT_LEFT_X + benchIdx * SLOT_STEP_BENCH;
+                    anchored = PsdAnchoredCenter(xPsd, SLOT_TOP_Y, SLOT_SIZE, SLOT_SIZE);
+                    benchIdx++;
+                }
 
                 var slot = new GameObject($"Slot_{i}_{spec.Type}",
                     typeof(RectTransform), typeof(Image), typeof(Button));
@@ -417,11 +508,20 @@ namespace WordDrop
                 rt.anchorMin = new Vector2(0.5f, 0f);
                 rt.anchorMax = new Vector2(0.5f, 0f);
                 rt.pivot     = new Vector2(0.5f, 0.5f);
-                rt.sizeDelta = new Vector2(SLOT_SIZE, SLOT_SIZE);
+                rt.sizeDelta = slotDim;
                 rt.anchoredPosition = anchored;
 
                 _slotImages[i] = slot.GetComponent<Image>();
-                _slotImages[i].sprite = GetCircleSpriteBig();
+                // Edit + Bag are rounded-SQUARE tools; boosters/Settings stay round.
+                if (spec.Type == SlotType.Edit || spec.Type == SlotType.TileBag)
+                {
+                    _slotImages[i].sprite = MenuUI.GetRoundedRectSprite(34);
+                    _slotImages[i].type   = Image.Type.Sliced;
+                }
+                else
+                {
+                    _slotImages[i].sprite = GetCircleSpriteBig();
+                }
                 _slotImages[i].color  = SlotBaseColor(spec.Type);
 
                 var slotBtn = slot.GetComponent<Button>();
@@ -495,8 +595,14 @@ namespace WordDrop
                     iconRT.anchorMin = new Vector2(0.5f, 0.5f);
                     iconRT.anchorMax = new Vector2(0.5f, 0.5f);
                     iconRT.pivot     = new Vector2(0.5f, 0.5f);
-                    iconRT.sizeDelta = new Vector2(SLOT_SIZE * 0.70f, SLOT_SIZE * 0.78f);
+                    iconRT.sizeDelta = new Vector2(slotSize * 0.70f, slotSize * 0.78f);
                     iconRT.anchoredPosition = Vector2.zero;
+                    _slotLabels[i] = null;
+                }
+                else if (spec.Type == SlotType.Edit)
+                {
+                    // EDITS pip panel — "EDITS" label + 3 gold pips (charge readout). No letter, no badge.
+                    BuildEditsPanel(slot, displayFont);
                     _slotLabels[i] = null;
                 }
                 else
@@ -517,10 +623,9 @@ namespace WordDrop
                     labelRT.offsetMax = Vector2.zero;
                 }
 
-                // Charge badge — boosters, Edit, and TileBag have one.
-                // Settings does not.
+                // Charge badge — boosters and TileBag have one. Edit now uses the EDITS pip
+                // panel instead of a numeric badge; Settings has none.
                 bool needsBadge = spec.Type == SlotType.Booster
-                              || spec.Type == SlotType.Edit
                               || spec.Type == SlotType.TileBag;
                 if (needsBadge)
                 {
@@ -536,7 +641,7 @@ namespace WordDrop
                     badgeRT.anchoredPosition = new Vector2(BADGE_OFFSET_X, BADGE_OFFSET_Y);
                     var badgeImg = badgeGO.GetComponent<Image>();
                     badgeImg.sprite = GetCircleSpriteSmall();
-                    badgeImg.color  = new Color(0.95f, 0.30f, 0.30f, 1f);
+                    badgeImg.color  = new Color(0.20f, 0.58f, 0.14f, 1f); // 2026-06-24 Spencer: darker green than SCORED_TINT so the white number reads (bright green washed it out)
                     badgeImg.raycastTarget = false;
 
                     var chargeGO = new GameObject("Charge", typeof(RectTransform));
@@ -584,11 +689,190 @@ namespace WordDrop
         {
             switch (type)
             {
-                case SlotType.Edit:     return new Color(0.16f, 0.22f, 0.32f, 0.92f);
+                case SlotType.Edit:     return new Color(0.10f, 0.27f, 0.50f, 0.95f); // navy panel (matches bench)
                 case SlotType.TileBag:  return new Color(0.18f, 0.25f, 0.20f, 0.92f);
                 case SlotType.Settings: return new Color(0.20f, 0.18f, 0.22f, 0.92f);
                 default:                return new Color(0.18f, 0.12f, 0.28f, 0.92f);
             }
+        }
+
+        /// <summary>Builds the "EDITS" pip panel inside the Edit slot: a title label + a row of
+        /// EDIT_PIP_COUNT gold pips (charge readout). Pips fill/empty with the rewrite count and
+        /// pop with an additive glow when an edit is RESTORED. 2026-06-24 Spencer.</summary>
+        private void BuildEditsPanel(GameObject slot, TMP_FontAsset font)
+        {
+            _editPanelSlot = slot;
+            _lastPipCount  = -1; // first RefreshEditPips just sets state, no animation
+            _editPanelGroup = slot.GetComponent<CanvasGroup>() ?? slot.AddComponent<CanvasGroup>();
+
+            // "EDITS" title (upper portion).
+            var lblGO = new GameObject("EditsLabel", typeof(RectTransform));
+            lblGO.transform.SetParent(slot.transform, false);
+            var lbl = lblGO.AddComponent<TextMeshProUGUI>();
+            var uiFont = GameFont.GetUITMP();   // 2026-06-24: match the HUD font (Montserrat-Black), not the Cartoon display font
+            if (uiFont != null) lbl.font = uiFont;
+            lbl.text = "SWAPS"; // 2026-06-24: edits renamed "swaps" for players (tile-bag swap was cut)
+            lbl.fontSize = 24;
+            lbl.fontStyle = TMPro.FontStyles.Bold;                       // match the NEXT label (bold)
+            lbl.alignment = TextAlignmentOptions.Center;
+            lbl.color = new Color(0.78f, 0.78f, 0.88f, 0.95f);          // match the NEXT label colour
+            lbl.raycastTarget = false;
+            var lrt = lbl.rectTransform;
+            lrt.anchorMin = new Vector2(0.05f, 0.50f); lrt.anchorMax = new Vector2(0.95f, 0.94f);
+            lrt.offsetMin = Vector2.zero; lrt.offsetMax = Vector2.zero;
+
+            // Pip row (lower portion).
+            _editPips     = new Image[EDIT_PIP_COUNT];
+            _editPipRects = new RectTransform[EDIT_PIP_COUNT];
+            const float pipW = 0.26f, gap = 0.06f;
+            float totalW = EDIT_PIP_COUNT * pipW + (EDIT_PIP_COUNT - 1) * gap;
+            float startX = (1f - totalW) * 0.5f;
+            for (int p = 0; p < EDIT_PIP_COUNT; p++)
+            {
+                var pipGO = new GameObject($"Pip{p}", typeof(RectTransform), typeof(Image));
+                pipGO.transform.SetParent(slot.transform, false);
+                var prt = pipGO.GetComponent<RectTransform>();
+                float x0 = startX + p * (pipW + gap);
+                prt.anchorMin = new Vector2(x0, 0.12f);
+                prt.anchorMax = new Vector2(x0 + pipW, 0.42f);
+                prt.offsetMin = Vector2.zero; prt.offsetMax = Vector2.zero;
+                var pimg = pipGO.GetComponent<Image>();
+                pimg.sprite = MenuUI.GetRoundedRectSprite(16);
+                pimg.type   = Image.Type.Sliced;
+                pimg.color  = PIP_EMPTY;
+                pimg.raycastTarget = false;
+                _editPips[p]     = pimg;
+                _editPipRects[p] = prt;
+            }
+
+            // "watch ad for swaps" hint — overlays the pip row, shown only when out of swaps
+            // AND a rewarded ad is on offer (see RefreshEditPips). Green = free/positive.
+            var hintGO = new GameObject("AdHint", typeof(RectTransform));
+            hintGO.transform.SetParent(slot.transform, false);
+            _editAdHint = hintGO.AddComponent<TextMeshProUGUI>();
+            if (font != null) _editAdHint.font = font;
+            _editAdHint.text = "▶ FREE +3";
+            _editAdHint.fontSize = 28;
+            _editAdHint.alignment = TextAlignmentOptions.Center;
+            _editAdHint.color = new Color(0.45f, 1f, 0.45f, 1f);
+            _editAdHint.raycastTarget = false;
+            var hrt = _editAdHint.rectTransform;
+            hrt.anchorMin = new Vector2(0.04f, 0.08f); hrt.anchorMax = new Vector2(0.96f, 0.46f);
+            hrt.offsetMin = Vector2.zero; hrt.offsetMax = Vector2.zero;
+            hintGO.SetActive(false);
+        }
+
+        /// <summary>Refreshes the EDITS pips to reflect the current rewrite count. Newly-FILLED pips
+        /// (an edit was restored) pop with an additive gold glow burst.</summary>
+        private void RefreshEditPips(int count)
+        {
+            if (_editPips == null) return;
+
+            // Out of swaps AND a rewarded ad is on offer → show the "watch ad" affordance instead of dim.
+            bool adOffer = count <= 0 && IsSwapAdEligible();
+
+            for (int p = 0; p < _editPips.Length; p++)
+            {
+                bool filled    = p < count;
+                bool wasFilled = p < _lastPipCount;
+                if (_editPips[p] != null)
+                {
+                    _editPips[p].gameObject.SetActive(!adOffer); // hide pips behind the ad hint
+                    _editPips[p].color = filled ? PIP_FULL : PIP_EMPTY;
+                }
+                if (filled && !wasFilled && _lastPipCount >= 0)
+                    AnimateEditPipGain(p); // restored this pip → celebrate (green glow)
+            }
+            _lastPipCount = count;
+
+            if (_editAdHint != null) _editAdHint.gameObject.SetActive(adOffer);
+
+            // Panel alpha: bright when you have swaps OR when the ad offer is live (inviting);
+            // dimmed only when you're out AND no ad is available.
+            if (_editPanelGroup != null)
+            {
+                _editPanelGroup.DOKill();
+                _editPanelGroup.DOFade(count > 0 || adOffer ? 1f : 0.45f, 0.2f);
+            }
+
+            // Gentle invite pulse while the ad offer is live; resting otherwise.
+            if (_editPanelSlot != null)
+            {
+                _editPulseTween?.Kill();
+                var t = _editPanelSlot.transform;
+                if (adOffer)
+                {
+                    t.localScale = Vector3.one;
+                    _editPulseTween = t.DOScale(1.06f, 0.6f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
+                }
+                else t.localScale = Vector3.one;
+            }
+        }
+
+        /// <summary>True when the player is out of swaps, swaps are unlocked (taught), and a rewarded
+        /// ad is available — i.e. we can offer "watch an ad to refill swaps". 2026-06-24 Spencer.</summary>
+        private bool IsSwapAdEligible()
+        {
+            if (TutorialLocks.EditLocked) return false;     // not during onboarding (before swaps are taught)
+            if (AdManager.Instance == null) return false;   // no ad system available
+            int swaps = MatchController.Instance != null
+                ? MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN) : 0;
+            return swaps <= 0;
+        }
+
+        /// <summary>Opt-in rewarded ad → refill swaps to the survival cap. Self-limits: refilling takes
+        /// you off 0, so the offer only reappears after you've spent them again. 2026-06-24 Spencer.</summary>
+        private void OfferSwapAd()
+        {
+            if (_swapAdInFlight || !IsSwapAdEligible()) return;
+            if (AdManager.Instance == null || MatchController.Instance == null) return;
+            _swapAdInFlight = true;
+            AdManager.Instance.ShowRewardedAd(onRewardGranted: () =>
+            {
+                // RefundRewriteCharge self-caps at the survival cap (3); call to-cap.
+                for (int k = 0; k < EDIT_PIP_COUNT; k++)
+                    MatchController.Instance.RefundRewriteCharge(MatchController.PLAYER_HUMAN);
+                GameAudio.Instance?.PlayPersonalBest();
+                _swapAdInFlight = false; // a real async SDK should also reset on ad-failed
+            });
+        }
+
+        /// <summary>Pop + additive-glow burst on a pip that just got restored.</summary>
+        private void AnimateEditPipGain(int p)
+        {
+            if (_editPipRects == null || p < 0 || p >= _editPipRects.Length) return;
+            var rt = _editPipRects[p];
+            if (rt == null) return;
+            rt.DOKill();
+            rt.localScale = Vector3.one * 0.45f;
+            rt.DOScale(1f, 0.34f).SetEase(Ease.OutBack, 3.2f);
+            SpawnEditPipGlow(rt);
+        }
+
+        /// <summary>Fake-bloom: an additive gold glow behind the pip that expands and fades out.
+        /// Over the dark navy panel the additive blend reads as a real glow. Self-destroys.</summary>
+        private void SpawnEditPipGlow(RectTransform pip)
+        {
+            if (_editPanelSlot == null || pip == null) return;
+            Sprite glow = LoadGlowSprite();
+            if (glow == null) return;
+            var gGO = new GameObject("PipGlow", typeof(RectTransform), typeof(Image));
+            gGO.transform.SetParent(_editPanelSlot.transform, false);
+            gGO.transform.SetSiblingIndex(0); // behind the pips
+            var grt = (RectTransform)gGO.transform;
+            grt.anchorMin = pip.anchorMin; grt.anchorMax = pip.anchorMax;
+            grt.offsetMin = new Vector2(-34f, -34f); grt.offsetMax = new Vector2(34f, 34f); // spill past the pip
+            var gimg = gGO.GetComponent<Image>();
+            gimg.sprite = glow;
+            gimg.color  = new Color(0.40f, 1f, 0.35f, 0.95f); // green = "you gained an edit"
+            gimg.raycastTarget = false;
+            var addMat = LoadAdditiveGlowMaterial();
+            if (addMat != null) gimg.material = addMat;
+            grt.localScale = Vector3.one * 0.5f;
+            var sq = DOTween.Sequence();
+            sq.Append(grt.DOScale(1.7f, 0.48f).SetEase(Ease.OutCubic));
+            sq.Join(gimg.DOFade(0f, 0.48f).SetEase(Ease.InQuad));
+            sq.OnComplete(() => { if (gGO != null) Destroy(gGO); });
         }
 
         // ── Aim-mode canvas ─────────────────────────────────────────────────────
@@ -697,13 +981,17 @@ namespace WordDrop
             xRT.anchorMin = new Vector2(0.5f, 0f);
             xRT.anchorMax = new Vector2(0.5f, 0f);
             xRT.pivot     = new Vector2(0.5f, 0.5f);
-            xRT.sizeDelta = new Vector2(SLOT_SIZE, SLOT_SIZE);
-            // Find the TileBag slot's anchored position so the X lines up.
+            xRT.sizeDelta = new Vector2(FLANK_SIZE, FLANK_SIZE); // matches the (smaller) bag slot it overlays
+            // Line the X up over the TileBag slot's ACTUAL position (the bag now flanks
+            // the tile holder rather than sitting in the bench row). Read the built slot's
+            // anchoredPosition directly; fall back to the computed flank position.
             int bagIndex = 0;
             for (int i = 0; i < DISPLAY_ORDER.Length; i++)
                 if (DISPLAY_ORDER[i].Type == SlotType.TileBag) { bagIndex = i; break; }
-            float bagXPsd = SLOT_LEFT_X + bagIndex * SLOT_STEP;
-            xRT.anchoredPosition = PsdAnchoredCenter(bagXPsd, SLOT_TOP_Y, SLOT_SIZE, SLOT_SIZE);
+            Vector2 bagAnchored = (_slotButtons != null && bagIndex < _slotButtons.Length && _slotButtons[bagIndex] != null)
+                ? _slotButtons[bagIndex].GetComponent<RectTransform>().anchoredPosition
+                : PsdAnchoredCenter(BAG_X_PSD, FLANK_Y_PSD, SLOT_SIZE, SLOT_SIZE);
+            xRT.anchoredPosition = bagAnchored;
 
             var xImg = _swapModeXButton.GetComponent<Image>();
             xImg.sprite = GetCircleSpriteBig();
@@ -1045,7 +1333,7 @@ namespace WordDrop
                 if (btn != null)
                 {
                     if (IsSlotLocked(spec))         btn.interactable = false; // onboarding lock
-                    else if (isEditSlot)            btn.interactable = false;
+                    else if (isEditSlot)            btn.interactable = IsSwapAdEligible(); // tappable only to offer the swap-refill ad
                     else if (isAim && !isArmedSlot) btn.interactable = false;
                     else                            btn.interactable = true;
                 }
@@ -1274,13 +1562,10 @@ namespace WordDrop
                 }
                 case SlotType.Edit:
                 {
-                    int charges = MatchController.Instance != null
-                        ? MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN)
-                        : 0;
-                    if (charges > 0)
-                        Debug.Log("[BoosterHUD] Edit tapped — wiring pending (Commit 3)");
-                    else
-                        OnBuyMoreTapped(spec);
+                    // The SWAPS panel is a readout (editing is via tapping a board tile). The only tap
+                    // it accepts is the out-of-swaps rewarded-ad refill offer.
+                    if (IsSwapAdEligible())
+                        OfferSwapAd();
                     break;
                 }
                 case SlotType.TileBag:

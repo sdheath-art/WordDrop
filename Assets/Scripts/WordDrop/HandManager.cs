@@ -47,19 +47,22 @@ namespace WordDrop
         private const float PSD_CANVAS_H   = 2556f;
         // Hand pill — rides 87 PSD below board bottom (drag-distance rule).
         // Board Y=500 in GridManager → bottom 1846 → pill Y=1933.
+        // 2026-06-24 (Spencer): whole holder raised 45 PSD (pill/cards/NEXT shifted up
+        // together) so the Edit + Bag tools can hang attached UNDER the panel's bottom
+        // edge with clean room above the booster row. Still ~22px clear of the board panel.
         private const float PSD_PILL_X     = 137f;
-        private const float PSD_PILL_Y     = 1933f;
+        private const float PSD_PILL_Y     = 1888f;   // was 1933 (−45)
         private const float PSD_PILL_W     = 905f;
         private const float PSD_PILL_H     = 200f;
         // Hand cards (4 of them, normalized step)
         private const float PSD_CARD_X0    = 171f;
         private const float PSD_CARD_STEP  = 169.67f;
-        private const float PSD_CARD_Y     = 1958f;
+        private const float PSD_CARD_Y     = 1913f;   // was 1958 (−45)
         private const float PSD_CARD_W     = 149f;
         private const float PSD_CARD_H     = 151f;
         // NEXT preview
         private const float PSD_NEXT_X     = 898f;
-        private const float PSD_NEXT_Y     = 1999f;
+        private const float PSD_NEXT_Y     = 1954f;   // was 1999 (−45)
         private const float PSD_NEXT_W     = 108f;
         private const float PSD_NEXT_H     = 109f;
 
@@ -100,6 +103,18 @@ namespace WordDrop
 
         public static HandManager Instance { get; private set; }
         public GameObject[] GetCardObjects() => _cardObjects;
+
+        /// <summary>World-space bounds of the control-tray pill (the rounded hand holder), for the
+        /// tutorial spotlight to cut a matching rounded hole. Null if the tray isn't built. 2026-06-25.</summary>
+        public Bounds? ControlTrayWorldBounds
+        {
+            get
+            {
+                if (_controlTray == null) return null;
+                var sr = _controlTray.GetComponent<SpriteRenderer>();
+                return sr != null ? sr.bounds : (Bounds?)null;
+            }
+        }
 
         // ── Runtime state ─────────────────────────────────────────────────────────
 
@@ -1129,7 +1144,13 @@ namespace WordDrop
                                     // Swap to drag sprite (wild slots keep their wild sprite)
                                     SpriteRenderer dragSR = _cardObjects[_touchCardIndex].GetComponent<SpriteRenderer>();
                                     if (dragSR != null)
+                                    {
                                         dragSR.sprite = GetSlotDragSprite(_touchCardIndex);
+                                        // green-tint the dragged tile (non-wild) to match the scored/
+                                        // selected look; wild keeps white. Reset on the next hand
+                                        // refresh after release. 2026-06-10 Spencer.
+                                        dragSR.color = IsWildSlotChecked(_touchCardIndex) ? Color.white : Tile.SCORED_TINT;
+                                    }
                                 }
 
 //                                 Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
@@ -1247,6 +1268,17 @@ namespace WordDrop
                         int dropCol = _grid.WorldXToColumn(worldPos.x);
                         bool overBoard = worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f;
 
+                        // Tutorial forgiveness: the taught move must be trivially easy. On an
+                        // (often empty) tutorial board, a single-column release-gate is finicky —
+                        // a near-miss snaps back and reads as "it won't drop". So redirect ANY
+                        // release over the board with the allowed card into the gated column.
+                        if (TutorialManager.AllowedColumn >= 0 && overBoard
+                            && (TutorialManager.AllowedCardIndex < 0
+                                || _touchCardIndex == TutorialManager.AllowedCardIndex))
+                        {
+                            dropCol = TutorialManager.AllowedColumn;
+                        }
+
                         // Tutorial restrictions on drag-to-drop
                         bool tutColOk  = TutorialManager.AllowedColumn < 0    || dropCol == TutorialManager.AllowedColumn;
                         bool tutCardOk = TutorialManager.AllowedCardIndex < 0 || _touchCardIndex == TutorialManager.AllowedCardIndex;
@@ -1294,6 +1326,13 @@ namespace WordDrop
                         }
                         else
                         {
+                            if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
+                                Debug.Log($"[Tutorial] drop snap-back — dropCol={dropCol} overBoard={overBoard} " +
+                                    $"card={_touchCardIndex} colAvail={(dropCol >= 0 && _grid.IsColumnAvailable(dropCol))} " +
+                                    $"tutColOk={tutColOk} tutCardOk={tutCardOk} " +
+                                    $"matchActive={(MatchController.Instance != null && MatchController.Instance.IsMatchActive)} " +
+                                    $"curPlayer={(MatchController.Instance != null ? MatchController.Instance.CurrentPlayer : -9)} " +
+                                    $"done={(MatchController.Instance != null && MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))}");
                             SnapCardBack(_touchCardIndex);
                         }
 
@@ -1388,7 +1427,11 @@ namespace WordDrop
             _cardObjects[index].transform.localScale = GetCardBaseScale();
             // Reset sprite back to rest state (wild slots return to wild sprite)
             SpriteRenderer csr = _cardObjects[index].GetComponent<SpriteRenderer>();
-            if (csr != null) csr.sprite = GetSlotRestSprite(index);
+            if (csr != null)
+            {
+                csr.sprite = GetSlotRestSprite(index);
+                csr.color  = Color.white; // clear the green drag tint (1132) so a cancelled drag doesn't leave the card green. 2026-06-10
+            }
             // Reset shadow to rest state
             if (index < HAND_SIZE && _cardShadows[index] != null)
             {
@@ -1728,6 +1771,10 @@ namespace WordDrop
 //                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is stone — cannot rewrite.");
                 return;
             }
+            // Frozen (ice) tiles are LOCKED — can't rewrite their letter until the ice thaws.
+            // Else you'd trivially edit your way around the clear-the-ice challenge. 2026-06-15 Spencer.
+            if (cell.IsFrozen)
+                return;
 
             var primed = RulesEngine.Instance.PrimedRegistry
                 .GetPrimedWordsContaining(new Vector2Int(col, row));
@@ -1806,6 +1853,7 @@ namespace WordDrop
 
             // Cannot swap special tiles
             if (cell1.IsStone || cell2.IsStone) return false;
+            if (cell1.IsFrozen || cell2.IsFrozen) return false; // ice tiles locked until thawed (2026-06-15 Spencer)
             if (cell1.IsSwapRefill || cell1.IsEditRefill || cell1.IsWildRefill) return false;
             if (cell2.IsSwapRefill || cell2.IsEditRefill || cell2.IsWildRefill) return false;
             if (cell1.IsWild || cell2.IsWild) return false;
@@ -1854,6 +1902,14 @@ namespace WordDrop
             mc.RecordEditCells(
                 new Vector2Int(col1, row1),
                 new Vector2Int(col2, row2));
+
+            // RecordEditCells pins the tier-3 burst origin to cells[0] (col1,row1). That's right for a
+            // single-cell rewrite, but a 2-cell SWAP has no single trigger cell — the word-forming letter
+            // can land in EITHER swapped cell, so cells[0] often fires the burst at the wrong swapped corner
+            // (Spencer 2026-06-17: swapped to make a word, glow erupted from the other corner, not the word).
+            // Clear it so the burst falls back to the DETONATING WORD's center (WordDropFX:1459), i.e. it
+            // erupts from the word you actually formed.
+            WordDropFX.LastTriggerCell = null;
 
             // Swap the letters in data
             cell1.Letter = letter2;
@@ -2140,6 +2196,7 @@ namespace WordDrop
 
                             case RulesEngine.ResolutionPhase.Exploding:
                             {
+                                DefrostThawedTiles(grid, step); // ICE: thaw frozen tiles caught in this detonation (survive + defrost)
                                 if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                                 {
                                     var dyingTiles = new System.Collections.Generic.List<Tile>();
@@ -2165,7 +2222,7 @@ namespace WordDrop
                                         FireTileFlashBoxes(dyingTiles);
                                         int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
                                         yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
-                                        yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
+                                        yield return ExplodeWordsThenSplash(step, dyingTiles, step.ChainDepth, wLen);
                                     }
                                     grid.RemoveTiles(step.ExplodedCells);
 
@@ -2518,6 +2575,7 @@ namespace WordDrop
                             if (ChainCounter.Instance != null)
                                 ChainCounter.Instance.OnDetonation(step.ChainDepth);
 
+                            DefrostThawedTiles(grid, step); // ICE: thaw frozen tiles caught in this detonation (survive + defrost)
                             if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                             {
                                 var dyingTiles = new System.Collections.Generic.List<Tile>();
@@ -2542,7 +2600,7 @@ namespace WordDrop
                                 if (dyingTiles.Count > 0 && WordDropFX.Instance != null)
                                 {
                                     yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
-                                    yield return WordDropFX.Instance.PlayExplosion(dyingTiles, 0);
+                                    yield return ExplodeWordsThenSplash(step, dyingTiles, step.ChainDepth, dyingTiles.Count);
                                 }
                                 grid.RemoveTiles(step.ExplodedCells);
 
@@ -2676,6 +2734,22 @@ namespace WordDrop
         /// the effect as a moment-to-moment surprise rather than a uniform overlay.
         /// Tune TILE_FLASH_BOX_CHANCE to taste.
         /// </summary>
+        // ICE: defrost any frozen tiles caught in this detonation step. Their IsFrozen was already
+        // cleared in DoExplode/TryThawCell and they are NOT in ExplodedCells (they survive), so the
+        // booster resolution sequences here (swap/edit/rewrite) must defrost + clear the overlay
+        // WITHOUT routing them through the explode animation. Mirrors GameVisualBridge. 2026-06-12.
+        private void DefrostThawedTiles(GridManager grid, RulesEngine.StepResult step)
+        {
+            if (grid == null || step == null || step.ThawedCells == null || step.ThawedCells.Count == 0) return;
+            for (int i = 0; i < step.ThawedCells.Count; i++)
+            {
+                Tile thawed = null;
+                try { thawed = grid.GetTile(step.ThawedCells[i].x, step.ThawedCells[i].y); }
+                catch { /* ignore */ }
+                if (thawed != null) thawed.PlayDefrost();
+            }
+        }
+
         private const float TILE_FLASH_BOX_CHANCE = 0.6f; // 60% of detonations show boxes
         private void FireTileFlashBoxes(IList<Tile> dying)
         {
@@ -3404,6 +3478,7 @@ namespace WordDrop
                         if (ChainCounter.Instance != null)
                             ChainCounter.Instance.OnDetonation(step.ChainDepth);
 
+                        DefrostThawedTiles(grid, step); // ICE: thaw frozen tiles caught in this detonation (survive + defrost)
                         if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                         {
                             var dyingTiles = new System.Collections.Generic.List<Tile>();
@@ -3479,7 +3554,7 @@ namespace WordDrop
                             {
                                 int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
                                 yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
-                                yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
+                                yield return ExplodeWordsThenSplash(step, dyingTiles, step.ChainDepth, wLen);
                             }
                             grid.RemoveTiles(step.ExplodedCells);
 //                             Debug.Log($"[Rewrite] Exploded {step.ExplodedCells.Count} tiles");
@@ -4053,6 +4128,39 @@ namespace WordDrop
             return FullTurnSequence(col, letter, handSlot, isWild: false);
         }
 
+        /// <summary>Explodes a detonation step's tiles, splitting WORD tiles (which flash green) from
+        /// big-moment SPLASH collateral (which stays white). Word membership comes from the step's
+        /// scored-word + triggered-word cells — reliable even for cascade/rise words that detonate
+        /// UNPRIMED (so it can't be done by primed state). 2026-06-23 Spencer.</summary>
+        private System.Collections.IEnumerator ExplodeWordsThenSplash(
+            RulesEngine.StepResult step, List<Tile> dying, int chainDepth, int wLen)
+        {
+            if (WordDropFX.Instance == null || dying == null || dying.Count == 0) yield break;
+
+            var wordCells = new HashSet<Vector2Int>();
+            if (step.FormedWordCells != null)
+                foreach (var c in step.FormedWordCells)
+                    wordCells.Add(c);
+
+            // SINGLE explosion (fixes the double-pop / fake-cascade regression: the old version called
+            // PlayExplosion TWICE — once for word tiles, once for splash — which read as two pops).
+            // Pre-green ONLY the formed-word tiles with the flat scored tint (no bloom/glow/decay — reverted
+            // per Spencer 2026-06-23), then detonate everything in ONE call with wordFlash:false. Splash
+            // tiles are left untouched → they pop white.
+            if (wordCells.Count > 0)
+            {
+                for (int i = 0; i < dying.Count; i++)
+                {
+                    var t = dying[i];
+                    if (t == null) continue;
+                    if (wordCells.Contains(new Vector2Int(t.Col, t.Row)) && !t.IsShowingScoredSprite)
+                        t.SetScoredSprite(true); // pre-green the word tile; splash tiles are left white
+                }
+            }
+
+            yield return WordDropFX.Instance.PlayExplosion(dying, chainDepth, wLen, wordFlash: false);
+        }
+
         private IEnumerator FullTurnSequence(int col, char letter, int handSlot, bool isWild)
         {
             // Mark processing so BlitzManager defers game-over until resolution completes
@@ -4427,6 +4535,7 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.Exploding:
                         // Track detonation bonus (difference between step total and what we've counted)
                         detonationBonusAccum += step.TotalScore - (baseScoreAccum + chainBonusAccum + detonationBonusAccum);
+                        DefrostThawedTiles(grid, step); // ICE: thaw frozen tiles caught in this detonation (survive + defrost)
                         if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                         {
                             List<Tile> dying = new List<Tile>();
@@ -4512,7 +4621,10 @@ namespace WordDrop
                             {
                                 int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dying.Count;
                                 yield return WordDropFX.MaybeBigPopAndHold(dying);
-                                yield return WordDropFX.Instance.PlayExplosion(dying, step.ChainDepth, wLen);
+                                // Split into WORD tiles (flash green) and SPLASH collateral (stay white) by
+                                // the step's word-cell set — reliable for cascade words that detonate unprimed.
+                                // 2026-06-23 Spencer (was: one PlayExplosion(dying) that greened splash too).
+                                yield return ExplodeWordsThenSplash(step, dying, step.ChainDepth, wLen);
                             }
 
                             grid.RemoveTiles(step.ExplodedCells);
@@ -5056,6 +5168,11 @@ namespace WordDrop
             PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
             if (hand != null)
             {
+                // HiddenWord completability safety net: rig a still-needed letter into the next draw if
+                // it's gone fully unavailable (board + hand + next, wilds count as backup). Runs BEFORE
+                // EnsureCachedNextLetter so the rig lands on the upcoming tile. 2026-06-17 Spencer.
+                MaybeRigHiddenLetter();
+
                 // Ensure next tile cache is populated before refreshing visuals
                 if (MatchController.Instance.CurrentPlayer == MatchController.PLAYER_HUMAN)
                     hand.EnsureCachedNextLetter(MatchController.Instance.Bag);
@@ -5066,6 +5183,48 @@ namespace WordDrop
 
                 RefreshAllCardVisuals();
 //                 Debug.Log($"[HandManager] Hand refreshed: {new string(_hand)}");
+            }
+        }
+
+        /// <summary>HiddenWord anti-frustration: if a still-needed mystery letter has ZERO availability
+        /// anywhere (no copies on the board, none in hand, not the next tile, and no wild to cover it),
+        /// force it into the next draw so the word can always be finished. Safety-net only — does nothing
+        /// while you still have a path. 2026-06-17 Spencer.</summary>
+        private void MaybeRigHiddenLetter()
+        {
+            var mc = MatchController.Instance;
+            if (mc == null || mc.Bag == null || mc.Bag.HasRiggedNext) return; // don't stack rigs
+            if (!(ObjectiveManager.Instance?.Active is HiddenWordObjective obj)) return;
+            var needed = obj.NeededLetters();
+            if (needed.Count == 0) return;
+
+            var hand = mc.GetHand(MatchController.PLAYER_HUMAN);
+            char nextCached = hand != null ? hand.CachedNextLetter : '\0';
+
+            // NOTE 2026-06-24 Spencer: we deliberately do NOT bail just because a wild exists.
+            // A wild is only a usable substitute if you can also FORM a valid word that places it
+            // as the needed letter — on a near-empty board that's often impossible, which softlocked
+            // a HiddenWord (the missing letters had zero real copies AND zero way to deploy the wild,
+            // so the level couldn't be finished). The per-letter check below only rigs a letter that
+            // has zero REAL copies anywhere, so rigging one in is always harmless; the wild stays a
+            // bonus on top. (Old code returned early whenever any wild was present.)
+            foreach (char L in needed)
+            {
+                char up = char.ToUpperInvariant(L);
+                bool avail = char.ToUpperInvariant(nextCached) == up;
+                if (!avail && hand != null)
+                    foreach (char hc in hand.GetAllSlots()) if (char.ToUpperInvariant(hc) == up) { avail = true; break; }
+                if (!avail && GridManager.Instance != null)
+                    for (int c = 0; c < GridManager.COLS && !avail; c++)
+                        for (int r = 0; r < GridManager.ROWS && !avail; r++)
+                        { var t = GridManager.Instance.GetTile(c, r); if (t != null && !t.IsWild && char.ToUpperInvariant(t.Letter) == up) avail = true; }
+
+                if (!avail)
+                {
+                    mc.Bag.ForceNextDraw(up);
+                    Debug.Log($"[HiddenSafetyNet] '{up}' unavailable everywhere — rigged into the next draw.");
+                    return; // one at a time
+                }
             }
         }
 
@@ -5296,7 +5455,7 @@ namespace WordDrop
             int radius = Mathf.Min(texW, texH) / 8;
 
             // Same material family as board — slightly lighter than board outer
-            Color trayColor = new Color(0.10f, 0.27f, 0.50f, 1.0f); // 2026-06-02: deep ocean blue (was #391D78 purple) — matches the new HUD bar; candy-palette chrome.
+            Color trayColor = new Color(0.10f, 0.27f, 0.50f, 1.0f); // deep ocean blue — matches the HUD bar / bench; candy-palette chrome.
             Sprite traySprite = TileRenderer.CreateSolidRoundedRect(texW, texH, radius, trayColor);
 
             _controlTray = new GameObject("ControlTray");
@@ -5326,8 +5485,12 @@ namespace WordDrop
             int radius  = texSize / 7;
             int border  = Mathf.Max(3, texSize / 16);
 
-            // Try loading hand-drawn sprites
-            Sprite loadedNormal   = Resources.Load<Sprite>("Tiles/white5@2x");
+            // Try loading hand-drawn sprites — the regular card is the baked glossy tile
+            // (white_glossy), chosen over the tester PSD in the A/B compare. whiteRef2 is the bounds
+            // reference; _spriteNormal is set to the glossy sprite in the build block below. 2026-06-10.
+            Sprite whiteRef2 = Resources.Load<Sprite>("Tiles/white5@2x");
+            float refBounds2 = (whiteRef2 != null && whiteRef2.bounds.size.x > 0.0001f) ? whiteRef2.bounds.size.x : 1f;
+            Sprite loadedNormal = whiteRef2;
             Sprite loadedSelected = Resources.Load<Sprite>("Tiles/green_tile2@2x");
             // 2026-06-04 Spencer: new glossy green (greeny) — trimmed to the tile (100%),
             // full rect at a PPU matched to white5 so it's a true drop-in / same size.
@@ -5365,7 +5528,9 @@ namespace WordDrop
                     // bounds == the tile → true drop-in (bounds-based sizing matches white5).
                     float gm = (1f - GLOSSY_FILL) * 0.5f * glossyTex.width;
                     float gcw = GLOSSY_FILL * glossyTex.width;
-                    _spriteGlossy = Sprite.Create(glossyTex, new Rect(gm, gm, gcw, gcw),
+                    // Regular card = the baked glossy tile. Assign to _spriteNormal so cards, the next
+                    // tile, AND the selected/drag green tint all render on the glossy tile. 2026-06-10.
+                    _spriteNormal = Sprite.Create(glossyTex, new Rect(gm, gm, gcw, gcw),
                                                   new Vector2(0.5f, 0.5f), glossyPPU);
                     // Shadow uses the FULL frame at the same PPU → bounds = 1/FILL × tile
                     // (~1.25× the tile), so at child scale 1.0 it feathers just past the edge.
@@ -5393,6 +5558,7 @@ namespace WordDrop
                         _spriteWild = Sprite.Create(wildSwapTex, new Rect(gm, gm, gcw, gcw),
                                                     new Vector2(0.5f, 0.5f), glossyPPU);
                 }
+                _spriteGlossy = null; // cards + next read _spriteNormal (the glossy tile) directly
             }
 
             // Wild halo — loaded once, reused across all hand slots.
@@ -6036,7 +6202,9 @@ namespace WordDrop
             // with the card), instead of reverting to the old hand-drawn wild sprite.
             if (IsWildSlotChecked(index))
                 return Tile.IridescentWild ? _spriteNormal : (_spriteWild ?? _spriteNormal);
-            return _spriteSelected ?? _spriteNormal;
+            // Non-wild drag: the LIVE tile (test_tile); the green comes from a color tint applied
+            // at the drag site, not the old greeny sprite. 2026-06-10 Spencer.
+            return _spriteNormal;
         }
 
         private bool IsWildSlotChecked(int index)
@@ -6104,16 +6272,27 @@ namespace WordDrop
                 // 2026-06-04 Spencer: rack wild uses the SAME normal white glossy tile that
                 // every other card uses (the wild identity reads from the aura + "?" overlay).
                 _cardSRs[index].sprite = _spriteGlossy ?? _spriteNormal;
+                _cardSRs[index].color  = Color.white; // wild is NEVER green — clear any stray scored tint. 2026-06-10
             }
             else if (_swapModeActive)
             {
                 _cardSRs[index].sprite = isSelected ? _spriteSwapSelected : _spriteSwap;
+                _cardSRs[index].color  = Color.white;
             }
             else
             {
-                // 2026-06-04 Spencer: normal white card → baked glossy tile (selected
-                // keeps its green sprite until that state is rebaked).
-                _cardSRs[index].sprite = isSelected ? _spriteSelected : (_spriteGlossy ?? _spriteNormal);
+                // Selected card: show the LIVE tile (test_tile) with a green TINT instead of the
+                // old separate greeny sprite — matches the new scored-green look. 2026-06-10 Spencer.
+                if (isSelected)
+                {
+                    _cardSRs[index].sprite = _spriteNormal;
+                    _cardSRs[index].color  = Tile.SCORED_TINT;
+                }
+                else
+                {
+                    _cardSRs[index].sprite = _spriteGlossy ?? _spriteNormal;
+                    _cardSRs[index].color  = Color.white;
+                }
             }
 
             // Update letter text. Default to a flat color + the tile font; the wild
@@ -7072,6 +7251,7 @@ namespace WordDrop
                             if (ChainCounter.Instance != null)
                                 ChainCounter.Instance.OnDetonation(step.ChainDepth);
 
+                            DefrostThawedTiles(grid, step); // ICE: thaw frozen tiles caught in this detonation (survive + defrost)
                             if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                             {
                                 var dyingTiles = new List<Tile>();
@@ -7099,7 +7279,7 @@ namespace WordDrop
                                 {
                                     int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dyingTiles.Count;
                                     yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
-                                    yield return WordDropFX.Instance.PlayExplosion(dyingTiles, step.ChainDepth, wLen);
+                                    yield return ExplodeWordsThenSplash(step, dyingTiles, step.ChainDepth, wLen);
                                 }
 
                                 grid.RemoveTiles(step.ExplodedCells);

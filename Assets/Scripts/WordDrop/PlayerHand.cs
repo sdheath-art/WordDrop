@@ -405,8 +405,16 @@ namespace WordDrop
         // The player still has to FIND and PLACE the word — the skill is intact.
         // Scales up further during drought so the player never gets completely stuck.
         // EXPERIMENT: reduced from 0.55/0.85 — revert if game feels too hard
-        private const float SURVIVAL_BOARD_ASSIST_BASE    = 0.38f; // was 0.55
-        private const float SURVIVAL_BOARD_ASSIST_DROUGHT = 0.85f; // kept — drought should still help
+        // 2026-06-15 (validation MVP): the BASE is now a runtime-overridable static so the level
+        // sequencer (LevelTable via ObjectiveManager) can set per-level assist frequency
+        // (0.5 high → 0.2 low). Defaults to the tuned 0.38 when no level override is set.
+        public  static float SURVIVAL_BOARD_ASSIST_BASE    = 0.38f; // was 0.55 — now level-driven
+        private const  float SURVIVAL_BOARD_ASSIST_BASE_DEFAULT = 0.38f;
+        private const  float SURVIVAL_BOARD_ASSIST_DROUGHT = 0.85f; // kept — drought should still help
+
+        /// <summary>Level sequencer sets per-level assist frequency; pass &lt; 0 to restore the default.</summary>
+        public static void SetBoardAssistBase(float freq)
+            => SURVIVAL_BOARD_ASSIST_BASE = freq < 0f ? SURVIVAL_BOARD_ASSIST_BASE_DEFAULT : Mathf.Clamp01(freq);
 
         private char GovernedDraw(TileBag bag, int slotIndex)
         {

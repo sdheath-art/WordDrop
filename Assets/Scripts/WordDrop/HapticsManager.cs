@@ -49,6 +49,21 @@ namespace WordDrop
             Lofelt.NiceVibrations.HapticPatterns.PlayEmphasis(0.60f, 0.55f);
         }
 
+        /// <summary>Detonation impact (= Strong), DEBOUNCED ~100ms. Explosions are fired from two
+        /// code paths (GameVisualBridge's Exploding step + WordDropFX's tier/cascade pop FX); some
+        /// blasts only hit one of them. Calling this from BOTH guarantees every explosion buzzes,
+        /// while the debounce collapses the same blast's two calls into ONE. Cascade LAYERS are
+        /// ~0.4s apart, so each still fires. 2026-06-11 Spencer.</summary>
+        private static float _lastExplosionTime = -1f;
+        public static void ExplosionImpact()
+        {
+            if (!_enabled) return;
+            float now = Time.unscaledTime;
+            if (_lastExplosionTime >= 0f && now - _lastExplosionTime < 0.10f) return; // same-blast double → one
+            _lastExplosionTime = now;
+            Lofelt.NiceVibrations.HapticPatterns.PlayEmphasis(0.60f, 0.55f);
+        }
+
         // ── Aliases for new call sites (now route to new semantic API) ──
 
         public static void TileLand() => TilePlacedOnBoard();
@@ -170,8 +185,19 @@ namespace WordDrop
         /// <summary>Swap card action. Same UI-crisp feel as edit.</summary>
         public static void SwapConfirm() => Emphasis(0.30f, 0.75f);
 
-        /// <summary>Standard UI button (Play, Stage Select, Settings).</summary>
-        public static void ButtonTap() => Emphasis(0.25f, 0.70f);
+        /// <summary>Standard UI button (Play, Stage Select, Settings). Debounced ~80ms so it can be
+        /// wired into BOTH the click-SOUND path (GameAudio.PlayButtonClick) and the press-ANIMATION
+        /// path (UIAnimations.ButtonPress) — buttons that fire both still get ONE haptic per press,
+        /// and buttons that fire only one are still covered. 2026-06-10.</summary>
+        private static float _lastButtonTapTime = -1f;
+        public static void ButtonTap()
+        {
+            if (!_enabled) return;
+            float now = Time.unscaledTime;
+            if (_lastButtonTapTime >= 0f && now - _lastButtonTapTime < 0.08f) return; // collapse double-fire
+            _lastButtonTapTime = now;
+            Emphasis(0.25f, 0.70f);
+        }
 
         /// <summary>Invalid action / error. Single transient at low sharpness for "thud" feel.</summary>
         public static void InvalidAction() => Emphasis(0.50f, 0.30f);

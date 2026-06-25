@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -85,23 +86,28 @@ namespace WordDrop
             // SURVIVAL — hero CTA (Phase 11a pivot). Large, top, bold red-orange.
             // Unlocked from first launch; no tutorial gate (Survival IS the game,
             // first-time onboarding lives WITHIN the mode, Phase 11c).
+            // PLAY — the single CTA (renamed from "SURVIVAL"). 2026-06-15 Spencer: stripped the
+            // Puzzles + Daily buttons off the menu for fresh-player playtests (a lone "PLAY" so
+            // testers aren't confused by mode choices). Also aligns with the procedural-run launch
+            // direction (no authored campaign / daily-puzzle at launch). The Puzzles/Daily creation
+            // is left commented below — re-enable if those modes come back.
             CreateButton(_panel.transform, "SurvivalButton",
-                anchorMin: new Vector2(0.12f, 0.48f),
-                anchorMax: new Vector2(0.88f, 0.66f),
-                label:     "SURVIVAL",
+                anchorMin: new Vector2(0.12f, 0.42f),
+                anchorMax: new Vector2(0.88f, 0.60f),
+                label:     "PLAY",
                 bgColor:   new Color(0.88f, 0.32f, 0.20f, 1f),  // bold red-orange
                 textColor: Color.white,
                 fontSize:  56,
                 onClick:   OnSurvivalClicked);
 
+            /* Removed from the menu for playtests (2026-06-15) — see note above.
             // PUZZLES — demoted from primary CTA. Routes via OnPlayClicked to
-            // tutorial L1 if incomplete, else Level Select. Same behavior as the
-            // old PLAY button; smaller visual weight under the Survival hero.
+            // tutorial L1 if incomplete, else Level Select.
             CreateButton(_panel.transform, "PlayButton",
                 anchorMin: new Vector2(0.24f, 0.36f),
                 anchorMax: new Vector2(0.76f, 0.44f),
                 label:     "PUZZLES",
-                bgColor:   cfg != null ? cfg.menuPlayBgColor : new Color(0.20f, 0.72f, 0.35f, 1f),
+                bgColor:   cfg != null ? cfg.menuPlayBgColor : new Color(0.96f, 0.63f, 0.16f, 1f), // 2026-06-24: warm orange CTA
                 textColor: Color.white,
                 fontSize:  30,
                 onClick:   OnPlayClicked);
@@ -119,6 +125,7 @@ namespace WordDrop
                 fontSize: cfg != null ? cfg.menuDailyInfoFontSize : 16,
                 color: cfg != null ? cfg.menuDailyInfoColor : new Color(0.60f, 0.75f, 0.90f, 1f));
             RefreshDailyInfo();
+            */
         }
 
         /// <summary>
@@ -444,6 +451,57 @@ namespace WordDrop
             return t;
         }
 
+        /// <summary>Default corner radius (px, at the 540×960 reference resolution) for cartoonish
+        /// rounded buttons. 2026-06-23 Spencer.</summary>
+        internal const int BUTTON_CORNER_RADIUS = 26;
+
+        private static readonly Dictionary<int, Sprite> _roundedRectCache = new Dictionary<int, Sprite>();
+        /// <summary>Returns a white 9-sliced rounded-rectangle sprite with the given corner radius (px).
+        /// Assign to an Image with <c>type = Image.Type.Sliced</c> and tint via <c>Image.color</c>; the
+        /// 9-slice border keeps the corners crisp at any size. Generated once per radius and cached.
+        /// Used to give modals/buttons a cartoonish rounded look. 2026-06-23 Spencer.</summary>
+        internal static Sprite GetRoundedRectSprite(int radius)
+            => GetRoundedRectSprite(radius, true, true);
+
+        /// <summary>Rounded-rect sprite that rounds only some corners — e.g. <c>roundTop:true,
+        /// roundBottom:false</c> for a header band whose top matches the card but whose bottom stays
+        /// square where it meets the body. 9-slice borders stay uniform (= radius) so it still scales.</summary>
+        internal static Sprite GetRoundedRectSprite(int radius, bool roundTop, bool roundBottom)
+        {
+            if (radius < 1) radius = 1;
+            int key = radius * 4 + (roundTop ? 2 : 0) + (roundBottom ? 1 : 0);
+            if (_roundedRectCache.TryGetValue(key, out Sprite cached) && cached != null) return cached;
+            int size = radius * 2 + 2; // 2px stretchable centre; corners/edges = the 9-slice border
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                bool topBand = y > size - 1 - radius;
+                bool botBand = y < radius;
+                // Skip rounding for a band whose corners we want square → treat vertical penetration as 0.
+                bool roundThisRow = (topBand && roundTop) || (botBand && roundBottom);
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = 0f, dy = 0f;
+                    if (roundThisRow)
+                    {
+                        if (x < radius) dx = radius - 0.5f - x; else if (x > size - 1 - radius) dx = x - (size - 0.5f - radius);
+                        if (topBand) dy = y - (size - 0.5f - radius); else if (botBand) dy = radius - 0.5f - y;
+                    }
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    float a = Mathf.Clamp01(radius - dist + 0.5f); // 1 inside, 0 outside, ~1px AA edge
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply();
+            Sprite s = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f),
+                                     100f, 0, SpriteMeshType.FullRect, new Vector4(radius, radius, radius, radius));
+            _roundedRectCache[key] = s;
+            return s;
+        }
+
         internal static void CreateButton(
             Transform parent, string name,
             Vector2 anchorMin, Vector2 anchorMax,
@@ -462,6 +520,9 @@ namespace WordDrop
 
             Image img = btnGO.AddComponent<Image>();
             img.color = bgColor;
+            // Cartoonish rounded corners (9-sliced so they stay crisp at any button size).
+            img.sprite = GetRoundedRectSprite(BUTTON_CORNER_RADIUS);
+            img.type = Image.Type.Sliced;
 
             Button btn    = btnGO.AddComponent<Button>();
             ColorBlock cb = btn.colors;
@@ -488,19 +549,22 @@ namespace WordDrop
             if (btnFont != null) t.font = btnFont;
             t.text      = label;
             t.fontSize  = fontSize;
-            t.fontStyle = FontStyles.Bold;
+            // 2026-06-15 Spencer: no faux-bold — Cartoon over-dilates into garbled glyphs. Native weight.
+            t.fontStyle = FontStyles.Normal;
             t.color     = textColor;
             t.alignment = TextAlignmentOptions.Center;
             t.enableWordWrapping = false;
             t.overflowMode = TextOverflowModes.Overflow;
 
-            t.outlineWidth = 0.1f;
-            t.outlineColor = (Color32)Color.Lerp(textColor, Color.black, 0.5f);
+            // 2026-06-15 Spencer: NO t.outlineWidth — setting it spawns a per-text material instance
+            // that bypasses the shared-material faux-bold fix in GameFont.GetUITMP, re-garbling the text.
         }
 
         internal static Font GetFont()
         {
-            Font f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            // 2026-06-15 Spencer: Cartoon font for all legacy-Text UI (modals, buttons, panels).
+            Font f = Resources.Load<Font>("Cartoon");
+            if (f == null) f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (f == null) f = Resources.GetBuiltinResource<Font>("Arial.ttf");
             return f;
         }

@@ -42,6 +42,7 @@ namespace WordDrop
         public const string ID_BRAMBLE_SWEEP = "bramble_sweep";
         public const string ID_WISPWHIRL     = "wispwhirl_row";   // existing Booster.Id
         public const string ID_ROCK_CRUSHER  = "stone_splitter";
+        public const string ID_MALLET        = "mallet";          // 2026-06-24: tap one tile, smash it
 
         // ── State ────────────────────────────────────────────────────────────────
 
@@ -98,11 +99,12 @@ namespace WordDrop
             _inventory.Add(new BrambleSweep());
             _inventory.Add(new WispwhirlSingleRow());
             _inventory.Add(new RockCrusher());
+            _inventory.Add(new Mallet());
 
             foreach (var b in _inventory)
                 _charges[b.Id] = STARTING_CHARGES;
 
-            Debug.Log($"[Booster] StartRun: 4 boosters granted, {STARTING_CHARGES} charges each");
+            Debug.Log($"[Booster] StartRun: {_inventory.Count} boosters granted, {STARTING_CHARGES} charges each");
             OnStateChanged?.Invoke();
         }
 

@@ -55,6 +55,7 @@ namespace WordDrop
                 }
             }
 
+            StripObjectiveTiles(toRemove); // never smash level objectives. 2026-06-15 Spencer.
             for (int i = 0; i < toRemove.Count; i++)
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);

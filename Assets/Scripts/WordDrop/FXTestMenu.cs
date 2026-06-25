@@ -43,6 +43,8 @@ namespace WordDrop
         private GUIStyle _btnStyle;
         private GUIStyle _toggleStyle;
         private GUIStyle _headerStyle;
+        private GUIStyle _tfStyle;
+        private string   _jumpLevelInput = "";
 
         private const int PANEL_W   = 460;
         private const int BTN_H     = 44;
@@ -186,6 +188,20 @@ namespace WordDrop
             GUI.Label(new Rect(0, innerY, PANEL_W - 20, HEADER_H), "── Direct Fire ──", _headerStyle);
             innerY += HEADER_H + 4;
 
+            // Skip-to-level: type a number, hit Go (or Enter).
+            GUI.Label(new Rect(0, innerY + 10, 110, BTN_H), "Skip to lvl:", _headerStyle);
+            GUI.SetNextControlName("JumpLevelField");
+            _jumpLevelInput = GUI.TextField(new Rect(112, innerY, 90, BTN_H), _jumpLevelInput, 3, _tfStyle);
+            bool enterPressed = Event.current.type == EventType.KeyDown
+                && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter)
+                && GUI.GetNameOfFocusedControl() == "JumpLevelField";
+            if (GUI.Button(new Rect(208, innerY, PANEL_W - 20 - 208, BTN_H), "Go ▶", _btnStyle) || enterPressed)
+            {
+                if (int.TryParse(_jumpLevelInput, out int lvl) && lvl > 0)
+                    SurvivalManager.Instance?.DebugJumpToStage(lvl);
+            }
+            innerY += BTN_H + GAP;
+
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown Prefab @ center", _btnStyle))
                 FireMeltdownPrefab();
             innerY += BTN_H + GAP;
@@ -240,6 +256,12 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Continue Modal — Show", _btnStyle))
                 FireContinueModalShow();
+            innerY += BTN_H + GAP;
+
+            // ── Target completion celebration (icon pop + white spark burst + check) ──
+            // Needs an active objective on screen (the Target panel) to celebrate.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Target Completion (celebrate + check)", _btnStyle))
+                HUDManager.Instance?.FlashObjectiveComplete();
             innerY += BTN_H + GAP;
 
             // ── MVP P5 turn-based playtest toggle ────────────────────────────────
@@ -309,6 +331,16 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 3 CASCADE (10 tiles, chain=2)", _btnStyle))
                 FireFakeDetonation(chainStep: 2, fakeTileCount: 10, forceMeltdown: false);
+            innerY += BTN_H + GAP;
+
+            // Watch the FULL cascade explosion on visible tiles — holds so you see the tiles,
+            // then plays the cascade pop in slow motion (whole arc: light-up → pop → fragments → fade).
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▶ WATCH Cascade — SLOW-MO (visible)", _btnStyle))
+                FireWatchCascade(fakeTileCount: 6, chainStep: 2, slow: true);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "▶ WATCH Cascade — normal speed (visible)", _btnStyle))
+                FireWatchCascade(fakeTileCount: 6, chainStep: 2, slow: false);
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Tier 4 MELTDOWN (15 tiles)", _btnStyle))
@@ -598,21 +630,7 @@ namespace WordDrop
         {
             if (WordDropFX.Instance == null) { Debug.LogWarning("[FXTest] WordDropFX missing"); return; }
 
-            // Build a row of dummy GameObjects with positions only — enough for
-            // PlayExplosion's per-tile loops to iterate. The Tile component IS
-            // attached but not Initialise()d — FlashHighlight/Shatter check for
-            // null sub-components and short-circuit cleanly.
-            var fake = new List<Tile>();
-            Vector3 c = ScreenCenterWorld();
-            float spacing = 0.7f;
-            for (int i = 0; i < fakeTileCount; i++)
-            {
-                var go = new GameObject($"FXTest_DummyTile_{i}");
-                go.transform.position = new Vector3(c.x + (i - fakeTileCount * 0.5f + 0.5f) * spacing, c.y, 0f);
-                var tile = go.AddComponent<Tile>();
-                fake.Add(tile);
-                Destroy(go, 5f); // safety cleanup
-            }
+            var fake = BuildVisibleFakeTiles(fakeTileCount);
 
             if (forceMeltdown)
                 StartCoroutine(ForcedMeltdownDetonation(fake, chainStep, fakeTileCount));
@@ -624,10 +642,71 @@ namespace WordDrop
                 StartCoroutine(FakeBigPopThenExplode(fake, chainStep, fakeTileCount));
         }
 
+        /// <summary>Builds a row of REAL, visible tiles (letter + sprite) at screen center for FX tests.
+        /// Initialise() is self-contained (no GridManager dependency), so the tiles render their actual
+        /// look — you see the tile itself explode, not just bare particles. Auto-cleaned after 5s.
+        /// 2026-06-23 Spencer (was invisible un-Initialised dummies).</summary>
+        private List<Tile> BuildVisibleFakeTiles(int count)
+        {
+            const string LETTERS = "WORDPLAYSTARGEMBLOOMCANDY"; // arbitrary visible letters, cycled
+            var fake = new List<Tile>();
+            Vector3 c = ScreenCenterWorld();
+            float spacing = 1.0f; // visible tiles are ~0.9 wide; 1.0 keeps them from overlapping
+            for (int i = 0; i < count; i++)
+            {
+                var go = new GameObject($"FXTest_DummyTile_{i}");
+                var tile = go.AddComponent<Tile>();
+                tile.Initialise(LETTERS[i % LETTERS.Length], i, 0, 1f); // letter + sprite → visible
+                go.transform.position = new Vector3(c.x + (i - count * 0.5f + 0.5f) * spacing, c.y, 0f);
+                fake.Add(tile);
+                Destroy(go, 5f); // safety cleanup
+            }
+            return fake;
+        }
+
         private System.Collections.IEnumerator FakeBigPopThenExplode(List<Tile> fake, int chainStep, int fakeTileCount)
         {
             yield return WordDropFX.MaybeBigPopAndHold(fake);
             WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
+        }
+
+        /// <summary>"Watch the whole cascade explosion" test: spawns visible tiles, holds so you can SEE
+        /// them sitting there, then runs the cascade detonation — optionally in slow motion so the full
+        /// arc (light-up → pop → fragments → fade) is observable. Restores timeScale when done.
+        /// 2026-06-23 Spencer.</summary>
+        private void FireWatchCascade(int fakeTileCount, int chainStep, bool slow)
+        {
+            if (WordDropFX.Instance == null) { Debug.LogWarning("[FXTest] WordDropFX missing"); return; }
+            StartCoroutine(WatchCascadeCoroutine(fakeTileCount, chainStep, slow));
+        }
+
+        private System.Collections.IEnumerator WatchCascadeCoroutine(int fakeTileCount, int chainStep, bool slow)
+        {
+            var fake = BuildVisibleFakeTiles(fakeTileCount);
+            // Beat to let you see the tiles BEFORE they go (realtime so slow-mo below doesn't stretch it).
+            yield return new WaitForSecondsRealtime(0.8f);
+
+            float prevTimeScale = Time.timeScale;
+            if (slow) Time.timeScale = 0.3f; // slow-mo the whole sequence so it's watchable
+            try
+            {
+                // STEP 1 — word-scored glow on the word the cascade forms. This is the green
+                // bloom that lights up the tiles BEFORE detonation; the real resolver fires it
+                // (GameVisualBridge.cs:566 / HandManager) right before PlayExplosion. Was missing
+                // from this test, which jumped straight to the boom. 2026-06-23.
+                WordDropFX.Instance.PlayWordScored(fake, new Color(0.45f, 1f, 0.55f, 1f), chainStep);
+                yield return new WaitForSecondsRealtime(slow ? 1.2f : 0.45f); // let the glow read
+
+                // STEP 2 — the detonation (big-pop hold, then explode).
+                yield return WordDropFX.MaybeBigPopAndHold(fake);
+                WordDropFX.Instance.PlayExplosion(fake, chainStep, fakeTileCount);
+                // Hold in realtime long enough to cover the slowed animation, then restore.
+                yield return new WaitForSecondsRealtime(slow ? 2.0f : 1.0f);
+            }
+            finally
+            {
+                Time.timeScale = prevTimeScale; // always restore, even if interrupted
+            }
         }
 
         /// <summary>
@@ -1272,6 +1351,7 @@ namespace WordDrop
             _btnStyle    = new GUIStyle(GUI.skin.button) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(10, 10, 6, 6) };
             _toggleStyle = new GUIStyle(GUI.skin.toggle) { fontSize = 16, padding = new RectOffset(6, 6, 4, 4) };
             _headerStyle = new GUIStyle(GUI.skin.label)  { fontSize = 18, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.7f, 0.9f, 1f) } };
+            _tfStyle     = new GUIStyle(GUI.skin.textField) { fontSize = 20, alignment = TextAnchor.MiddleCenter };
         }
     }
 }

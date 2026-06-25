@@ -53,8 +53,8 @@ namespace WordDrop
         private const float REWARDED_AD_STUB_SECONDS = 3f;
 
         private static readonly Color PANEL_BG = new Color(0.10f, 0.08f, 0.20f, 0.95f);
-        private static readonly Color CARD_BG  = new Color(0.20f, 0.14f, 0.18f, 1f);
-        private static readonly Color TITLE    = new Color(1.00f, 0.56f, 0.56f, 1f);
+        private static readonly Color CARD_BG  = new Color(0.99f, 0.95f, 0.86f, 1f); // TEMP candy-unification
+        private static readonly Color TITLE    = new Color(0.86f, 0.30f, 0.32f, 1f);
 
         private void Awake()
         {
@@ -120,36 +120,36 @@ namespace WordDrop
 
             CreateLabel(card.transform, "SubHint",
                 new Vector2(0.05f, 0.68f), new Vector2(0.95f, 0.78f),
-                "So close — don't give up.", 20, new Color(0.90f, 0.85f, 0.80f, 1f));
+                "So close — don't give up.", 20, new Color(0.32f, 0.24f, 0.30f, 1f));
 
             CreateLabel(card.transform, "ScoreLabel",
                 new Vector2(0.08f, 0.56f), new Vector2(0.48f, 0.64f),
-                "Score", 18, new Color(0.75f, 0.72f, 0.82f, 1f));
+                "Score", 18, new Color(0.50f, 0.42f, 0.48f, 1f));
             CreateLabel(card.transform, "TargetLabel",
                 new Vector2(0.52f, 0.56f), new Vector2(0.92f, 0.64f),
-                "Target", 18, new Color(0.75f, 0.72f, 0.82f, 1f));
+                "Target", 18, new Color(0.50f, 0.42f, 0.48f, 1f));
 
             _scoreValueText = CreateLabel(card.transform, "ScoreValue",
                 new Vector2(0.08f, 0.46f), new Vector2(0.48f, 0.58f),
-                "0", 36, Color.white);
+                "0", 36, new Color(0.32f, 0.24f, 0.30f, 1f));
             _scoreValueText.fontStyle = FontStyle.Bold;
 
             var targetValue = CreateLabel(card.transform, "TargetValue",
                 new Vector2(0.52f, 0.46f), new Vector2(0.92f, 0.58f),
-                "0", 36, new Color(1f, 0.84f, 0.25f, 1f));
+                "0", 36, new Color(0.80f, 0.52f, 0.10f, 1f));
             targetValue.fontStyle = FontStyle.Bold;
 
             _shortfallText = CreateLabel(card.transform, "Shortfall",
                 new Vector2(0.08f, 0.36f), new Vector2(0.92f, 0.44f),
-                "", 18, new Color(1f, 0.70f, 0.70f, 1f));
+                "", 18, new Color(0.86f, 0.30f, 0.32f, 1f));
 
             _heartsText = CreateLabel(card.transform, "Hearts",
                 new Vector2(0.08f, 0.30f), new Vector2(0.92f, 0.36f),
-                "", 16, new Color(0.90f, 0.85f, 0.80f, 1f));
+                "", 16, new Color(0.50f, 0.42f, 0.48f, 1f));
 
             _coinBalanceText = CreateLabel(card.transform, "CoinBalance",
                 new Vector2(0.08f, 0.24f), new Vector2(0.92f, 0.30f),
-                "", 16, UILayout.Gold);
+                "", 16, new Color(0.80f, 0.52f, 0.10f, 1f));
 
             // Buttons
             float btnY0 = 0.08f;

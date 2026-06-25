@@ -32,6 +32,11 @@ namespace WordDrop
         // ---------------------------------------------------------------------------
 
         private static readonly Color TILE_FILL_COLOR    = new Color(0.973f, 0.961f, 0.937f, 1f);     // warm cream #F8F5EF
+        // 2026-06-24 Spencer: per-letter value-accent tinting was REMOVED (it read as confusing — color the
+        // player has to decode). Tiles use a single uniform resting colour again. The _baseTint /
+        // ApplyRestingColor plumbing is kept (it just restores the uniform colour) so the state reverts
+        // stay centralised in one place.
+        private Color _baseTint = Color.white; // uniform resting tile colour
         private static readonly Color TILE_BORDER_NORMAL = new Color(0.800f, 0.745f, 0.640f, 1f);  // desaturated warm tan
         private static readonly Color TILE_BORDER_GOLD   = new Color(1.000f, 0.720f, 0.180f, 1f);  // bright rich gold-orange #FFB82E
 
@@ -72,7 +77,10 @@ namespace WordDrop
         // change PSD_CELL_PITCH in GridManager, update the denominator here
         // too. (Long-term: refactor so tile size is decoupled from pitch
         // entirely — for now, two-place coupled change.)
-        private const float TILE_DISPLAY_RATIO = 147f / 172f; // 2026-06-05 Spencer: pitch 168→172, tile held at 147 → wider gap (21→25 PSD). (was 147/168.) Keep numerator=147; denom MUST match GridManager.PSD_CELL_PITCH + the hardcoded 147/172 there.
+        private const float TILE_DISPLAY_RATIO = 154f / 172f; // 2026-06-24 Spencer: a hair more spacing (numerator 158→154 → gap 14→18 PSD; board margin scales off the same). Numerator MUST match the hardcoded 154/172 in GridManager (halfGapPad + tileRadiusWorld) and HUDManager baseScale; denom = GridManager.PSD_CELL_PITCH.
+        /// <summary>Tile display size as a fraction of the cell pitch — so other systems (e.g. the
+        /// drop-preview ghost) can size their tiles to MATCH the board tiles. 2026-06-16 Spencer.</summary>
+        public static float DisplayRatio => TILE_DISPLAY_RATIO;
 
         // ---------------------------------------------------------------------------
         // Runtime state
@@ -155,6 +163,7 @@ namespace WordDrop
         private SpriteRenderer _glossSR;
         private static Sprite   s_glossSprite;
         private static Sprite   s_dropShadowSprite; // 2026-06-04 Spencer: baked tile_shadow2 drop shadow
+        private SpriteRenderer  _dropShadowSR;      // this tile's drop-shadow renderer (faded during the fake-3D drop tilt)
         private static Material s_shadowMultiplyMat; // 2026-06-04 Spencer: MULTIPLY blend so the baked shadow blends like its PS layer
         private static Material s_glossMaterial;
         public static bool  GlossEnabled = false; // 2026-06-04 Spencer: off — gloss is baked into the new tile sprite now
@@ -229,6 +238,30 @@ namespace WordDrop
         private bool  _isWildRefill   = false;
         private bool  _isStone        = false;
         private bool  _isAnchored      = false; // Break-Rocks: fixed rock — resists gravity (visual side, mirrors RulesCellData.IsAnchored)
+        private bool  _isVault         = false; // Vaults: anchored objective tile rendered as a treasure chest (distinct from grey stone)
+        private int   _vaultRequiredLen = 0;    // chest-tier "key" length — telegraphed by tint (0=regular/white, mid=silver, high=gold)
+        private bool  _isFrozen        = false; // ICE objective: tile covered in ice (still a normal matchable letter; thaws on detonation)
+        private GameObject     _frostGO;        // frost overlay child (above the letter) — independent of sprite-color repaints
+        private SpriteRenderer _frostSR;
+        private static Sprite  s_frostSprite;   // shared rounded-rect for the frost overlay
+
+        // -------------------------------------------------------------------
+        // Bloom-glow overlay (MOBILE bloom fix, 2026-06-19)
+        // On iOS/Metal, SpriteRenderer.color is baked to Color32 and clamps HDR
+        // to [0,1], so the primed/scored glows (driven via sr.color) never cross
+        // the 1.30 bloom threshold on device — they glow on desktop but not the
+        // phone. This additive overlay carries the HDR glow through a material
+        // _Color property instead (the same path the coin trail uses, which DOES
+        // bloom on device). Mobile-only: desktop keeps its existing sr.color glow
+        // untouched. _Color carries HDR rgb + the animated alpha (Blend SrcAlpha One).
+        private GameObject     _bloomGlowGO;
+        private SpriteRenderer _bloomGlowSR;
+        private static Material s_bloomGlowMat;       // shared WordDrop/AdditiveSprite
+        private static MaterialPropertyBlock s_bloomGlowMPB;
+        private GameObject     _vaultBadgeGO;   // circular chip behind the requirement number (built lazily)
+        private SpriteRenderer _vaultBadgeBg;
+        private TextMeshPro    _vaultBadgeTMP;  // the "4+"/"5+" number
+        private static Sprite  s_badgeCircle;
         private bool  _hasPrimedGlow    = false;
         private Color _primedGlowColor  = new Color(0.812f, 0.812f, 0.863f, 1f);
         private Color _currentBorderColor = new Color(0.812f, 0.812f, 0.863f, 1f);
@@ -244,6 +277,9 @@ namespace WordDrop
         // Time.time < _scoredFlashUntil, the primed VISUAL takeover (sprite swap + pulse
         // color write) is held so the green scored flash plays through first.
         private float _scoredFlashUntil = 0f;
+        // After the scored-flash hold expires, the magenta primed visual eases IN over this window
+        // (white → magenta) instead of snapping — fixes the choppy scored→primed handoff. 2026-06-23.
+        private const float PRIMED_MAGENTA_FADE_IN = 0.14f;
         public void HoldPrimedVisual(float seconds)
         {
             float until = Time.time + seconds;
@@ -329,7 +365,8 @@ namespace WordDrop
             if (_spriteRenderer != null)
             {
                 _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
-                _spriteRenderer.color = Color.white;
+                _baseTint = BaseTintForLetter(letter);   // per-letter value accent
+                _spriteRenderer.color = _baseTint;
                 _spriteRenderer.enabled = true;
             }
 
@@ -364,12 +401,19 @@ namespace WordDrop
 
             DOTween.Kill(transform);
 
+            _pendingDiffusePop = false; // recycled tile must not carry a pending diffuse-pop into reuse
             if (_hasPrimedGlow) ClearPrimedGlow();
+            ClearBloomGlow(); // 2026-06-24: defensive — a non-primed bloom glow (cascade green flash) must NOT leak onto a reused tile
             if (_hasFake3D) ClearFake3D();
             if (_isHighlighted) Highlight(false);
             if (_isGoldBonus) SetGoldBonus(false);
-            if (_isStone) SetStoneVisual(false);
+            if (_isVault) SetVaultVisual(false);      // restores chest → normal sprite + cell-fit
+            else if (_isDropTargetVisual) { SetDropTargetVisual(false); _isStone = false; } // clear escort-object look
+            else if (_isStone) SetStoneVisual(false);
+            _isDropTargetVisual = false; // clear escort-object flag on pool reuse
             _isAnchored = false; // clear Break-Rocks anchor on pool reuse
+            _vaultRequiredLen = 0; // clear chest-tier tint on pool reuse
+            if (_isFrozen) SetFrozenVisual(false); // ICE: clear frost overlay on pool reuse
             if (_isWild) SetWild(false); // also hides the iridescent overlay
             if (_iridGO != null) _iridGO.SetActive(false); // belt-and-suspenders for pool reuse
             if (_isSwapRefill) SetSwapRefillVisual(false);
@@ -403,7 +447,7 @@ namespace WordDrop
             {
                 if (_defaultMaterial != null) _spriteRenderer.material = _defaultMaterial;
                 _spriteRenderer.enabled = true;
-                _spriteRenderer.color = Color.white;
+                _spriteRenderer.color = _baseTint;
             }
             // Reset TMP colors — dissolve fades these to alpha 0
             if (_letterTMP != null)
@@ -518,6 +562,7 @@ namespace WordDrop
                 shadowGO.transform.localPosition = new Vector3(0f, 0f, 0.1f);
                 shadowGO.transform.localScale = Vector3.one;
                 SpriteRenderer shadowSR = shadowGO.AddComponent<SpriteRenderer>();
+                _dropShadowSR = shadowSR;
                 shadowSR.sprite = s_dropShadowSprite; // baked art defines spread/darkness
                 shadowSR.color = Color.white;
                 // MULTIPLY blend so it darkens the board like the PS Multiply layer
@@ -897,6 +942,10 @@ namespace WordDrop
             }
             Letter = letter;
             UpdateLetterDisplay(letter);
+            RefreshBaseTint(); // letter changed (rewrite/swap) → recompute the value tint
+            if (!_isShowingScoredSprite && !_hasPrimedGlow && !_isGoldBonus && !_isStone
+                && !_isFrozen && !_isWild && !_isSwapRefill && !_isEditRefill && !_isWildRefill)
+                ApplyRestingColor(); // repaint only if the tile is in its plain resting state
 
             // Update border if no primed glow active
             if (!_hasPrimedGlow && !_isHighlighted)
@@ -1121,7 +1170,10 @@ namespace WordDrop
 
         private int _heatLevel = 0;
         private TextMeshPro _fuseTMP; // small countdown number on primed tiles
-        private int _fuseRemaining = 0;
+        // Default -1 (= "no fuse yet" → CALM), NOT 0. 0 maps to GetDropsUrgency()==4 (critical),
+        // so a fresh tile pulsed at max heat for the window before SetPrimedGlow set the real fuse,
+        // then "diffused" to calm. -1 matches ResetPrimedTimer's no-fuse value. 2026-06-10.
+        private int _fuseRemaining = -1;
 
         // ── Gold Bonus tile ──────────────────────────────────────────────────
 
@@ -1160,7 +1212,7 @@ namespace WordDrop
                 if (_goldPulseCoroutine != null) { StopCoroutine(_goldPulseCoroutine); _goldPulseCoroutine = null; }
                 // Restore normal sprite + default color/letter tints
                 _spriteRenderer.sprite = s_spriteNormal;
-                _spriteRenderer.color = Color.white;
+                ApplyRestingColor();
                 if (_letterTMP != null)
                     _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
                 if (_pointTMP != null)
@@ -1184,12 +1236,19 @@ namespace WordDrop
             }
             else
             {
-                _spriteRenderer.color = Color.white;
+                ApplyRestingColor();
             }
         }
 
         // ── Edit refill visual — cyan tint ────────────────────────────────────
         private static readonly Color EDIT_REFILL_TINT = new Color(0.2f, 0.9f, 0.95f, 1f);
+        // ── Scored "word made" tint (2026-06-10 Spencer): green the CURRENT tile instead of
+        // swapping to a separate green sprite, so the scored flash keeps the live tile's shape
+        // (same approach as the edit/swap refill tints). Multiplies the light tile → kelly green.
+        public static readonly Color SCORED_TINT = new Color(0.44f, 1.0f, 0.11f, 1f); // #57C515 hue at full brightness — bright/saturated/happy on the shaded tile (Spencer 2026-06-16; flat #57C515 read too dark once tinted)
+        // Saturated HDR green for the CASCADE bloom flash — G pushed well past the 1.30 bloom line so the
+        // additive overlay glows hard and the flash is unmissable. 2026-06-24 Spencer.
+        public static readonly Color SCORED_GLOW_HDR = new Color(0.30f, 2.6f, 0.18f, 1f);
         public bool IsEditRefill => _isEditRefill;
 
         public void SetEditRefillVisual(bool active)
@@ -1204,7 +1263,7 @@ namespace WordDrop
             }
             else
             {
-                _spriteRenderer.color = Color.white;
+                ApplyRestingColor();
             }
         }
 
@@ -1224,12 +1283,23 @@ namespace WordDrop
             }
             else
             {
-                _spriteRenderer.color = Color.white;
+                ApplyRestingColor();
             }
         }
 
+        // ── Value-accent resting colour (2026-06-24 Spencer) ──────────────────
+        private static Color BaseTintForLetter(char letter) => Color.white; // value-accent tinting removed 2026-06-24 (kept as the single resting colour)
+        /// <summary>Recompute the per-letter value tint (call when the letter is set/changed).</summary>
+        private void RefreshBaseTint() => _baseTint = BaseTintForLetter(Letter);
+        /// <summary>Paint the tile face its resting value tint. Used by every "return to normal" revert
+        /// so the tint survives scored/primed/gold/refill states (replaces the old hard-coded white).</summary>
+        private void ApplyRestingColor()
+        {
+            if (_spriteRenderer != null) _spriteRenderer.color = _baseTint;
+        }
+
         // ── Stone tile visual — dark grey, no letter ──────────────────────────
-        private static readonly Color STONE_TINT = new Color(0.25f, 0.23f, 0.28f, 1f); // much darker — clearly not a normal tile
+        private static readonly Color STONE_TINT = new Color(0.46f, 0.46f, 0.49f, 1f); // neutral stone grey (was dark purple-grey)
         public bool IsStone => _isStone;
 
         // ── Break-Rocks: anchored flag (visual mirror of RulesCellData.IsAnchored). ──
@@ -1240,6 +1310,8 @@ namespace WordDrop
 
         public void SetStoneVisual(bool active)
         {
+            if (active && _isVault) { SetVaultVisual(true); return; } // vaults render as the chest, never grey
+            if (active && _isDropTargetVisual) { SetDropTargetVisual(true); return; } // escort objects are NOT grey rocks
             _isStone = active;
             if (_spriteRenderer == null) return;
             if (active)
@@ -1270,6 +1342,470 @@ namespace WordDrop
                     _pointTMP.color = new Color(0.4f, 0.4f, 0.45f, 0.85f);
                 }
             }
+        }
+
+        // ── HeroWord ESCORT-OBJECT visual — must NOT look like a grey rock. Distinct vivid AMBER
+        // collectible tint (placeholder; drop a sprite at Resources/Tiles/Icon_DropTarget to upgrade
+        // it like the vault chest and I'll wire it). Keeps stone DATA behavior (non-matchable,
+        // survives detonation) but reads as the prize you're escorting down. 2026-06-15 Spencer.
+        private static readonly Color DROP_TARGET_TINT = new Color(1f, 0.48f, 0f, 1f); // bright saturated orange (Spencer 2026-06-15)
+        private bool _isDropTargetVisual;
+        public bool  IsDropTargetVisual => _isDropTargetVisual;
+        // PLACEHOLDER: the escort drop-target renders the chicken sprite instead of an orange tile.
+        // 2026-06-19 Spencer.
+        public static Sprite ChickenSprite => GetChickenSprite(); // exposed for the escort fly-up
+        private static Sprite s_chickenSprite; private static bool s_chickenTried;
+        private static Sprite GetChickenSprite()
+        {
+            if (s_chickenTried) return s_chickenSprite;
+            s_chickenTried = true;
+            s_chickenSprite = Resources.Load<Sprite>("Tiles/common_icon_chicken");
+            if (s_chickenSprite == null)
+            {
+                var tex = Resources.Load<Texture2D>("Tiles/common_icon_chicken");
+                if (tex != null) s_chickenSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            return s_chickenSprite;
+        }
+
+        public void SetDropTargetVisual(bool active)
+        {
+            _isDropTargetVisual = active;
+            _isStone = active; // keep stone data-guards (hidden letter, survives detonation, non-matchable)
+            if (_spriteRenderer == null) return;
+            if (active)
+            {
+                var chick = GetChickenSprite();
+                if (chick != null)
+                {
+                    if (_spriteRenderer.sprite != chick) { _spriteRenderer.sprite = chick; RefitToSprite(chick); } // swap+fit once
+                    _spriteRenderer.color = Color.white;
+                }
+                else _spriteRenderer.color = DROP_TARGET_TINT; // fallback orange if the chicken can't load
+                if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
+                if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
+                if (_glossGO != null) _glossGO.SetActive(false);        // chicken placeholder — no tile sheen
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
+                if (_dropShadowSR != null) _dropShadowSR.enabled = false; // no tile-shaped drop shadow behind the chicken
+            }
+            else
+            {
+                Sprite normal = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
+                if (normal != null && _spriteRenderer.sprite != normal) { _spriteRenderer.sprite = normal; RefitToSprite(normal); }
+                _spriteRenderer.color = Color.white;
+                if (_glossGO != null) _glossGO.SetActive(true);
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(true);
+                if (_dropShadowSR != null) _dropShadowSR.enabled = true;
+            }
+        }
+
+        // ── Treasure Vault visual (Break-Rocks → Vaults) — chest sprite, no letter ──
+        public bool IsVault => _isVault;
+        public int  VaultRequiredLen => _vaultRequiredLen; // chest tier key (0=regular, mid≈4, high≥5) — for reward coins
+        /// <summary>Telegraph the chest's tier by its required word-length key: regular (0) = normal
+        /// chest, mid = silver, high (≥5) = gold (the jackpot). Set before SetVaultVisual. 2026-06-12.</summary>
+        public void SetVaultRequirement(int requiredLen) => _vaultRequiredLen = requiredLen;
+        private static readonly Color VAULT_MID_TINT = new Color(0.80f, 0.86f, 0.95f, 1f); // cool silver
+        private Color VaultTint => _vaultRequiredLen <= 0 ? Color.white
+                                 : _vaultRequiredLen >= 5 ? GOLD_HIGH        // high tier = gold jackpot
+                                 : VAULT_MID_TINT;                            // mid tier = silver
+
+        // Build the badge chip lazily: a dark circular chip + a small white number, both children
+        // of the tile. Mirrors the booster count-chips. 2026-06-15.
+        private void EnsureVaultBadge()
+        {
+            if (_vaultBadgeGO != null) return;
+            if (s_badgeCircle == null)
+                s_badgeCircle = TileRenderer.CreateSolidRoundedRect(64, 64, 32, Color.white); // filled circle
+
+            _vaultBadgeGO = new GameObject("VaultBadge");
+            _vaultBadgeGO.transform.SetParent(transform, false);
+            _vaultBadgeGO.transform.localPosition = new Vector3(0f, 0f, -0.11f);
+            _vaultBadgeBg = _vaultBadgeGO.AddComponent<SpriteRenderer>();
+            _vaultBadgeBg.sprite = s_badgeCircle;
+            _vaultBadgeBg.color = new Color(0.12f, 0.10f, 0.22f, 0.96f); // dark navy chip (matches HUD)
+            _vaultBadgeBg.sortingOrder = 8; // above chest face(5)/gloss(6)/letter(7)
+            _vaultBadgeGO.tag = "Untagged";
+
+            // Number — a DIRECT child of the tile (not the scaled chip) so its size is predictable.
+            var numGO = new GameObject("VaultBadgeNum");
+            numGO.transform.SetParent(transform, false);
+            numGO.transform.localPosition = new Vector3(0f, 0f, -0.12f);
+            _vaultBadgeTMP = numGO.AddComponent<TextMeshPro>();
+            var f = GameFont.GetTMP(); if (f != null) _vaultBadgeTMP.font = f;
+            _vaultBadgeTMP.fontSize          = 3.1f; // small (Spencer)
+            _vaultBadgeTMP.characterSpacing  = -10f; // pull the number + "+" together (close the glyph gap)
+            _vaultBadgeTMP.fontStyle         = FontStyles.Bold;
+            _vaultBadgeTMP.color             = Color.white;
+            _vaultBadgeTMP.alignment         = TextAlignmentOptions.Center;
+            _vaultBadgeTMP.enableWordWrapping = false;
+            _vaultBadgeTMP.overflowMode      = TextOverflowModes.Overflow;
+            _vaultBadgeTMP.rectTransform.sizeDelta = new Vector2(4f, 4f);
+            _vaultBadgeTMP.sortingOrder      = 9;
+        }
+
+        // Telegraph the requirement as a small "4+"/"5+" number centered in a circular chip — mid/
+        // high chests only; regular chests show nothing. The chest always hides its own letter. 2026-06-15.
+        private void ApplyVaultBadge()
+        {
+            if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
+            if (_vaultRequiredLen <= 0) { HideVaultBadge(); return; }
+
+            EnsureVaultBadge();
+            // Chip ≈ 0.52× the cell — gloss-style counter-scale so it's the same world size
+            // regardless of the chest sprite's bounds.
+            float displaySize = _cellSize * TILE_DISPLAY_RATIO;
+            float restX = Mathf.Max(0.01f, _restScale.x);
+            float cNative = (_vaultBadgeBg.sprite != null && _vaultBadgeBg.sprite.bounds.size.x > 0f)
+                ? _vaultBadgeBg.sprite.bounds.size.x : 1f;
+            float cs = (displaySize * 0.52f) / (cNative * restX);
+            _vaultBadgeBg.transform.localScale = new Vector3(cs, cs, 1f);
+
+            _vaultBadgeTMP.text = $"{_vaultRequiredLen}+";
+            _vaultBadgeGO.SetActive(true);
+            _vaultBadgeTMP.gameObject.SetActive(true);
+        }
+
+        private void HideVaultBadge()
+        {
+            if (_vaultBadgeGO != null)  _vaultBadgeGO.SetActive(false);
+            if (_vaultBadgeTMP != null) _vaultBadgeTMP.gameObject.SetActive(false);
+        }
+
+        // ── ICE / frost overlay (clear-the-blocker objective, 2026-06-12) ───────────────
+        // A frozen tile is a NORMAL, MATCHABLE letter with a translucent ice sheet drawn OVER it.
+        // We render the frost as a separate child SpriteRenderer (like the gloss/badge) rather than
+        // tinting the base sprite — so the letter stays visible AND the many places that repaint
+        // _spriteRenderer.color (ResetVisuals, pulse cleanup, flashes) can't clobber the ice. The
+        // overlay just sits on/off; nothing else has to know about it. The tile is otherwise a
+        // normal letter tile (NOT a stone — it matches in words).
+        public bool IsFrozen => _isFrozen;
+        private static readonly Color FROST_TINT = new Color(0.62f, 0.84f, 0.97f, 0.62f); // icy light-blue, translucent
+
+        private void EnsureFrostOverlay()
+        {
+            if (_frostGO != null) return;
+            if (s_frostSprite == null)
+                s_frostSprite = TileRenderer.CreateSolidRoundedRect(160, 160, 36, Color.white);
+
+            _frostGO = new GameObject("TileFrost");
+            _frostGO.transform.SetParent(transform, false);
+            _frostGO.transform.localPosition = new Vector3(0f, 0f, -0.13f); // in front of letter (-0.1) + badge (-0.12)
+            _frostSR = _frostGO.AddComponent<SpriteRenderer>();
+            _frostSR.sprite = s_frostSprite;
+            _frostSR.color  = FROST_TINT;
+            _frostSR.sortingOrder = 10; // above face(5)/gloss(6)/letter(7)/badge(8-9)
+            _frostGO.tag = "Untagged"; // skip 2D-light conversion (stays unlit)
+
+            // Size the sheet to roughly cover the tile face (same counter-scale formula as the gloss).
+            float displaySize = _cellSize * TILE_DISPLAY_RATIO;
+            float restX = Mathf.Max(0.01f, _restScale.x);
+            float fNative = (_frostSR.sprite != null && _frostSR.sprite.bounds.size.x > 0f)
+                ? _frostSR.sprite.bounds.size.x : 1f;
+            float fs = (displaySize * 0.92f) / (fNative * restX);
+            _frostGO.transform.localScale = new Vector3(fs, fs, 1f);
+
+            // Assign the diagonal specular-sweep material + a per-tile phase so a row of ice
+            // doesn't sweep in lockstep. The shine animates on the GPU (_Time.y) — no per-frame C#.
+            var sheen = GetFrostSheenMat();
+            if (sheen != null)
+            {
+                _frostSR.sharedMaterial = sheen;
+                _frostHasSheen = true;
+                if (s_frostMPB == null) s_frostMPB = new MaterialPropertyBlock();
+                _frostSR.GetPropertyBlock(s_frostMPB);
+                s_frostMPB.SetFloat("_Phase", UnityEngine.Random.value);
+                _frostSR.SetPropertyBlock(s_frostMPB);
+            }
+        }
+
+        private Coroutine _frostShiverRoutine; // fallback CPU glint loop (only if the sheen shader is unavailable)
+        private Coroutine _defrostRoutine;     // thaw flash → shatter
+        private bool      _defrosting;         // guards against a sync clearing the frost mid-defrost
+        private bool      _frostHasSheen;      // true once the GPU sheen material is assigned
+
+        private static Material s_frostSheenMat;
+        private static bool     s_frostSheenTried;
+        private static MaterialPropertyBlock s_frostMPB;
+
+        // The diagonal specular-sweep material (WordDrop/FrostSheen). Shared across all ice tiles;
+        // per-tile _Phase desyncs them via a MaterialPropertyBlock. GPU-animated (_Time.y) → no
+        // per-frame C#. Returns null only if the shader can't be found (→ CPU glint fallback).
+        private static Material GetFrostSheenMat()
+        {
+            if (s_frostSheenTried) return s_frostSheenMat;
+            s_frostSheenTried = true;
+            // Prefer the editable material ASSET (Assets/Resources/FrostSheen.mat) so its sweep
+            // values can be tuned live in the Inspector. Fall back to building one from the shader.
+            s_frostSheenMat = Resources.Load<Material>("FrostSheen");
+            if (s_frostSheenMat == null)
+            {
+                var sh = Shader.Find("WordDrop/FrostSheen") ?? Resources.Load<Shader>("Shaders/FrostSheen");
+                if (sh != null) s_frostSheenMat = new Material(sh) { name = "FrostSheenShared" };
+            }
+            return s_frostSheenMat;
+        }
+
+        /// <summary>Show/hide the ice overlay. Frozen tiles stay normal matchable letters; this is
+        /// pure visual. GridManager.SyncToRulesState drives it from RulesCellData.IsFrozen. The
+        /// overlay is a separate child so sprite-color repaints never clobber it (reset-pattern).</summary>
+        public void SetFrozenVisual(bool active)
+        {
+            // While a thaw wind-up crack is playing, ignore a safety-sync trying to clear the frost —
+            // the defrost coroutine owns the final clear (so the crack isn't cut off mid-shiver).
+            if (!active && _defrosting) return;
+
+            _isFrozen = active;
+            if (active)
+            {
+                EnsureFrostOverlay();
+                if (_frostGO != null) { _frostGO.SetActive(true); _frostSR.color = FROST_TINT; }
+                // The sheen shader self-animates on the GPU. Only if it's unavailable do we fall back
+                // to a lightweight CPU glint (a gentle brightness pulse — NO movement; moving the frost
+                // over a static letter read as the tile distorting).
+                if (!_frostHasSheen && _frostShiverRoutine == null && _frostGO != null && isActiveAndEnabled)
+                    _frostShiverRoutine = StartCoroutine(FrostGlintLoop());
+            }
+            else if (_frostGO != null)
+            {
+                if (_frostShiverRoutine != null) { StopCoroutine(_frostShiverRoutine); _frostShiverRoutine = null; }
+                if (_frostSR != null) _frostSR.color = FROST_TINT;
+                _frostGO.SetActive(false);
+            }
+        }
+
+        /// <summary>FALLBACK ambient glint (only runs if the WordDrop/FrostSheen shader can't be
+        /// loaded). A gentle periodic brightness pulse on the frost — NO movement (movement over a
+        /// static letter read as distortion). The real effect is the GPU diagonal specular sweep in
+        /// the sheen shader. 2026-06-18 Spencer.</summary>
+        private System.Collections.IEnumerator FrostGlintLoop()
+        {
+            if (_frostGO == null) { _frostShiverRoutine = null; yield break; }
+
+            const float PULSE_DUR = 0.5f;
+            float t = 0f, pulseT = -1f;
+            yield return WaitCache.Get(UnityEngine.Random.Range(0f, 1.5f)); // desync the start
+            float nextPulse = UnityEngine.Random.Range(1.2f, 2.4f);
+
+            while (_isFrozen && !_defrosting && _frostGO != null && _frostGO.activeInHierarchy)
+            {
+                float dt = Time.deltaTime;
+                t += dt;
+
+                float env = 0f;
+                if (pulseT >= 0f)
+                {
+                    pulseT += dt;
+                    float p = pulseT / PULSE_DUR;
+                    if (p >= 1f) { pulseT = -1f; nextPulse = t + UnityEngine.Random.Range(1.2f, 2.4f); }
+                    else env = Mathf.Sin(p * Mathf.PI); // rise + fall
+                }
+                else if (t >= nextPulse) pulseT = 0f;
+
+                if (_frostSR != null)
+                    _frostSR.color = new Color(
+                        FROST_TINT.r + 0.22f * env, FROST_TINT.g + 0.16f * env,
+                        FROST_TINT.b + 0.10f * env, Mathf.Min(1f, FROST_TINT.a + 0.20f * env));
+
+                yield return null;
+            }
+
+            if (_frostGO != null && !_defrosting && _frostSR != null) _frostSR.color = FROST_TINT;
+            _frostShiverRoutine = null;
+        }
+
+        /// <summary>Defrost / ice-shatter: a short sharp "crack" shiver that BUILDS (the ice straining)
+        /// with the frost brightening, then the shatter particle burst fires and the overlay clears —
+        /// leaving the (now normal) letter tile in place. Called by GameVisualBridge for cells in
+        /// StepResult.ThawedCells. 2026-06-12 / wind-up added 2026-06-18 Spencer.</summary>
+        public void PlayDefrost()
+        {
+            if (_defrosting) return;
+            // No visible frost (edge: already cleared) → just the burst + ensure state cleared.
+            if (_frostGO == null || !_frostGO.activeInHierarchy || !isActiveAndEnabled)
+            {
+                GameParticles.Instance?.PlayDefrost(transform.position);
+                SetFrozenVisual(false);
+                return;
+            }
+            if (_defrostRoutine != null) StopCoroutine(_defrostRoutine);
+            _defrostRoutine = StartCoroutine(DefrostCoroutine());
+        }
+
+        private System.Collections.IEnumerator DefrostCoroutine()
+        {
+            _defrosting = true;
+            if (_frostShiverRoutine != null) { StopCoroutine(_frostShiverRoutine); _frostShiverRoutine = null; }
+
+            // Quick bright "crack" FLASH on the frost (no movement — moving the overlay over a static
+            // letter read as the tile distorting), then shatter. 2026-06-18 Spencer.
+            const float DUR = 0.14f;
+            float e = 0f;
+            while (e < DUR && _frostGO != null)
+            {
+                e += Time.deltaTime;
+                float p = Mathf.Clamp01(e / DUR);
+                if (_frostSR != null)
+                    _frostSR.color = new Color(
+                        FROST_TINT.r + 0.45f * p, FROST_TINT.g + 0.40f * p,
+                        FROST_TINT.b + 0.30f * p, Mathf.Min(1f, FROST_TINT.a + 0.30f * p));
+                yield return null;
+            }
+
+            // Shatter: ice-particle burst, then clear the overlay (tile stays as a normal letter).
+            GameParticles.Instance?.PlayDefrost(transform.position);
+            _defrosting = false;
+            SetFrozenVisual(false);
+            _defrostRoutine = null;
+        }
+        private static Sprite s_vaultSprite;
+        private static bool   s_vaultSpriteTried;
+        private Coroutine     _vaultIdleRoutine;   // anticipation jiggle while rendered as a chest
+
+        private static Sprite GetVaultSprite()
+        {
+            if (s_vaultSpriteTried) return s_vaultSprite;
+            s_vaultSpriteTried = true;
+            // Icon_ItemIcon_Treasure.Png is imported as a plain Texture (mistake #5) → the Sprite
+            // load returns null; fall back to building a Sprite from the Texture2D.
+            s_vaultSprite = Resources.Load<Sprite>("Tiles/Icon_ItemIcon_Treasure");
+            if (s_vaultSprite == null)
+            {
+                var tex = Resources.Load<Texture2D>("Tiles/Icon_ItemIcon_Treasure");
+                if (tex != null)
+                    s_vaultSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            if (s_vaultSprite == null)
+                Debug.LogWarning("[Vault] Icon_ItemIcon_Treasure failed to load (Sprite + Texture2D both null).");
+            return s_vaultSprite;
+        }
+
+        /// <summary>Render this tile as a treasure VAULT — swaps to the chest sprite (re-fit to the
+        /// cell since its PPU/bounds differ from tile sprites) and hides the letter/gloss like a
+        /// stone. The vault stays IsStone in DATA so the adjacent-detonation crack still works, but
+        /// it reads as the hunted chest, not grey junk. Restores the normal tile on false / pool
+        /// reuse. 2026-06-09.</summary>
+        public void SetVaultVisual(bool active)
+        {
+            _isVault = active;
+            _isStone = active; // keep stone guards (hidden letter, crack mechanic) applying
+            if (_spriteRenderer == null) return;
+            if (active)
+            {
+                var vault = GetVaultSprite();
+                if (vault != null)
+                {
+                    _spriteRenderer.sprite = vault;
+                    RefitToSprite(vault); // chest bounds ≠ tile bounds — re-scale to the cell
+                }
+                _spriteRenderer.color = VaultTint; // tier telegraph: white / silver / gold
+                ApplyVaultBadge(); // "4+"/"5+" requirement on mid/high chests; nothing on regular
+                if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
+                if (_glossGO != null) _glossGO.SetActive(false);
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
+                // Treasure-chest "shaking in anticipation" idle (Vampire-Survivors feel).
+                if (_vaultIdleRoutine == null && gameObject.activeInHierarchy)
+                    _vaultIdleRoutine = StartCoroutine(VaultIdleShakeLoop());
+            }
+            else
+            {
+                if (_vaultIdleRoutine != null) { StopCoroutine(_vaultIdleRoutine); _vaultIdleRoutine = null; }
+                transform.localRotation = Quaternion.identity; // undo any in-progress jiggle
+                HideVaultBadge();
+                Sprite normal = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
+                if (normal != null)
+                {
+                    _spriteRenderer.sprite = normal;
+                    RefitToSprite(normal);
+                }
+                _spriteRenderer.color = Color.white;
+                if (_glossGO != null) _glossGO.SetActive(true);
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(true);
+                if (_letterTMP != null)
+                {
+                    _letterTMP.gameObject.SetActive(true);
+                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                }
+                if (_pointTMP != null)
+                {
+                    _pointTMP.gameObject.SetActive(true);
+                    _pointTMP.color = new Color(0.4f, 0.4f, 0.45f, 0.85f);
+                }
+            }
+        }
+
+        // Re-fit this tile's rest scale so `sprite` renders at the cell display size, mirroring the
+        // bounds-based sizing in CheckoutTile (sprite PPU/native bounds vary — skill_007).
+        private void RefitToSprite(Sprite sprite)
+        {
+            if (sprite == null) return;
+            float displaySize = _cellSize * TILE_DISPLAY_RATIO;
+            float nativeSize  = sprite.bounds.size.x > 0.0001f ? sprite.bounds.size.x : 1f;
+            float scale = displaySize / nativeSize;
+            _restScale = new Vector3(scale, scale, 1f); _restScaleSet = true;
+            transform.localScale = _restScale;
+        }
+
+        /// <summary>Idle "shaking in anticipation" jiggle for treasure vaults — a few quick damped
+        /// Z-rotation oscillations, then a rest gap, looped. Rotation-ONLY (leaves scale to the
+        /// refit path and position to gravity, so it can't desync). Phase-desynced per chest so a
+        /// board of vaults doesn't shake in lockstep. Runs while _isVault; SetVaultVisual(false) /
+        /// ResetForPool stop it and restore upright rotation. 2026-06-09.</summary>
+        private IEnumerator VaultIdleShakeLoop()
+        {
+            var t = transform;
+            yield return WaitCache.Get(Random.Range(0f, 1.6f)); // stagger chests
+            while (_isVault && _spriteRenderer != null)
+            {
+                // ── rest between shakes (the pause is what reads as "anticipation") ──
+                float gap = Random.Range(1.5f, 2.4f), gt = 0f;
+                while (gt < gap && _isVault) { gt += Time.deltaTime; yield return null; }
+                if (!_isVault) break;
+
+                // ── damped wobble ──
+                const float dur = 0.42f, amp = 6f, freq = 3f; // peak ±6°, 3 oscillations, fading out
+                float e = 0f;
+                while (e < dur && _isVault)
+                {
+                    e += Time.deltaTime;
+                    float p = e / dur;
+                    float ang = Mathf.Sin(p * freq * Mathf.PI * 2f) * amp * (1f - p);
+                    t.localRotation = Quaternion.Euler(0f, 0f, ang);
+                    yield return null;
+                }
+                t.localRotation = Quaternion.identity;
+            }
+            t.localRotation = Quaternion.identity;
+            _vaultIdleRoutine = null;
+        }
+
+        /// <summary>Pre-open "tell": a hard, intensifying shake to fire the instant before the chest
+        /// pops (call from the open/crack sequence when it lands). Ramps amplitude up over ~0.5s so
+        /// it builds — the idle jiggle's louder cousin. Stops the idle loop while it plays.</summary>
+        public void PlayVaultAnticipation()
+        {
+            if (!_isVault || !gameObject.activeInHierarchy) return;
+            if (_vaultIdleRoutine != null) { StopCoroutine(_vaultIdleRoutine); _vaultIdleRoutine = null; }
+            StartCoroutine(VaultAnticipationBurst());
+        }
+
+        private IEnumerator VaultAnticipationBurst()
+        {
+            var t = transform;
+            const float dur = 0.55f, maxAmp = 13f, freq = 9f; // builds to ±13°, fast
+            float e = 0f;
+            while (e < dur && _isVault)
+            {
+                e += Time.deltaTime;
+                float p = e / dur;
+                float ang = Mathf.Sin(p * freq * Mathf.PI * 2f) * maxAmp * p; // amplitude ramps UP
+                t.localRotation = Quaternion.Euler(0f, 0f, ang);
+                yield return null;
+            }
+            t.localRotation = Quaternion.identity;
+            // hand back to the idle jiggle if the chest is still around
+            if (_isVault && _vaultIdleRoutine == null && gameObject.activeInHierarchy)
+                _vaultIdleRoutine = StartCoroutine(VaultIdleShakeLoop());
         }
 
         private IEnumerator GoldPulseLoop()
@@ -1332,14 +1868,12 @@ namespace WordDrop
         {
             bool wasAlreadyPrimed = _hasPrimedGlow;
             int oldFuse = _fuseRemaining;
+            _pendingDiffusePop = false; // re-primed → cancel any pending diffuse-pop revert
             _hasPrimedGlow   = true;
             _heatLevel       = heatLevel;
             _fuseRemaining   = fuseRemaining;
             _primedStartTime = Time.time;
             _primedMaxAge    = maxAge;
-
-            // DIAGNOSTIC — kept silent in normal play, uncomment to re-enable.
-            // Debug.Log($"[PrimedTile] ({Col},{Row}) fuse {oldFuse}→{fuseRemaining} heat={heatLevel} isGold={isGold} wasAlreadyPrimed={wasAlreadyPrimed}");
 
             // Final-turn warning — if caller tells us this is the final displayed
             // turn (fuse 0 or 1), shift to HDR red-orange so the player sees
@@ -1364,8 +1898,10 @@ namespace WordDrop
             // (Spencer reported 2026-05-19: had to drop another letter first).
             // 2026-06-04 Spencer: but NOT during the green scored-flash window — let the
             // green flash play first; PrimedPulseLoop swaps to the magenta sprite when
-            // the hold expires.
-            if (_spriteRenderer != null && s_spriteGold != null && Time.time >= _scoredFlashUntil)
+            // the hold expires. ALSO skip while the tile is still showing its scored-green (the edit/
+            // rewrite path) — PrimedPulseLoop swaps to the magenta sprite after the fade-in, once the
+            // color already matches, so the swap blends instead of popping. 2026-06-23 Spencer.
+            if (_spriteRenderer != null && s_spriteGold != null && Time.time >= _scoredFlashUntil && !_isShowingScoredSprite)
                 _spriteRenderer.sprite = s_spriteGold;
 
             // Start subtle primed idle animation
@@ -1381,17 +1917,29 @@ namespace WordDrop
                 // the magenta pulse takes over cleanly once the hold expires.
                 if (Time.time >= _scoredFlashUntil)
                 {
-                    // Flash to a TAMED version of the glow — the raw HDR (PRIMED_GLOW
-                    // 1.8/0.5/1.3) held at peak blooms too hard ("blows out"). Cap each
-                    // channel so the flash glows gently. The STEADY primed glow
-                    // (settleColor, from _primedGlowColor) is computed separately and
-                    // unaffected, so the gameplay cue stays.
-                    Color flashCol = new Color(
-                        Mathf.Min(glowColor.r, 1.28f),
-                        Mathf.Min(glowColor.g, 1.28f),
-                        Mathf.Min(glowColor.b, 1.28f),
-                        glowColor.a);
-                    FlashHighlight(flashCol);
+                    if (_isShowingScoredSprite)
+                    {
+                        // EDIT/REWRITE path: the word is primed AFTER its green scored-flash window has
+                        // already settled to white (unlike a normal drop, which primes mid-window). Snapping
+                        // the magenta FlashHighlight here is the choppy white→magenta flip. Instead, restart
+                        // the fade-in clock so PrimedPulseLoop eases white→magenta smoothly — same handoff a
+                        // normal drop gets. 2026-06-23 Spencer.
+                        _scoredFlashUntil = Time.time;
+                    }
+                    else
+                    {
+                        // Flash to a TAMED version of the glow — the raw HDR (PRIMED_GLOW
+                        // 1.8/0.5/1.3) held at peak blooms too hard ("blows out"). Cap each
+                        // channel so the flash glows gently. The STEADY primed glow
+                        // (settleColor, from _primedGlowColor) is computed separately and
+                        // unaffected, so the gameplay cue stays.
+                        Color flashCol = new Color(
+                            Mathf.Min(glowColor.r, 1.28f),
+                            Mathf.Min(glowColor.g, 1.28f),
+                            Mathf.Min(glowColor.b, 1.28f),
+                            glowColor.a);
+                        FlashHighlight(flashCol);
+                    }
                 }
                 GameParticles.Instance?.PlayPrimed(transform.position);
             }
@@ -1489,13 +2037,35 @@ namespace WordDrop
                 // sprite yet (the green scored sprite + flash tween own sr.color).
                 if (Time.time < _scoredFlashUntil)
                 {
+                    // 2026-06-17 Spencer: the scored flash MULTIPLIES a green tint over the sprite. While
+                    // we're holding, the sprite may still be the PRIMED (magenta) sprite — and green×magenta
+                    // = a muddy dark tile (seen when a primed word scores/explodes via a booster). Force the
+                    // LIGHT normal sprite during the hold so the green reads bright, exactly like a non-primed
+                    // scored tile. The block just below restores the magenta sprite once the hold expires.
+                    if (s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
+                        _spriteRenderer.sprite = s_spriteNormal;
+                    // NOTE: don't touch the bloom overlay here — during this hold the
+                    // scored green-flash tween (WordDropFX.PlayWordScored) owns it. We
+                    // resume driving the magenta overlay once the hold expires below.
                     yield return null;
                     continue;
                 }
-                // First frame past the hold: make sure the magenta primed sprite is now
-                // showing (the swap in SetPrimedGlow was skipped during the flash window).
-                if (s_spriteGold != null && _spriteRenderer.sprite != s_spriteGold)
-                    _spriteRenderer.sprite = s_spriteGold;
+                // Smooth scored→primed handoff (2026-06-23 Spencer): instead of snapping from the
+                // white scored-flash settle straight to the glossy magenta sprite (choppy), the magenta
+                // EASES in via sr.color over PRIMED_MAGENTA_FADE_IN. Keep the LIGHT sprite during that
+                // fade (the magenta rises as a tint on it), then swap to the glossy primed sprite once
+                // the color already matches — so the sprite swap blends instead of popping.
+                bool pastMagentaFadeIn = Time.time >= _scoredFlashUntil + PRIMED_MAGENTA_FADE_IN;
+                if (pastMagentaFadeIn)
+                {
+                    if (s_spriteGold != null && _spriteRenderer.sprite != s_spriteGold)
+                        _spriteRenderer.sprite = s_spriteGold;
+                }
+                else
+                {
+                    if (s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
+                        _spriteRenderer.sprite = s_spriteNormal;
+                }
 
                 // Use global Time.time as the pulse clock so all primed tiles
                 // share the same phase — the word pulses as a unit.
@@ -1550,7 +2120,23 @@ namespace WordDrop
                 // the pulse stopped reading as a GLOW. Raise the cap so it blooms again.
                 float primedCap = Mathf.Max(WordDropFX.PrimedGlowCap, 1.55f);
                 if (pmax > primedCap) { float k = primedCap / pmax; pc.r *= k; pc.g *= k; pc.b *= k; }
+                // Ease the magenta IN from white over the first PRIMED_MAGENTA_FADE_IN seconds after the
+                // scored-flash hold expires (smooth green→white→magenta, no snap). After the window —
+                // or when there was no recent scored flash — fadeIn is 1 and this is a no-op. 2026-06-23.
+                if (!pastMagentaFadeIn)
+                {
+                    float fadeIn = Mathf.Clamp01((Time.time - _scoredFlashUntil) / PRIMED_MAGENTA_FADE_IN);
+                    pc = Color.Lerp(Color.white, pc, fadeIn);
+                }
                 _spriteRenderer.color = pc;
+
+                // MOBILE bloom: pc above gets clamped to 1.0 on iOS/Metal (sr.color
+                // → Color32), so on the phone the primed pulse never crosses the 1.30
+                // bloom line. Feed the additive overlay the RAW HDR primed color with a
+                // soft pulsing alpha so it glows on device. No-ops on desktop (the pc
+                // path already blooms there). Floor near calm, brighter with heat.
+                SetBloomGlow(_primedGlowColor,
+                    Mathf.Clamp01(0.26f + pulse * 0.18f + effectiveHeat * 0.03f));
 
                 // Scale: visible breathe at all levels, punchier at high heat
                 float scalePulse = 0.035f + effectiveHeat * 0.015f; // 3.5% → 9.5% scale change
@@ -1588,6 +2174,7 @@ namespace WordDrop
                 _spriteRenderer.color = Color.white;
                 _spriteRenderer.sprite = s_spriteNormal;
             }
+            ClearBloomGlow();
             _primedPulseCoroutine = null;
         }
 
@@ -1622,6 +2209,66 @@ namespace WordDrop
             }
         }
 
+        // -------------------------------------------------------------------
+        // Bloom-glow overlay — additive HDR glow that blooms on MOBILE (where
+        // sr.color HDR is clamped). See the field declarations for the why.
+        // -------------------------------------------------------------------
+        private void EnsureBloomGlowOverlay()
+        {
+            if (_bloomGlowSR != null) return;
+            if (s_bloomGlowMat == null)
+            {
+                Shader sh = Shader.Find("WordDrop/AdditiveSprite")
+                         ?? Resources.Load<Shader>("Shaders/AdditiveSprite");
+                if (sh != null) s_bloomGlowMat = new Material(sh) { name = "TileBloomGlowShared" };
+            }
+            if (s_bloomGlowMPB == null) s_bloomGlowMPB = new MaterialPropertyBlock();
+
+            _bloomGlowGO = new GameObject("TileBloomGlow");
+            _bloomGlowGO.transform.SetParent(transform, false);
+            _bloomGlowGO.transform.localPosition = new Vector3(0f, 0f, -0.04f); // in front of face, behind letter
+            _bloomGlowGO.transform.localScale    = Vector3.one;                 // same transform/scale as the face
+            _bloomGlowSR = _bloomGlowGO.AddComponent<SpriteRenderer>();
+            // Use the NEUTRAL light tile shape as a fixed base (NOT the colored
+            // primed/scored face sprite — that would tint the additive hue). Same
+            // native size as the face, so localScale 1 covers the tile exactly and
+            // the HDR _Color cleanly controls the glow color. Bloom adds the halo.
+            _bloomGlowSR.sprite = s_spriteNormal;
+            if (s_bloomGlowMat != null) _bloomGlowSR.sharedMaterial = s_bloomGlowMat;
+            _bloomGlowSR.color = Color.white; // vertex color stays white; HDR comes from _Color (MPB)
+            _bloomGlowSR.sortingOrder = (_spriteRenderer != null ? _spriteRenderer.sortingOrder : 5) + 1;
+            _bloomGlowSR.enabled = false;
+        }
+
+        /// <summary>
+        /// Drive the additive bloom-glow overlay. hdrColor carries the HDR rgb
+        /// (e.g. PRIMED_GLOW 1.8/0.5/1.3 or scored green ~1.62); alpha animates
+        /// the glow in/out. MOBILE-ONLY — on desktop the existing sr.color HDR
+        /// path already blooms, so this no-ops to keep the desktop look identical.
+        /// </summary>
+        public void SetBloomGlow(Color hdrColor, float alpha, bool forceDesktop = false)
+        {
+            if (!Application.isMobilePlatform && !forceDesktop) return; // desktop unchanged unless forced (cascade green flash)
+            EnsureBloomGlowOverlay();
+            if (_bloomGlowSR == null) return;
+
+            alpha = Mathf.Clamp01(alpha);
+            if (alpha <= 0.001f) { _bloomGlowSR.enabled = false; return; }
+
+            // HDR rgb + animated alpha go through the material _Color (unclamped),
+            // NOT sr.color (which would clamp). Blend SrcAlpha One uses _Color.a.
+            _bloomGlowSR.GetPropertyBlock(s_bloomGlowMPB);
+            s_bloomGlowMPB.SetColor("_Color", new Color(hdrColor.r, hdrColor.g, hdrColor.b, alpha));
+            _bloomGlowSR.SetPropertyBlock(s_bloomGlowMPB);
+            _bloomGlowSR.enabled = true;
+        }
+
+        /// <summary>Hide the bloom-glow overlay (mobile). Safe to call on desktop.</summary>
+        public void ClearBloomGlow()
+        {
+            if (_bloomGlowSR != null) _bloomGlowSR.enabled = false;
+        }
+
         /// <summary>Set sorting order on tile sprite + text layers.</summary>
         public void SetSortingOrder(int order)
         {
@@ -1629,6 +2276,7 @@ namespace WordDrop
             if (_iridSR != null) _iridSR.sortingOrder = order + 1;            // holographic fill, above the face
             if (_glossSR != null) _glossSR.sortingOrder = order + 1;          // top sheen, above the face
             if (_innerShadowSR != null) _innerShadowSR.sortingOrder = order + 1; // bottom shadow, above the face
+            if (_bloomGlowSR != null) _bloomGlowSR.sortingOrder = order + 1;  // additive glow, above the face (below the letter)
             if (_letterTMP != null) _letterTMP.sortingOrder = order + 2; // letter crisp ABOVE both
             if (_pointTMP != null) _pointTMP.sortingOrder = order + 2;
         }
@@ -1694,7 +2342,13 @@ namespace WordDrop
             if (_spriteRenderer != null)
             {
                 // Preserve special tile tints — they stay until cleared
-                if (_isStone)
+                if (_isVault)
+                {
+                    // Vaults ALWAYS show the treasure chest — never the grey stone tint.
+                    var v = GetVaultSprite(); if (v != null) _spriteRenderer.sprite = v;
+                    _spriteRenderer.color = VaultTint; // tier telegraph (white / silver / gold)
+                }
+                else if (_isStone)
                     _spriteRenderer.color = STONE_TINT;
                 else if (_isSwapRefill)
                     _spriteRenderer.color = SWAP_REFILL_TINT;
@@ -1799,8 +2453,26 @@ namespace WordDrop
             }
         }
 
+        // Diffuse pop: when a primed word expires WITHOUT detonating, the springy "pop" is deferred
+        // (so the rising row can't DOComplete it away). But the colour reverts immediately in the
+        // rebuild — so the pop fired AFTER the tile already looked normal, which read backwards. These
+        // let the tile KEEP its primed look through the deferral, so the pop fires first and the revert
+        // to normal happens at the pop's tail (signifying the state change). 2026-06-18 Spencer.
+        private bool   _pendingDiffusePop;
+        private Sprite _diffuseSprite;
+        private Color  _diffuseColor = Color.white;
+        public void MarkPendingDiffusePop() { _pendingDiffusePop = true; }
+
         public void ClearPrimedGlow()
         {
+            // Capture the primed look BEFORE we reset it — a pending diffuse pop keeps showing it.
+            // (ResetVisuals runs just before this and whitens the colour, so use the primed glow's
+            // settle-colour for fidelity rather than the live value.) The primed sprite is unchanged.
+            if (_hasPrimedGlow && _spriteRenderer != null)
+            {
+                _diffuseSprite = _spriteRenderer.sprite;
+                _diffuseColor  = Color.Lerp(Color.white, _primedGlowColor, 0.35f);
+            }
             _hasPrimedGlow      = false;
             _currentBorderColor = TILE_BORDER_NORMAL;
 
@@ -1810,6 +2482,7 @@ namespace WordDrop
                 StopCoroutine(_primedPulseCoroutine);
                 _primedPulseCoroutine = null;
             }
+            ClearBloomGlow(); // StopCoroutine skips the loop's own cleanup
 
             if (!_isHighlighted)
                 ApplyBorderColor(TILE_BORDER_NORMAL);
@@ -1817,7 +2490,9 @@ namespace WordDrop
             // Reset any pulse-induced tint/scale — preserve special tile tints
             if (_spriteRenderer != null)
             {
-                if (_isStone)
+                if (_isVault)
+                    _spriteRenderer.color = VaultTint; // vaults keep the chest; tier tint (white/silver/gold)
+                else if (_isStone)
                     _spriteRenderer.color = STONE_TINT;
                 else if (_isSwapRefill)
                     _spriteRenderer.color = SWAP_REFILL_TINT;
@@ -1827,11 +2502,13 @@ namespace WordDrop
                     _spriteRenderer.color = WILD_REFILL_TINT;
                 else if (!_isGoldBonus)
                     _spriteRenderer.color = Color.white;
-                // Restore appropriate sprite based on tile state.
-                // Gold-bonus tiles return to their gold sprite, not white.
-                _spriteRenderer.sprite = _isGoldBonus
-                    ? (s_spriteGolden ?? s_spriteNormal)
-                    : s_spriteNormal;
+                // Restore appropriate sprite based on tile state. Vaults re-assert the chest;
+                // gold-bonus tiles return to their gold sprite, not white.
+                _spriteRenderer.sprite = _isVault
+                    ? (GetVaultSprite() ?? s_spriteNormal)
+                    : _isGoldBonus
+                        ? (s_spriteGolden ?? s_spriteNormal)
+                        : s_spriteNormal;
             }
 
             // Reset scale to correct base
@@ -1841,8 +2518,20 @@ namespace WordDrop
             transform.localScale = new Vector3(correctScale, correctScale, 1f);
 
             _heatLevel = 0;
-            _fuseRemaining = 0;
+            _fuseRemaining = -1; // -1 = no fuse → CALM. Was 0, which = critical heat, causing a
+                                 // re-primed tile to flash max-heat for a frame before settling. 2026-06-10.
             if (_fuseTMP != null) _fuseTMP.gameObject.SetActive(false);
+
+            // If this tile is queued for a diffuse pop, RE-ASSERT the primed look (plain letter tiles
+            // only — special tiles keep the look set above). The deferred PlayDiffusePop reverts it to
+            // normal at the end of the pop, so the pop fires first and the colour change lands after.
+            if (_pendingDiffusePop && _diffuseSprite != null && _spriteRenderer != null
+                && !_isVault && !_isStone && !_isGoldBonus && !_isWild
+                && !_isSwapRefill && !_isEditRefill && !_isWildRefill && !_isShowingScoredSprite)
+            {
+                _spriteRenderer.sprite = _diffuseSprite;
+                _spriteRenderer.color  = _diffuseColor;
+            }
         }
 
         // ---------------------------------------------------------------------------
@@ -1855,21 +2544,23 @@ namespace WordDrop
         /// <summary>Lightweight tint overlay for drop preview. Does not affect primed glow.</summary>
         public void SetPreviewHighlight(Color color)
         {
+            if (_isDropTargetVisual) return; // escort objects keep their amber — never preview-tint them (caused a flicker)
             if (!_hasPreviewHighlight)
                 _savedBorderBeforePreview = _currentBorderColor;
             _hasPreviewHighlight = true;
 
-            // Swap sprite to scored look instead of tinting
+            // Tint the live tile to the scored green (keeps test_tile's shape). 2026-06-10.
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
-                _spriteRenderer.color = Color.white;
+                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.color  = SCORED_TINT;
             }
         }
 
         /// <summary>Restore tile to its state before preview highlight.</summary>
         public void ClearPreviewHighlight()
         {
+            if (_isDropTargetVisual) { _hasPreviewHighlight = false; return; } // never repaint an escort white (flicker)
             if (!_hasPreviewHighlight) return;
             _hasPreviewHighlight = false;
 
@@ -1882,20 +2573,29 @@ namespace WordDrop
             if (_spriteRenderer != null)
             {
                 if (_isShowingScoredSprite)
-                    _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
-                else if (_hasPrimedGlow)
-                    _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
-                else if (_isGoldBonus)
-                    _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
-                else if (_isWild)
-                    _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
-                else
+                {
+                    // scored = green tint on the live tile (not a sprite swap). Keep the tint;
+                    // do NOT fall through to the color=white reset below. 2026-06-10.
                     _spriteRenderer.sprite = s_spriteNormal;
-                _spriteRenderer.color = Color.white;
+                    _spriteRenderer.color  = SCORED_TINT;
+                }
+                else
+                {
+                    if (_hasPrimedGlow)
+                        _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                    else if (_isGoldBonus)
+                        _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                    else if (_isWild)
+                        _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
+                    else
+                        _spriteRenderer.sprite = s_spriteNormal;
+                    _spriteRenderer.color = Color.white;
+                }
             }
             ApplyBorderColor(_savedBorderBeforePreview);
         }
 
+        // ── TEMP diagnostic 2026-06-17: "muddy green/dark primed tile" (booster cascade) ──
         // ---------------------------------------------------------------------------
         // Public API — SetPermanentGlow (backward compat alias for SetPrimedGlow)
         // ---------------------------------------------------------------------------
@@ -2001,6 +2701,11 @@ namespace WordDrop
         public static Sprite PrimedSprite =>
             s_spriteGold ?? Resources.Load<Sprite>("Tiles/primed_test@2x");
 
+        /// <summary>Public accessor for the base/normal tile sprite (currently test_tile). Used by
+        /// the drag ghost + selected-card so they can show the live tile shape + a green tint
+        /// instead of swapping to the old separate green sprite. 2026-06-10.</summary>
+        public static Sprite NormalSprite => s_spriteNormal;
+
         /// <summary>
         /// Public accessor for the green "scored" tile sprite — used by
         /// WordDropFX to force the green texture under fragments so the
@@ -2085,12 +2790,15 @@ namespace WordDrop
         public void SetScoredSprite(bool scored)
         {
             if (_spriteRenderer == null) return;
+            if (_isDropTargetVisual) return; // escort objects aren't matchable — never scored-tint them (flicker)
             _isShowingScoredSprite = scored;
             if (scored) _wasInScoredWord = true;
             if (scored)
             {
-                _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
-                _spriteRenderer.color = Color.white;
+                // Green the LIVE tile via tint (keeps test_tile's shape) instead of swapping
+                // to the separate green sprite. 2026-06-10 Spencer.
+                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.color  = SCORED_TINT;
             }
             else
             {
@@ -2118,13 +2826,17 @@ namespace WordDrop
             if (active)
             {
                 _spriteRenderer.sprite = s_spriteCyan ?? s_spriteNormal;
+                _spriteRenderer.color  = Color.white; // clear any scored green tint while showing cyan
             }
             else
             {
                 // Restore based on current tile state.
                 // Priority: scored > primed > gold > normal
                 if (_isShowingScoredSprite)
-                    _spriteRenderer.sprite = s_spriteScored ?? s_spriteNormal;
+                {
+                    _spriteRenderer.sprite = s_spriteNormal;       // scored = green tint, not sprite swap
+                    _spriteRenderer.color  = SCORED_TINT;
+                }
                 else if (_hasPrimedGlow)
                     _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
                 else if (_isGoldBonus)
@@ -2224,7 +2936,27 @@ namespace WordDrop
             transform.localScale = baseScale;
             transform.DOScale(baseScale * EDIT_POP_SCALE, EDIT_POP_DUR)
                 .SetEase(Ease.OutBack, 1.7f)
-                .OnComplete(() => { if (this != null) transform.localScale = baseScale; });
+                .OnComplete(() =>
+                {
+                    if (this == null) return;
+                    transform.localScale = baseScale;
+                    RevertDiffuseLook(); // pop done → NOW revert primed→normal (signifies the state change)
+                });
+        }
+
+        /// <summary>Revert the kept-primed look to a normal tile at the END of the diffuse pop, so the
+        /// scale-up reads as the cue and the colour change lands after it. 2026-06-18 Spencer.</summary>
+        private void RevertDiffuseLook()
+        {
+            if (!_pendingDiffusePop) return;
+            _pendingDiffusePop = false;
+            if (_spriteRenderer == null) return;
+            if (!_isVault && !_isStone && !_isGoldBonus && !_isWild
+                && !_isSwapRefill && !_isEditRefill && !_isWildRefill && !_isShowingScoredSprite && !_hasPrimedGlow)
+            {
+                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.color  = Color.white;
+            }
         }
 
         /// <summary>2026-06-04 Spencer: the tile's canonical cell-derived rest scale.
@@ -2363,31 +3095,23 @@ namespace WordDrop
             int radius  = texSize / 6;
             int border  = Mathf.Max(3, texSize / 12);
 
-            // Try loading hand-drawn sprites from Resources/Tiles
-            Sprite loadedNormal = Resources.Load<Sprite>("Tiles/white5@2x");
-
-            // 2026-06-04 Spencer: board white tile → baked glossy sprite. Built from the
-            // 1024px texture's TILE region (80% fill) at a PPU that matches white5's tile
-            // bounds, so it's a true drop-in (board sizes by sprite bounds). Replaces
-            // loadedNormal so every white state below picks it up.
+            // Regular white tile = the baked glossy tile (white_glossy, 80% crop matched to white5's
+            // bounds → true drop-in). Chosen over the tester PSD in the A/B compare. 2026-06-10 Spencer.
+            // This block also builds the board drop-shadows.
+            Sprite whiteRef = Resources.Load<Sprite>("Tiles/white5@2x");
+            float refBounds = (whiteRef != null && whiteRef.bounds.size.x > 0.0001f) ? whiteRef.bounds.size.x : 1f;
+            Sprite loadedNormal = whiteRef;
             Texture2D glossyTex = Resources.Load<Texture2D>("Tiles/white_glossy@2x");
-            if (glossyTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+            if (glossyTex != null && refBounds > 0.0001f)
             {
                 const float GLOSSY_FILL = 0.80f;
-                float whiteBounds = loadedNormal.bounds.size.x;
-                float ppu = glossyTex.width / (whiteBounds / GLOSSY_FILL);
+                float ppu = glossyTex.width / (refBounds / GLOSSY_FILL);
                 float m = (1f - GLOSSY_FILL) * 0.5f * glossyTex.width;
                 float cw = GLOSSY_FILL * glossyTex.width;
                 loadedNormal = Sprite.Create(glossyTex, new Rect(m, m, cw, cw), new Vector2(0.5f, 0.5f), ppu);
-                // Baked drop shadow (tile_shadow2) at the SAME PPU → bounds ≈ 1.25× the
-                // tile, so a child at scale 1.0 feathers just past the tile edge.
-                // 2026-06-05 Spencer: build BOTH board-shadow variants so \ can flip them
-                // live on the board. s_dropShadowSprite = the currently active one.
                 s_dropShadowSpriteA = MakeBoardShadow(BoardShadowTexA, ppu);
                 s_dropShadowSpriteB = MakeBoardShadow(BoardShadowTexB, ppu);
                 s_dropShadowSprite  = s_useBoardShadowB ? s_dropShadowSpriteB : s_dropShadowSpriteA;
-                Debug.Log($"[BoardShadow] A='{BoardShadowTexA}'(loaded={s_dropShadowSpriteA != null}) " +
-                          $"B='{BoardShadowTexB}'(loaded={s_dropShadowSpriteB != null}) active={(s_useBoardShadowB ? "B" : "A")} ShadowEnabled={ShadowEnabled}");
             }
 
             Sprite loadedPrimed = Resources.Load<Sprite>("Tiles/pink_tile@2x");
@@ -2737,6 +3461,16 @@ namespace WordDrop
                 _fake3DMatInstance.SetFloat("_RotX", rotX);
                 _fake3DMatInstance.SetFloat("_RotY", rotY);
             }
+
+            // The fake-3D tilt warps the tile FACE in-shader, but the flat drop shadow (a separate sprite)
+            // can't follow — it looked like the shadow peeled off. A tilted tile is lifted off the board, so
+            // fade its ground shadow out with the tilt (full when flat, gone when tilted). 2026-06-17 Spencer.
+            if (_dropShadowSR != null)
+            {
+                float a = Mathf.Clamp01(1f - (Mathf.Abs(rotX) + Mathf.Abs(rotY)) / 16f);
+                var c = _dropShadowSR.color; c.a = a; _dropShadowSR.color = c;
+                _dropShadowSR.enabled = !_isDropTargetVisual && a > 0.02f; // chicken escort has no tile shadow
+            }
         }
 
         /// <summary>Animates 3D rotation from one angle to another.</summary>
@@ -2772,6 +3506,8 @@ namespace WordDrop
                 if (_spriteRenderer != null) _spriteRenderer.enabled = true;
                 if (_letterTMP != null) _letterTMP.enabled = true;
                 if (_pointTMP != null) _pointTMP.enabled = true;
+                // Tilt's gone (tile flat again) — bring the ground shadow fully back (except chicken escorts).
+                if (_dropShadowSR != null && !_isDropTargetVisual) { _dropShadowSR.enabled = true; var c = _dropShadowSR.color; c.a = 1f; _dropShadowSR.color = c; }
 
                 _hasFake3D = false;
             }

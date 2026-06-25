@@ -40,8 +40,10 @@ namespace WordDrop
             {
                 for (int x = 0; x < width; x++)
                 {
-                    bool insideOuter = IsInsideRoundedRect(x, y, width, height, cornerRadius);
-                    if (!insideOuter)
+                    // Anti-aliased outer silhouette (supersampled coverage) so the rounded corners don't
+                    // read as jaggy stair-steps — especially when the sprite is stretched. 2026-06-15.
+                    float cov = CoverageRoundedRect(x, y, width, height, cornerRadius);
+                    if (cov <= 0f)
                     {
                         pixels[y * width + x] = Color.clear;
                         continue;
@@ -52,20 +54,21 @@ namespace WordDrop
                         Mathf.Max(0, cornerRadius - borderThickness),
                         borderThickness);
 
-                    if (!insideInner)
-                    {
-                        pixels[y * width + x] = borderColor;
-                        continue;
-                    }
-
-                    pixels[y * width + x] = fillColor;
+                    Color col = insideInner ? fillColor : borderColor;
+                    col.a *= cov; // soften the outer edge
+                    pixels[y * width + x] = col;
                 }
             }
 
             tex.SetPixels(pixels);
             tex.Apply();
 
-            return Sprite.Create(tex, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), 100f);
+            // 9-slice border = cornerRadius so callers that set Image.type = Sliced keep crisp, correctly
+            // proportioned corners at ANY display size (only the middle stretches). Ignored in Simple
+            // mode, so existing callers are unaffected. 2026-06-15.
+            int b = Mathf.Clamp(cornerRadius, 0, Mathf.Min(width, height) / 2);
+            return Sprite.Create(tex, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), 100f,
+                0, SpriteMeshType.FullRect, new Vector4(b, b, b, b));
         }
 
         /// <summary>Solid rounded rect with bevel (no separate border).</summary>
@@ -167,6 +170,40 @@ namespace WordDrop
         }
 
         // ── Geometry helpers ────────────────────────────────────────────────────
+
+        /// <summary>Fractional coverage (0..1) of pixel (px,py) by the rounded-rect silhouette,
+        /// supersampled 4×4 — this is the anti-aliasing that kills the jaggy corners. 2026-06-15.</summary>
+        private static float CoverageRoundedRect(int px, int py, int w, int h, int radius)
+        {
+            const int S = 4;
+            int inside = 0;
+            for (int sy = 0; sy < S; sy++)
+                for (int sx = 0; sx < S; sx++)
+                {
+                    float fx = px + (sx + 0.5f) / S;
+                    float fy = py + (sy + 0.5f) / S;
+                    if (InsideRoundedRectF(fx, fy, w, h, radius)) inside++;
+                }
+            return inside / (float)(S * S);
+        }
+
+        /// <summary>Float-precision point-in-rounded-rect test (for supersampled coverage).</summary>
+        private static bool InsideRoundedRectF(float x, float y, float w, float h, float radius)
+        {
+            if (x < 0f || x >= w || y < 0f || y >= h) return false;
+            radius = Mathf.Min(radius, w * 0.5f, h * 0.5f);
+            if (radius <= 0f) return true;
+
+            float cx, cy;
+            if      (x < radius      && y < radius)      { cx = radius;      cy = radius; }
+            else if (x >= w - radius && y < radius)      { cx = w - radius;  cy = radius; }
+            else if (x < radius      && y >= h - radius) { cx = radius;      cy = h - radius; }
+            else if (x >= w - radius && y >= h - radius) { cx = w - radius;  cy = h - radius; }
+            else return true; // not in a corner quadrant → solid
+
+            float dx = x - cx, dy = y - cy;
+            return dx * dx + dy * dy <= radius * radius;
+        }
 
         private static bool IsInsideRoundedRect(int px, int py, int w, int h, int radius, int inset = 0)
         {

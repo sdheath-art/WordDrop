@@ -34,6 +34,9 @@ namespace WordDrop
         private Image _backdrop;
         private TextMeshProUGUI _titleText;
         private TextMeshProUGUI _bodyText;
+        private GameObject  _objectiveIconHolder; // holds the remaining-objective ICON below the body text
+        private CanvasGroup _objectiveIconCG;
+        private GameObject  _objectiveIconGO;      // the built icon (rebuilt each show; destroyed first)
         private TextMeshProUGUI _continueLabel;
         private TextMeshProUGUI _adLabel;
         private Button _continueButton;
@@ -118,7 +121,7 @@ namespace WordDrop
             panelRT.pivot     = new Vector2(0.5f,  0.5f);
             panelRT.offsetMin = Vector2.zero;
             panelRT.offsetMax = Vector2.zero;
-            panelGO.GetComponent<Image>().color = new Color(0.12f, 0.08f, 0.22f, 0.98f);
+            panelGO.GetComponent<Image>().color = new Color(0.99f, 0.95f, 0.86f, 0.98f); // TEMP candy-unification
             // CanvasGroup lets us hide the panel across the SetActive→
             // DropInWithBounce gap. Without this, the panel renders briefly at
             // rest position before DropInWithBounce snaps it offscreen, which
@@ -141,10 +144,10 @@ namespace WordDrop
             _titleText.text = "CONTINUE?";
             _titleText.fontSize = 150; // Spencer 2026-06-01 — bigger title for the CONTINUE? hero moment
             _titleText.alignment = TextAlignmentOptions.Center;
-            _titleText.color = new Color(1f, 0.84f, 0.42f, 1f);
+            _titleText.color = new Color(0.82f, 0.28f, 0.46f, 1f);
             var titleRT = titleGO.GetComponent<RectTransform>();
-            titleRT.anchorMin = new Vector2(0.05f, 0.78f);
-            titleRT.anchorMax = new Vector2(0.95f, 0.95f);
+            titleRT.anchorMin = new Vector2(0.05f, 0.75f);  // 2026-06-24: nudged down so the big title fits inside the panel
+            titleRT.anchorMax = new Vector2(0.95f, 0.92f);
             titleRT.offsetMin = Vector2.zero;
             titleRT.offsetMax = Vector2.zero;
 
@@ -156,12 +159,23 @@ namespace WordDrop
             _bodyText.text = "Clear the top rows\nand refill resources";
             _bodyText.fontSize = 28;
             _bodyText.alignment = TextAlignmentOptions.Center;
-            _bodyText.color = new Color(0.94f, 0.90f, 0.84f, 1f);
+            _bodyText.color = new Color(0.32f, 0.24f, 0.30f, 1f);
             var bodyRT = bodyGO.GetComponent<RectTransform>();
-            bodyRT.anchorMin = new Vector2(0.05f, 0.48f);
-            bodyRT.anchorMax = new Vector2(0.95f, 0.72f);
+            bodyRT.anchorMin = new Vector2(0.05f, 0.70f);   // raised to make room for the bigger objective icon below it
+            bodyRT.anchorMax = new Vector2(0.95f, 0.745f);
             bodyRT.offsetMin = Vector2.zero;
             bodyRT.offsetMax = Vector2.zero;
+            _bodyText.alignment = TextAlignmentOptions.Bottom;
+
+            // Remaining-objective ICON holder — point-anchored just below the "So close" line.
+            var iconHolderGO = new GameObject("ObjectiveIconHolder", typeof(RectTransform));
+            iconHolderGO.transform.SetParent(panelRT, false);
+            _objectiveIconHolder = iconHolderGO;
+            _objectiveIconCG = iconHolderGO.AddComponent<CanvasGroup>();
+            var iconHolderRT = iconHolderGO.GetComponent<RectTransform>();
+            iconHolderRT.anchorMin = iconHolderRT.anchorMax = new Vector2(0.5f, 0.625f);
+            iconHolderRT.pivot     = new Vector2(0.5f, 0.5f);
+            iconHolderRT.sizeDelta = new Vector2(10f, 10f);
 
             // Continue (PLAY ON) button (paid path) — primary CTA. Cost is
             // dynamic per SurvivalManager.CurrentContinueCost (50→100 ladder).
@@ -171,9 +185,9 @@ namespace WordDrop
             var continueBtnGO = MakeButton(panelRT, "ContinueBtn",
                 new Vector2(0.10f, 0.42f), new Vector2(0.90f, 0.56f),
                 "PLAY ON  ●  50",
-                new Color(0.18f, 0.65f, 0.38f, 1f),
+                new Color(0.96f, 0.63f, 0.16f, 1f), // 2026-06-24: warm orange CTA (was green)
                 OnContinueClicked);
-            PinButtonSize(continueBtnGO, 0.49f);
+            PinButtonSize(continueBtnGO, 0.45f);  // 2026-06-24: nudged down to open room above for the objective icon
             _continueButtonGO = continueBtnGO;
             _continueButton = continueBtnGO.GetComponent<Button>();
             _continueLabel = continueBtnGO.GetComponentInChildren<TextMeshProUGUI>();
@@ -198,7 +212,7 @@ namespace WordDrop
                 "WATCH AD",
                 new Color(0.25f, 0.42f, 0.62f, 1f),
                 OnAdClicked);
-            PinButtonSize(adBtnGO, 0.325f);
+            PinButtonSize(adBtnGO, 0.285f);  // 2026-06-24: down with PLAY ON, keeps the gap
             _adButtonGO = adBtnGO;
             _adButton = adBtnGO.GetComponent<Button>();
             _adLabel = adBtnGO.GetComponentInChildren<TextMeshProUGUI>();
@@ -241,8 +255,8 @@ namespace WordDrop
             rt.anchorMax = new Vector2(0f, 1f);
             rt.pivot     = new Vector2(0f, 0.5f); // anchored from left edge
             rt.sizeDelta = new Vector2(320f, 110f);
-            rt.anchoredPosition = new Vector2(40f, -40f); // mirrors cancel-X inset
-            containerGO.GetComponent<Image>().color = new Color(0.10f, 0.06f, 0.18f, 0.92f);
+            rt.anchoredPosition = new Vector2(40f, -68f); // 2026-06-24: lowered so the whole pill sits inside the panel (was clipping the top)
+            containerGO.GetComponent<Image>().color = new Color(0.96f, 0.89f, 0.79f, 0.92f);
             containerGO.GetComponent<Image>().raycastTarget = false;
 
             // Coin amount label ("● 1234"). Yellow, matches HUD coin counter.
@@ -254,7 +268,7 @@ namespace WordDrop
             _coinAmountText.text = "● 0";
             _coinAmountText.fontSize = 56;
             _coinAmountText.alignment = TextAlignmentOptions.MidlineRight;
-            _coinAmountText.color = new Color(1f, 0.85f, 0.30f, 1f);
+            _coinAmountText.color = new Color(0.80f, 0.52f, 0.10f, 1f);
             _coinAmountText.raycastTarget = false;
             var labelRT = labelGO.GetComponent<RectTransform>();
             labelRT.anchorMin = Vector2.zero;
@@ -381,7 +395,10 @@ namespace WordDrop
             rt.offsetMin = Vector2.zero;
             rt.offsetMax = Vector2.zero;
 
-            btnGO.GetComponent<Image>().color = bgColor;
+            var btnImg = btnGO.GetComponent<Image>();
+            btnImg.color  = bgColor;
+            btnImg.sprite = MenuUI.GetRoundedRectSprite(28); // 2026-06-24: rounded corners (match the rest of the buttons)
+            btnImg.type   = Image.Type.Sliced;
             btnGO.GetComponent<Button>().onClick.AddListener(onClick);
 
             var labelGO = new GameObject("Label", typeof(RectTransform));
@@ -414,6 +431,30 @@ namespace WordDrop
             // Refresh coin total in the top-left pill.
             if (_coinAmountText != null)
                 _coinAmountText.text = $"● {CoinWallet.Balance}";
+
+            // "So close!" — surface the remaining objective so the continue feels like one more push
+            // at a goal in sight, not a generic "clear the top rows". 2026-06-15 Spencer.
+            {
+                var obj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
+
+                // Rebuild the remaining-objective icon (chicken / vault / hidden-row / etc.) fresh each show.
+                if (_objectiveIconGO != null) { Destroy(_objectiveIconGO); _objectiveIconGO = null; }
+
+                bool showIcon = obj != null && !obj.IsComplete && obj.Icon != Objective.HudIcon.None;
+                if (showIcon && _objectiveIconHolder != null)
+                {
+                    _objectiveIconGO = ObjectiveIconBuilder.Build(
+                        obj.Icon, _objectiveIconHolder.transform, 76f, obj.RemainingCount, obj.IconWord);
+                    if (_bodyText != null) _bodyText.text = "So close! You only have";
+                }
+                else if (_bodyText != null)
+                {
+                    _bodyText.text = (obj != null && !obj.IsComplete)
+                        ? $"So close! You only have\n{obj.RemainingText}"
+                        : "Clear the top rows\nand refill resources";
+                }
+                if (_objectiveIconHolder != null) _objectiveIconHolder.SetActive(showIcon);
+            }
 
             if (_continueLabel != null)
                 _continueLabel.text = canAfford
@@ -478,6 +519,7 @@ namespace WordDrop
             // the purpose of the staggered reveal.
             SetTextAlpha(_titleText, 0f);
             SetTextAlpha(_bodyText,  0f);
+            if (_objectiveIconCG != null) _objectiveIconCG.alpha = 0f;
             if (_continueButtonCG != null) _continueButtonCG.alpha = 0f;
             if (_adButtonCG       != null) _adButtonCG.alpha       = 0f;
             if (_giveUpButtonCG   != null) _giveUpButtonCG.alpha   = 0f;
@@ -545,7 +587,11 @@ namespace WordDrop
             // once) so the panel reads as "alive" rather than a screenshot.
             seq.AppendCallback(() => TossInTitle());
             seq.AppendInterval(STAGGER);
-            seq.AppendCallback(() => FadeInText(_bodyText, CHILD_FADE_DUR));
+            seq.AppendCallback(() =>
+            {
+                FadeInText(_bodyText, CHILD_FADE_DUR);
+                if (_objectiveIconCG != null) _objectiveIconCG.DOFade(1f, CHILD_FADE_DUR);
+            });
             seq.AppendInterval(STAGGER);
             seq.AppendCallback(() =>
             {

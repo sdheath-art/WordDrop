@@ -59,6 +59,13 @@ namespace WordDrop
         {
             if (!_loadedUITMP)
             {
+                // 2026-06-15 Spencer: UI/HUD uses Montserrat-Black SDF (clean). We TRIED Cartoon SDF for
+                // everything, but that asset was generated with padding=20 at pointSize=42 (spread ratio
+                // ~0.48 vs the normal ~0.05–0.1) — the huge SDF spread bloats/melts/overlaps glyphs at UI
+                // sizes (fine only on the giant title). It's baked into the atlas; no code fix. To go full
+                // Cartoon, regenerate "Cartoon SDF" in Window▸TextMeshPro▸Font Asset Creator at pointSize
+                // ~90, padding ~9, then switch the first load back to "Cartoon SDF". Display/celebration
+                // text (GetDisplayTMP) stays Cartoon — it's always large, where the bad atlas looks fine.
                 _uiTMP = Resources.Load<TMP_FontAsset>("Montserrat-Black SDF");
                 if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_uiTMP == null) _uiTMP = GetTMP();
@@ -99,7 +106,8 @@ namespace WordDrop
         {
             if (!_loadedUI)
             {
-                _uiFont = Resources.Load<Font>("NunitoSans");
+                _uiFont = Resources.Load<Font>("Cartoon"); // 2026-06-15 Spencer: Cartoon for all UI
+                if (_uiFont == null) _uiFont = Resources.Load<Font>("NunitoSans");
                 if (_uiFont == null) _uiFont = Get();
                 _loadedUI = true;
             }
