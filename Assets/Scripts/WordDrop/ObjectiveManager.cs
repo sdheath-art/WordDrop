@@ -109,6 +109,8 @@ namespace WordDrop
             SurvivalManager.Instance?.SetStageMoveBudgetOverride(e.MoveBudget);
             // Tutorial: count the connecting word toward the goal on this level (OFF for normal levels).
             CountConnectingWords = e.CountConnecting;
+            // Tutorial: disable the fuse so primed words don't fizzle on a learner (OFF for normal levels).
+            RulesEngine.FuseDisabled = e.FuseOff;
 
             // ── Starting board ──
             // Tutorial / authored levels place an EXACT hand-built board (FixedBoard) verbatim and skip
@@ -159,10 +161,27 @@ namespace WordDrop
                         case LevelMode.HeroWord: fillRows = 6; density = 0.80f; break; // 2026-06-15 Spencer: FULLER board so the escort takes longer to reach the bottom
                         default:                 fillRows = 5; density = 0.65f; break; // LongWord: room to maneuver
                     }
+                    // Per-level override (tutorial levels keep the board lighter/forgiving). 2026-06-25.
+                    if (e.BoardFillRows > 0) fillRows = e.BoardFillRows;
+                    if (e.BoardDensity > 0f) density = e.BoardDensity;
                     rules.SeedVaultBoard(fillRows, density, 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
                     MatchController.Instance?.ResetTurnCounter();                 // ClearBoard zeroed GlobalTurn; reset the cached _currentTurn too (the trap)
                     GridManager.Instance?.RebuildFromRulesEngine(rules);          // full rebuild wipes stale per-tile visual state
                 }
+            }
+
+            // Tutorial: guarantee the opening hand can make a word on this board (no cold start). 2026-06-25.
+            if (e.GuaranteeFirstWord)
+            {
+                // These levels are DESIGNED around the assists (board-aware draws + opening guarantee).
+                // A stale NoAssist debug toggle disables ALL of it → a cold, dead board (Spencer hit this
+                // repeatedly). Force it OFF for assisted tutorial levels so it can't bite. 2026-06-25.
+                if (SurvivalManager.NoAssistMode)
+                {
+                    SurvivalManager.NoAssistMode = false;
+                    Debug.Log("[LevelTable] Tutorial level forced NoAssistMode OFF (assists are required here).");
+                }
+                MatchController.Instance?.GuaranteeFirstWordForCurrentBoard();
             }
 
             // ── Install the mode ──

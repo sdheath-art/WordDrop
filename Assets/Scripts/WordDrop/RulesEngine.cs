@@ -83,8 +83,13 @@ namespace WordDrop
         private const int SURVIVAL_FUSE_CAP   = 6;
 
         /// <summary>Returns the fuse length for a primed word. Survival: word length capped at 6. Classic: flat 4.</summary>
+        // Tutorial levels disable the fuse so primed words never fizzle on a learner (the fuse is its
+        // own mechanic, taught later). Set per-level in ObjectiveManager.InstallLevel. 2026-06-25 Spencer.
+        public static bool FuseDisabled = false;
+
         private static int GetFuseLength(int wordLength)
         {
+            if (FuseDisabled) return 9999;   // effectively infinite — primed words don't fizzle this level
             if (SurvivalManager.IsSurvivalMode)
                 return Mathf.Min(wordLength, SURVIVAL_FUSE_CAP);
             return PRIMED_EXPIRY_TURNS;

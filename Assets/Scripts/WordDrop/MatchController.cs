@@ -1242,6 +1242,19 @@ namespace WordDrop
             Debug.Log($"[MatchController] Auto-primed {primed} word(s) on starting board.");
         }
 
+        /// <summary>Reroll the human hand until it can make a valid word on the CURRENT board (reuses
+        /// the match-start first-word guarantee). For tutorial levels that want a guaranteed easy opening
+        /// move. Respects NoAssistMode (skipped if the player turned help off). 2026-06-25 Spencer.</summary>
+        public void GuaranteeFirstWordForCurrentBoard(int maxRerolls = 8)
+        {
+            if (SurvivalManager.NoAssistMode) return;
+            if (RulesEngine.Instance == null || _hands == null
+                || _hands[PLAYER_HUMAN] == null || _bag == null) return;
+            for (int i = 0; i < maxRerolls && !HasValidFirstMove(_hands[PLAYER_HUMAN], RulesEngine.Instance); i++)
+                _hands[PLAYER_HUMAN].FillAll(_bag);
+            EmitHandRefilled(PLAYER_HUMAN);
+        }
+
         /// <summary>
         /// Checks if any hand letter dropped in any column would create a valid word.
         /// Used for first-word guarantee at match start.

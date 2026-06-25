@@ -95,6 +95,10 @@ namespace WordDrop
         public bool Gated;           // tutorial: run the input-gating + hand_point coaching on this level.
         public bool CountConnecting; // tutorial: also count the connecting/trigger word toward the goal,
                                      // so a "2 explosions of 4 words" board reads 4 on the TARGET.
+        public int   BoardFillRows;  // generated-board levels: starting fill rows (0 = mode default).
+        public float BoardDensity;   // generated-board levels: starting fill density 0..1 (0 = mode default).
+        public bool  GuaranteeFirstWord; // reroll the opening hand until a word is makeable on this board.
+        public bool  FuseOff;            // tutorial: primed words DON'T fizzle (the fuse is its own later lesson).
 
         public string Why;           // one-line rationale (dip/peak/Kishōtenketsu beat) — for logging
     }
@@ -158,8 +162,19 @@ namespace WordDrop
                         "DRW.AT",   // row 1
                         "NGZYEX",   // row 0 (bottom)
                     },
-                    risesOff:true, moveBudget:30, gated:true, countConnecting:true,
+                    risesOff:true, moveBudget:30, gated:true, countConnecting:true, fuseOff:true,
                     why:"TUTORIAL L1 — prime→explode on a fixed gated board (CAT/PIT + LAND/NOT)."),
+
+                // TUTORIAL L2 — COMPREHENSION (training wheels off). NOT a fixed board + NOT gated: the
+                //   player does prime→explode THEIR way on a GENERATED fertile board with the assist dials
+                //   cranked to "knife through butter" (length + detonation seeding ON, assist freq maxed),
+                //   so opportunities are abundant + easy. Rises ON (the REFILL engine keeps the board fed;
+                //   gentle Breezy cadence). The idle marching-ants hint is the safety net if they stall.
+                //   Goal: explode 3 ANY words. ⚠️ Needs NoAssistMode OFF (N) or all the help is disabled.
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:4,
+                    assistFreq:0.90f, risesOff:true, moveBudget:30, boardFillRows:4, boardDensity:0.55f,
+                    guaranteeFirstWord:true, fuseOff:true,
+                    why:"TUTORIAL L2 — comprehension: explode 4 words YOUR way. LIGHT/open board (no edits or swaps to dig out of clutter, so keep it forgiving) + MAX assists feed the opportunities; rises off, 30 moves, free play, idle hint = safety net."),
 
                 // L1 — LongWord Ki. Knife-through-butter hook: explode 3 ANY words, every helper ON. VALLEY (run floor).
                 Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
@@ -240,7 +255,9 @@ namespace WordDrop
             LevelMode mode, DifficultyProfile profile, string why,
             int longMin = 3, int longGoal = 3, int hero = 2, int ice = 4,
             int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
-            bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false)
+            bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false,
+            float assistFreq = -1f, int boardFillRows = 0, float boardDensity = 0f,
+            bool guaranteeFirstWord = false, bool fuseOff = false)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -256,13 +273,17 @@ namespace WordDrop
                 HiddenWord     = hidden,
                 LengthSeed  = d.length,
                 DetonSeed   = d.deton,
-                AssistFreq  = d.freq,
+                AssistFreq  = assistFreq >= 0f ? assistFreq : d.freq,  // override for tutorial "max help" levels
                 RiseCadence = d.rise,
                 FixedBoard  = fixedBoard,
                 RisesOff    = risesOff,
                 MoveBudget  = moveBudget,
                 Gated           = gated,
                 CountConnecting = countConnecting,
+                BoardFillRows   = boardFillRows,
+                BoardDensity    = boardDensity,
+                GuaranteeFirstWord = guaranteeFirstWord,
+                FuseOff         = fuseOff,
                 Why = why,
             };
         }

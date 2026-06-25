@@ -1692,6 +1692,16 @@ namespace WordDrop
         {
             _isRisingRow = true;
             _riseScheduledPending = false; // the queued rise is now executing — no longer "pending"
+
+            // Rising rows disabled for this level (tutorial RisesOff levels set RisingRowManager.Enabled
+            // = false). The TIME-BASED rise clock here doesn't go through ShouldRiseThisTurn, so honor the
+            // disable explicitly or rows still creep up on a free-play level. 2026-06-25 Spencer.
+            if (RisingRowManager.Instance == null || !RisingRowManager.Enabled)
+            {
+                _isRisingRow = false;
+                yield break;
+            }
+
             bool isProcessing = MatchController.Instance != null && MatchController.Instance.IsProcessing;
             bool isRewriting  = HandManager.Instance != null && HandManager.Instance.IsRewriteModeActive;
             bool rmExists     = RisingRowManager.Instance != null;
