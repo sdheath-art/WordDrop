@@ -111,6 +111,10 @@ namespace WordDrop
             CountConnectingWords = e.CountConnecting;
             // Tutorial: disable the fuse so primed words don't fizzle on a learner (OFF for normal levels).
             RulesEngine.FuseDisabled = e.FuseOff;
+            // A gate from a PREVIOUS level (e.g. skipping L1 → L4 via the debug menu) must not linger and
+            // lock the player out of this level — cancel any active coaching before installing. 2026-07-06.
+            TutorialManager.Instance?.CancelActiveCoaching();
+
             // Onboarding locks: lock the tools not yet taught (swaps/boosters/edit/bag) for early levels;
             // they unlock when the real game starts (see TutorialLocks unlock-level constants).
             TutorialLocks.ApplyForLevel(levelIndex);

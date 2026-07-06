@@ -573,10 +573,17 @@ namespace WordDrop
             if (IsGating) return;
             if (!SurvivalManager.IsSurvivalMode || SurvivalManager.Instance == null) return;
             int stage = SurvivalManager.Instance.CurrentStageIndex;
-            if (!LevelTable.Get(stage).Gated) return;
-            var script = GetGateScript(stage);
-            if (script == null || script.Length == 0) return;
-            BeginGatedLevel(script);
+            var entry = LevelTable.Get(stage);
+            if (entry.Gated)
+            {
+                var script = GetGateScript(stage);
+                if (script != null && script.Length > 0) BeginGatedLevel(script);
+                return;
+            }
+            // Non-gated level with a seeded opening hand (the combo-practice puzzle): FORCE the combo letters
+            // into the hand so the player can actually build it — but DON'T gate placement (free play). 2026-07-06.
+            if (!string.IsNullOrEmpty(entry.RigHand))
+                SetPlayerHand(entry.RigHand.ToUpperInvariant().ToCharArray());
         }
 
         // Gated tutorial levels: stage 1 = prime→explode, stage 3 = the combo (stack a cluster, detonate all).
@@ -676,6 +683,18 @@ namespace WordDrop
             HintManager.Instance?.ClearForcedHint();
             if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
 //             Debug.Log("[TutorialGate] gated level complete — coaching released.");
+        }
+
+        /// <summary>End any active gated-level coaching (hand-pointer, input gate, forced hint) RIGHT NOW.
+        /// Called from ObjectiveManager.InstallLevel on every level change so a gate from a PREVIOUS level
+        /// (e.g. skipping L1 → L4 via the debug menu) can't linger and lock the player out. 2026-07-06 Spencer.</summary>
+        public void CancelActiveCoaching()
+        {
+            if (_gateScript != null)
+            {
+                Debug.Log("[TutorialGate] CancelActiveCoaching — clearing a stale gate from a previous level.");
+                EndGatedLevel();
+            }
         }
 
         // ══════════════════════════════════════════════════════════════════════════

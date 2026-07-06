@@ -101,6 +101,7 @@ namespace WordDrop
         public bool  GuaranteeFirstWord; // reroll the opening hand until a word is makeable on this board.
         public bool  FuseOff;            // tutorial: primed words DON'T fizzle (the fuse is its own later lesson).
         public string GoalText;          // tutorial/authored: custom pre-level GOAL text (null = auto from the objective).
+        public string RigHand;           // authored: FORCE this opening hand (each char = a card); free placement, no gating.
 
         public string Why;           // one-line rationale (dip/peak/Kishōtenketsu beat) — for logging
     }
@@ -198,16 +199,27 @@ namespace WordDrop
                     why:"TUTORIAL L3 — COMBO: stack TOW/STAR/ZIP (col-1 tower), then DAY triggers all 3 at once."),
 
                 // TUTORIAL L4 — COMBO PRACTICE (free play, ungated). They learned the combo on L3's rigged
-                //   board; now they pull one off THEMSELVES. Goal is a real ComboObjective — "blow up 3 words
-                //   at once" — so separate single pops DON'T count; they must stack a cluster + detonate it.
-                //   Assist-heavy generated board (detonation seeding cranked) keeps combo setups flowing; rises
-                //   off, 30 moves, guaranteed opening word. ▶ NEXT (Spencer's ask): author a FIXED opening board
-                //   so a combo is teed up right off the bat — just add a fixedBoard: here and it's guaranteed.
+                //   board; now they pull one off THEMSELVES. Authored board (Spencer 2026-07-06) with a real
+                //   3-word combo teed up:
+                //     C→col0 → CAT (row4) charges · T→col3 → SOFT (row3) charges · E→col4 → FINE (row2) charges
+                //     — three charged words in a STAIRCASE (they only TOUCH, never share a cell, so they stack) —
+                //     then Y→col4 → YES (vertical), whose E is SHARED with FINE → detonates the whole cluster at
+                //     once (CAT+SOFT+FINE = a 3-word combo; YES is the connector, not counted).
+                //   Real ComboObjective, so only an ACTUAL combo wins (separate pops don't). Free play (no gating)
+                //   + heavy assists + the idle hint help them find it; rises off, 30 moves, fuse off.
                 Entry(LevelMode.Combo, DifficultyProfile.A_Breezy, longGoal:3,
-                    assistFreq:0.90f, risesOff:true, moveBudget:30, boardFillRows:4, boardDensity:0.60f,
+                    fixedBoard: new[] {
+                        ".AT...",   // row 4  (C → col0 makes CAT)
+                        "SOF...",   // row 3  (T → col3 makes SOFT ; Y → col4 makes YES = the trigger)
+                        "OFIN.I",   // row 2  (E → col4 makes FINE)
+                        "TDBRSS",   // row 1
+                        "YCABMW",   // row 0  (bottom)
+                    },
+                    assistFreq:0.90f, risesOff:true, moveBudget:30,
                     guaranteeFirstWord:true, fuseOff:true,
                     goalText:"Blow up a 3-word combo!",
-                    why:"TUTORIAL L4 — combo practice: pull off a 3-word combo yourself (ComboObjective), assist-heavy free play."),
+                    rigHand:"CTEYR",   // FORCE the combo letters (C,T,E,Y) + one distractor into the opening hand
+                    why:"TUTORIAL L4 — combo practice: authored CAT/SOFT/FINE + YES-trigger 3-word combo; ComboObjective, free play."),
 
                 // L1 — LongWord Ki. Knife-through-butter hook: explode 3 ANY words, every helper ON. VALLEY (run floor).
                 Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
@@ -290,7 +302,7 @@ namespace WordDrop
             int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
             bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false,
             float assistFreq = -1f, int boardFillRows = 0, float boardDensity = 0f,
-            bool guaranteeFirstWord = false, bool fuseOff = false, string goalText = null)
+            bool guaranteeFirstWord = false, bool fuseOff = false, string goalText = null, string rigHand = null)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -318,6 +330,7 @@ namespace WordDrop
                 GuaranteeFirstWord = guaranteeFirstWord,
                 FuseOff         = fuseOff,
                 GoalText        = goalText,
+                RigHand         = rigHand,
                 Why = why,
             };
         }

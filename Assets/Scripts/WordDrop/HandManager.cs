@@ -4246,16 +4246,24 @@ namespace WordDrop
                     // the detonation pitch per pop. 2026-07-06 Spencer.
                     var boom = WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, wordFlash: false, cascade: false);
 
-                    if (finale && BigBurstFlash.Instance != null)
+                    if (finale)
                     {
-                        Vector3 fc = Vector3.zero; int fn = 0;
-                        foreach (var ft in groupTiles) if (ft != null) { fc += ft.transform.position; fn++; }
-                        if (fn > 0) BigBurstFlash.Instance.Play(fc / fn, 7f, 1.1f, false, null);
+                        // The climax BOOM — moved here from the pre-windup (MaybeBigPopAndHold skips it on a
+                        // combo) so the deep boom lands ON the last pop and the audio BUILDS instead of firing
+                        // front-loaded. 2026-07-06 Spencer.
+                        GameAudio.Instance?.PlayBigPop();
+                        if (BigBurstFlash.Instance != null)
+                        {
+                            Vector3 fc = Vector3.zero; int fn = 0;
+                            foreach (var ft in groupTiles) if (ft != null) { fc += ft.transform.position; fn++; }
+                            if (fn > 0) BigBurstFlash.Instance.Play(fc / fn, 7f, 1.1f, false, null);
+                        }
                     }
 
-                    // Growing screen punch — light early, biggest on the climax (prototype values).
-                    float mag = finale ? 0.20f : 0.06f + 0.10f * t01;
-                    float dur = finale ? 0.26f : 0.16f;
+                    // Growing screen punch — light early, biggest on the climax. Finale mag bumped 0.20→0.30
+                    // so the boom lands harder (2026-07-06 Spencer).
+                    float mag = finale ? 0.30f : 0.06f + 0.10f * t01;
+                    float dur = finale ? 0.28f : 0.16f;
                     GridManager.Instance?.ShakeBoard(mag, dur);
 
                     if (finale)

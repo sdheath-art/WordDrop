@@ -791,6 +791,17 @@ namespace WordDrop
         {
             if (_editPips == null) return;
 
+            // Locked (early tutorial levels) → show ONLY the padlock. Hide the pips + ad hint and bail:
+            // RefreshEditPips runs every frame and would otherwise re-activate the pips, leaving the pink
+            // charges visible ON TOP of the lock (inconsistent with how L1–L3 look). 2026-07-06 Spencer.
+            if (TutorialLocks.EditLocked)
+            {
+                for (int p = 0; p < _editPips.Length; p++)
+                    if (_editPips[p] != null) _editPips[p].gameObject.SetActive(false);
+                if (_editAdHint != null) _editAdHint.gameObject.SetActive(false);
+                return;
+            }
+
             // Out of swaps AND a rewarded ad is on offer → show the "watch ad" affordance instead of dim.
             bool adOffer = count <= 0 && IsSwapAdEligible();
 

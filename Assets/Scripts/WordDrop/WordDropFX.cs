@@ -745,7 +745,13 @@ namespace WordDrop
             Debug.Log($"[BigPop] gate: tiles={totalTiles} → {(fire ? "FIRE+hold" : "skip")}");
             if (!fire) yield break;
 
-            GameAudio.Instance?.PlayBigPop(BigPopNudge);
+            // Skip the pre-windup BOOM when a multi-word combo is about to STAGGER — otherwise the boom
+            // front-loads BEFORE the rising chain pops, making the crescendo backwards (BOOM → little pops).
+            // The stagger fires its own boom at the FINALE instead, so the audio BUILDS to the climax. (The
+            // visual pucker/bubble below still plays.) 2026-07-06 Spencer.
+            bool comboPending = _pendingCascadeWords != null && _pendingCascadeWords.Count >= 2;
+            if (!comboPending)
+                GameAudio.Instance?.PlayBigPop(BigPopNudge);
 
             float hold = BigPopLeadSeconds;
             float suck = BigPopSuckScale;
@@ -859,10 +865,14 @@ namespace WordDrop
             // on it would never fire. FIRST CUT — flies every tile in this blast group, which on the single-
             // detonation path can include a little splash collateral; tighten to word-only if it reads busy.
             // 2026-07-06 Spencer.
-            if (ObjectiveManager.Instance != null
-                && ObjectiveManager.Instance.Active is LongWordObjective longObj
-                && HUDManager.Instance != null
-                && wordLength >= longObj.MinLen)
+            // Fire for LongWord ("explode N words") AND Combo ("blow up N at once") — both want the
+            // detonated word's letters to fly up to the target. LongWord gates on its MinLen; Combo takes
+            // any qualifying word. 2026-07-06 Spencer.
+            var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
+            bool flyUpGoal = HUDManager.Instance != null
+                && ((flyObj is LongWordObjective lwObj && wordLength >= lwObj.MinLen)
+                    || flyObj is ComboObjective);
+            if (flyUpGoal)
             {
                 // Collect valid tiles first so we can pop the icon EXACTLY ONCE (on the last landing) —
                 // a per-letter pop stacks overlapping rotation tweens and freezes the icon (see
@@ -884,10 +894,14 @@ namespace WordDrop
                     if (isWordTile) flyTiles.Add(ft);
                 }
                 Debug.Log($"[FlyUp] wordLen={wordLength} tiles={tiles.Count} fly={flyTiles.Count} | {_flyDbg}");
+                // Ramp the fly-up pop per WORD along a chain: deeper words punch out bigger toward the
+                // camera, the finale biggest. Keyed on chainStep (the word's position in the stagger/cascade).
+                // Tasteful range: 1.28× (first) → ~1.65× (chainStep 4+). Glow scales with it (child). 2026-07-06.
+                float popPeak = 1.28f + Mathf.Min(chainStep * 0.10f, 0.37f);
                 for (int i = 0; i < flyTiles.Count; i++)
                 {
                     bool last = (i == flyTiles.Count - 1);
-                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, null, i * 0.07f, cascade);
+                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, null, i * 0.07f, cascade, popPeak);
                 }
             }
 

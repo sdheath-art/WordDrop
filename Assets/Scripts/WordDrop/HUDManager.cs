@@ -1186,7 +1186,7 @@ namespace WordDrop
         // objective ICON — same routine + look as the HeroWord escorts / HiddenWord letters — landing
         // with a pop + chime, so a goal-satisfying explosion gets the same "collected!" travel. Flies to
         // the icon (there are no letter slots on these levels). 2026-07-06 Spencer.
-        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false)
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f)
         {
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
             Vector3 target = GetObjectiveIconScreenPos();
@@ -1211,10 +1211,10 @@ namespace WordDrop
             // (>0 = a post-gravity cascade word). 2026-07-06 Spencer.
             if (cascadeGreen)
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Tile.SCORED_TINT,
-                    Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay));
+                    Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay, popPeak));
             else
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, new Color(1.7f, 0.7f, 1.5f, 1f),
-                    new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay));
+                    new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay, popPeak));
         }
 
         /// <summary>UI renders by hierarchy order, so bring the whole Target chain to the front before a
@@ -1479,7 +1479,7 @@ namespace WordDrop
         /// ease-in flight, dissolves at the HUD, then onArrive() does the landing (reveal/pop/collect).
         /// Shared by the HiddenWord letters and the HeroWord escorts. 2026-06-17 Spencer.</summary>
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
-            Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay)
+            Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f)
         {
             var cam = Camera.main;
             if (cam == null) { onArrive?.Invoke(); yield break; }
@@ -1538,7 +1538,7 @@ namespace WordDrop
             // ── Phase 1: WILD POP — overshoot + glow flash + wobble, elastic settle ──
             GameParticles.Instance?.PlayShimmerBurst(startWorld, 10);
             var pop = DOTween.Sequence();
-            pop.Append(go.transform.DOScale(baseScale * 1.28f, 0.17f).SetEase(Ease.OutBack, 4f));
+            pop.Append(go.transform.DOScale(baseScale * popPeak, 0.17f).SetEase(Ease.OutBack, 4f)); // popPeak ramps per word on a chain (glow is a child → scales with it)
             pop.Join(glowSR.DOFade(0.95f, 0.13f));
             pop.Join(go.transform.DOPunchRotation(new Vector3(0f, 0f, 13f), 0.34f, 6, 0.7f));
             pop.Append(go.transform.DOScale(baseScale, 0.16f).SetEase(Ease.OutElastic, 0.6f, 0.4f));
