@@ -863,11 +863,18 @@ namespace WordDrop
                                 // detonation reads as several small per-group pops and
                                 // never crosses the 8-tile threshold.
                                 yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
+                                Debug.Log($"[ChainFX] detonation FX — triggerWordGroups={(_triggerWordGroups?.Count ?? 0)} dyingTiles={dyingTiles.Count} chainDepth={step.ChainDepth} → " +
+                                          ((_triggerWordGroups != null && _triggerWordGroups.Count > 1) ? "STAGGERED crescendo path" : "SINGLE-BLAST path (no stagger)"));
                                 if (_triggerWordGroups != null && _triggerWordGroups.Count > 1)
                                 {
-                                    // Sequential: explode each word group one at a time
+                                    // STAGGERED CRESCENDO — ports the ChainPrototype "PULL TRIGGER" feel
+                                    // into the live combo so stacked words pop one-at-a-time and BUILD: each
+                                    // word gets a growing screen-shake, and the LAST one climaxes with a hard
+                                    // hitstop + big burst. (Rising pitch already comes from PlayExplosion's
+                                    // PlayMatchLine.) Values are the prototype's tuned ones. 2026-06-25 Spencer.
                                     var explodedSet = new HashSet<Vector2Int>();
-                                    for (int g = 0; g < _triggerWordGroups.Count; g++)
+                                    int groupCount = _triggerWordGroups.Count;
+                                    for (int g = 0; g < groupCount; g++)
                                     {
                                         var group = _triggerWordGroups[g];
                                         var groupTiles = new List<Tile>();
@@ -880,16 +887,31 @@ namespace WordDrop
                                         }
                                         if (groupTiles.Count > 0)
                                         {
+                                            bool finale = (g == groupCount - 1);
+                                            float tt = groupCount <= 1 ? 1f : (float)g / (groupCount - 1); // 0→1 across the chain
+
+                                            // Climax only: a crisp anticipation freeze BEFORE the boom
+                                            // (freezes the wind-up, never the explosion — prototype).
+                                            if (finale)
+                                                yield return StartCoroutine(WordDropFX.HitStop(0.05f));
+
                                             yield return WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count);
-                                            // Phase 9.10: widen the per-word beat for Level mode so
-                                            // cluster detonations at the same step (e.g. L208's AND
-                                            // and PIN both primed + triggered in one DoExplode pass)
-                                            // read as distinct sequential events instead of blurring
-                                            // into a simultaneous flash. Survival keeps the tight
-                                            // 0.12s beat since its clusters are from rapid rising-row
-                                            // cascades where the tighter rhythm is desired.
-                                            float perWordBeat = GameManager.IsLevelMode ? 0.35f : 0.12f;
-                                            yield return WaitCache.Get(perWordBeat);
+
+                                            // Climax burst (prototype values).
+                                            if (finale && BigBurstFlash.Instance != null)
+                                            {
+                                                Vector3 fc = Vector3.zero; int fn = 0;
+                                                foreach (var ft in groupTiles) if (ft != null) { fc += ft.transform.position; fn++; }
+                                                if (fn > 0) BigBurstFlash.Instance.Play(fc / fn, 7f, 1.1f, false, null);
+                                            }
+
+                                            // Growing screen punch — light early, biggest on the climax (prototype).
+                                            float mag = finale ? 0.20f : 0.06f + 0.10f * tt;
+                                            float dur = finale ? 0.26f : 0.16f;
+                                            GridManager.Instance?.ShakeBoard(mag, dur);
+
+                                            // Inter-pop beat = the shake duration (the prototype's inter-link spacing).
+                                            yield return WaitCache.Get(dur);
                                         }
                                     }
 

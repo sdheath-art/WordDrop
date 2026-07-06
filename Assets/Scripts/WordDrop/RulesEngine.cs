@@ -4692,6 +4692,16 @@ namespace WordDrop
                     }
             }
 
+            // COMBO objective: report how many CHARGED (human) words THIS single blast detonates at once —
+            // ComboObjective completes on the first blast that reaches its target. Read-only / FX-neutral. 2026-07-06.
+            int comboWordCount = 0;
+            for (int ci = 0; ci < _stepPendingTriggers.Count; ci++)
+            {
+                var cpw = _primedRegistry.GetById(_stepPendingTriggers[ci]);
+                if (cpw != null && cpw.OwnerPlayer == MatchController.PLAYER_HUMAN) comboWordCount++;
+            }
+            if (comboWordCount > 0) ObjectiveManager.Instance?.NotifyComboDetonated(comboWordCount);
+
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
             {
                 int pid = _stepPendingTriggers[i];

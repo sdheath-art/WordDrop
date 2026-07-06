@@ -111,6 +111,9 @@ namespace WordDrop
             CountConnectingWords = e.CountConnecting;
             // Tutorial: disable the fuse so primed words don't fizzle on a learner (OFF for normal levels).
             RulesEngine.FuseDisabled = e.FuseOff;
+            // Onboarding locks: lock the tools not yet taught (swaps/boosters/edit/bag) for early levels;
+            // they unlock when the real game starts (see TutorialLocks unlock-level constants).
+            TutorialLocks.ApplyForLevel(levelIndex);
 
             // ── Starting board ──
             // Tutorial / authored levels place an EXACT hand-built board (FixedBoard) verbatim and skip
@@ -373,6 +376,17 @@ namespace WordDrop
             if (Active == null || string.IsNullOrEmpty(word)) return;
             bool wasComplete = Active.IsComplete;
             Active.OnWordExploded(word, ownerPlayerIndex);
+            PushHud();
+            FireCompleteIfJust(wasComplete);
+        }
+
+        /// <summary>A single detonation blew up <paramref name="chargedWordsInBlast"/> charged words AT ONCE
+        /// (the combo size, reported once per blast by RulesEngine.DoExplode). Feeds ComboObjective. 2026-07-06.</summary>
+        public void NotifyComboDetonated(int chargedWordsInBlast)
+        {
+            if (Active == null || chargedWordsInBlast <= 0) return;
+            bool wasComplete = Active.IsComplete;
+            Active.OnComboDetonated(chargedWordsInBlast);
             PushHud();
             FireCompleteIfJust(wasComplete);
         }

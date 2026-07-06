@@ -42,7 +42,8 @@ namespace WordDrop
         HeroWord,   // escort N drop-targets to the bottom (FLAGSHIP escort-down)
         Vault,      // treasure triage-loot (PURE REWARD — never ends the run; rises OFF, move cap)
         Ice,        // clear-the-ice blocker (thaw N frozen tiles by detonating them in words)
-        HiddenWord  // uncover a mystery word — exploded letters that match reveal in place (2026-06-17)
+        HiddenWord, // uncover a mystery word — exploded letters that match reveal in place (2026-06-17)
+        Combo       // blow up N charged words in ONE detonation (the combo — teaches/tests clustering) 2026-07-06
     }
 
     /// <summary>
@@ -99,6 +100,7 @@ namespace WordDrop
         public float BoardDensity;   // generated-board levels: starting fill density 0..1 (0 = mode default).
         public bool  GuaranteeFirstWord; // reroll the opening hand until a word is makeable on this board.
         public bool  FuseOff;            // tutorial: primed words DON'T fizzle (the fuse is its own later lesson).
+        public string GoalText;          // tutorial/authored: custom pre-level GOAL text (null = auto from the objective).
 
         public string Why;           // one-line rationale (dip/peak/Kishōtenketsu beat) — for logging
     }
@@ -175,6 +177,37 @@ namespace WordDrop
                     assistFreq:0.90f, risesOff:true, moveBudget:30, boardFillRows:4, boardDensity:0.55f,
                     guaranteeFirstWord:true, fuseOff:true,
                     why:"TUTORIAL L2 — comprehension: explode 4 words YOUR way. LIGHT/open board (no edits or swaps to dig out of clutter, so keep it forgiving) + MAX assists feed the opportunities; rises off, 30 moves, free play, idle hint = safety net."),
+
+                // TUTORIAL L3 — teaches the COMBO: STACK a cluster of charged words, then DETONATE them all
+                //   at once. Gated. The col-1 tower (Spencer's authored board):
+                //     O→col1 (TOW charges, row1) · S→col1 (STAR charges, row2) · I→col1 (ZIP charges, row3)
+                //     — three charged words that only TOUCH (never share a cell), so they stack without
+                //     setting each other off — then D→col3 forms DAY (vertical), which OVERLAPS STAR's A →
+                //     triggers STAR → the connected-group adjacency cascade pulls in the touching TOW + ZIP →
+                //     all three blow at once (the combo). Goal "explode 3" = exactly the cluster; DAY is the
+                //     connector (not counted). fuseOff so the charges wait patiently while the player stacks.
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
+                    fixedBoard: new[] {
+                        "Z.P...",   // row 3 (top)
+                        "N.TARI",   // row 2
+                        "T.WYAM",   // row 1
+                        "RVIERT",   // row 0 (bottom)
+                    },
+                    risesOff:true, moveBudget:30, gated:true, countConnecting:false, fuseOff:true,
+                    goalText:"Explode a 3-word cluster!",
+                    why:"TUTORIAL L3 — COMBO: stack TOW/STAR/ZIP (col-1 tower), then DAY triggers all 3 at once."),
+
+                // TUTORIAL L4 — COMBO PRACTICE (free play, ungated). They learned the combo on L3's rigged
+                //   board; now they pull one off THEMSELVES. Goal is a real ComboObjective — "blow up 3 words
+                //   at once" — so separate single pops DON'T count; they must stack a cluster + detonate it.
+                //   Assist-heavy generated board (detonation seeding cranked) keeps combo setups flowing; rises
+                //   off, 30 moves, guaranteed opening word. ▶ NEXT (Spencer's ask): author a FIXED opening board
+                //   so a combo is teed up right off the bat — just add a fixedBoard: here and it's guaranteed.
+                Entry(LevelMode.Combo, DifficultyProfile.A_Breezy, longGoal:3,
+                    assistFreq:0.90f, risesOff:true, moveBudget:30, boardFillRows:4, boardDensity:0.60f,
+                    guaranteeFirstWord:true, fuseOff:true,
+                    goalText:"Blow up a 3-word combo!",
+                    why:"TUTORIAL L4 — combo practice: pull off a 3-word combo yourself (ComboObjective), assist-heavy free play."),
 
                 // L1 — LongWord Ki. Knife-through-butter hook: explode 3 ANY words, every helper ON. VALLEY (run floor).
                 Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
@@ -257,7 +290,7 @@ namespace WordDrop
             int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
             bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false,
             float assistFreq = -1f, int boardFillRows = 0, float boardDensity = 0f,
-            bool guaranteeFirstWord = false, bool fuseOff = false)
+            bool guaranteeFirstWord = false, bool fuseOff = false, string goalText = null)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -284,6 +317,7 @@ namespace WordDrop
                 BoardDensity    = boardDensity,
                 GuaranteeFirstWord = guaranteeFirstWord,
                 FuseOff         = fuseOff,
+                GoalText        = goalText,
                 Why = why,
             };
         }
@@ -421,7 +455,7 @@ namespace WordDrop
         {
             switch (e.Mode)
             {
-                case LevelMode.LongWord: return new LongWordObjective(e.LongWordMinLen, e.LongWordGoal);
+                case LevelMode.LongWord: return new LongWordObjective(e.LongWordMinLen, e.LongWordGoal, e.GoalText);
                 case LevelMode.HeroWord: return new HeroWordObjective(e.HeroWordCount);
                 case LevelMode.Vault:    return new VaultObjective(e.VaultChests);
                 case LevelMode.Ice:      return new IceObjective(e.IceCount);
@@ -431,6 +465,7 @@ namespace WordDrop
                     // (4-letter early → 5/6 later). Falls back to the authored word if needed.
                     int len = string.IsNullOrEmpty(e.HiddenWord) ? 4 : e.HiddenWord.Length;
                     return new HiddenWordObjective(RandomHiddenWord(len) ?? e.HiddenWord);
+                case LevelMode.Combo:    return new ComboObjective(e.LongWordGoal, e.GoalText);
                 default:                 return new LongWordObjective(2, 3);
             }
         }

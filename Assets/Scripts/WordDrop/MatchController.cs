@@ -1020,6 +1020,7 @@ namespace WordDrop
         // a turn, increment _playerTurns[player] and call SwitchPlayer() after the swap.
         public bool UseSwap(int handSlot)
         {
+            if (TutorialLocks.SwapLocked) return false;   // swaps locked during early onboarding levels
             if (!_isMatchActive || _isGameOver)
             {
                 Debug.LogWarning("[MatchController] UseSwap: match not active or game over.");

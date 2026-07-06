@@ -71,6 +71,17 @@ namespace WordDrop
             new GateDrop { Letter='L', Col=0, Charge=true,  Cells=new[]{ new Vector2Int(0,1), new Vector2Int(0,2), new Vector2Int(0,3), new Vector2Int(0,4) } }, // LAND (col 0)
             new GateDrop { Letter='O', Col=1, Charge=false, Cells=new[]{ new Vector2Int(0,2), new Vector2Int(1,2), new Vector2Int(2,2) } }, // NOT  (row 2)
         };
+
+        // Level 3 solution (the COMBO). Stack three charged words in a col-1 tower — they only TOUCH,
+        // never share a cell, so they don't set each other off — then DAY triggers the whole cluster at
+        // once (DAY overlaps STAR's A; TOW + ZIP are pulled in by the connected-group adjacency cascade).
+        private static readonly GateDrop[] LEVEL3_SCRIPT =
+        {
+            new GateDrop { Letter='O', Col=1, Charge=true,  Cells=new[]{ new Vector2Int(0,1), new Vector2Int(1,1), new Vector2Int(2,1) } }, // TOW  (row 1) charges
+            new GateDrop { Letter='S', Col=1, Charge=true,  Cells=new[]{ new Vector2Int(1,2), new Vector2Int(2,2), new Vector2Int(3,2), new Vector2Int(4,2) } }, // STAR (row 2) charges
+            new GateDrop { Letter='I', Col=1, Charge=true,  Cells=new[]{ new Vector2Int(0,3), new Vector2Int(1,3), new Vector2Int(2,3) } }, // ZIP  (row 3) charges
+            new GateDrop { Letter='D', Col=3, Charge=false, Cells=new[]{ new Vector2Int(3,3), new Vector2Int(3,2), new Vector2Int(3,1) } }, // DAY  (col 3, vertical) → triggers all 3
+        };
         private GateDrop[] _gateScript;
         private int  _gateStep = -1;
         private bool _gateAdvancing;
@@ -568,8 +579,10 @@ namespace WordDrop
             BeginGatedLevel(script);
         }
 
-        // Only Level 1 is gated for now. (When more gated levels land, map stage → script here.)
-        private GateDrop[] GetGateScript(int stage) => stage == 1 ? LEVEL1_SCRIPT : null;
+        // Gated tutorial levels: stage 1 = prime→explode, stage 3 = the combo (stack a cluster, detonate all).
+        private GateDrop[] GetGateScript(int stage) =>
+            stage == 1 ? LEVEL1_SCRIPT :
+            stage == 3 ? LEVEL3_SCRIPT : null;
 
         private void BeginGatedLevel(GateDrop[] script)
         {

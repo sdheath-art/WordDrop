@@ -2706,6 +2706,10 @@ namespace WordDrop
         // Exploding fires — but we want the flash to land WITH the actual explosion,
         // not during the pre-anticipation. Cache here, then fire in Exploding.
         private List<PrimedTriggeredEvent>       _pendingBurstTriggers;
+        // Un-consumed copy of the per-word triggers, kept ALIVE for the staggered-combo gate in
+        // ExplodeWordsThenSplash. Needed because (a) step.Triggers is null on the Exploding-phase step
+        // and (b) FirePerWordBurst nulls _pendingBurstTriggers before the explode runs. 2026-07-06 Spencer.
+        private List<PrimedTriggeredEvent>       _stagerTriggers;
         private List<RulesWordMatch> _pendingBurstTriggerWords;
         private int  _pendingBurstChainDepth;
         private int  _pendingBurstLongestWord;
@@ -2776,9 +2780,13 @@ namespace WordDrop
             {
                 _pendingBurstTriggers     = null;
                 _pendingBurstTriggerWords = null;
+                _stagerTriggers           = null;
                 return;
             }
             _pendingBurstTriggers     = new List<PrimedTriggeredEvent>(step.Triggers);
+            // Live copy for the staggered-combo gate (see field decl) — FirePerWordBurst consumes
+            // _pendingBurstTriggers before ExplodeWordsThenSplash reads it. 2026-07-06 Spencer.
+            _stagerTriggers           = new List<PrimedTriggeredEvent>(step.Triggers);
             _pendingBurstTriggerWords = step.TriggerWords != null
                 ? new List<RulesWordMatch>(step.TriggerWords) : null;
             _pendingBurstChainDepth  = step.ChainDepth;
@@ -3127,6 +3135,9 @@ namespace WordDrop
         /// </summary>
         private void TryInjectWildReward(Vector3 popupWorldPos)
         {
+            // Wilds are introduced at the combo/chain level (L3) — suppress the chain-reward wild on the
+            // earlier tutorial levels so a learner isn't handed a mechanic they haven't been taught. 2026-06-25.
+            if (TutorialLocks.WildRewardLocked) return;
             // Phase 5 mechanic gate. Single choke point for wild Phase C injection.
             // Callers at 3840, 3884 flow through here, so one gate covers all paths.
             if (!LevelController.IsMechanicAllowed("wild")) return;
@@ -4158,7 +4169,110 @@ namespace WordDrop
                 }
             }
 
-            yield return WordDropFX.Instance.PlayExplosion(dying, chainDepth, wLen, wordFlash: false);
+            // ── STAGGERED COMBO CRESCENDO ──────────────────────────────────────────
+            // When ONE move sets off MULTIPLE connected primed words (the "stack a web of
+            // words, then trigger the whole thing" combo), pop them ONE-AT-A-TIME with a
+            // growing screen-shake and a climactic finale — the ChainPrototype "PULL
+            // TRIGGER" feel — instead of one flat simultaneous blast. The small per-word
+            // pops stay under the 8-tile meltdown gate, so only the FINALE (last word +
+            // splash collateral) keeps the big meltdown payoff. Single-word detonations
+            // fall through to the original one-shot path. FX-ONLY — logical tile removal is
+            // unchanged (the caller still does grid.RemoveTiles afterward). 2026-06-25 Spencer.
+            // Read the CACHED per-word triggers, not step.Triggers (null on the Exploding step) — see
+            // _stagerTriggers. Consume immediately so a wave with no triggers can't reuse a stale list.
+            var triggers = _stagerTriggers;
+            _stagerTriggers = null;
+            int wordCount = 0;
+            if (triggers != null)
+                for (int i = 0; i < triggers.Count; i++)
+                    if (triggers[i].TriggeredCells != null && triggers[i].TriggeredCells.Count > 0)
+                        wordCount++;
+
+            if (wordCount >= 2)
+            {
+                // Build disjoint per-word tile groups in trigger order (direct hits first,
+                // then chain-connected). Leftover = trigger word + splash collateral, which
+                // gets merged into the LAST pop so the finale stays big enough to meltdown.
+                var claimed = new HashSet<Vector2Int>();
+                var pops = new List<List<Tile>>();
+                for (int ti = 0; ti < triggers.Count; ti++)
+                {
+                    var cells = triggers[ti].TriggeredCells;
+                    if (cells == null || cells.Count == 0) continue;
+                    var cellSet = new HashSet<Vector2Int>(cells);
+                    var groupTiles = new List<Tile>();
+                    for (int i = 0; i < dying.Count; i++)
+                    {
+                        var t = dying[i];
+                        if (t == null) continue;
+                        var p = new Vector2Int(t.Col, t.Row);
+                        if (cellSet.Contains(p) && !claimed.Contains(p))
+                        {
+                            claimed.Add(p);
+                            groupTiles.Add(t);
+                        }
+                    }
+                    if (groupTiles.Count > 0) pops.Add(groupTiles);
+                }
+
+                var splash = new List<Tile>();
+                for (int i = 0; i < dying.Count; i++)
+                {
+                    var t = dying[i];
+                    if (t == null) continue;
+                    if (!claimed.Contains(new Vector2Int(t.Col, t.Row)))
+                        splash.Add(t);
+                }
+                if (pops.Count > 0) pops[pops.Count - 1].AddRange(splash);
+                else if (splash.Count > 0) pops.Add(splash);
+
+                Debug.Log($"[ChainFX] STAGGER combo: words={wordCount} pops={pops.Count} dying={dying.Count} chain={chainDepth}");
+
+                int popCount = pops.Count;
+                for (int g = 0; g < popCount; g++)
+                {
+                    var groupTiles = pops[g];
+                    if (groupTiles == null || groupTiles.Count == 0) continue;
+                    bool finale = (g == popCount - 1);
+                    float t01 = popCount <= 1 ? 1f : (float)g / (popCount - 1); // 0→1 across the chain
+
+                    // Climax only: a crisp anticipation freeze BEFORE the boom (prototype).
+                    if (finale)
+                        yield return StartCoroutine(WordDropFX.HitStop(0.05f));
+
+                    // FIRE the explosion but do NOT await it — this is the whole fix. Awaiting each
+                    // PlayExplosion serialized the pops (~0.4s apart, no ramp); fire-and-forget lets them
+                    // OVERLAP and cascade exactly like ChainPrototype.PullTrigger. chainStep=g still climbs
+                    // the detonation pitch per pop. 2026-07-06 Spencer.
+                    var boom = WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, wordFlash: false, cascade: false);
+
+                    if (finale && BigBurstFlash.Instance != null)
+                    {
+                        Vector3 fc = Vector3.zero; int fn = 0;
+                        foreach (var ft in groupTiles) if (ft != null) { fc += ft.transform.position; fn++; }
+                        if (fn > 0) BigBurstFlash.Instance.Play(fc / fn, 7f, 1.1f, false, null);
+                    }
+
+                    // Growing screen punch — light early, biggest on the climax (prototype values).
+                    float mag = finale ? 0.20f : 0.06f + 0.10f * t01;
+                    float dur = finale ? 0.26f : 0.16f;
+                    GridManager.Instance?.ShakeBoard(mag, dur);
+
+                    if (finale)
+                        // Await ONLY the finale so the caller's grid.RemoveTiles (fired the instant we
+                        // return) can't yank tiles mid-explosion. Earlier pops began ≥dur before and are
+                        // finishing alongside it.
+                        yield return boom;
+                    else
+                        // Tight REALTIME beat between pops — matches the prototype's ShakeRealtime spacing
+                        // and stays tight even if a hitstop nudged timeScale. Prototype = 0.16s/link.
+                        yield return new WaitForSecondsRealtime(dur);
+                }
+                yield break;
+            }
+
+            // ── Single detonation (original one-shot path) ──
+            yield return WordDropFX.Instance.PlayExplosion(dying, chainDepth, wLen, wordFlash: false, cascade: false);
         }
 
         private IEnumerator FullTurnSequence(int col, char letter, int handSlot, bool isWild)

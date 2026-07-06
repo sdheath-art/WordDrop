@@ -368,6 +368,17 @@ namespace WordDrop
                 RefreshEditPips(editCount); // update + animate the EDITS pips (glow burst on gain)
             }
 
+            // Onboarding locks can flip between levels — rebuild the slots when they change so the
+            // padlock overlays appear/disappear correctly (the overlay is built in BuildSlotCanvas). 2026-06-25.
+            int lockHash = (TutorialLocks.EditLocked ? 1 : 0)
+                         | (TutorialLocks.BagLocked ? 2 : 0)
+                         | (TutorialLocks.BoostersLocked ? 4 : 0);
+            if (lockHash != _lastLockHash)
+            {
+                _lastLockHash = lockHash;
+                RebuildSlots();
+            }
+
             // Aim-mode board-tap polling.
             if (BoosterManager.Instance == null || !BoosterManager.Instance.AimMode) return;
             if (!Input.GetMouseButtonDown(0) && Input.touchCount == 0) return;
@@ -413,6 +424,18 @@ namespace WordDrop
         }
 
         // ── Slot canvas (5 buttons + bench panel) ───────────────────────────────
+
+        private int _lastLockHash = -1; // tracks TutorialLocks state so a change triggers a rebuild
+
+        /// <summary>Tear down + rebuild the slot canvas so the padlock overlays match the current
+        /// TutorialLocks state (the overlay is created in BuildSlotCanvas). Called on a lock change.</summary>
+        public void RebuildSlots()
+        {
+            if (_slotCanvas != null) Destroy(_slotCanvas.gameObject);
+            _slotCanvas = null;
+            BuildSlotCanvas();
+            RefreshDisplay();
+        }
 
         private void BuildSlotCanvas()
         {

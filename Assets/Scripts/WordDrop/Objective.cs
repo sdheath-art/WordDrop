@@ -53,6 +53,9 @@ namespace WordDrop
         /// splash sweep. Use for "explode N words" goals; priming is trivial, detonating is the
         /// real achievement. Called once per exploded word. 2026-06-08.</summary>
         public virtual void OnWordExploded(string word, int ownerPlayerIndex) { }
+        /// <summary>One detonation blew up N charged words AT ONCE (the combo size). Use for combo goals.
+        /// Fired once per detonation via ObjectiveManager.NotifyComboDetonated. 2026-07-06.</summary>
+        public virtual void OnComboDetonated(int chargedWordsInBlast) { }
         public virtual void OnTilesExploded(List<Vector2Int> cells) { }
         /// <summary>A drop-target tile reached the bottom row and was collected (count this tick).
         /// Use for "bring N to the bottom" / hero-word goals.</summary>
@@ -82,11 +85,18 @@ namespace WordDrop
         private readonly int _goal;
         private int _count;
 
-        public LongWordObjective(int minLen, int goal)
+        private readonly string _customIntro; // per-level GOAL-text override (tutorial/authored); null = auto-generate
+
+        public LongWordObjective(int minLen, int goal, string customIntro = null)
         {
             _minLen = Mathf.Max(2, minLen);
             _goal   = Mathf.Max(1, goal);
+            _customIntro = customIntro;
         }
+
+        /// <summary>Minimum word length that counts toward this goal — read by the WordDropFX fly-up
+        /// so a qualifying detonation sends its letters up to the objective icon. 2026-07-06 Spencer.</summary>
+        public int MinLen => _minLen;
 
         public override string Title        => _minLen <= 2 ? "Explode words" : $"Explode {_minLen}+ letter words";
         public override string ProgressText => $"{Mathf.Min(_count, _goal)} / {_goal}";
@@ -97,9 +107,10 @@ namespace WordDrop
         // 4 → "FOUR" (4 tiles), generic "explode words" → "WORD". 2026-06-17 Spencer.
         public override string IconWord      => _minLen >= 5 ? "WORDS" : _minLen >= 4 ? "FOUR" : "WORD";
         public override int     RemainingCount => Mathf.Max(0, _goal - _count);
-        public override string  IntroDescription => _minLen <= 2
-            ? $"Explode {_goal} words to win!"
-            : $"Explode {_goal} words of {_minLen}+ letters!";
+        public override string  IntroDescription =>
+            !string.IsNullOrEmpty(_customIntro) ? _customIntro
+            : (_minLen <= 2 ? $"Explode {_goal} words to win!"
+                            : $"Explode {_goal} words of {_minLen}+ letters!");
 
         // Counts a word whenever its tiles actually blow up — doesn't matter if it was the
         // primed word that got set off or the word that set it off; if it explodes, it counts.
@@ -112,6 +123,46 @@ namespace WordDrop
         }
 
         public override void Reset() => _count = 0;
+    }
+
+    /// <summary>
+    /// "Blow up N words in ONE detonation" — the COMBO. Completes on the first single blast that
+    /// detonates _target+ charged words at once (a stacked cluster set off together), so separate one-word
+    /// pops do NOT satisfy it. Progress shows the best combo reached so far. Fed by RulesEngine.DoExplode
+    /// → ObjectiveManager.NotifyComboDetonated. 2026-07-06 Spencer.
+    /// </summary>
+    public sealed class ComboObjective : Objective
+    {
+        private readonly int _target;
+        private readonly string _customIntro;
+        private int  _best;
+        private bool _done;
+
+        public ComboObjective(int target, string customIntro = null)
+        {
+            _target = Mathf.Max(2, target);
+            _customIntro = customIntro;
+        }
+
+        public override string  Title          => $"Combo {_target} words";
+        public override string  ProgressText   => $"{Mathf.Min(_best, _target)} / {_target}";
+        public override bool     IsComplete     => _done;
+        public override HudIcon  Icon           => HudIcon.Word;
+        public override string   IconWord       => "WORD";
+        public override int      RemainingCount => _done ? 0 : _target;
+        public override string   RemainingText  => _done ? "combo!" : $"blow up {_target} words at once";
+        public override string   IntroDescription =>
+            !string.IsNullOrEmpty(_customIntro) ? _customIntro : $"Blow up {_target} words in one combo!";
+
+        /// <summary>A single blast just detonated <paramref name="chargedWordsInBlast"/> charged words.
+        /// Completes on the first blast that reaches the target; tracks the best for the progress readout.</summary>
+        public override void OnComboDetonated(int chargedWordsInBlast)
+        {
+            if (chargedWordsInBlast > _best) _best = chargedWordsInBlast;
+            if (chargedWordsInBlast >= _target) _done = true;
+        }
+
+        public override void Reset() { _best = 0; _done = false; }
     }
 
     /// <summary>

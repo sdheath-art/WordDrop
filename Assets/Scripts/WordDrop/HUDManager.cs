@@ -1182,6 +1182,41 @@ namespace WordDrop
                 new Color(1.7f, 1.3f, 0.3f, 1f), '\0', target, onArrive, startDelay));
         }
 
+        // LongWord ("explode N words") polish: a qualifying exploded word's letters fly up to the
+        // objective ICON — same routine + look as the HeroWord escorts / HiddenWord letters — landing
+        // with a pop + chime, so a goal-satisfying explosion gets the same "collected!" travel. Flies to
+        // the icon (there are no letter slots on these levels). 2026-07-06 Spencer.
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false)
+        {
+            if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
+            Vector3 target = GetObjectiveIconScreenPos();
+            System.Action onArrive = () =>
+            {
+                onLand?.Invoke();
+                GameAudio.Instance?.PlayLine2();
+                // Pop the shared icon only ONCE per word — the caller passes popIcon=true for the LAST letter.
+                // Popping per letter stacks overlapping DOPunchRotation tweens that interrupt each other and can
+                // leave the icon frozen mid-rotation (the documented HUD target-icon bug). 2026-07-06 Spencer.
+                if (popIcon && _objectiveIconGO != null)
+                {
+                    BringTargetChainToFront();
+                    _objectiveIconGO.transform.SetAsLastSibling();
+                    UIAnimations.WildCardPop(_objectiveIconGO.transform, Vector3.one);
+                    if (_objectiveIconHolder != null && _objectiveIconHolder.transform is RectTransform hrt)
+                        SpawnSlotSparkleBurst(hrt, Vector2.zero); // icon sits at the holder centre
+                }
+            };
+            // CASCADE fly-ups use the scored-GREEN look; the opening (regular) detonation keeps the original
+            // HiddenWord-style PINK. cascadeGreen is set by the caller from the detonation's chain depth
+            // (>0 = a post-gravity cascade word). 2026-07-06 Spencer.
+            if (cascadeGreen)
+                StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Tile.SCORED_TINT,
+                    Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay));
+            else
+                StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, new Color(1.7f, 0.7f, 1.5f, 1f),
+                    new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay));
+        }
+
         /// <summary>UI renders by hierarchy order, so bring the whole Target chain to the front before a
         /// landing pop, or it draws under the panel frame / neighbouring panels.</summary>
         private void BringTargetChainToFront()

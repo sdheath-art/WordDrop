@@ -817,7 +817,7 @@ namespace WordDrop
 
         // wordFlash: true for tiles that form a detonating WORD (they get the green cascade-flash);
         // false for pure splash/collateral tiles (they stay white per design). 2026-06-23.
-        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true)
+        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false)
         {
             if (tiles == null || tiles.Count == 0) return null;
 
@@ -848,6 +848,46 @@ namespace WordDrop
                         ObjectiveManager.Instance?.NotifyHiddenReveal(wasComplete);
                     }, flyOrder * 0.35f);
                     flyOrder++;
+                }
+            }
+
+            // LongWord ("explode N words") polish: when a word that COUNTS toward the goal detonates
+            // (length >= the target min length), its letters fly UP to the objective icon — the same
+            // escort travel the HeroWord chickens use — so a goal-satisfying explosion feels "collected."
+            // Mirrors the HiddenWord/Vault fly-ups at this same detonation chokepoint. Deliberately UNGATED
+            // by wordFlash: the live player-detonation path (HandManager) passes wordFlash:false, so gating
+            // on it would never fire. FIRST CUT — flies every tile in this blast group, which on the single-
+            // detonation path can include a little splash collateral; tighten to word-only if it reads busy.
+            // 2026-07-06 Spencer.
+            if (ObjectiveManager.Instance != null
+                && ObjectiveManager.Instance.Active is LongWordObjective longObj
+                && HUDManager.Instance != null
+                && wordLength >= longObj.MinLen)
+            {
+                // Collect valid tiles first so we can pop the icon EXACTLY ONCE (on the last landing) —
+                // a per-letter pop stacks overlapping rotation tweens and freezes the icon (see
+                // HUDManager.FlyLetterToTarget). Stagger so the letters launch together, land one-by-one.
+                var flyTiles = new System.Collections.Generic.List<Tile>();
+                var _flyDbg = new System.Text.StringBuilder();
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    var ft = tiles[i];
+                    if (ft == null) continue;
+                    // Fly the WORD's letters, EXCLUDE splash collateral. A word tile is one that either was
+                    // SCORED (WasInScoredWord, sticky green flag) OR is currently CHARGED/primed
+                    // (HasPermanentGlow). The OR is the fix for words CHARGED ON AN EARLIER MOVE (e.g. SIP in a
+                    // SIP/RUT/HUH cluster): those can lack the sticky scored flag but are still glowing-primed at
+                    // detonation, so WasInScoredWord alone dropped them. Stones ('#') / swept junk are neither →
+                    // stay filtered out. char.IsLetter guards stray '#'/'?'/'\0'. 2026-07-06 Spencer.
+                    bool isWordTile = (ft.WasInScoredWord || ft.HasPermanentGlow) && char.IsLetter(ft.Letter);
+                    _flyDbg.Append($"{ft.Letter}(s{(ft.WasInScoredWord ? 1 : 0)}g{(ft.HasPermanentGlow ? 1 : 0)}{(isWordTile ? "→fly" : "")}) ");
+                    if (isWordTile) flyTiles.Add(ft);
+                }
+                Debug.Log($"[FlyUp] wordLen={wordLength} tiles={tiles.Count} fly={flyTiles.Count} | {_flyDbg}");
+                for (int i = 0; i < flyTiles.Count; i++)
+                {
+                    bool last = (i == flyTiles.Count - 1);
+                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, null, i * 0.07f, cascade);
                 }
             }
 
