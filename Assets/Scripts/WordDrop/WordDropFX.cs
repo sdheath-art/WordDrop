@@ -823,7 +823,7 @@ namespace WordDrop
 
         // wordFlash: true for tiles that form a detonating WORD (they get the green cascade-flash);
         // false for pure splash/collateral tiles (they stay white per design). 2026-06-23.
-        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false)
+        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false, bool suppressFlyUp = false)
         {
             if (tiles == null || tiles.Count == 0) return null;
 
@@ -869,7 +869,7 @@ namespace WordDrop
             // detonated word's letters to fly up to the target. LongWord gates on its MinLen; Combo takes
             // any qualifying word. 2026-07-06 Spencer.
             var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
-            bool flyUpGoal = HUDManager.Instance != null
+            bool flyUpGoal = HUDManager.Instance != null && !suppressFlyUp
                 && ((flyObj is LongWordObjective lwObj && wordLength >= lwObj.MinLen)
                     || flyObj is ComboObjective);
             if (flyUpGoal)
@@ -901,7 +901,8 @@ namespace WordDrop
                 for (int i = 0; i < flyTiles.Count; i++)
                 {
                     bool last = (i == flyTiles.Count - 1);
-                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, null, i * 0.07f, cascade, popPeak);
+                    // Own 4-slot sorting band per letter (+4) so a letter never bleeds onto a neighbour tile.
+                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, null, i * 0.07f, cascade, popPeak, 200 + i * 4);
                 }
             }
 

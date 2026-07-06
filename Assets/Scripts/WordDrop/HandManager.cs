@@ -2710,6 +2710,9 @@ namespace WordDrop
         // ExplodeWordsThenSplash. Needed because (a) step.Triggers is null on the Exploding-phase step
         // and (b) FirePerWordBurst nulls _pendingBurstTriggers before the explode runs. 2026-07-06 Spencer.
         private List<PrimedTriggeredEvent>       _stagerTriggers;
+        // Un-consumed copy of the TRIGGER (connecting) words for the staggered combo — gives the trigger
+        // word its OWN stage in the 4-part chain (e.g. YES). Mirrors _stagerTriggers. 2026-07-06 Spencer.
+        private List<RulesWordMatch>             _stagerTriggerWords;
         private List<RulesWordMatch> _pendingBurstTriggerWords;
         private int  _pendingBurstChainDepth;
         private int  _pendingBurstLongestWord;
@@ -2781,12 +2784,14 @@ namespace WordDrop
                 _pendingBurstTriggers     = null;
                 _pendingBurstTriggerWords = null;
                 _stagerTriggers           = null;
+                _stagerTriggerWords       = null;
                 return;
             }
             _pendingBurstTriggers     = new List<PrimedTriggeredEvent>(step.Triggers);
             // Live copy for the staggered-combo gate (see field decl) — FirePerWordBurst consumes
             // _pendingBurstTriggers before ExplodeWordsThenSplash reads it. 2026-07-06 Spencer.
             _stagerTriggers           = new List<PrimedTriggeredEvent>(step.Triggers);
+            _stagerTriggerWords       = step.TriggerWords != null ? new List<RulesWordMatch>(step.TriggerWords) : null;
             _pendingBurstTriggerWords = step.TriggerWords != null
                 ? new List<RulesWordMatch>(step.TriggerWords) : null;
             _pendingBurstChainDepth  = step.ChainDepth;
@@ -4190,69 +4195,104 @@ namespace WordDrop
 
             if (wordCount >= 2)
             {
-                // Build disjoint per-word tile groups in trigger order (direct hits first,
-                // then chain-connected). Leftover = trigger word + splash collateral, which
-                // gets merged into the LAST pop so the finale stays big enough to meltdown.
-                var claimed = new HashSet<Vector2Int>();
-                var pops = new List<List<Tile>>();
+                // ── Build the STAGES of the chain (order A — the blast RADIATES FROM THE TRIGGER) ──
+                // Stage 0 = the TRIGGER word (e.g. YES): it fired the combo, so it goes FIRST. Then the
+                // charged words in trigger order (direct-hit → chain-connected), finale last + biggest.
+                // Each stage keeps its FULL word cells (for the FLY-UP, so a SHARED letter like the E in
+                // FINE+YES flies in BOTH stages) AND a DISJOINT pop group (so each tile DETONATES once). 2026-07-06.
+                var stageCells = new List<List<Vector2Int>>();
+                if (_stagerTriggerWords != null)
+                    for (int w = 0; w < _stagerTriggerWords.Count; w++)
+                        if (_stagerTriggerWords[w]?.Cells != null && _stagerTriggerWords[w].Cells.Count > 0)
+                            stageCells.Add(_stagerTriggerWords[w].Cells);
                 for (int ti = 0; ti < triggers.Count; ti++)
+                    if (triggers[ti].TriggeredCells != null && triggers[ti].TriggeredCells.Count > 0)
+                        stageCells.Add(triggers[ti].TriggeredCells);
+
+                var dyingByCell = new Dictionary<Vector2Int, Tile>();
+                for (int i = 0; i < dying.Count; i++)
                 {
-                    var cells = triggers[ti].TriggeredCells;
-                    if (cells == null || cells.Count == 0) continue;
-                    var cellSet = new HashSet<Vector2Int>(cells);
-                    var groupTiles = new List<Tile>();
-                    for (int i = 0; i < dying.Count; i++)
+                    var t = dying[i];
+                    if (t != null) dyingByCell[new Vector2Int(t.Col, t.Row)] = t;
+                }
+
+                var claimed = new HashSet<Vector2Int>();
+                var pops = new List<List<Tile>>();      // DISJOINT — each tile detonates once
+                var flyGroups = new List<List<Tile>>(); // per WORD — a shared letter appears in every word it's in
+                for (int s = 0; s < stageCells.Count; s++)
+                {
+                    var cells = stageCells[s];
+                    var popTiles = new List<Tile>();
+                    var flyTiles = new List<Tile>();
+                    for (int c = 0; c < cells.Count; c++)
                     {
-                        var t = dying[i];
-                        if (t == null) continue;
-                        var p = new Vector2Int(t.Col, t.Row);
-                        if (cellSet.Contains(p) && !claimed.Contains(p))
-                        {
-                            claimed.Add(p);
-                            groupTiles.Add(t);
-                        }
+                        if (!dyingByCell.TryGetValue(cells[c], out var t) || t == null) continue;
+                        if ((t.WasInScoredWord || t.HasPermanentGlow) && char.IsLetter(t.Letter))
+                            flyTiles.Add(t);                                                   // FLY: every letter of this word
+                        if (!claimed.Contains(cells[c])) { claimed.Add(cells[c]); popTiles.Add(t); } // POP: disjoint
                     }
-                    if (groupTiles.Count > 0) pops.Add(groupTiles);
+                    pops.Add(popTiles);
+                    flyGroups.Add(flyTiles);
                 }
 
                 var splash = new List<Tile>();
                 for (int i = 0; i < dying.Count; i++)
                 {
                     var t = dying[i];
-                    if (t == null) continue;
-                    if (!claimed.Contains(new Vector2Int(t.Col, t.Row)))
-                        splash.Add(t);
+                    if (t != null && !claimed.Contains(new Vector2Int(t.Col, t.Row))) splash.Add(t);
                 }
                 if (pops.Count > 0) pops[pops.Count - 1].AddRange(splash);
-                else if (splash.Count > 0) pops.Add(splash);
 
-                Debug.Log($"[ChainFX] STAGGER combo: words={wordCount} pops={pops.Count} dying={dying.Count} chain={chainDepth}");
+                Debug.Log($"[ChainFX] STAGGER combo(4-part): stages={pops.Count} dying={dying.Count} chain={chainDepth}");
+
+                var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
+                bool flyUpGoal = HUDManager.Instance != null && (flyObj is LongWordObjective || flyObj is ComboObjective);
+                int flyMinLen = flyObj is LongWordObjective lwFly ? lwFly.MinLen : 0;
 
                 int popCount = pops.Count;
                 for (int g = 0; g < popCount; g++)
                 {
-                    var groupTiles = pops[g];
-                    if (groupTiles == null || groupTiles.Count == 0) continue;
                     bool finale = (g == popCount - 1);
+                    var groupTiles = pops[g];
                     float t01 = popCount <= 1 ? 1f : (float)g / (popCount - 1); // 0→1 across the chain
 
                     // Climax only: a crisp anticipation freeze BEFORE the boom (prototype).
                     if (finale)
                         yield return StartCoroutine(WordDropFX.HitStop(0.05f));
 
-                    // FIRE the explosion but do NOT await it — this is the whole fix. Awaiting each
-                    // PlayExplosion serialized the pops (~0.4s apart, no ramp); fire-and-forget lets them
-                    // OVERLAP and cascade exactly like ChainPrototype.PullTrigger. chainStep=g still climbs
-                    // the detonation pitch per pop. 2026-07-06 Spencer.
-                    var boom = WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, wordFlash: false, cascade: false);
+                    // POP (detonation visual) — fire-and-forget for the overlapping cascade feel. Fly-up is
+                    // SUPPRESSED here; we drive it per WORD just below so a shared letter flies in two stages.
+                    Coroutine boom = (groupTiles != null && groupTiles.Count > 0)
+                        ? WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, wordFlash: false, cascade: false, suppressFlyUp: true)
+                        : null;
+
+                    // FLY-UP — this WORD's full letters travel up to the target, ramping per word (finale
+                    // biggest). Shared letters (E in FINE+YES) fly in each stage they belong to. 2026-07-06.
+                    if (flyUpGoal && g < flyGroups.Count && stageCells[g].Count >= flyMinLen)
+                    {
+                        var flyTiles = flyGroups[g];
+                        // Crescendo: an ACCELERATING ramp (t^1.6 across the chain) so the build is obvious and the
+                        // FINALE pops noticeably harder — ~1.2× (first) → ~1.9× (last). Wider + non-linear beats
+                        // the old gentle linear 1.28→1.58. 2026-07-06 Spencer.
+                        float popPeak = 1.2f + 0.72f * Mathf.Pow(t01, 1.6f);
+                        for (int i = 0; i < flyTiles.Count; i++)
+                        {
+                            bool lastLetter = (i == flyTiles.Count - 1);
+                            // Each flying tile gets its OWN 4-slot sorting band: +4 per LETTER (so a letter
+                            // never bleeds onto a neighbour's tile) and +40 per STAGE (later stages fully in
+                            // front → CAT covers SOFT covers FINE). 2026-07-06 Spencer.
+                            int sortBase = 200 + g * 40 + i * 4;
+                            HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter,
+                                lastLetter, null, i * 0.07f, false, popPeak, sortBase);
+                        }
+                    }
 
                     if (finale)
                     {
-                        // The climax BOOM — moved here from the pre-windup (MaybeBigPopAndHold skips it on a
-                        // combo) so the deep boom lands ON the last pop and the audio BUILDS instead of firing
-                        // front-loaded. 2026-07-06 Spencer.
+                        // The climax BOOM — moved here from the pre-windup so the deep boom lands ON the last
+                        // pop and the audio BUILDS instead of firing front-loaded. 2026-07-06 Spencer.
                         GameAudio.Instance?.PlayBigPop();
-                        if (BigBurstFlash.Instance != null)
+                        if (BigBurstFlash.Instance != null && groupTiles != null && groupTiles.Count > 0)
                         {
                             Vector3 fc = Vector3.zero; int fn = 0;
                             foreach (var ft in groupTiles) if (ft != null) { fc += ft.transform.position; fn++; }
@@ -4260,21 +4300,13 @@ namespace WordDrop
                         }
                     }
 
-                    // Growing screen punch — light early, biggest on the climax. Finale mag bumped 0.20→0.30
-                    // so the boom lands harder (2026-07-06 Spencer).
+                    // Growing screen punch — light early, biggest on the climax.
                     float mag = finale ? 0.30f : 0.06f + 0.10f * t01;
                     float dur = finale ? 0.28f : 0.16f;
                     GridManager.Instance?.ShakeBoard(mag, dur);
 
-                    if (finale)
-                        // Await ONLY the finale so the caller's grid.RemoveTiles (fired the instant we
-                        // return) can't yank tiles mid-explosion. Earlier pops began ≥dur before and are
-                        // finishing alongside it.
-                        yield return boom;
-                    else
-                        // Tight REALTIME beat between pops — matches the prototype's ShakeRealtime spacing
-                        // and stays tight even if a hitstop nudged timeScale. Prototype = 0.16s/link.
-                        yield return new WaitForSecondsRealtime(dur);
+                    if (finale) { if (boom != null) yield return boom; else yield return new WaitForSecondsRealtime(dur); }
+                    else yield return new WaitForSecondsRealtime(dur);
                 }
                 yield break;
             }

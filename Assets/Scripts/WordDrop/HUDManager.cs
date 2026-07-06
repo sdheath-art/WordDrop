@@ -1186,7 +1186,7 @@ namespace WordDrop
         // objective ICON — same routine + look as the HeroWord escorts / HiddenWord letters — landing
         // with a pop + chime, so a goal-satisfying explosion gets the same "collected!" travel. Flies to
         // the icon (there are no letter slots on these levels). 2026-07-06 Spencer.
-        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f)
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200)
         {
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
             Vector3 target = GetObjectiveIconScreenPos();
@@ -1211,10 +1211,10 @@ namespace WordDrop
             // (>0 = a post-gravity cascade word). 2026-07-06 Spencer.
             if (cascadeGreen)
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Tile.SCORED_TINT,
-                    Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay, popPeak));
+                    Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay, popPeak, sortBase));
             else
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, new Color(1.7f, 0.7f, 1.5f, 1f),
-                    new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay, popPeak));
+                    new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay, popPeak, sortBase));
         }
 
         /// <summary>UI renders by hierarchy order, so bring the whole Target chain to the front before a
@@ -1479,7 +1479,7 @@ namespace WordDrop
         /// ease-in flight, dissolves at the HUD, then onArrive() does the landing (reveal/pop/collect).
         /// Shared by the HiddenWord letters and the HeroWord escorts. 2026-06-17 Spencer.</summary>
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
-            Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f)
+            Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200)
         {
             var cam = Camera.main;
             if (cam == null) { onArrive?.Invoke(); yield break; }
@@ -1493,13 +1493,13 @@ namespace WordDrop
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = sprite != null ? sprite : Tile.NormalSprite;
             sr.color = tileColor; // HDR so it blooms
-            sr.sortingOrder = 202; // well above the board so the flight is never occluded
+            sr.sortingOrder = sortBase + 2; // per-flight sorting band (sortBase) so a letter never bleeds onto a neighbour tile
 
             var glowSR = new GameObject("Glow").AddComponent<SpriteRenderer>();
             glowSR.transform.SetParent(go.transform, false);
             glowSR.sprite = GetGlowSprite();
             glowSR.color = new Color(glowColor.r, glowColor.g, glowColor.b, 0.75f);
-            glowSR.sortingOrder = 201;
+            glowSR.sortingOrder = sortBase + 1;
             glowSR.transform.localScale = Vector3.one * 3.3f;
 
             var trail = go.AddComponent<TrailRenderer>();
@@ -1510,7 +1510,7 @@ namespace WordDrop
             trail.minVertexDistance = 0.02f;
             trail.autodestruct = false;
             trail.emitting = false;
-            trail.sortingOrder = 200;
+            trail.sortingOrder = sortBase;
             var ftMat = GetCoinTrailMat(sr.sharedMaterial); // shared trail material — was new Material() per flight
             if (ftMat != null) trail.sharedMaterial = ftMat;
             var tgrad = new Gradient();
@@ -1532,7 +1532,7 @@ namespace WordDrop
                 tmp.enableWordWrapping = false;
                 tmp.alignment = TextAlignmentOptions.Center;
                 tmp.color = Color.white;
-                var tmpR = tmp.GetComponent<MeshRenderer>(); if (tmpR != null) tmpR.sortingOrder = 203;
+                var tmpR = tmp.GetComponent<MeshRenderer>(); if (tmpR != null) tmpR.sortingOrder = sortBase + 3;
             }
 
             // ── Phase 1: WILD POP — overshoot + glow flash + wobble, elastic settle ──
