@@ -218,7 +218,7 @@ namespace WordDrop
             // batch (rare but real) all get shown in sequence as the player
             // dismisses each.
             _pendingQueue.Enqueue(ctx);
-            if (ctx.ClearedStage == TutorialLocks.SWAP_UNLOCK_LEVEL - 1)
+            if (ctx.ClearedStage == TutorialLocks.EDIT_UNLOCK_LEVEL - 1)
                 UnlockRewardPending = true;
         }
 
@@ -1028,9 +1028,9 @@ namespace WordDrop
             // After the tutorial level that UNLOCKS Swap (the level just before SWAP_UNLOCK_LEVEL), hand off to
             // the Unlock reward modal INSTEAD of resuming — it keeps the overlay paused and resumes/advances on
             // Claim. Royal-Match cadence: cleared celebration FIRST, then the unlock reward. 2026-07-06 Spencer.
-            if (_clearedStage == TutorialLocks.SWAP_UNLOCK_LEVEL - 1 && UnlockModal.Instance != null)
+            if (_clearedStage == TutorialLocks.EDIT_UNLOCK_LEVEL - 1 && UnlockModal.Instance != null)
             {
-                UnlockModal.Instance.Show("Swap", "Swap any tile on the board for a new one!",
+                UnlockModal.Instance.Show("Edit", "Change any tile on the board into the letter you need!",
                     Resources.Load<Sprite>("Tiles/swap_tile"));
                 return;
             }

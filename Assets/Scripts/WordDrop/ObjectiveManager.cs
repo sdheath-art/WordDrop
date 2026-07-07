@@ -111,6 +111,10 @@ namespace WordDrop
             CountConnectingWords = e.CountConnecting;
             // Tutorial: disable the fuse so primed words don't fizzle on a learner (OFF for normal levels).
             RulesEngine.FuseDisabled = e.FuseOff;
+            // Splash collateral off for authored/gated tutorial levels so detonations are DETERMINISTIC
+            // (clear only the word tiles — no junk-splash scrambling the pre-placed board). Self-restoring:
+            // every non-splashOff level install sets it back true. 2026-07-07 Spencer.
+            RulesEngine.JunkSplashEnabled = !e.SplashOff;
             // A gate from a PREVIOUS level (e.g. skipping L1 → L4 via the debug menu) must not linger and
             // lock the player out of this level — cancel any active coaching before installing. 2026-07-06.
             TutorialManager.Instance?.CancelActiveCoaching();
@@ -211,7 +215,7 @@ namespace WordDrop
             // If THIS level (the swap-unlock level) is being reached via a clear celebration, DEFER the intro
             // so the order reads cleared → UNLOCKED → objective — the UnlockModal's Claim shows it. On a
             // direct/debug jump (no clear celebration up), show it normally. 2026-07-06 Spencer.
-            if (levelIndex == TutorialLocks.SWAP_UNLOCK_LEVEL && StageClearModal.UnlockRewardPending)
+            if (levelIndex == TutorialLocks.EDIT_UNLOCK_LEVEL && StageClearModal.UnlockRewardPending)
                 LevelIntroModal.Instance?.SetDeferred(Active, levelIndex);
             else
                 LevelIntroModal.Instance?.Show(Active, levelIndex);

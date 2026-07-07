@@ -21,11 +21,15 @@ namespace WordDrop
         // practice) — so tools stay locked through L4 and unlock at L5, the first real level. Bump each one
         // down to its own teaching level as dedicated teach-levels for swaps/boosters/etc. get added.
         // 2026-07-06 Spencer.
-        public const int SWAP_UNLOCK_LEVEL     = 5;
-        public const int BOOSTER_UNLOCK_LEVEL  = 5;
-        public const int EDIT_UNLOCK_LEVEL     = 5;
-        public const int BAG_UNLOCK_LEVEL      = 5;
-        public const int WILD_UNLOCK_LEVEL     = 5;
+        // 2026-07-07: L5 now TEACHES EDIT (its own gated level). EDIT unlocks at 5; everything else stays
+        // locked until its own future teach-level (placeholders below at the design drip levels). So on L5 the
+        // ONLY tool available is Edit — swaps/boosters/bag/wild are all still locked. Bump each down when its
+        // teach-level is built.
+        public const int SWAP_UNLOCK_LEVEL     = 31;  // hand-card swap — drip ~L31 (teach-level TBD)
+        public const int BOOSTER_UNLOCK_LEVEL  = 41;  // boosters/mallet — drip ~L41 (teach-level TBD)
+        public const int EDIT_UNLOCK_LEVEL     = 5;   // rewrite/EDIT — TAUGHT at tutorial L5
+        public const int BAG_UNLOCK_LEVEL      = 41;  // tile-bag — drip later (teach-level TBD)
+        public const int WILD_UNLOCK_LEVEL     = 36;  // chain-reward wild — drip ~L36 (teach-level TBD)
 
         /// <summary>Set every lock from the current level index. Called per-level in
         /// ObjectiveManager.InstallLevel. Both the UI (BoosterHUDSlot / SWAPS panel) and the mechanics

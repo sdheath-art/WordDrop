@@ -4322,8 +4322,12 @@ namespace WordDrop
                     float dur = finale ? 0.28f : 0.16f;
                     GridManager.Instance?.ShakeBoard(mag, dur);
 
-                    if (finale) { if (boom != null) yield return boom; else yield return new WaitForSecondsRealtime(dur); }
-                    else yield return new WaitForSecondsRealtime(dur);
+                    // Inter-pop beat — TIGHTENED so the whole clear finishes fast and gravity follows sooner
+                    // (shrinks the "letters hang suspended" gap without touching removal/gravity). 2026-07-07 Spencer.
+                    float beat = 0.09f;
+
+                    if (finale) { if (boom != null) yield return boom; else yield return new WaitForSecondsRealtime(beat); }
+                    else yield return new WaitForSecondsRealtime(beat);
                 }
                 yield break;
             }

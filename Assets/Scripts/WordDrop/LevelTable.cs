@@ -100,6 +100,7 @@ namespace WordDrop
         public float BoardDensity;   // generated-board levels: starting fill density 0..1 (0 = mode default).
         public bool  GuaranteeFirstWord; // reroll the opening hand until a word is makeable on this board.
         public bool  FuseOff;            // tutorial: primed words DON'T fizzle (the fuse is its own later lesson).
+        public bool  SplashOff;          // tutorial/authored: NO junk-splash collateral — detonations clear only the word tiles (deterministic board).
         public string GoalText;          // tutorial/authored: custom pre-level GOAL text (null = auto from the objective).
         public string RigHand;           // authored: FORCE this opening hand (each char = a card); free placement, no gating.
 
@@ -221,6 +222,27 @@ namespace WordDrop
                     rigHand:"CTEYR",   // FORCE the combo letters (C,T,E,Y) + one distractor into the opening hand
                     why:"TUTORIAL L4 — combo practice: authored CAT/SOFT/FINE + YES-trigger 3-word combo; ComboObjective, free play."),
 
+                // TUTORIAL L5 — TEACH EDIT (Spencer authored 2026-07-07). First EDIT level (Edit unlocks @ L5).
+                //   Player EDITS wrong tiles (tap a board tile → tap a hand letter) to build words on a fixed board:
+                //     Z→P completes SWAP across row3 → primes · B→D completes HAND down col2 (its A is SHARED with
+                //     SWAP) → detonates the combo · an A drops into col2/row1 · S→T makes ANT · H→S makes ANTS (row1).
+                //   rigHand forces the edit letters P,D,T,S into the opening hand. Rises off, fuse off.
+                //   ⚠ UNGATED + high goal FOR NOW = manual-verification build: play the 4 edits by hand and confirm
+                //   the words form + the A lands where predicted. Edit-gating script + final objective come next.
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
+                    fixedBoard: new[] {
+                        "..A...",   // row 5
+                        ".RH...",   // row 4
+                        "SWAZJ.",   // row 3   Z→P = SWAP (primes)
+                        "OFNGEI",   // row 2
+                        "UIBNSH",   // row 1   B→D = HAND (triggers blast) ; then S→T = ANT ; H→S = ANTS
+                        "YCXOMW",   // row 0   (bottom) — X/O break the accidental words Spencer hit
+                    },
+                    risesOff:true, moveBudget:30, fuseOff:true, splashOff:true,
+                    goalText:"Cause 2 explosions with edits!",
+                    rigHand:"PDTSA",   // FORCE the edit letters P,D,T,S (+A distractor) into the opening hand
+                    why:"TUTORIAL L5 — TEACH EDIT: edit tiles → SWAP/HAND (blast) then ANT/ANTS. UNGATED for now (verify)."),
+
                 // L1 — LongWord Ki. Knife-through-butter hook: explode 3 ANY words, every helper ON. VALLEY (run floor).
                 Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
                     why:"L1 VALLEY — LongWord Ki: 3 any-words, all helpers ON. Feel-good fast start."),
@@ -302,7 +324,7 @@ namespace WordDrop
             int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
             bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false,
             float assistFreq = -1f, int boardFillRows = 0, float boardDensity = 0f,
-            bool guaranteeFirstWord = false, bool fuseOff = false, string goalText = null, string rigHand = null)
+            bool guaranteeFirstWord = false, bool fuseOff = false, bool splashOff = false, string goalText = null, string rigHand = null)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -329,6 +351,7 @@ namespace WordDrop
                 BoardDensity    = boardDensity,
                 GuaranteeFirstWord = guaranteeFirstWord,
                 FuseOff         = fuseOff,
+                SplashOff       = splashOff,
                 GoalText        = goalText,
                 RigHand         = rigHand,
                 Why = why,

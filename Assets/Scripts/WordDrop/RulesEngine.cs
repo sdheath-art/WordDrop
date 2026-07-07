@@ -2307,6 +2307,7 @@ namespace WordDrop
                     detonationBonusAccum += detonationBonus;
 
                     if (!_splashFiredThisResolution
+                        && JunkSplashEnabled            // master splash switch — off for splashOff tutorial levels
                         && SurvivalManager.IsSurvivalMode
                         && (chainStep >= 2 || longestPrimedWord >= 6 || primedIdsToExplode.Count >= 2))
                     {
