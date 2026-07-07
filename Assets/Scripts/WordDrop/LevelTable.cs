@@ -238,7 +238,7 @@ namespace WordDrop
                         "UIBNSH",   // row 1   B→D = HAND (triggers blast) ; then S→T = ANT ; H→S = ANTS
                         "YCXOMW",   // row 0   (bottom) — X/O break the accidental words Spencer hit
                     },
-                    risesOff:true, moveBudget:30, fuseOff:true, splashOff:true,
+                    risesOff:true, moveBudget:30, gated:true, fuseOff:true, splashOff:true,
                     goalText:"Cause 2 explosions with edits!",
                     rigHand:"PDTSA",   // FORCE the edit letters P,D,T,S (+A distractor) into the opening hand
                     why:"TUTORIAL L5 — TEACH EDIT: edit tiles → SWAP/HAND (blast) then ANT/ANTS. UNGATED for now (verify)."),

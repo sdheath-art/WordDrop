@@ -34,6 +34,13 @@ namespace WordDrop
         public static int AllowedColumn { get; private set; } = -1;
         public static int AllowedCardIndex { get; private set; } = -1;
         public static bool BlockShuffleAndSwap { get; private set; } = false;
+        // EDIT-gating (2026-07-07): the ONLY board tile that may enter rewrite, and the ONLY hand letter that
+        // may be stamped. -1 / '\0' = no edit gate. Enforced in HandManager.TryEnterRewriteMode/TryExecuteRewrite.
+        public static int  AllowedEditCol    { get; private set; } = -1;
+        public static int  AllowedEditRow    { get; private set; } = -1;
+        public static char AllowedEditLetter { get; private set; } = '\0';
+        public static bool EditGateActive    { get; private set; } = false; // true during the L5 edit tutorial — disables the rewrite auto-timeout
+        private const int  NO_INPUT = 99; // impossible column/card index → blocks all drops + card selection
 
         /// <summary>
         /// The letter that should appear in the NEXT tile preview during tutorial.
@@ -58,7 +65,7 @@ namespace WordDrop
         private static bool _skipForSession = false;
         private bool _transitioning = false;
 
-        public bool IsActive => (_step != TutorialStep.Inactive && _step != TutorialStep.Done) || _gateScript != null;
+        public bool IsActive => (_step != TutorialStep.Inactive && _step != TutorialStep.Done) || _gateScript != null || _editScript != null;
 
         // ── Gated-level coaching (2026-06-25) — input gating + hand_point on a REAL level ──
         private struct GateDrop { public char Letter; public int Col; public bool Charge; public Vector2Int[] Cells; }
@@ -86,6 +93,23 @@ namespace WordDrop
         private int  _gateStep = -1;
         private bool _gateAdvancing;
         public bool IsGating => _gateScript != null;
+
+        // ── EDIT-gated coaching (2026-07-07) — teach the EDIT tool: gate tap-tile → tap-letter ──
+        private struct GateEdit { public int Col; public int Row; public char Letter; public Vector2Int[] Cells; }
+        // Level 5 solution (the EDIT teach). Each step: tap the target TILE, then tap the hand LETTER → the tile
+        // becomes that letter, forming a word. Z→P=SWAP (primes) · B→D=HAND (blast 1) · S→T=ANT · H→S=ANTS (blast 2).
+        private static readonly GateEdit[] LEVEL5_EDIT_SCRIPT =
+        {
+            new GateEdit { Col=3, Row=3, Letter='P', Cells=new[]{ new Vector2Int(0,3), new Vector2Int(1,3), new Vector2Int(2,3), new Vector2Int(3,3) } }, // Z→P = SWAP
+            new GateEdit { Col=2, Row=1, Letter='D', Cells=new[]{ new Vector2Int(2,4), new Vector2Int(2,3), new Vector2Int(2,2), new Vector2Int(2,1) } }, // B→D = HAND (blast 1)
+            new GateEdit { Col=4, Row=1, Letter='T', Cells=new[]{ new Vector2Int(2,1), new Vector2Int(3,1), new Vector2Int(4,1) } },                     // S→T = ANT
+            new GateEdit { Col=5, Row=1, Letter='S', Cells=new[]{ new Vector2Int(2,1), new Vector2Int(3,1), new Vector2Int(4,1), new Vector2Int(5,1) } }, // H→S = ANTS (blast 2)
+        };
+        private GateEdit[] _editScript;
+        private int  _editStep = -1;
+        private bool _editAdvancing;
+        private Coroutine _editPointerCo;
+        public bool IsGatingEdit => _editScript != null;
 
         // ── Level 1: target = "Explode 4 words", taught as 4 gated charge→explode cycles ──
         // Each cycle authors a fresh board: drop Drop1 into col 2 → Charge word (horizontal, row 0)
@@ -570,10 +594,21 @@ namespace WordDrop
 
         private void OnLevelPlayStarted()
         {
-            if (IsGating) return;
+            if (IsGating || IsGatingEdit) return;
             if (!SurvivalManager.IsSurvivalMode || SurvivalManager.Instance == null) return;
             int stage = SurvivalManager.Instance.CurrentStageIndex;
             var entry = LevelTable.Get(stage);
+
+            // EDIT-tutorial (L5): gate the tap-tile → tap-letter EDIT sequence. Apply its RigHand (PDTSA) too so
+            // the edit letters are in the opening hand. 2026-07-07 Spencer.
+            if (entry.Gated && stage == TutorialLocks.EDIT_UNLOCK_LEVEL)
+            {
+                if (!string.IsNullOrEmpty(entry.RigHand))
+                    SetPlayerHand(entry.RigHand.ToUpperInvariant().ToCharArray());
+                BeginGatedEditLevel(LEVEL5_EDIT_SCRIPT);
+                return;
+            }
+
             if (entry.Gated)
             {
                 var script = GetGateScript(stage);
@@ -590,6 +625,144 @@ namespace WordDrop
         private GateDrop[] GetGateScript(int stage) =>
             stage == 1 ? LEVEL1_SCRIPT :
             stage == 3 ? LEVEL3_SCRIPT : null;
+
+        // ── EDIT-gated level flow (mirrors the drop-gated flow, but for the EDIT tool) ──
+        private void BeginGatedEditLevel(GateEdit[] script)
+        {
+            _editScript = script;
+            _editStep = 0;
+            _editAdvancing = false;
+            EditGateActive = true; // no rewrite timeout — the player can take their time on the tutorial edit
+            // Edits must WORK here (BlockShuffleAndSwap would block TryEnterRewriteMode) so leave it false —
+            // boosters + hand-swap are locked via TutorialLocks anyway. Advance on each completed rewrite.
+            if (MatchController.Instance != null)
+            {
+                MatchController.Instance.OnRewriteUsed -= OnGatedRewriteUsed;
+                MatchController.Instance.OnRewriteUsed += OnGatedRewriteUsed;
+            }
+            Debug.Log($"[TutorialGate] BEGIN edit-gated level — {script.Length} guided edits.");
+            SetupEditGateStep(0);
+        }
+
+        private void SetupEditGateStep(int i)
+        {
+            if (_editScript == null) return;
+            if (i >= _editScript.Length) { EndGatedEditLevel(); return; }
+
+            GateEdit e = _editScript[i];
+            if (MatchController.Instance != null)
+                MatchController.Instance.CurrentPlayer = MatchController.PLAYER_HUMAN;
+
+            // Lock input to ONLY this edit: no drops + no card selection (impossible index), only THIS tile can
+            // enter rewrite, only THIS letter can be stamped.
+            AllowedColumn     = NO_INPUT;
+            AllowedCardIndex  = NO_INPUT;
+            AllowedEditCol    = e.Col;
+            AllowedEditRow    = e.Row;
+            AllowedEditLetter = char.ToUpperInvariant(e.Letter);
+
+            ShowInstruction("CHANGE A TILE");
+            if (HintManager.Instance != null && e.Cells != null)
+                HintManager.Instance.SetForcedHint(0, e.Col, new List<Vector2Int>(e.Cells));
+
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
+            _editAdvancing = false;
+            if (_editPointerCo != null) StopCoroutine(_editPointerCo);
+            _editPointerCo = StartCoroutine(EditPointerRoutine(e));
+            Debug.Log($"[TutorialGate] edit step {i}: tile ({e.Col},{e.Row}) → '{e.Letter}'.");
+        }
+
+        // Pointer: bounce the hand_point on the target TILE; once the player taps it (rewrite mode engages),
+        // move it to the hand CARD carrying the target letter. Falls back to the tile if rewrite is cancelled.
+        private IEnumerator EditPointerRoutine(GateEdit e)
+        {
+            var grid = GridManager.Instance;
+            var hand = HandManager.Instance;
+            if (grid == null || hand == null) yield break;
+            Vector3 tileW = grid.CellToWorld(e.Col, e.Row);
+            char letter = char.ToUpperInvariant(e.Letter);
+            // Offset the fingertip toward the lower-right CORNER so the hand sits off the tile face (doesn't
+            // cover the letter) instead of dead-center. 2026-07-07 Spencer.
+            float cell = grid.CellSize;
+            Vector3 corner = new Vector3(cell * 0.30f, -cell * 0.10f, 0f);
+            int shownPhase = -1; // -1 none, 0 = tapping the tile, 1 = tapping the card
+
+            // Fire the gesture ONLY when the phase changes (ShowDragGesture is a fire-once looping animation —
+            // calling it every frame restarts it and stutters). Gesture = hand descends ONTO the target (a tap).
+            while (_editScript != null && !_editAdvancing)
+            {
+                int phase = (hand != null && hand.IsRewriteModeActive) ? 1 : 0;
+                if (phase != shownPhase)
+                {
+                    if (phase == 0)
+                    {
+                        TutorialSpotlight.ShowTap(tileW + corner);
+                        shownPhase = 0;
+                    }
+                    else
+                    {
+                        int slot = FindHandSlot(letter);
+                        if (slot >= 0)
+                        {
+                            Vector3 cardW = new Vector3(hand.GetCardWorldX(slot), hand.GetCardWorldY(), 0f);
+                            TutorialSpotlight.ShowTap(cardW + corner);
+                            shownPhase = 1;
+                        }
+                        // slot not found yet (hand mid-refill) — leave shownPhase so we retry next frame
+                    }
+                }
+                yield return null;
+            }
+        }
+
+        private int FindHandSlot(char letter)
+        {
+            var hand = MatchController.Instance != null
+                ? MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN) : null;
+            if (hand == null) return -1;
+            for (int i = 0; i < PlayerHand.HAND_SIZE; i++)
+                if (char.ToUpperInvariant(hand.GetSlot(i)) == letter) return i;
+            return -1;
+        }
+
+        private void OnGatedRewriteUsed(RewriteUsedEvent evt)
+        {
+            if (_editScript == null || _editAdvancing) return;
+            // Input is gated to ONLY the scripted edit, so any completed rewrite = the correct one.
+            _editAdvancing = true;
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(false);
+            HideInstruction();
+            TutorialSpotlight.Hide();
+            HintManager.Instance?.ClearForcedHint();
+            AllowedEditCol = NO_INPUT; AllowedEditRow = NO_INPUT; AllowedEditLetter = '\0'; // block ALL edits while it resolves
+            _editStep++;
+            StartCoroutine(AdvanceEditGateAfterResolution());
+        }
+
+        private IEnumerator AdvanceEditGateAfterResolution()
+        {
+            // Let the edit resolve (word forms / detonates / gravity settles) before the next step.
+            yield return new WaitForSeconds(1.6f);
+            SetupEditGateStep(_editStep);
+        }
+
+        private void EndGatedEditLevel()
+        {
+            _editScript = null;
+            _editStep = -1;
+            _editAdvancing = false;
+            EditGateActive = false;
+            if (_editPointerCo != null) { StopCoroutine(_editPointerCo); _editPointerCo = null; }
+            AllowedColumn = -1;
+            AllowedCardIndex = -1;
+            AllowedEditCol = -1; AllowedEditRow = -1; AllowedEditLetter = '\0';
+            if (MatchController.Instance != null) MatchController.Instance.OnRewriteUsed -= OnGatedRewriteUsed;
+            HideInstruction();
+            TutorialSpotlight.Hide();
+            HintManager.Instance?.ClearForcedHint();
+            if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
+            Debug.Log("[TutorialGate] edit-gated level complete — coaching released.");
+        }
 
         private void BeginGatedLevel(GateDrop[] script)
         {
@@ -694,6 +867,11 @@ namespace WordDrop
             {
                 Debug.Log("[TutorialGate] CancelActiveCoaching — clearing a stale gate from a previous level.");
                 EndGatedLevel();
+            }
+            if (_editScript != null)
+            {
+                Debug.Log("[TutorialGate] CancelActiveCoaching — clearing a stale EDIT gate.");
+                EndGatedEditLevel();
             }
         }
 

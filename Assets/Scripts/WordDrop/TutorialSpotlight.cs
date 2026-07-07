@@ -207,6 +207,47 @@ namespace WordDrop
             _cursorSeq.SetLoops(-1);
         }
 
+        /// <summary>Looping "push down" TAP on a single world point (no travel) — the hand hovers just above
+        /// the target, dips onto it with a press-squash, lifts, and repeats. Used to coach a TAP/edit, vs the
+        /// drag gesture used for drops. 2026-07-07 Spencer.</summary>
+        public static void ShowTap(Vector3 worldPos)
+        {
+            var inst = Ensure();
+            inst.BuildTapGesture(worldPos);
+        }
+
+        private void BuildTapGesture(Vector3 world)
+        {
+            if (_cursor == null)
+            {
+                var go = new GameObject("DragCursor");
+                _cursorSR = go.AddComponent<SpriteRenderer>();
+                _cursorSR.sprite = GetHandSprite();   // pivot baked at the fingertip
+                _cursorSR.sortingOrder = 120;
+                _cursor = go.transform;
+            }
+            _cursor.gameObject.SetActive(true);
+
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 1f;
+            float nativeH = (_cursorSR != null && _cursorSR.sprite != null) ? _cursorSR.sprite.bounds.size.y : 1f;
+            float scale = (cell * 1.2f) / Mathf.Max(nativeH, 0.001f);
+
+            world.z = CURSOR_Z;
+            Vector3 hover = world + Vector3.up * (cell * 0.22f); // rest position: fingertip hovers just above
+
+            _cursorSeq?.Kill();
+            _cursorSeq = DOTween.Sequence().SetUpdate(true);
+            _cursorSeq.AppendCallback(() => { _cursor.position = hover; _cursor.localScale = new Vector3(scale, scale, 1f); });
+            // Press DOWN onto the target with a slight squash, hold a beat, lift back up, pause, repeat.
+            _cursorSeq.Append(_cursor.DOMove(world, 0.15f).SetEase(Ease.OutQuad));
+            _cursorSeq.Join(_cursor.DOScale(scale * 0.80f, 0.15f).SetEase(Ease.OutQuad));
+            _cursorSeq.AppendInterval(0.08f);
+            _cursorSeq.Append(_cursor.DOMove(hover, 0.20f).SetEase(Ease.InQuad));
+            _cursorSeq.Join(_cursor.DOScale(scale, 0.20f).SetEase(Ease.InQuad));
+            _cursorSeq.AppendInterval(0.32f);
+            _cursorSeq.SetLoops(-1);
+        }
+
         // ── hand_point sprite (Resources/Tiles/hand_point) — pivot baked at the FINGERTIP, measured
         //    from the art: opaque pixel (40,16) of 133² → (0.301, 0.880). So transform.position == tip. ──
         private static Sprite _handSprite;

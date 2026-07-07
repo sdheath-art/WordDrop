@@ -986,7 +986,7 @@ namespace WordDrop
             bool risingRowActive = SurvivalManager.Instance != null && SurvivalManager.Instance.IsRisingRow;
 
             // Rewrite mode timeout — auto-cancel to prevent indefinite pause
-            if (_rewriteModeActive)
+            if (_rewriteModeActive && !TutorialManager.EditGateActive) // no auto-timeout during the L5 edit tutorial
             {
                 _rewriteTimeoutTimer -= Time.deltaTime;
                 if (_rewriteTimeoutTimer <= 0f)
@@ -1737,6 +1737,9 @@ namespace WordDrop
         {
             if (TutorialLocks.EditLocked) return;   // edit is locked until it's taught (L2+)
             if (TutorialManager.BlockShuffleAndSwap) return;
+            // EDIT-gated tutorial: ONLY the scripted target tile may enter rewrite mode. 2026-07-07 Spencer.
+            if (TutorialManager.AllowedEditCol >= 0
+                && (col != TutorialManager.AllowedEditCol || row != TutorialManager.AllowedEditRow)) return;
             if (MatchController.Instance == null || RulesEngine.Instance == null) return;
 
             // 2026-06-01: tile taps during booster aim mode are RESERVED for
@@ -3182,6 +3185,14 @@ namespace WordDrop
             PlayerHand authHand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
             bool isWild = authHand != null && authHand.IsWildSlot(handSlot);
             char letter = authHand != null ? authHand.GetSlot(handSlot) : _hand[handSlot];
+
+            // EDIT-gated tutorial: ONLY the scripted letter may be stamped onto the target tile. 2026-07-07 Spencer.
+            if (TutorialManager.AllowedEditLetter != '\0'
+                && char.ToUpperInvariant(letter) != TutorialManager.AllowedEditLetter)
+            {
+                CancelRewriteMode();
+                return;
+            }
 
             // A wild slot carries no committed letter — only treat an empty NON-wild
             // slot as "nothing to stamp."
