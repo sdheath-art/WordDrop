@@ -208,7 +208,13 @@ namespace WordDrop
 
             // Pre-level "here's your goal" modal — pauses gameplay until the player taps PLAY so a
             // fresh tester always knows the objective before the board starts moving. 2026-06-15 Spencer.
-            LevelIntroModal.Instance?.Show(Active, levelIndex);
+            // If THIS level (the swap-unlock level) is being reached via a clear celebration, DEFER the intro
+            // so the order reads cleared → UNLOCKED → objective — the UnlockModal's Claim shows it. On a
+            // direct/debug jump (no clear celebration up), show it normally. 2026-07-06 Spencer.
+            if (levelIndex == TutorialLocks.SWAP_UNLOCK_LEVEL && StageClearModal.UnlockRewardPending)
+                LevelIntroModal.Instance?.SetDeferred(Active, levelIndex);
+            else
+                LevelIntroModal.Instance?.Show(Active, levelIndex);
         }
 
         /// <summary>Stage cleared via this objective: keep showing it (3/3) but stop it being the

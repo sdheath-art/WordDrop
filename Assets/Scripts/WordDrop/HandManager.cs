@@ -4278,12 +4278,16 @@ namespace WordDrop
                         for (int i = 0; i < flyTiles.Count; i++)
                         {
                             bool lastLetter = (i == flyTiles.Count - 1);
+                            // Pop the objective icon ONCE for the whole combo — on the FINALE stage's last
+                            // letter only. Popping per stage stacks overlapping WildCardPop punch-rotations that
+                            // interrupt each other, freezing the target icon slanted. 2026-07-07 Spencer.
+                            bool popIcon = finale && lastLetter;
                             // Each flying tile gets its OWN 4-slot sorting band: +4 per LETTER (so a letter
                             // never bleeds onto a neighbour's tile) and +40 per STAGE (later stages fully in
                             // front → CAT covers SOFT covers FINE). 2026-07-06 Spencer.
                             int sortBase = 200 + g * 40 + i * 4;
                             HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter,
-                                lastLetter, null, i * 0.07f, false, popPeak, sortBase);
+                                popIcon, null, i * 0.07f, false, popPeak, sortBase);
                         }
                     }
 
@@ -4292,11 +4296,24 @@ namespace WordDrop
                         // The climax BOOM — moved here from the pre-windup so the deep boom lands ON the last
                         // pop and the audio BUILDS instead of firing front-loaded. 2026-07-06 Spencer.
                         GameAudio.Instance?.PlayBigPop();
-                        if (BigBurstFlash.Instance != null && groupTiles != null && groupTiles.Count > 0)
+                        if (groupTiles != null && groupTiles.Count > 0)
                         {
+                            // Center the finale FX on the LAST WORD to explode (this stage's word tiles), NOT the
+                            // merged pop group — that has scattered splash collateral folded in, which pulls the
+                            // center off the actual last word. Fall back to the group if empty. 2026-07-07 Spencer.
+                            var centerTiles = (g < flyGroups.Count && flyGroups[g] != null && flyGroups[g].Count > 0)
+                                ? flyGroups[g] : groupTiles;
                             Vector3 fc = Vector3.zero; int fn = 0;
-                            foreach (var ft in groupTiles) if (ft != null) { fc += ft.transform.position; fn++; }
-                            if (fn > 0) BigBurstFlash.Instance.Play(fc / fn, 7f, 1.1f, false, null);
+                            foreach (var ft in centerTiles) if (ft != null) { fc += ft.transform.position; fn++; }
+                            if (fn > 0)
+                            {
+                                Vector3 center = fc / fn;
+                                if (BigBurstFlash.Instance != null) BigBurstFlash.Instance.Play(center, 7f, 1.1f, false, null);
+                                // Expanding white light ring blooming out from the finale — the "boom" shockwave
+                                // payoff on the final pop of the chain. 2026-07-07 Spencer.
+                                float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
+                                ShockwaveRing.Instance?.Play(center, cell * 1.6f, null); // contained boom ring
+                            }
                         }
                     }
 

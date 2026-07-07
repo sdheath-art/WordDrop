@@ -278,8 +278,8 @@ namespace WordDrop
             // and bloated rendering (lesson learned 2026-04 — see
             // feedback_lessons_learned.md "Typography / TextMeshPro").
             _titleText = CreateTMPLabel(_panel, "Title",
-                new Vector2(0.05f, 0.50f), new Vector2(0.95f, 0.84f), // top portion — pill sits below
-                "Out Of Moves", 34, TITLE_COLOR); // 2026-06-24: smaller font so the pill fits the original-height banner
+                new Vector2(0.05f, 0.20f), new Vector2(0.95f, 0.80f), // centered — pill/icon removed 2026-07-07 Spencer
+                "Out Of Moves", 40, TITLE_COLOR);
             _titleText.fontStyle = FontStyles.Normal;
             _titleText.enableWordWrapping = false;
             _titleText.overflowMode = TextOverflowModes.Overflow;
@@ -312,13 +312,9 @@ namespace WordDrop
         /// objective. Hides the pill if there's no icon-type objective. 2026-06-24 Spencer.</summary>
         private void RefreshObjectivePill()
         {
+            // Pill box + objective icon REMOVED per Spencer 2026-07-07 — the banner is title-only now.
             if (_objectiveIconGO != null) { Destroy(_objectiveIconGO); _objectiveIconGO = null; }
-            var obj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
-            bool show = obj != null && obj.Icon != Objective.HudIcon.None && _objectiveIconHolder != null;
-            if (show)
-                _objectiveIconGO = ObjectiveIconBuilder.Build(
-                    obj.Icon, _objectiveIconHolder.transform, 36f, obj.RemainingCount, obj.IconWord);
-            if (_objectivePill != null) _objectivePill.SetActive(show);
+            if (_objectivePill != null) _objectivePill.SetActive(false);
         }
 
         private static void CreateStripe(RectTransform parent, string name, float yMin, float yMax)

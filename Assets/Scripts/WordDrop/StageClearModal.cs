@@ -104,6 +104,7 @@ namespace WordDrop
 
         // Guard against double-dismiss (Continue clicked twice, etc.).
         private bool _isDismissing;
+        private int _clearedStage; // the stage this modal is celebrating — used to trigger the unlock reward
 
         // Tracks whether we've successfully subscribed to OnStageCleared. The
         // late-bind path in Update() only runs subscription when this is false,
@@ -205,12 +206,20 @@ namespace WordDrop
 
         // ── Event flow ──────────────────────────────────────────────────────────
 
+        // Set the instant the swap-unlock level clears. HandleStageCleared fires on OnStageCleared — BEFORE
+        // the next-level InstallLevel runs (the modal itself shows later, after explosions settle), so this is
+        // the reliable signal for deferring the L5 objective intro behind the Unlock modal. Cleared by
+        // UnlockModal.OnClaim. 2026-07-06 Spencer.
+        public static bool UnlockRewardPending;
+
         private void HandleStageCleared(SurvivalManager.StageClearContext ctx)
         {
             // Queue the payload — multiple stage-clears in a single resolution
             // batch (rare but real) all get shown in sequence as the player
             // dismisses each.
             _pendingQueue.Enqueue(ctx);
+            if (ctx.ClearedStage == TutorialLocks.SWAP_UNLOCK_LEVEL - 1)
+                UnlockRewardPending = true;
         }
 
         private void Update()
@@ -339,6 +348,7 @@ namespace WordDrop
             // Populate text fields. Score value displays "0" initially so the
             // count-up animation can tally up from zero. Final value populates
             // when the count-up completes.
+            _clearedStage = ctx.ClearedStage;
             if (_titleText != null) _titleText.text = $"LEVEL {ctx.ClearedStage} CLEARED!";
             if (_scoreLabelText != null) _scoreLabelText.text = "Level Score";
             if (_scoreValueText != null) _scoreValueText.text = "0";
@@ -1014,6 +1024,16 @@ namespace WordDrop
             // closes the slip window where back-to-back modals could leak
             // a frame of unpaused gameplay.
             if (_pendingQueue.Count > 0) return;
+
+            // After the tutorial level that UNLOCKS Swap (the level just before SWAP_UNLOCK_LEVEL), hand off to
+            // the Unlock reward modal INSTEAD of resuming — it keeps the overlay paused and resumes/advances on
+            // Claim. Royal-Match cadence: cleared celebration FIRST, then the unlock reward. 2026-07-06 Spencer.
+            if (_clearedStage == TutorialLocks.SWAP_UNLOCK_LEVEL - 1 && UnlockModal.Instance != null)
+            {
+                UnlockModal.Instance.Show("Swap", "Swap any tile on the board for a new one!",
+                    Resources.Load<Sprite>("Tiles/swap_tile"));
+                return;
+            }
 
             if (SurvivalManager.Instance != null)
                 SurvivalManager.Instance.SetOverlayPaused(false);

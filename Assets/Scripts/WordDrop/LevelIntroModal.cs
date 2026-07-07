@@ -66,6 +66,22 @@ namespace WordDrop
         // ── Show / dismiss ────────────────────────────────────────────────────────
 
         /// <summary>Present the goal for the level about to start. Pauses gameplay until PLAY.</summary>
+        // ── Deferred show ──────────────────────────────────────────────────────
+        // When an UNLOCK reward modal sits between the clear celebration and this level, the intro is STORED
+        // here (not shown) at install time and displayed later by UnlockModal.OnClaim, so the order reads
+        // cleared → UNLOCKED → objective intro. 2026-07-06 Spencer.
+        private Objective _deferredObj;
+        private int _deferredLevel = -1;
+        public bool HasDeferred => _deferredObj != null;
+        public void SetDeferred(Objective obj, int levelNum) { _deferredObj = obj; _deferredLevel = levelNum; }
+        public void ShowDeferred()
+        {
+            if (_deferredObj == null) return;
+            var obj = _deferredObj; int lvl = _deferredLevel;
+            _deferredObj = null; _deferredLevel = -1;
+            Show(obj, lvl);
+        }
+
         public void Show(Objective obj, int levelNum)
         {
             if (_canvas == null || obj == null) return;

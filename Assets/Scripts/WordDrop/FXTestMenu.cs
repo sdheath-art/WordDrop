@@ -218,6 +218,10 @@ namespace WordDrop
                 FireBigBurst(vertical: true);
             innerY += BTN_H + GAP;
 
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Shockwave Ring @ center", _btnStyle))
+                ShockwaveRing.Instance?.Play(ScreenCenterWorld(), 1.6f, null);
+            innerY += BTN_H + GAP;
+
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Sparkle Spray", _btnStyle))
                 FireSparkleSpray();
             innerY += BTN_H + GAP;
@@ -248,6 +252,14 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Hide", _btnStyle))
                 FireStageClearHide();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Unlock Modal — Show", _btnStyle))
+                UnlockModal.Instance?.ShowForDebug();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Unlock Modal — Hide", _btnStyle))
+                UnlockModal.Instance?.HideForDebug();
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Top Out Panel (drop / dwell / exit)", _btnStyle))
