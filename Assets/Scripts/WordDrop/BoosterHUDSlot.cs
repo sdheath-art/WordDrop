@@ -215,6 +215,8 @@ namespace WordDrop
         private static readonly Color PIP_EMPTY = new Color(0.30f, 0.36f, 0.46f, 0.85f); // dim = used
         private Image[]         _editPips;
         private RectTransform[] _editPipRects;
+        /// <summary>2026-09-03: swaps are unlimited, so the SWAPS pip panel is hidden.</summary>
+        public static bool ShowSwapsPanel = false;
         private GameObject      _editPanelSlot;
         private CanvasGroup     _editPanelGroup; // dims the whole panel when out of edits
         private TextMeshProUGUI _editAdHint;     // "▶ FREE +3" shown when out + a rewarded ad is offered
@@ -743,6 +745,10 @@ namespace WordDrop
         /// pop with an additive glow when an edit is RESTORED. 2026-06-24 Spencer.</summary>
         private void BuildEditsPanel(GameObject slot, TMP_FontAsset font)
         {
+            // 2026-09-03 swap-pivot: swaps are UNLIMITED now, so the pip readout has
+            // nothing to report. Gated rather than deleted — flip ShowSwapsPanel back
+            // on if a swap budget ever returns.
+            if (!ShowSwapsPanel) { if (slot != null) slot.SetActive(false); return; }
             _editPanelSlot = slot;
             _lastPipCount  = -1; // first RefreshEditPips just sets state, no animation
             _editPanelGroup = slot.GetComponent<CanvasGroup>() ?? slot.AddComponent<CanvasGroup>();
@@ -1262,7 +1268,7 @@ namespace WordDrop
         }
 
         private const int AIM_BOARD_BG_ORDER = 17; // above scrim (15), below tiles
-        private const int AIM_TILE_ORDER     = 25; // well above scrim and board bg
+        private const int AIM_TILE_ORDER     = 70; // 2026-09-03: above the per-row tile bands (was 25)
 
         /// <summary>Set up the scrim as a single full-screen dim layer.
         /// Uses _aimScrimTop as the sole active rect; the other 3 (Bottom /
@@ -1364,6 +1370,11 @@ namespace WordDrop
                         break;
                     }
                     case SlotType.Edit:
+                        // 2026-09-03 swap-pivot: swaps are unlimited, so the EDITS/SWAPS
+                        // pill has nothing to report. This refresh pass re-activates every
+                        // slot each tick, so hiding it at BUILD time was not enough — it
+                        // has to be suppressed HERE too.
+                        if (!ShowSwapsPanel) { slotActive = false; break; }
                         charges = MatchController.Instance != null
                             ? MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN)
                             : 0;

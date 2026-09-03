@@ -128,6 +128,7 @@ namespace WordDrop
 
         private Camera     _cam;
         private GameObject _gridRoot;
+        private GameObject _specFrameGO, _specInnerGO;   // board + frame, for the entry slide
         private float _specBoardW, _specBoardH, _specBoardCentreY;
         private bool  _specUsed;
         private SpriteRenderer _gridBackgroundSR; // stored so booster aim-mode can bump its sortingOrder above the scrim
@@ -192,6 +193,13 @@ namespace WordDrop
             _boardEntryPrepped = true;
             _boardEntryTfs.Clear(); _boardEntryRests.Clear();
             _boardEntryTfs.Add(_gridRoot.transform); _boardEntryRests.Add(_gridRoot.transform.position);
+            // 2026-09-03: the spec board + frame must slide in WITH the tiles. They are
+            // children of _gridRoot, but the root can be rebuilt after this snapshot is
+            // taken — so drive them explicitly rather than relying on parenting.
+            if (_specFrameGO != null)
+            { _boardEntryTfs.Add(_specFrameGO.transform); _boardEntryRests.Add(_specFrameGO.transform.position); }
+            if (_specInnerGO != null)
+            { _boardEntryTfs.Add(_specInnerGO.transform); _boardEntryRests.Add(_specInnerGO.transform.position); }
             for (int i = 0; i < _allTileObjects.Count; i++)
                 if (_allTileObjects[i] != null)
                 {
@@ -485,10 +493,10 @@ namespace WordDrop
                 _specUsed = true;
                 Debug.Log($"[Grid] SPEC board {boardW:F2}x{boardH:F2} world, cell {CellSize:F3}, " +
                           $"{COLS}x{ROWS}, playable {playW:F2}x{playH:F2}");
-                // BuildGridVisuals creates _gridRoot, which the panel parents to —
-                // so it MUST run first.
-                BuildGridVisuals();
-                CreateSpecBoardPanel(boardW, boardH, boardCentreY);
+                // NOTE: do NOT call BuildGridVisuals here. Every caller of
+                // CalculateLayout calls it immediately afterwards, and a second call
+                // destroys the root (and the board panel) that the first one built.
+                // BuildGridVisuals creates the spec panel itself — see below.
                 return;
             }
 
@@ -585,6 +593,17 @@ namespace WordDrop
 
         private void BuildGridVisuals()
         {
+            // 2026-09-03: this used to create a NEW GridRoot without destroying the old
+            // one. CalculateLayout runs more than once on level entry, so the first root
+            // was ORPHANED in the scene — still holding its board panel, which then sat
+            // at rest position while everything else slid in (a stray rectangle in the
+            // middle of the screen), and leaked a full board's worth of objects per call.
+            if (_gridRoot != null)
+            {
+                Destroy(_gridRoot);
+                _gridRoot = null;
+                _specFrameGO = null; _specInnerGO = null; _gridBackgroundSR = null;
+            }
             _gridRoot = new GameObject("GridRoot");
             _gridRoot.transform.SetParent(transform, false);
 
@@ -603,15 +622,22 @@ namespace WordDrop
                 // cell-area edge, so half-gap padding makes board→tile == one full gap.
                 // gap = CellSize*(1 - TILE_DISPLAY_RATIO) where ratio = 158/172 (tightened 2026-06-16).
                 float halfGapPad = CellSize * (1f - 154f / 172f) * 0.5f; // 2026-06-24: 158→154 (a hair more spacing + margin)
-                CreateBackgroundPanel((GridRight - GridLeft) + halfGapPad * 2f,
-                                      (GridTop   - GridBottom) + halfGapPad * 2f);
+                if (!UseBoardSpec)
+                    CreateBackgroundPanel((GridRight - GridLeft) + halfGapPad * 2f,
+                                          (GridTop   - GridBottom) + halfGapPad * 2f);
             }
             else
             {
                 float bgPadding = CellSize * 0.16f;
-                CreateBackgroundPanel((GridRight - GridLeft) + bgPadding * 2f,
-                                      (GridTop   - GridBottom) + bgPadding * 2f);
+                if (!UseBoardSpec)
+                    CreateBackgroundPanel((GridRight - GridLeft) + bgPadding * 2f,
+                                          (GridTop   - GridBottom) + bgPadding * 2f);
             }
+            // 2026-09-03: with UseBoardSpec the board is drawn to the exact spec HERE,
+            // paired with the root that was just created. (Drawing the legacy
+            // grid-derived panel as well put two offset rounded rects on screen.)
+            if (UseBoardSpec && _specUsed)
+                CreateSpecBoardPanel(_specBoardW, _specBoardH, _specBoardCentreY);
 
             int texSize = Mathf.Clamp(Mathf.RoundToInt(CellSize * 200f), 64, 512);
             int radius  = texSize / 6;   // slightly rounder corners
@@ -713,7 +739,7 @@ namespace WordDrop
             // outer frame
             var frame = TileRenderer.CreateRoundedRect(texW, texH, rOuter, FRAME_OUTER, FRAME_OUTER, 1);
             if (frame == null) { Debug.LogError("[Grid] frame sprite NULL"); return; }
-            var frameGO = new GameObject("BoardFrame");
+            var frameGO = new GameObject("BoardFrame"); _specFrameGO = frameGO;
             frameGO.transform.SetParent(_gridRoot.transform, false);
             frameGO.transform.position = new Vector3(0f, centreY, 0f);
             var fsr = frameGO.AddComponent<SpriteRenderer>();
@@ -725,7 +751,7 @@ namespace WordDrop
             int itexH = Mathf.Max(8, texH - borderPx * 2);
             var inner = TileRenderer.CreateRoundedRect(itexW, itexH, rInner, BOARD_INNER, BOARD_INNER, 1);
             if (inner == null) { Debug.LogError("[Grid] inner sprite NULL"); return; }
-            var innerGO = new GameObject("GridBackground");
+            var innerGO = new GameObject("GridBackground"); _specInnerGO = innerGO;
             innerGO.transform.SetParent(_gridRoot.transform, false);
             innerGO.transform.position = new Vector3(0f, centreY, 0f);
             var isr = innerGO.AddComponent<SpriteRenderer>();
@@ -734,6 +760,15 @@ namespace WordDrop
             float innerW = boardW * (SPEC_PLAY_W / SPEC_BOARD_W);
             float innerH = boardH * (SPEC_PLAY_H / SPEC_BOARD_H);
             innerGO.transform.localScale = new Vector3(innerW / (itexW / 100f), innerH / (itexH / 100f), 1f);
+
+            // If the entry slide already parked the board off-screen before this panel
+            // existed, register + park it now so it does not pop in at rest position.
+            if (_boardEntryPrepped)
+            {
+                _boardEntryTfs.Add(frameGO.transform); _boardEntryRests.Add(frameGO.transform.position);
+                _boardEntryTfs.Add(innerGO.transform); _boardEntryRests.Add(innerGO.transform.position);
+                ApplyBoardEntryOffset(_boardEntryOffX);
+            }
         }
 
         private void CreateBackgroundPanel(float bgW, float bgH)
@@ -839,7 +874,11 @@ namespace WordDrop
         public Vector3 CellToWorld(int col, int row)
         {
             float x = GridLeft   + (col + 0.5f) * CellSize;
-            float y = GridBottom + (row + 0.5f) * RowPitch;   // overlap: rows are closer than tiles are tall
+            // The tile is 1/TILE_ASPECT cells tall (1.2). Bias every row UP by half the
+            // overshoot so the BOTTOM row sits flush with the board floor and the extra
+            // height sticks up as the top face — which the tile above covers.
+            float overshootHalf = ((1f / TILE_ASPECT) - 1f) * 0.5f;
+            float y = GridBottom + (row + 0.5f + overshootHalf) * RowPitch;
             // UPPER rows must draw IN FRONT so each tile's top face is hidden behind the
             // tile above it. Done with Z (sprites of equal sortingOrder sort by depth) so
             // the existing sortingOrder logic — including the FX bump to 15 — is untouched.

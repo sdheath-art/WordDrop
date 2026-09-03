@@ -206,7 +206,7 @@ namespace WordDrop
 
                 tile.transform.DOComplete();
                 tile.SetScoredSprite(true);
-                tile.SetSortingOrder(15);
+                tile.SetSortingOrder(Tile.FX_TILE_ORDER);   // 2026-09-03: above every per-row band
 
                 // Stagger: each tile flashes white slightly after the previous
                 // Feel-pass 2026-05-16: 0.06 → 0.03 (matches TILE_STAGGER_DELAY
@@ -259,7 +259,7 @@ namespace WordDrop
                     .SetEase(DG.Tweening.Ease.OutBack)
                     .OnComplete(() => {
                         if (tile != null) {
-                            tile.SetSortingOrder(5);
+                            tile.SetSortingOrder(tile.BaseSortingOrder); // 2026-09-03: restore the tile's ROW band, not a flat 5
                             // 2026-06-03 Spencer: keep the green scored sprite — do NOT
                             // revert to white here. The tile stays green after the flash
                             // (no white flicker), holding green straight through until

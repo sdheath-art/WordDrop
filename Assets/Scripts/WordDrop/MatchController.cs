@@ -57,7 +57,10 @@ namespace WordDrop
         /// Off by default. Economy during Survival: 3 edits at run start,
         /// fully refilled to 3 on every stage clear.
         /// </summary>
-        public static bool UnlimitedRewrites = false;
+        /// 2026-09-03 swap-pivot: swapping is now the core VERB, not a limited
+        /// resource, so this is ON. The SWAPS pip panel is hidden to match
+        /// (BoosterHUDSlot.ShowSwapsPanel).
+        public static bool UnlimitedRewrites = true;
         public const int PLAYER_HUMAN    = 0;
         public const int PLAYER_AI       = 1;
         public const int NUM_PLAYERS     = 2;
@@ -165,6 +168,10 @@ namespace WordDrop
         public int  GetRewritesRemaining(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return 0;
+            // 2026-09-03: with UnlimitedRewrites on, report a large count so every
+            // "<= 0" gate (board swap, edit mode, the jam check) agrees with the flag.
+            // Several call sites test the COUNTER directly rather than the flag.
+            if (UnlimitedRewrites) return 999;
             return _rewritesRemaining[playerIndex];
         }
 

@@ -79,6 +79,13 @@ namespace WordDrop
         // change PSD_CELL_PITCH in GridManager, update the denominator here
         // too. (Long-term: refactor so tile size is decoupled from pitch
         // entirely — for now, two-place coupled change.)
+        /// <summary>2026-09-03: the tile is FORCED to this width:height on screen so
+        /// the vertical stacking overlap is deterministic. Width == one cell; height ==
+        /// cell / TILE_TARGET_ASPECT (= 1.2 cells). The extra 20% is the shaded top
+        /// face, which the tile ABOVE draws over — that is the whole 3D-stack effect.
+        /// Forced non-uniformly because several paths swap the sprite after Initialise
+        /// and a square sprite would silently kill the overlap.</summary>
+        public  const float TILE_TARGET_ASPECT = 0.833f;
         public  const bool  TILE_DROP_SHADOW   = false; // 2026-09-03: per-tile drop shadow off for the stacked/overlap board
         private const float TILE_DISPLAY_RATIO = 1.0f;   // 2026-09-03: was 154/172 — tiles now butt up edge-to-edge (Toon Blast style), no gap // 2026-06-24 Spencer: a hair more spacing (numerator 158→154 → gap 14→18 PSD; board margin scales off the same). Numerator MUST match the hardcoded 154/172 in GridManager (halfGapPad + tileRadiusWorld) and HUDManager baseScale; denom = GridManager.PSD_CELL_PITCH.
         /// <summary>Tile display size as a fraction of the cell pitch — so other systems (e.g. the
@@ -404,6 +411,11 @@ namespace WordDrop
             transform.localScale = _restScale;
             transform.localRotation = Quaternion.identity;
 
+            // 2026-09-03: sorting is per-ROW (ROW_ORDER_STRIDE). Tiles come from a POOL,
+            // and Reinitialise set Row WITHOUT re-applying the order — so a recycled tile
+            // kept its previous row's band and stopped being obscured by the tile above.
+            SetSortingOrder(BaseSortingOrder);
+
             UpdateLetterDisplay(letter);
             if (_letterTMP != null) { _letterTMP.gameObject.SetActive(true); _letterTMP.enabled = true; }
             if (_pointTMP != null) { _pointTMP.gameObject.SetActive(true); _pointTMP.enabled = true; }
@@ -499,7 +511,7 @@ namespace WordDrop
 
             _spriteRenderer              = gameObject.AddComponent<SpriteRenderer>();
             _spriteRenderer.sprite       = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
-            _spriteRenderer.sortingOrder = 5;
+            _spriteRenderer.sortingOrder = BaseSortingOrder;
 
             // Skip lit material for now — debug: does the tile render without it?
             // LightingSetup.Instance?.ApplyLitMaterial(_spriteRenderer);
@@ -516,6 +528,15 @@ namespace WordDrop
             float scale       = displaySize / nativeSize;
             _restScale = new Vector3(scale, scale, 1f); _restScaleSet = true;
             transform.localScale = _restScale;
+            if (!s_loggedTileMetrics)
+            {
+                s_loggedTileMetrics = true;
+                var sp = _spriteRenderer.sprite;
+                Debug.Log($"[TileMetrics] cell={cellSize:F4} ratio={TILE_DISPLAY_RATIO:F3} " +
+                          $"spriteBounds={(sp!=null?sp.bounds.size.x:0):F4}x{(sp!=null?sp.bounds.size.y:0):F4} " +
+                          $"scale={scale:F4} -> onScreen {(sp!=null?sp.bounds.size.x*scale:0):F4}x{(sp!=null?sp.bounds.size.y*scale:0):F4} " +
+                          $"(want width==cell, height==1.2*cell)  spriteName={(sp!=null?sp.name:"NULL")}");
+            }
 
             float invScale = 1f / Mathf.Max(scale, 0.01f);
 
@@ -523,7 +544,16 @@ namespace WordDrop
             GameObject letterGO = new GameObject("TileLetter");
             letterGO.transform.SetParent(transform, false);
             // Centered on tile face (true center, no offset).
-            letterGO.transform.localPosition = new Vector3(0f, 0f, -0.1f); // 2026-06-04 Spencer: nudge to re-center Avenir
+            // 2026-09-03: the tile sprite is 1/TILE_TARGET_ASPECT cells TALL, but only the
+            // bottom ~83% of it is the visible FACE (the top is the shaded face that the
+            // tile above covers). A letter centred on the whole sprite therefore sits high
+            // in the block, leaving dead space under it that reads as "stretched".
+            // Push it down by half the overshoot so it centres on the FACE.
+            // localPosition is in the tile's LOCAL space, which is scaled by `scale`,
+            // so the world offset (overshoot/2 * cellSize) divides back out to
+            // (1/aspect - 1)/2 * nativeSize.
+            float faceNudge = ((1f / TILE_TARGET_ASPECT) - 1f) * 0.5f * nativeSize;
+            letterGO.transform.localPosition = new Vector3(0f, -faceNudge, -0.1f); // 2026-06-04 Spencer: nudge to re-center Avenir
 
             _letterTMP = letterGO.AddComponent<TextMeshPro>();
             // Load Fredoka Bold TMP font
@@ -534,7 +564,7 @@ namespace WordDrop
             _letterTMP.fontStyle      = FontStyles.Bold;
             _letterTMP.color          = new Color(0.145f, 0.153f, 0.200f, 1f); // #252733
             _letterTMP.alignment      = TextAlignmentOptions.Midline; // Midline (not Center) so a single capital sits visually centered, not high
-            _letterTMP.sortingOrder   = 7; // above the gloss sheen (6) so the letter stays crisp
+            _letterTMP.sortingOrder   = BaseSortingOrder + 2; // above the gloss sheen (+1) so the letter stays crisp
             _letterTMP.rectTransform.sizeDelta = new Vector2(2f, 2f);
             _letterTMP.enableWordWrapping = false;
             _letterTMP.overflowMode  = TextOverflowModes.Overflow;
@@ -552,10 +582,11 @@ namespace WordDrop
             // ── Point value — quieter, no shadow ──
             GameObject pointGO = new GameObject("TilePoints");
             pointGO.transform.SetParent(transform, false);
+            // same face-centring nudge as the letter (applied to its localPosition below)
             // Slight push toward the corner (was 0.22, then 0.28 was too aggressive
             // and made subscripts touch the tile edge). 0.25 gives breathing room
             // from the letter without crowding the tile boundary.
-            pointGO.transform.localPosition = new Vector3(nativeSize * 0.25f, -nativeSize * 0.25f, -0.1f);
+            pointGO.transform.localPosition = new Vector3(nativeSize * 0.25f, -nativeSize * 0.25f - faceNudge, -0.1f);
 
             _pointTMP = pointGO.AddComponent<TextMeshPro>();
             if (tileFont != null) _pointTMP.font = tileFont;
@@ -564,7 +595,7 @@ namespace WordDrop
             _pointTMP.fontStyle      = FontStyles.Normal;  // Fredoka Bold already bold
             _pointTMP.color          = new Color(0.40f, 0.40f, 0.50f, 1f);
             _pointTMP.alignment      = TextAlignmentOptions.Center;
-            _pointTMP.sortingOrder   = 7; // above the gloss sheen (6)
+            _pointTMP.sortingOrder   = BaseSortingOrder + 2; // above the gloss sheen (+1)
             _pointTMP.rectTransform.sizeDelta = new Vector2(0.8f, 0.6f);
             _pointTMP.enableWordWrapping = false;
             _pointTMP.overflowMode  = TextOverflowModes.Overflow;
@@ -634,7 +665,7 @@ namespace WordDrop
                     _glossSR.sprite = s_glossSprite;
                     if (s_glossMaterial != null) _glossSR.sharedMaterial = s_glossMaterial;
                     _glossSR.color = new Color(1f, 1f, 1f, GlossAlpha);
-                    _glossSR.sortingOrder = 6; // above tile face (5); SetSortingOrder keeps it at order+1
+                    _glossSR.sortingOrder = BaseSortingOrder + 1; // above tile face; SetSortingOrder keeps it at order+1
                     float gNative = (_glossSR.sprite != null && _glossSR.sprite.bounds.size.x > 0f)
                         ? _glossSR.sprite.bounds.size.x : 1f;
                     // Ellipse: same world-size formula as the edit halo — world size
@@ -664,7 +695,7 @@ namespace WordDrop
                 _innerShadowSR.sprite = s_shadowSprite; // vertical gradient, tinted dark
                 if (s_shadowMaterial != null) _innerShadowSR.sharedMaterial = s_shadowMaterial;
                 _innerShadowSR.color = new Color(0f, 0f, 0f, ShadowAlpha);
-                _innerShadowSR.sortingOrder = 6; // with the gloss (face+1), under the letter (face+2)
+                _innerShadowSR.sortingOrder = BaseSortingOrder + 1; // with the gloss (face+1), under the letter (face+2)
                 float sNative = (_innerShadowSR.sprite != null && _innerShadowSR.sprite.bounds.size.x > 0f)
                     ? _innerShadowSR.sprite.bounds.size.x : 1f;
                 float sx = (displaySize * ShadowWidth)  / (sNative * Mathf.Max(scale, 0.01f));
@@ -864,7 +895,7 @@ namespace WordDrop
                 _wildHaloSR = _wildHaloGO.AddComponent<SpriteRenderer>();
                 _wildHaloSR.sprite = s_wildHaloSprite;
                 if (s_wildHaloMaterial != null) _wildHaloSR.sharedMaterial = s_wildHaloMaterial;
-                _wildHaloSR.sortingOrder = 3; // tiles render at 5, halo renders behind
+                _wildHaloSR.sortingOrder = BaseSortingOrder - 2; // halo renders behind its own tile face
                 // Scale halo to ~1.7× cell footprint for a glow that spills past the tile edges.
                 float haloNative = (_wildHaloSR.sprite != null && _wildHaloSR.sprite.bounds.size.x > 0)
                     ? _wildHaloSR.sprite.bounds.size.x : 1f;
@@ -929,7 +960,7 @@ namespace WordDrop
                 _iridGO.transform.localPosition = new Vector3(0f, 0f, -0.03f);
                 _iridSR = _iridGO.AddComponent<SpriteRenderer>();
                 if (s_iridMaterial != null) _iridSR.sharedMaterial = s_iridMaterial;
-                _iridSR.sortingOrder = 6; // over the white face (5), under the letter (7)
+                _iridSR.sortingOrder = BaseSortingOrder + 1; // over the face, under the letter (+2)
                 _iridGO.transform.localScale = Vector3.one; // matches the tile face
                 _iridGO.tag = "Untagged";
             }
@@ -990,6 +1021,10 @@ namespace WordDrop
         {
             Col = col;
             Row = row;
+            // 2026-09-03: sorting is per-ROW (see ROW_ORDER_STRIDE) so a tile that
+            // FALLS must take its new row's band, or the overlap sorts wrong after
+            // every gravity step.
+            SetSortingOrder(BaseSortingOrder);
         }
 
         private void OnDestroy()
@@ -2386,7 +2421,7 @@ namespace WordDrop
         {
             // While a tutorial spotlight is DIMMING this tile, block external FX bumps (WordDropFX charge/detonation
             // raises tiles to 15) from lifting it above the scrim — charged tiles were bleeding bright. 2026-07-08 Spencer.
-            if (SpotlightActive && _spotlightOrder < 0) order = 5;
+            if (SpotlightActive && _spotlightOrder < 0) order = BaseSortingOrder;
             if (_spriteRenderer != null) _spriteRenderer.sortingOrder = order;
             if (_iridSR != null) _iridSR.sortingOrder = order + 1;            // holographic fill, above the face
             if (_glossSR != null) _glossSR.sortingOrder = order + 1;          // top sheen, above the face
@@ -2480,7 +2515,7 @@ namespace WordDrop
             // ResetVisuals (called from various cleanup paths) hard-coded the
             // default 5, the tile would drop BELOW the scrim mid-aim and
             // disappear. AimModeTileOrder is set by BoosterHUDSlot.
-            SetSortingOrder(_spotlightOrder >= 0 ? _spotlightOrder : (AimModeTileOrder > 0 ? AimModeTileOrder : 5));
+            SetSortingOrder(_spotlightOrder >= 0 ? _spotlightOrder : (AimModeTileOrder > 0 ? AimModeTileOrder : BaseSortingOrder));
             Color border = _hasPrimedGlow ? _primedGlowColor : TILE_BORDER_NORMAL;
             ApplyBorderColor(border);
         }
@@ -3291,6 +3326,33 @@ namespace WordDrop
         /// Rebuilds the sprite with the given border color. Respects highlight/glow state.
         /// </summary>
         // Static cached sprites — shared by ALL tiles, generated once
+        private static bool s_loggedTileMetrics;
+
+        /// <summary>2026-09-03: tiles OVERLAP vertically, so an upper tile must cover a
+        /// lower tile's top face — including that tile's GLOW and letter. Unity's
+        /// sortingOrder ALWAYS beats Z depth, so a lower tile's glow at order+1 was
+        /// drawing over an upper tile's face at order+0. Give each ROW its own band of
+        /// 3 orders (face, sub-layers, letter) so the whole stack sorts by row.
+        /// Bands run 5 .. 5+3*(rows-1); FX/aim orders sit above that (see FX_TILE_ORDER).</summary>
+        public const int ROW_ORDER_STRIDE = 3;
+        public const int ROW_ORDER_BASE   = 5;
+        /// <summary>Order for a tile lifted by FX/detonation — above every row band.</summary>
+        public const int FX_TILE_ORDER    = 60;
+        public int BaseSortingOrder => ROW_ORDER_BASE + Mathf.Max(Row, 0) * ROW_ORDER_STRIDE;
+
+
+        /// <summary>2026-09-03: the sprite cache lives in statics behind
+        /// s_spriteCacheBuilt. With Editor domain reload off those statics survive
+        /// between play sessions, so a sprite built from an OLDER version of the
+        /// texture kept being reused (and the tile came out the wrong shape). Reset
+        /// on every play so the cache always matches the art on disk.</summary>
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetSpriteCache()
+        {
+            s_spriteCacheBuilt = false;
+            s_loggedTileMetrics = false;
+        }
+
         private static Sprite s_spriteNormal;
         private static Sprite s_spriteThick;
         private static Sprite s_spriteGold;
@@ -3348,12 +3410,16 @@ namespace WordDrop
             Texture2D primedTex = Resources.Load<Texture2D>("Tiles/primed_tile@2x");
             if (primedTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
             {
-                const float PRIMED_FILL = 0.80f;
+                // 2026-09-03: the primed tile art is now TIGHT-CROPPED and TALLER than
+                // wide, like the white tile. The old centred SQUARE crop cut the rounded
+                // top and bottom off and kept only the flat middle — which rendered the
+                // primed state as a plain magenta RECTANGLE with no tile form. Use the
+                // full texture at a PPU that matches the white tile's bounds.
                 float targetBounds = loadedNormal.bounds.size.x; // = the (glossy) tile size
-                float pppu = primedTex.width / (targetBounds / PRIMED_FILL);
-                float pm = (1f - PRIMED_FILL) * 0.5f * primedTex.width;
-                float pcw = PRIMED_FILL * primedTex.width;
-                loadedPrimed = Sprite.Create(primedTex, new Rect(pm, pm, pcw, pcw), new Vector2(0.5f, 0.5f), pppu);
+                float pppu = primedTex.width / targetBounds;
+                loadedPrimed = Sprite.Create(primedTex,
+                    new Rect(0f, 0f, primedTex.width, primedTex.height),
+                    new Vector2(0.5f, 0.5f), pppu);
             }
             Sprite loadedAI     = Resources.Load<Sprite>("Tiles/ai_tile");
 

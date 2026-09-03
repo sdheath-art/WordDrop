@@ -7496,7 +7496,16 @@ namespace WordDrop
 
         // ── Next tile preview ───────────────────────────────────────────────────
 
+        /// <summary>2026-09-03 swap-pivot: the NEXT preview belongs to the DROP mechanic
+        /// (it previews the tile you are about to drop). With the hand gone it has no
+        /// meaning. Gated with the hand — see HandEnabled.</summary>
         private void BuildNextTilePreview()
+        {
+            if (!HandEnabled) return;
+            BuildNextTilePreviewInner();
+        }
+
+        private void BuildNextTilePreviewInner()
         {
             if (_grid == null) return;
 

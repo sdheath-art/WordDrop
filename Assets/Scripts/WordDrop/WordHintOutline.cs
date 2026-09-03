@@ -78,6 +78,13 @@ namespace WordDrop
             minX -= outset; maxX += outset;
             minY -= outset; maxY += outset;
 
+            // 2026-09-03: tiles OVERLAP vertically — CellToWorld returns the TILE centre,
+            // which is biased UP by half the tile's overshoot so the bottom row sits flush
+            // with the board floor. The visible FACE sits that much lower, so drop the
+            // outline to hug the faces instead of floating above them.
+            float faceDrop = ((1f / GridManager.TILE_ASPECT) - 1f) * 0.5f * cs;
+            minY -= faceDrop; maxY -= faceDrop;
+
             float r = cs * CornerRadius;
             List<Vector3> pts = BuildRoundedRect(minX, minY, maxX, maxY, r, Mathf.Max(1, CornerSegs));
             _lr.positionCount = pts.Count;

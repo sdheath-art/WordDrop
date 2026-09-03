@@ -72,7 +72,7 @@ namespace WordDrop
                 arrowGO.transform.localScale = Vector3.one;
 
                 MeshRenderer mr = arrowGO.GetComponent<MeshRenderer>();
-                if (mr != null) mr.sortingOrder = 15;
+                if (mr != null) mr.sortingOrder = 50; // 2026-09-03: above the per-row tile bands (was 15)
 
                 _arrowObjects[col] = arrowGO;
                 _arrowTexts[col]   = tm;
