@@ -6196,8 +6196,14 @@ namespace WordDrop
         /// Creates a rounded-rect tray behind the rack + action area.
         /// Visually groups cards, shuffle, and next into one control cluster.
         /// </summary>
+        /// <summary>2026-09-03 swap-pivot: the DROP mechanic's letter hand is being
+        /// removed in favour of board swaps. Gate rather than delete so the old game
+        /// is one bool away. Suppresses the tray pill AND the letter cards.</summary>
+        public static bool HandEnabled = false;
+
         private void BuildControlTray()
         {
+            if (!HandEnabled) return;
             if (_grid == null) return;
 
             float cardY = GetCardRowY();
@@ -6362,6 +6368,12 @@ namespace WordDrop
         }
 
         private void BuildCardObjects()
+        {
+            if (!HandEnabled) return;
+            BuildCardObjectsInner();
+        }
+
+        private void BuildCardObjectsInner()
         {
             if (_grid == null || _spriteNormal == null) return;
 

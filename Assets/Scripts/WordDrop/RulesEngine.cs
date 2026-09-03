@@ -34,9 +34,13 @@ namespace WordDrop
         // mode → then TransitionTo(Playing)), so at validation time the
         // dynamic ROWS property would still return 5. Using LEVEL_ROWS keeps
         // the validator consistent with Level's actual runtime row count.
-        public const int COLS       = 6;
-        public const int MAX_ROWS   = 9;
-        public const int LEVEL_ROWS = 8;
+        // 2026-09-02 swap-pivot grid. Was 6x8. Chosen over 11x9: 9x12 gives MORE
+        // cells (108 vs 99), BIGGER tiles (122px vs 100px on a 1179-wide phone),
+        // and 12 rows of build room instead of 9. 11x9 used only 58% of the
+        // screen height — wasted space in a game about building before you fire.
+        public const int COLS       = 9;
+        public const int MAX_ROWS   = 11;
+        public const int LEVEL_ROWS = 11;
         public static int ROWS => (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode) ? LEVEL_ROWS : 5;
 
         /// <summary>
@@ -52,6 +56,11 @@ namespace WordDrop
         /// Prevents junk towers from accumulating on the sides.
         /// </summary>
         public static bool JunkSplashEnabled = true;
+
+        // True while the CURRENT resolution was initiated by a SWAP/EDIT (BeginSwapResolution); a DROP
+        // (FullTurnSequence) sets it false. Lets swap-tutorial objectives count ONLY swap-caused explosions.
+        // 2026-07-07 Spencer.
+        public static bool LastResolutionWasSwap = false;
 
         /// <summary>
         /// Kill switch for post-gravity fertility repair.
@@ -86,6 +95,7 @@ namespace WordDrop
         // Tutorial levels disable the fuse so primed words never fizzle on a learner (the fuse is its
         // own mechanic, taught later). Set per-level in ObjectiveManager.InstallLevel. 2026-06-25 Spencer.
         public static bool FuseDisabled = false;
+        public static bool StonesDisabled = false; // per-level: suppress rising-row stone/rock tiles (L9 intro — rocks introduced later). 2026-07-08 Spencer.
 
         private static int GetFuseLength(int wordLength)
         {
@@ -782,7 +792,10 @@ namespace WordDrop
             int n = 0;
             for (int c = 0; c < COLS; c++)
                 for (int r = 0; r < ROWS; r++)
-                    if (_board[c, r] != null && _board[c, r].IsFrozen) n++;
+                    // A REAL ice tile is a frozen cell that still holds a LETTER. A cell emptied via the
+                    // Letter='\0' re-resolution path keeps IsFrozen but has no tile — counting that GHOST left
+                    // the ice objective un-winnable ("1 ice left" with nothing on the board). 2026-07-07 Spencer.
+                    if (_board[c, r] != null && _board[c, r].IsFrozen && _board[c, r].Letter != '\0') n++;
             return n;
         }
 
@@ -1564,7 +1577,7 @@ namespace WordDrop
             bool fertility = SurvivalManager.IsSurvivalMode && !SurvivalManager.NoAssistMode;
 
             // Stone tiles
-            float stoneChance = SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+            float stoneChance = SurvivalManager.IsSurvivalMode && !StonesDisabled && SurvivalManager.Instance != null
                 ? SurvivalManager.Instance.GetStoneChance() : 0f;
             var stoneColumns = new HashSet<int>();
             for (int col = 0; col < COLS; col++)
@@ -3870,6 +3883,7 @@ namespace WordDrop
         /// </summary>
         public void BeginSwapResolution(List<RulesWordMatch> detectedWords, int playerIndex, HashSet<int> justPrimedIds)
         {
+            LastResolutionWasSwap   = true; // swap/edit-initiated → swap-tutorial objectives count these explosions
             _stepPlayerIndex        = playerIndex;
             _stepChainDepth         = 0;
             _stepTotalScore         = 0;
@@ -4093,6 +4107,12 @@ namespace WordDrop
             }
 
             RemoveInvalidPrimedWords();
+
+            // Prime pitch-ramp: keep CLIMBING across consecutive priming drops while charged words are still on the
+            // board (the combo is building); reset to base pitch only once they've ALL resolved — detonated or
+            // expired — so the next charge-up starts the scale over. 2026-07-14 Spencer.
+            if (_primedRegistry.Count == 0) GameAudio.Instance?.ResetPrimeRamp();
+
             _globalTurn++;
             _currentPhase = ResolutionPhase.Idle;
 
@@ -4121,6 +4141,7 @@ namespace WordDrop
             if (_currentPhase == ResolutionPhase.Idle) return;
 
             RemoveInvalidPrimedWords();
+            if (_primedRegistry.Count == 0) GameAudio.Instance?.ResetPrimeRamp(); // reset only once all charged words resolved
             _currentPhase = ResolutionPhase.Idle;
 
             _stepJustPrimed      = null;
@@ -4476,7 +4497,13 @@ namespace WordDrop
             int chainTriggeredCount = 0;
             if (triggeredIds.Count > 0)
             {
-                var connectedGroup = _primedRegistry.FindConnectedGroup(triggeredIds, _stepJustPrimed);
+                // Align the just-primed exclusion with the trigger gate above (skipJustPrimedFilter): during a
+                // cascade (chainDepth > 0) in level/survival, words primed THIS resolution ARE allowed to trigger,
+                // so they must also be allowed to JOIN the connected chain group. Was: always excluded here →
+                // cascade-formed connected primes silently failed to chain. 2026-07-08 Spencer.
+                var chainExclude = ((GameManager.IsLevelMode || SurvivalManager.IsSurvivalMode) && _stepChainDepth > 0)
+                    ? null : _stepJustPrimed;
+                var connectedGroup = _primedRegistry.FindConnectedGroup(triggeredIds, chainExclude);
                 for (int g = 0; g < connectedGroup.Count; g++)
                 {
                     var pw = connectedGroup[g];
@@ -4689,6 +4716,8 @@ namespace WordDrop
                         // objective so a "2 explosions of 4 words" board reads 4. Scoped to gated tutorial
                         // levels (flag OFF for every normal level). 2026-06-25 Spencer.
                         if (ObjectiveManager.CountConnectingWords && trigWord.Word != null)
+                            // trigWord is a RulesWordMatch (freshly formed THIS resolution), not a registry PrimedWord —
+                            // its edit-ness is already the current LastResolutionWasSwap, so the 2-arg gate is correct.
                             ObjectiveManager.Instance?.NotifyWordExploded(trigWord.Word, MatchController.PLAYER_HUMAN);
                     }
             }
@@ -4710,7 +4739,7 @@ namespace WordDrop
                 if (pw == null) continue;
 
                 // Objective tracking: this primed word is about to explode (live path). 2026-06-09.
-                ObjectiveManager.Instance?.NotifyWordExploded(pw.Word, pw.OwnerPlayer);
+                ObjectiveManager.Instance?.NotifyWordExploded(pw.Word, pw.OwnerPlayer, pw.PrimedByEdit);
 
                 if (pw.Word.Length > longestPrimedWord)
                     longestPrimedWord = pw.Word.Length;
@@ -4721,6 +4750,10 @@ namespace WordDrop
                     Vector2Int cell = pw.Cells[c];
                     if (InBounds(cell.x, cell.y) && _board[cell.x, cell.y] != null)
                     {
+                        // Escort drop-targets (rubber chickens) ONLY leave at the bottom row — never destroyed as
+                        // primed-word / chain-detonation collateral. Higher-tier chains detonate more primed words
+                        // through here, so this path was blowing up chickens on big explosions. 2026-07-23.
+                        if (_board[cell.x, cell.y].IsDropTarget) continue;
                         // ICE: a frozen tile in the detonating word thaws + survives (never destroyed).
                         if (TryThawCell(cell, thawedCells)) continue;
 
@@ -4825,7 +4858,7 @@ namespace WordDrop
                                     for (int p = primedAt.Count - 1; p >= 0; p--)
                                     {
                                         // Objective tracking: trigger-word cells take these primed words with them. 2026-06-09.
-                                        ObjectiveManager.Instance?.NotifyWordExploded(primedAt[p].Word, primedAt[p].OwnerPlayer);
+                                        ObjectiveManager.Instance?.NotifyWordExploded(primedAt[p].Word, primedAt[p].OwnerPlayer, primedAt[p].PrimedByEdit);
                                         _primedRegistry.RemovePrimedWord(primedAt[p].Id);
                                     }
                             }
@@ -4969,7 +5002,7 @@ namespace WordDrop
                             if (pw == null) continue;
 
                             // Objective tracking: splash swept this primed word into the blast. 2026-06-09.
-                            ObjectiveManager.Instance?.NotifyWordExploded(pw.Word, pw.OwnerPlayer);
+                            ObjectiveManager.Instance?.NotifyWordExploded(pw.Word, pw.OwnerPlayer, pw.PrimedByEdit);
 
                             // Sweep remaining cells of this primed word (splash may
                             // have cleared some already).
@@ -4979,6 +5012,8 @@ namespace WordDrop
                                 {
                                     if (alreadyExploded.Contains(cell)) continue;
                                     if (!InBounds(cell.x, cell.y) || _board[cell.x, cell.y] == null) continue;
+                                    // Escort drop-targets survive splash-detonated primed words too — never collateral. 2026-07-23.
+                                    if (_board[cell.x, cell.y].IsDropTarget) { alreadyExploded.Add(cell); continue; }
                                     // ICE: a frozen tile in a splash-detonated primed word thaws + survives.
                                     if (TryThawCell(cell, thawedCells)) { alreadyExploded.Add(cell); continue; }
                                     _board[cell.x, cell.y] = null;
@@ -5109,6 +5144,7 @@ namespace WordDrop
                         var jCell = _board[jx, jy];
                         if (jCell == null) continue;
                         if (jCell.IsStone) continue; // stones handled separately
+                        if (jCell.IsDropTarget) continue; // escort chickens ONLY leave at the bottom row — never junk-splash collateral (2026-07-21: this filter was missing the guard every other clear path has, so a chicken next to an exploded word blew up)
                         if (IsIceProtected(jPos, thawedCells)) continue; // ICE (strict): never destroy a frozen OR already-thawed tile via junk-splash
                         if (jCell.IsSwapRefill || jCell.IsEditRefill || jCell.IsWildRefill) continue; // protect specials
                         if (_bonusCells[jx, jy]) continue; // protect gold

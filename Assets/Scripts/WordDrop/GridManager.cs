@@ -26,9 +26,35 @@ namespace WordDrop
         // Constants
         // ---------------------------------------------------------------------------
 
-        public const int COLS     = 6;
-        public const int MAX_ROWS = 9;
-        public static int ROWS => RulesEngine.ROWS;
+        // 2026-09-03: these were a SECOND hardcoded copy of the grid size (6 x 9)
+        // that silently disagreed with RulesEngine once the grid changed — the
+        // loops ran to RulesEngine's size while these arrays stayed 6x9, giving
+        // IndexOutOfRangeException in BuildGridVisuals. Single source of truth now.
+        // ── Toon-Blast style vertical OVERLAP (2026-09-03) ───────────────────────
+        // Tile art is 0.782 w/h (taller than wide) with a 15.6% "top face" that is
+        // meant to be HIDDEN behind the tile above, so the board reads as stacked
+        // blocks rather than flat cards. Column pitch = CellSize (tiles butt up
+        // edge to edge). ROW pitch is SHORTER than the tile is tall:
+        //     tile height = CellSize / 0.782      = 1.279 * CellSize
+        //     row pitch   = tile height * (1-0.156) = 1.079 * CellSize
+        // Upper rows must also DRAW IN FRONT or every top face shows and it reads
+        // as flat cards again.
+        // Solved from Spencer's measurement of Toon Blast's own board (1143x1166
+        // board / 1121x1146 playable, 9x9, on a 1179x2556 screen):
+        //   grid pitch 124.56 SQUARE  ·  tile 124.56 x 149.56  ·  aspect 0.833
+        //   overlap 25px = 16.7% of tile height
+        // So the pitch is a PLAIN SQUARE GRID — the overlap comes entirely from the
+        // tile sprite being TALLER than its cell. (An earlier pass used a separate
+        // non-square row pitch from a 0.782 aspect measured off a 70px screenshot
+        // crop; that was wrong and made the tiles look tall and skinny.)
+        public const float TILE_ASPECT   = 0.833f;   // tile w/h
+        public const float TILE_TOP_FACE = 0.167f;   // hidden behind the tile above
+        public float RowPitch => CellSize;           // SQUARE pitch
+        public const float ROW_Z_STEP = 0.01f;   // per-row depth so upper rows draw in front
+
+        public static int COLS     => RulesEngine.COLS;
+        public static int MAX_ROWS => RulesEngine.MAX_ROWS;
+        public static int ROWS     => RulesEngine.ROWS;
 
         private const float GRID_HEIGHT_FRACTION          = 0.82f;  // denser, less bulky
         // Board width as fraction of screen width. Tile = fraction / COLS.
@@ -102,6 +128,8 @@ namespace WordDrop
 
         private Camera     _cam;
         private GameObject _gridRoot;
+        private float _specBoardW, _specBoardH, _specBoardCentreY;
+        private bool  _specUsed;
         private SpriteRenderer _gridBackgroundSR; // stored so booster aim-mode can bump its sortingOrder above the scrim
 
         private readonly List<GameObject> _allTileObjects = new List<GameObject>();
@@ -361,6 +389,29 @@ namespace WordDrop
         // edge fixed (cells don't move). Outer side margin: 31 → 41 → 51 PSD.
         private const float PSD_BOARD_X    = 34.5f;
         private const float PSD_BOARD_Y    = 426f;
+        /// <summary>2026-09-03: pin the survival board to the old PSD spec. OFF for the
+        /// 9x12 swap-pivot board — the spec is sized for 6x8. Turn back on when the new
+        /// board frame art is drawn and the constants below are re-derived.</summary>
+        // ── BOARD SPEC (2026-09-03, authored on 1179x2556) ──────────────────────
+        // Two rounded rectangles:
+        //   outer frame  1143 x 1415, corner radius 38
+        //   inner board  1121 x 1395, corner radius 27
+        // Everything is expressed as a FRACTION OF SCREEN WIDTH so the board keeps
+        // its designed proportions on any phone aspect (a taller phone just leaves
+        // more room above/below; a wider one scales the whole board down).
+        public const float SPEC_SCREEN_W = 1179f;
+        public const float SPEC_BOARD_W  = 1143f;
+        public const float SPEC_BOARD_H  = 1415f;
+        public const float SPEC_PLAY_W   = 1121f;
+        public const float SPEC_PLAY_H   = 1395f;
+        public const float SPEC_R_OUTER  = 38f;
+        public const float SPEC_R_INNER  = 27f;
+        public const int   SPEC_ROWS     = 11;   // the spec's row count; board height holds even if ROWS differs
+        /// <summary>Use the 2026-09-03 board spec instead of the legacy auto-fit.</summary>
+        public static bool UseBoardSpec = true;
+
+        public static bool PinBoardToPSD = false;
+
         private const float PSD_BOARD_W    = 1110f;
         private const float PSD_BOARD_H    = 1420f;
         private const float PSD_BOARD_BOTTOM_MARGIN = 30f; // gap above board bottom for cells
@@ -395,7 +446,51 @@ namespace WordDrop
         {
             float halfH = _cam.orthographicSize;
             float halfW = halfH * ((float)Screen.width / Screen.height);
-            bool isSurvival = SurvivalManager.IsSurvivalMode;
+            // 2026-09-03: the PSD pin hardcodes a 172px cell for a 6x8 board inside a
+            // 1110x1420 frame. At 9x12 that needs 1548px of cells in an 1110px board —
+            // it overflows. Auto-fit until the new board frame art exists.
+            bool isSurvival = SurvivalManager.IsSurvivalMode && PinBoardToPSD;
+
+            // ── BOARD SPEC path (2026-09-03) ────────────────────────────────────────
+            // Derive everything from SCREEN WIDTH so the board matches the design on
+            // any aspect ratio, then centre it in the space left between the HUD
+            // reserve above and the booster reserve below.
+            if (UseBoardSpec)
+            {
+                float screenWorldW = halfW * 2f;
+                float boardW = screenWorldW * (SPEC_BOARD_W / SPEC_SCREEN_W);
+                float playW  = screenWorldW * (SPEC_PLAY_W  / SPEC_SCREEN_W);
+                CellSize = playW / COLS;
+
+                // playable height for the ACTUAL row count: (ROWS-1) square pitches
+                // plus one full tile height (the tile is 1/TILE_ASPECT tall).
+                float playH  = CellSize * ((ROWS - 1) + (1f / TILE_ASPECT));
+                float borderY = screenWorldW * ((SPEC_BOARD_H - SPEC_PLAY_H) * 0.5f / SPEC_SCREEN_W);
+                float boardH = playH + borderY * 2f;
+
+                // Vertical placement: centre the board in the gap between the HUD
+                // band at the top and the booster band at the bottom.
+                float topBand    = halfH * 2f * 0.145f;
+                float bottomBand = halfH * 2f * 0.245f;
+                float freeTop    = halfH - topBand;
+                float freeBottom = -halfH + bottomBand;
+                float boardCentreY = (freeTop + freeBottom) * 0.5f;
+
+                GridLeft   = -playW * 0.5f;
+                GridRight  =  playW * 0.5f;
+                GridBottom = boardCentreY - playH * 0.5f;
+                GridTop    = GridBottom + playH;
+
+                _specBoardW = boardW; _specBoardH = boardH; _specBoardCentreY = boardCentreY;
+                _specUsed = true;
+                Debug.Log($"[Grid] SPEC board {boardW:F2}x{boardH:F2} world, cell {CellSize:F3}, " +
+                          $"{COLS}x{ROWS}, playable {playW:F2}x{playH:F2}");
+                // BuildGridVisuals creates _gridRoot, which the panel parents to —
+                // so it MUST run first.
+                BuildGridVisuals();
+                CreateSpecBoardPanel(boardW, boardH, boardCentreY);
+                return;
+            }
 
             // 2026-05-28 (Path A, Phase 2): Survival board pinned to exact PSD
             // spec — tiles are 150 px, board is 1030×1346, centered at PSD
@@ -456,12 +551,13 @@ namespace WordDrop
             float availableHeight = (halfH * 2f) - topReserve - bottomReserve;
 
             float cellFromWidth = availableWidth / COLS;
-            float cellFromHeight = availableHeight / ROWS;
+            // rows are RowPitchRatio tall (plus the one un-overlapped tile top)
+            float cellFromHeight = availableHeight / ((ROWS - 1) + (1f / TILE_ASPECT));
 
             CellSize = Mathf.Min(cellFromWidth, cellFromHeight);
 
             float gridWorldWidth = CellSize * COLS;
-            float gridWorldHeight = CellSize * ROWS;
+            float gridWorldHeight = CellSize * ((ROWS - 1) + (1f / TILE_ASPECT));
 
             // Anchor grid to bottom of available space — tiles build upward
             float gridCenterX = 0f;
@@ -597,6 +693,49 @@ namespace WordDrop
             Tile.SetBoardShadowStrength(_boardShadowStrength);
         }
 
+        /// <summary>Board + frame drawn to the 2026-09-03 spec: two rounded rects,
+        /// outer 1143x1415 r38 and inner 1121x1395 r27, radii scaled with the board.</summary>
+        private void CreateSpecBoardPanel(float boardW, float boardH, float centreY)
+        {
+            if (_gridRoot == null)
+            {
+                Debug.LogError("[Grid] CreateSpecBoardPanel: _gridRoot is NULL — BuildGridVisuals must run first.");
+                return;
+            }
+            int texW = Mathf.Clamp(Mathf.RoundToInt(boardW * 150f), 64, 2048);
+            int texH = Mathf.Clamp(Mathf.RoundToInt(boardH * 150f), 64, 2048);
+            Debug.Log($"[Grid] spec panel tex {texW}x{texH}  rOuter/rInner/border scaled from spec");
+            float pxPerSpec = texW / SPEC_BOARD_W;               // texels per spec pixel
+            int rOuter = Mathf.Max(2, Mathf.RoundToInt(SPEC_R_OUTER * pxPerSpec));
+            int rInner = Mathf.Max(2, Mathf.RoundToInt(SPEC_R_INNER * pxPerSpec));
+            int borderPx = Mathf.Max(1, Mathf.RoundToInt((SPEC_BOARD_W - SPEC_PLAY_W) * 0.5f * pxPerSpec));
+
+            // outer frame
+            var frame = TileRenderer.CreateRoundedRect(texW, texH, rOuter, FRAME_OUTER, FRAME_OUTER, 1);
+            if (frame == null) { Debug.LogError("[Grid] frame sprite NULL"); return; }
+            var frameGO = new GameObject("BoardFrame");
+            frameGO.transform.SetParent(_gridRoot.transform, false);
+            frameGO.transform.position = new Vector3(0f, centreY, 0f);
+            var fsr = frameGO.AddComponent<SpriteRenderer>();
+            fsr.sprite = frame; fsr.sortingOrder = -1;
+            frameGO.transform.localScale = new Vector3(boardW / (texW / 100f), boardH / (texH / 100f), 1f);
+
+            // inner board
+            int itexW = Mathf.Max(8, texW - borderPx * 2);
+            int itexH = Mathf.Max(8, texH - borderPx * 2);
+            var inner = TileRenderer.CreateRoundedRect(itexW, itexH, rInner, BOARD_INNER, BOARD_INNER, 1);
+            if (inner == null) { Debug.LogError("[Grid] inner sprite NULL"); return; }
+            var innerGO = new GameObject("GridBackground");
+            innerGO.transform.SetParent(_gridRoot.transform, false);
+            innerGO.transform.position = new Vector3(0f, centreY, 0f);
+            var isr = innerGO.AddComponent<SpriteRenderer>();
+            isr.sprite = inner; isr.sortingOrder = 0;
+            _gridBackgroundSR = isr;
+            float innerW = boardW * (SPEC_PLAY_W / SPEC_BOARD_W);
+            float innerH = boardH * (SPEC_PLAY_H / SPEC_BOARD_H);
+            innerGO.transform.localScale = new Vector3(innerW / (itexW / 100f), innerH / (itexH / 100f), 1f);
+        }
+
         private void CreateBackgroundPanel(float bgW, float bgH)
         {
 
@@ -700,8 +839,12 @@ namespace WordDrop
         public Vector3 CellToWorld(int col, int row)
         {
             float x = GridLeft   + (col + 0.5f) * CellSize;
-            float y = GridBottom + (row + 0.5f) * CellSize;
-            return new Vector3(x, y, 0f);
+            float y = GridBottom + (row + 0.5f) * RowPitch;   // overlap: rows are closer than tiles are tall
+            // UPPER rows must draw IN FRONT so each tile's top face is hidden behind the
+            // tile above it. Done with Z (sprites of equal sortingOrder sort by depth) so
+            // the existing sortingOrder logic — including the FX bump to 15 — is untouched.
+            float z = -row * ROW_Z_STEP;
+            return new Vector3(x, y, z);
         }
 
         /// <summary>MVP P5 booster aim mode: convert a world-space position to
@@ -710,7 +853,7 @@ namespace WordDrop
         public bool WorldToCell(Vector3 worldPos, out int col, out int row)
         {
             col = Mathf.FloorToInt((worldPos.x - GridLeft) / CellSize);
-            row = Mathf.FloorToInt((worldPos.y - GridBottom) / CellSize);
+            row = Mathf.FloorToInt((worldPos.y - GridBottom) / RowPitch);
             if (col < 0 || col >= COLS) return false;
             if (row < 0 || row >= ROWS) return false;
             return true;

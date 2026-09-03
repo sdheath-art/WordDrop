@@ -79,7 +79,8 @@ namespace WordDrop
         // change PSD_CELL_PITCH in GridManager, update the denominator here
         // too. (Long-term: refactor so tile size is decoupled from pitch
         // entirely — for now, two-place coupled change.)
-        private const float TILE_DISPLAY_RATIO = 154f / 172f; // 2026-06-24 Spencer: a hair more spacing (numerator 158→154 → gap 14→18 PSD; board margin scales off the same). Numerator MUST match the hardcoded 154/172 in GridManager (halfGapPad + tileRadiusWorld) and HUDManager baseScale; denom = GridManager.PSD_CELL_PITCH.
+        public  const bool  TILE_DROP_SHADOW   = false; // 2026-09-03: per-tile drop shadow off for the stacked/overlap board
+        private const float TILE_DISPLAY_RATIO = 1.0f;   // 2026-09-03: was 154/172 — tiles now butt up edge-to-edge (Toon Blast style), no gap // 2026-06-24 Spencer: a hair more spacing (numerator 158→154 → gap 14→18 PSD; board margin scales off the same). Numerator MUST match the hardcoded 154/172 in GridManager (halfGapPad + tileRadiusWorld) and HUDManager baseScale; denom = GridManager.PSD_CELL_PITCH.
         /// <summary>Tile display size as a fraction of the cell pitch — so other systems (e.g. the
         /// drop-preview ghost) can size their tiles to MATCH the board tiles. 2026-06-16 Spencer.</summary>
         public static float DisplayRatio => TILE_DISPLAY_RATIO;
@@ -574,7 +575,10 @@ namespace WordDrop
             // ── Static drop shadow — ONLY the baked tile_shadowbig. No procedural
             // fallback (2026-06-04 Spencer): if the baked sprite didn't load we render
             // NO shadow rather than the old black silhouette. Stays UNLIT.
-            if (s_dropShadowSprite != null)
+            // 2026-09-03: OFF for the overlap board — tiles now butt together and
+            // stack, so a per-tile drop shadow just muddies the seams. The stacking
+            // itself is what reads as depth.
+            if (TILE_DROP_SHADOW && s_dropShadowSprite != null)
             {
                 GameObject shadowGO = new GameObject("TileShadow");
                 shadowGO.transform.SetParent(transform, false);
@@ -3323,11 +3327,15 @@ namespace WordDrop
             Texture2D glossyTex = Resources.Load<Texture2D>("Tiles/white_glossy@2x");
             if (glossyTex != null && refBounds > 0.0001f)
             {
-                const float GLOSSY_FILL = 0.80f;
-                float ppu = glossyTex.width / (refBounds / GLOSSY_FILL);
-                float m = (1f - GLOSSY_FILL) * 0.5f * glossyTex.width;
-                float cw = GLOSSY_FILL * glossyTex.width;
-                loadedNormal = Sprite.Create(glossyTex, new Rect(m, m, cw, cw), new Vector2(0.5f, 0.5f), ppu);
+                // 2026-09-03: the tile art is now TIGHT-CROPPED and TALLER than wide
+                // (0.782). The old centred SQUARE crop threw away that shape and left
+                // the tile at ~70% of the cell width. Use the full texture, and set PPU
+                // off WIDTH so sprite width == one cell; the extra height becomes the
+                // vertical overlap that hides the tile-top behind the tile above.
+                float ppu = glossyTex.width / refBounds;
+                loadedNormal = Sprite.Create(glossyTex,
+                    new Rect(0f, 0f, glossyTex.width, glossyTex.height),
+                    new Vector2(0.5f, 0.5f), ppu);
                 s_dropShadowSpriteA = MakeBoardShadow(BoardShadowTexA, ppu);
                 s_dropShadowSpriteB = MakeBoardShadow(BoardShadowTexB, ppu);
                 s_dropShadowSprite  = s_useBoardShadowB ? s_dropShadowSpriteB : s_dropShadowSpriteA;
