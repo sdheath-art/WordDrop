@@ -128,9 +128,8 @@ namespace WordDrop
                 sRT.offsetMin = Vector2.zero;
                 sRT.offsetMax = Vector2.zero;
                 Image sImg = starGO.AddComponent<Image>();
-                sImg.color = STAR_DARK;
-                sImg.sprite = CreateStarSprite();
                 sImg.preserveAspect = true;
+                SetStarLit(sImg, false);
                 _starIcons[i] = sImg;
             }
 
@@ -279,7 +278,7 @@ namespace WordDrop
 
             for (int i = 0; i < _starIcons.Length; i++)
             {
-                _starIcons[i].color = STAR_DARK;
+                SetStarLit(_starIcons[i], false);
                 _starIcons[i].transform.localScale = Vector3.one * 0.6f;
             }
 
@@ -390,7 +389,7 @@ namespace WordDrop
 
             // Light the earned stars FIRST (color), then animate scale.
             for (int i = 0; i < stars && i < _starIcons.Length; i++)
-                if (_starIcons[i] != null) _starIcons[i].color = STAR_LIT;
+                if (_starIcons[i] != null) SetStarLit(_starIcons[i], true);
 
             var transforms = new Transform[_starIcons.Length];
             for (int i = 0; i < _starIcons.Length; i++)
@@ -608,6 +607,65 @@ namespace WordDrop
             t.color = color;
             t.alignment = TextAnchor.MiddleCenter;
             return t;
+        }
+
+        // ── 3D star art (2026-07-28) ────────────────────────────────────────────
+        // The stars used to be a procedurally-filled white polygon (CreateStarSprite
+        // below) tinted with STAR_LIT / STAR_DARK — a 128px binary fill with hard
+        // aliased edges. Replaced with rendered Candy-Crush-style art: a lit gold
+        // sprite and an unlit dark one, swapped rather than tinted (tinting baked-in
+        // colour would muddy it).
+        //
+        // TO REVERT: set USE_3D_STARS = false, or just delete the two PNGs from
+        // Resources/Tiles — LoadStarArt returns null and every call site falls back
+        // to the original procedural-sprite + colour-tint path automatically.
+        private const bool USE_3D_STARS = true;
+
+        private static Sprite _star3dGold, _star3dDark;
+        private static bool   _star3dTried;
+
+        /// <summary>Loads the rendered star art. Sprite-then-Texture2D fallback
+        /// because a PNG imported as a plain Texture returns null from
+        /// Resources.Load&lt;Sprite&gt; and shows as a white box.</summary>
+        private static Sprite LoadStarArt(bool lit)
+        {
+            if (!USE_3D_STARS) return null;
+            if (!_star3dTried)
+            {
+                _star3dTried = true;
+                _star3dGold = LoadSpriteOrTexture("Tiles/star3d_gold");
+                _star3dDark = LoadSpriteOrTexture("Tiles/star3d_dark");
+                if (_star3dGold == null || _star3dDark == null)
+                    Debug.LogWarning("[LevelCompleted] 3D star art missing — falling back to the procedural star.");
+            }
+            return lit ? _star3dGold : _star3dDark;
+        }
+
+        private static Sprite LoadSpriteOrTexture(string path)
+        {
+            Sprite s = Resources.Load<Sprite>(path);
+            if (s != null) return s;
+            Texture2D tex = Resources.Load<Texture2D>(path);
+            if (tex == null) return null;
+            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+        }
+
+        /// <summary>Single place that decides how a star shows earned vs unearned:
+        /// sprite-swap when the rendered art is present, colour-tint when it isn't.</summary>
+        private static void SetStarLit(Image img, bool lit)
+        {
+            if (img == null) return;
+            Sprite art = LoadStarArt(lit);
+            if (art != null)
+            {
+                img.sprite = art;
+                img.color  = Color.white;   // art is pre-coloured; tinting would muddy it
+            }
+            else
+            {
+                img.sprite = CreateStarSprite();
+                img.color  = lit ? STAR_LIT : STAR_DARK;
+            }
         }
 
         /// <summary>

@@ -15,15 +15,27 @@ namespace WordDrop
         public static float Pad           = 0.0f;  // 0 = lines land on the cell boundary (centred in the inter-tile gap); negative = tighter
         public static float CornerRadius  = 0.22f; // rounded-corner radius
         public static int   CornerSegs    = 5;      // arc subdivisions per corner
-        public static float LineWidth     = 0.055f; // outline thickness
+        public static float LineWidth     = 0.035f; // outline thickness
         public static float DashesPerCell = 2.2f;   // dash density along the line
         public static float MarchSpeed    = 0.55f;  // texture scroll (UV units/sec)
         public static float Brightness    = 1.15f;  // HDR white → soft bloom glow
+        public static Color Tint          = new Color(1.0f, 0.92f, 0.62f, 1f); // warm pale-gold (line + sparkles)
         public static int   SortOrder     = 40;     // safely above tiles + their anims
+
+        // ── Sparkle layer — Royal-Match "line of twinkles" scattered along the outline. 2026-07-08 Spencer.
+        public static int   SparkleCount  = 12;     // twinkles alive along the line at once
+        public static float SparkleSize   = 0.11f;  // ×CellSize (peak)
+        public static float SparkleLife   = 0.75f;  // seconds per twinkle pop→fade cycle
 
         private LineRenderer _lr;
         private Material     _mat;
         private bool         _active;
+
+        private List<Vector3>    _pts;              // current outline perimeter (for sparkle placement)
+        private Transform[]      _sparkles;
+        private SpriteRenderer[] _sparkleSR;
+        private float[]          _sparklePhase;
+        private static Sprite    _sparkleSprite;
 
         private void Awake()
         {
@@ -70,6 +82,17 @@ namespace WordDrop
             List<Vector3> pts = BuildRoundedRect(minX, minY, maxX, maxY, r, Mathf.Max(1, CornerSegs));
             _lr.positionCount = pts.Count;
             _lr.SetPositions(pts.ToArray());
+            _pts = pts;               // stash for the sparkle layer
+            EnsureSparkles();
+            // Re-seed sparkles onto the NEW perimeter (staggered, starting invisible) so they don't linger at
+            // the previous word's outline and snap across. 2026-07-08 Spencer.
+            if (_sparkles != null)
+                for (int i = 0; i < _sparkles.Length; i++)
+                {
+                    _sparklePhase[i]      = i / (float)_sparkles.Length;
+                    _sparkles[i].position = RandomPerimeterPoint();
+                    if (_sparkleSR[i] != null) _sparkleSR[i].color = Color.clear;
+                }
 
             float w = cs * LineWidth;
             _lr.startWidth = w;
@@ -91,6 +114,9 @@ namespace WordDrop
         {
             _active = false;
             if (_lr != null) _lr.enabled = false;
+            if (_sparkleSR != null)
+                for (int i = 0; i < _sparkleSR.Length; i++)
+                    if (_sparkleSR[i] != null) _sparkleSR[i].color = Color.clear;
         }
 
         private void Update()
@@ -99,15 +125,97 @@ namespace WordDrop
 
             // March the dashes.
             Vector2 off = _mat.mainTextureOffset;
-            off.x -= MarchSpeed * Time.deltaTime;
-            if (off.x < -1f) off.x += 1f;
+            off.x += MarchSpeed * Time.deltaTime; // clockwise march (2026-07-08 Spencer)
+            if (off.x > 1f) off.x -= 1f;
             _mat.mainTextureOffset = off;
 
             // Gentle brightness pulse.
             float pulse = Brightness * (0.85f + 0.15f * Mathf.Sin(Time.time * 4.2f));
-            Color c = new Color(pulse, pulse, pulse, 1f);
+            Color c = new Color(Tint.r * pulse, Tint.g * pulse, Tint.b * pulse, 1f);
             _lr.startColor = c;
             _lr.endColor   = c;
+
+            UpdateSparkles(Time.deltaTime);
+        }
+
+        // ── Sparkle layer ──────────────────────────────────────────────────
+        private void EnsureSparkles()
+        {
+            if (_sparkles != null) return;
+            _sparkles     = new Transform[SparkleCount];
+            _sparkleSR    = new SpriteRenderer[SparkleCount];
+            _sparklePhase = new float[SparkleCount];
+            Shader sh = Shader.Find("WordDrop/AdditiveSprite") ?? Shader.Find("Sprites/Default");
+            Sprite spr = GetSparkleSprite();
+            for (int i = 0; i < SparkleCount; i++)
+            {
+                var go = new GameObject("HintSparkle" + i);
+                go.transform.SetParent(transform, false);
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite      = spr;
+                sr.material     = new Material(sh);
+                sr.sortingOrder = SortOrder + 1; // just above the line
+                sr.color        = Color.clear;
+                _sparkles[i]     = go.transform;
+                _sparkleSR[i]    = sr;
+                _sparklePhase[i] = i / (float)SparkleCount; // stagger so they don't all twinkle in unison
+            }
+        }
+
+        private void UpdateSparkles(float dt)
+        {
+            if (_sparkles == null || _pts == null || _pts.Count < 2) return;
+            float cs = GridManager.Instance != null ? GridManager.Instance.CellSize : 1f;
+            for (int i = 0; i < _sparkles.Length; i++)
+            {
+                _sparklePhase[i] += dt / Mathf.Max(0.05f, SparkleLife);
+                if (_sparklePhase[i] >= 1f)
+                {
+                    _sparklePhase[i] -= 1f;
+                    _sparkles[i].position = RandomPerimeterPoint(); // respawn at a new spot on the line
+                }
+                float p  = _sparklePhase[i];
+                float tw = Mathf.Sin(p * Mathf.PI);                 // 0 → 1 → 0 pop-and-fade
+                float sc = cs * SparkleSize * (0.35f + 0.65f * tw);
+                _sparkles[i].localScale    = new Vector3(sc, sc, 1f);
+                _sparkles[i].localRotation = Quaternion.Euler(0f, 0f, p * 120f);
+                float b = Mathf.Clamp01(tw) * Brightness;
+                _sparkleSR[i].color = new Color(Tint.r * b, Tint.g * b, Tint.b * b, Mathf.Clamp01(tw));
+            }
+        }
+
+        private Vector3 RandomPerimeterPoint()
+        {
+            // Sample by ARC LENGTH so sparkles spread evenly along the whole line — sampling by segment index
+            // over-picked the corner arcs (many tiny segments) and starved the long top/bottom edges. 2026-07-08.
+            float total = Perimeter(_pts);
+            float target = UnityEngine.Random.value * total;
+            float acc = 0f;
+            for (int i = 0; i < _pts.Count; i++)
+            {
+                int j = (i + 1) % _pts.Count;
+                float seg = Vector3.Distance(_pts[i], _pts[j]);
+                if (acc + seg >= target)
+                {
+                    float t = seg > 0.0001f ? (target - acc) / seg : 0f;
+                    return Vector3.Lerp(_pts[i], _pts[j], t);
+                }
+                acc += seg;
+            }
+            return _pts[0];
+        }
+
+        private static Sprite GetSparkleSprite()
+        {
+            if (_sparkleSprite != null) return _sparkleSprite;
+            _sparkleSprite = Resources.Load<Sprite>("Particles/star_hc");
+            if (_sparkleSprite == null)
+            {
+                var tex = Resources.Load<Texture2D>("Particles/star_hc");
+                if (tex != null)
+                    _sparkleSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            return _sparkleSprite;
         }
 
         // Counter-clockwise rounded rectangle as a point loop (LineRenderer loop=true).

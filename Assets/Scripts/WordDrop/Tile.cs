@@ -52,6 +52,8 @@ namespace WordDrop
         /// path (rewrite cancel, drop complete, etc.) fires mid-aim.
         /// Reset to 0 when aim mode ends.</summary>
         public static int AimModeTileOrder = 0;
+        private int _spotlightOrder = -1; // tutorial per-tile spotlight: >=0 raises THIS tile above the dim scrim
+        public static bool SpotlightActive = false; // true while a tutorial spotlight/scrim is up (guards FX re-bumps)
         public static readonly Color PRIMED_GOLD_GLOW  = new Color(2.0f, 1.5f, 0.3f, 1f);  // HDR gold — bloom catches this
         // Final-turn warning: primed word has 1 drop left. Shifts to HDR red-orange
         // so the player gets a clear "USE THIS OR LOSE IT" signal on their last chance.
@@ -154,6 +156,17 @@ namespace WordDrop
         private static readonly Color EDIT_GLINT_HIGH = new Color(0.24f, 1.06f, 1.26f, 1f); // peak — saturated cyan, blue just UNDER 1.30 bloom (minimal glow)
         private static readonly Color EDIT_GLINT_LOW  = new Color(0.42f, 0.98f, 1.18f, 1f); // breathing trough — still cyan-lit
         private const float EDIT_ACCESS_DUR = 0.13f; // fast snap-to-peak on click
+        // 2026-07-09 Spencer: the sr.color glint above is CLAMPED on mobile (linear) so it
+        // can't actually bloom — the selected tile read as a flat cyan. Layer a REAL pulsing
+        // HDR cyan bloom through the additive _Color overlay (the coin-trail/primed path that
+        // DOES bloom on device) so the swap/edit selection obviously breathes a glow. Forced on
+        // desktop too so it's unmistakable wherever it's viewed. Well above the 1.30 threshold.
+        private static readonly Color EDIT_GLOW_HDR = new Color(0.28f, 1.18f, 1.42f, 1f); // peak bloom — brought down again; sits right around the 1.30 bloom threshold for a soft glow, full-off trough carries the pulse
+        private const float EDIT_GLOW_ALPHA_LOW  = 0.0f;  // trough — glow fades fully OFF so it blinks on↔off (not just dims)
+        private const float EDIT_GLOW_ALPHA_HIGH = 1.0f;  // peak — full glow
+        private const float EDIT_GLOW_DUR        = 0.6f;  // half-cycle of the glow blink (own timing so it's livelier than the face breath)
+        private Tween _editGlowPulse;
+        private float _editGlowAlpha;
 
         // ── Glassy sheen highlight (CC-style) — 2026-06-03 Spencer prototype ──
         // A soft white gloss layered OVER the upper portion of every tile (not
@@ -265,6 +278,11 @@ namespace WordDrop
         private bool  _hasPrimedGlow    = false;
         private Color _primedGlowColor  = new Color(0.812f, 0.812f, 0.863f, 1f);
         private Color _currentBorderColor = new Color(0.812f, 0.812f, 0.863f, 1f);
+        // Combo colour escalation (2026-07-27 Spencer): once WordDropFX.PlayExplosion tints this
+        // tile by its blast order, the tint is LATCHED so per-turn re-glows (SetPrimedGlow) can't
+        // repaint it back to magenta before it pops. Cleared on ClearPrimedGlow/ResetForPool.
+        private bool  _hasDetonationColor = false;
+        private bool  _detoProbeLogged    = false; // TEMP diagnostic: one pulse-frame log per detonation tint
 
         private Coroutine _gravityCoroutine;
         private Coroutine _fallCoroutine;
@@ -433,6 +451,7 @@ namespace WordDrop
             // when caught in collateral splash damage on a later word.)
             _isShowingScoredSprite = false;
             _wasInScoredWord = false;
+            _hasDetonationColor = false; // combo escalation: recycled tile must not carry a stale blast tint
             // Reset localPosition in case MeltdownShakeCoroutine was interrupted
             // mid-shake and never restored its baseLocalPos at line 1190.
             Debug.Log($"[Tile] ResetForPool localPos: {transform.localPosition} → Vector3.zero");
@@ -971,6 +990,12 @@ namespace WordDrop
 
         private void OnDestroy()
         {
+            // Kill the edit/swap glow pulse — it's a virtual tween with no Unity target,
+            // so DOTween safe-mode won't auto-null it; left running it would fire its
+            // setter on this destroyed tile. 2026-07-09 Spencer.
+            _editGlowPulse?.Kill();
+            _editGlowPulse = null;
+
             // Clean up orphaned Fake3D baked renderer (not parented to this tile)
             if (_bakedRenderer != null)
             {
@@ -1637,23 +1662,45 @@ namespace WordDrop
             _defrosting = true;
             if (_frostShiverRoutine != null) { StopCoroutine(_frostShiverRoutine); _frostShiverRoutine = null; }
 
-            // Quick bright "crack" FLASH on the frost (no movement — moving the overlay over a static
-            // letter read as the tile distorting), then shatter. 2026-06-18 Spencer.
-            const float DUR = 0.14f;
+            // 1) Quick bright "crack" flash — brighten the frost toward white-blue.
+            const float CRACK = 0.10f;
             float e = 0f;
-            while (e < DUR && _frostGO != null)
+            while (e < CRACK && _frostGO != null)
             {
                 e += Time.deltaTime;
-                float p = Mathf.Clamp01(e / DUR);
+                float p = Mathf.Clamp01(e / CRACK);
                 if (_frostSR != null)
-                    _frostSR.color = new Color(
-                        FROST_TINT.r + 0.45f * p, FROST_TINT.g + 0.40f * p,
-                        FROST_TINT.b + 0.30f * p, Mathf.Min(1f, FROST_TINT.a + 0.30f * p));
+                    _frostSR.color = new Color(0.72f + 0.28f * p, 0.90f, 1f, Mathf.Min(1f, FROST_TINT.a + 0.55f * p));
                 yield return null;
             }
 
-            // Shatter: ice-particle burst, then clear the overlay (tile stays as a normal letter).
+            // 2) Ice shard / shimmer / droplet burst at the moment it cracks.
             GameParticles.Instance?.PlayDefrost(transform.position);
+
+            // 3) MELT: the frost SLUMPS and fades away (Y-shrink + drip DOWN + fade) instead of popping off —
+            //    the visible "it's actually melting" moment. 2026-07-07 Spencer.
+            const float MELT = 0.42f;
+            Vector3 s0 = _frostGO != null ? _frostGO.transform.localScale : Vector3.one;
+            Vector3 p0 = _frostGO != null ? _frostGO.transform.localPosition : Vector3.zero;
+            float a0 = _frostSR != null ? _frostSR.color.a : FROST_TINT.a;
+            float m = 0f;
+            while (m < MELT && _frostGO != null)
+            {
+                m += Time.deltaTime;
+                float t = Mathf.Clamp01(m / MELT);
+                float ease = 1f - (1f - t) * (1f - t); // OutQuad
+                _frostGO.transform.localScale = new Vector3(s0.x * (1f - 0.55f * ease), s0.y * (1f - 0.92f * ease), 1f);
+                _frostGO.transform.localPosition = p0 + Vector3.down * (0.16f * ease);
+                if (_frostSR != null)
+                {
+                    var c = _frostSR.color;
+                    _frostSR.color = new Color(c.r, c.g, c.b, a0 * (1f - ease));
+                }
+                yield return null;
+            }
+
+            // Restore the overlay's rest transform (so a pooled tile freezes clean next time) + clear.
+            if (_frostGO != null) { _frostGO.transform.localScale = s0; _frostGO.transform.localPosition = p0; }
             _defrosting = false;
             SetFrozenVisual(false);
             _defrostRoutine = null;
@@ -1870,6 +1917,12 @@ namespace WordDrop
             int oldFuse = _fuseRemaining;
             _pendingDiffusePop = false; // re-primed → cancel any pending diffuse-pop revert
             _hasPrimedGlow   = true;
+            // If this tile is priming straight out of the teal edit/swap glow, kill that glow's bloom + pulse now
+            // so the cyan doesn't linger a frame over the magenta primed look. No-op for normal drop-primed tiles
+            // (no edit glow active). 2026-07-10 Spencer.
+            if (_editGlowPulse != null) { _editGlowPulse.Kill(); _editGlowPulse = null; }
+            _editSelected = false;
+            ClearBloomGlow();
             _heatLevel       = heatLevel;
             _fuseRemaining   = fuseRemaining;
             _primedStartTime = Time.time;
@@ -1886,11 +1939,22 @@ namespace WordDrop
                 glowColor = PRIMED_DANGER_GLOW;
             else
                 glowColor = isGold ? PRIMED_GOLD_GLOW : PRIMED_GLOW;
-            _primedGlowColor = glowColor;
+            // Combo escalation: if this tile has already been handed its per-word detonation
+            // hue (mid-blast), DON'T let a re-glow stomp it back to magenta before it pops.
+            if (!_hasDetonationColor)
+                _primedGlowColor = glowColor;
             _currentBorderColor = glowColor;
 
             if (!_isHighlighted)
                 ApplyBorderColor(glowColor);
+
+            // Teaching hook (L7 one-shot): a charged word showing its WARNING color (fuse ≤ 1, about to lose its
+            // charge) tells the tutorial so it can freeze + spotlight it. Robust by design — NOT gated on a clean
+            // oldFuse→newFuse transition, because several re-glow paths pass fuseRemaining:-1 and would poison an
+            // oldFuse check; the one-shot flag inside MaybeShowPrimeDecay dedups the repeated warning re-glows.
+            // Non-gold only. Cheap no-op unless L7 armed it + it hasn't shown. 2026-07-09 Spencer.
+            if (!isGold && fuseRemaining >= 0 && fuseRemaining <= 1)
+                TutorialManager.MaybeShowPrimeDecay(new Vector2Int(Col, Row));
 
             // Force the primed sprite swap immediately, regardless of highlight
             // state or coroutine lifecycle. Without this, gold tiles entering
@@ -1944,6 +2008,38 @@ namespace WordDrop
                 GameParticles.Instance?.PlayPrimed(transform.position);
             }
 
+        }
+
+        // COMBO COLOUR ESCALATION (2026-07-27 Spencer). WordDropFX.PlayExplosion calls this on each
+        // chained word's tiles in the split-second before they detonate, tinting them by blast order
+        // (pink→magenta→violet→blue-violet) so a combo reads as a rolling hue ramp. It writes the SAME
+        // field the primed pulse already paints from (_primedGlowColor), so the running pulse simply
+        // renders the new hue — and LATCHES _hasDetonationColor so a per-turn re-glow won't repaint it
+        // back to magenta before the pop. The big-blast/meltdown path reads DetonationColor from its
+        // cache instead (WordDropFX ~1658). Cleared on ClearPrimedGlow/ResetForPool.
+        public void SetDetonationColor(Color hdrTint)
+        {
+            _hasDetonationColor = true;
+            _primedGlowColor    = hdrTint;
+            _currentBorderColor = hdrTint;
+            if (!_isHighlighted) ApplyBorderColor(hdrTint);
+        }
+        public bool  HasDetonationColor => _hasDetonationColor;
+        public Color DetonationColor    => _primedGlowColor;
+        // Hue-preserving LDR version of the detonation tint. sr.color is clamped to [0,1] per channel
+        // on mobile (Color32), which pins the brightest channel to 1.0 for EVERY chain word and
+        // collapses the per-word hue ramp to one magenta. Normalising so the brightest channel = 1.0
+        // keeps the R:G:B RATIO (= the hue) intact through that clamp, so each word's hue survives.
+        // The additive bloom overlay still gets the raw HDR _primedGlowColor for the glow. 2026-07-27.
+        public Color DetonationFaceColor
+        {
+            get
+            {
+                float m = Mathf.Max(_primedGlowColor.r, Mathf.Max(_primedGlowColor.g, _primedGlowColor.b));
+                if (m <= 0.0001f) return _primedGlowColor;
+                float s = 1f / m;
+                return new Color(_primedGlowColor.r * s, _primedGlowColor.g * s, _primedGlowColor.b * s, 1f);
+            }
         }
 
         private System.Collections.IEnumerator DelayedShineSweep()
@@ -2128,7 +2224,19 @@ namespace WordDrop
                     float fadeIn = Mathf.Clamp01((Time.time - _scoredFlashUntil) / PRIMED_MAGENTA_FADE_IN);
                     pc = Color.Lerp(Color.white, pc, fadeIn);
                 }
+                // COMBO ESCALATION: for detonation tiles, replace the HDR pc (which loses its hue to the
+                // mobile Color32 clamp) with the hue-preserving LDR face tint so each chain word's colour
+                // actually reads on screen. Bloom overlay below still gets raw HDR. 2026-07-27.
+                if (_hasDetonationColor)
+                    pc = DetonationFaceColor;
                 _spriteRenderer.color = pc;
+
+                // TEMP diagnostic (2026-07-27): confirm the pulse is actually painting the detonation tint.
+                if (_hasDetonationColor && !_detoProbeLogged)
+                {
+                    _detoProbeLogged = true;
+                    Debug.Log($"[ComboRamp/pulse] {Letter} PAINTING glow=({_primedGlowColor.r:F2},{_primedGlowColor.g:F2},{_primedGlowColor.b:F2}) → pc=({pc.r:F2},{pc.g:F2},{pc.b:F2}) tint={tintAmount:F2} sprite={( _spriteRenderer.sprite!=null?_spriteRenderer.sprite.name:"null")}");
+                }
 
                 // MOBILE bloom: pc above gets clamped to 1.0 on iOS/Metal (sr.color
                 // → Color32), so on the phone the primed pulse never crosses the 1.30
@@ -2272,6 +2380,9 @@ namespace WordDrop
         /// <summary>Set sorting order on tile sprite + text layers.</summary>
         public void SetSortingOrder(int order)
         {
+            // While a tutorial spotlight is DIMMING this tile, block external FX bumps (WordDropFX charge/detonation
+            // raises tiles to 15) from lifting it above the scrim — charged tiles were bleeding bright. 2026-07-08 Spencer.
+            if (SpotlightActive && _spotlightOrder < 0) order = 5;
             if (_spriteRenderer != null) _spriteRenderer.sortingOrder = order;
             if (_iridSR != null) _iridSR.sortingOrder = order + 1;            // holographic fill, above the face
             if (_glossSR != null) _glossSR.sortingOrder = order + 1;          // top sheen, above the face
@@ -2365,9 +2476,17 @@ namespace WordDrop
             // ResetVisuals (called from various cleanup paths) hard-coded the
             // default 5, the tile would drop BELOW the scrim mid-aim and
             // disappear. AimModeTileOrder is set by BoosterHUDSlot.
-            SetSortingOrder(AimModeTileOrder > 0 ? AimModeTileOrder : 5);
+            SetSortingOrder(_spotlightOrder >= 0 ? _spotlightOrder : (AimModeTileOrder > 0 ? AimModeTileOrder : 5));
             Color border = _hasPrimedGlow ? _primedGlowColor : TILE_BORDER_NORMAL;
             ApplyBorderColor(border);
+        }
+
+        /// <summary>Tutorial spotlight: raise THIS tile above the dim scrim (order >= 0) or clear it (-1).
+        /// Persists through repaints, unlike a bare SetSortingOrder. 2026-07-08 Spencer.</summary>
+        public void SetSpotlight(int order)
+        {
+            _spotlightOrder = order;
+            SetSortingOrder(order >= 0 ? order : (AimModeTileOrder > 0 ? AimModeTileOrder : 5));
         }
 
         private System.Collections.IEnumerator FlashBorderCoroutine(Color color)
@@ -2474,6 +2593,8 @@ namespace WordDrop
                 _diffuseColor  = Color.Lerp(Color.white, _primedGlowColor, 0.35f);
             }
             _hasPrimedGlow      = false;
+            _hasDetonationColor = false; // combo escalation: drop the latched blast tint
+            _detoProbeLogged    = false;
             _currentBorderColor = TILE_BORDER_NORMAL;
 
             // Stop primed pulse
@@ -2867,12 +2988,9 @@ namespace WordDrop
                 _editBaseScale = CanonicalRestScale();
                 _editSelected = true;
 
-                // Springy select-pop for tactile feedback, then settle back to rest.
-                transform.DOKill();
-                transform.localScale = _editBaseScale;
-                transform.DOScale(_editBaseScale * EDIT_POP_SCALE, EDIT_POP_DUR)
-                    .SetEase(Ease.OutBack, 1.7f)
-                    .OnComplete(() => { if (this != null) transform.localScale = _editBaseScale; });
+                // "Button push" tactile feedback on tap — a quick scale-DOWN press that springs back to rest
+                // (was a scale-UP pop). 2026-07-10 Spencer.
+                ButtonPushScale();
 
                 // 2026-06-03 Spencer: selection reads as an HDR cyan glow on the tile
                 // itself (glow-only, like the hint) — NO cyan sprite swap, NO halo.
@@ -2892,6 +3010,22 @@ namespace WordDrop
                                     .SetLoops(-1, LoopType.Yoyo);
                         });
                 }
+
+                // Pulsing HDR cyan bloom overlay — the part that actually glows on
+                // mobile (sr.color above is clamped there). Alpha breathes between
+                // LOW and HIGH so the selected tile obviously throbs. forceDesktop so
+                // it's visible in the editor / on desktop too. Virtual tween (not bound
+                // to sr), so the sr.DOKill above won't touch it — kill it explicitly on
+                // deselect. 2026-07-09 Spencer.
+                _editGlowPulse?.Kill();
+                _editGlowAlpha = EDIT_GLOW_ALPHA_LOW;
+                SetBloomGlow(EDIT_GLOW_HDR, _editGlowAlpha, forceDesktop: true);
+                _editGlowPulse = DOTween.To(
+                        () => _editGlowAlpha,
+                        x => { _editGlowAlpha = x; SetBloomGlow(EDIT_GLOW_HDR, x, forceDesktop: true); },
+                        EDIT_GLOW_ALPHA_HIGH, EDIT_GLOW_DUR)
+                    .SetEase(Ease.InOutSine)
+                    .SetLoops(-1, LoopType.Yoyo);
             }
             else
             {
@@ -2911,6 +3045,12 @@ namespace WordDrop
                     _spriteRenderer.DOKill();
                     _spriteRenderer.color = Color.white;
                 }
+                // Kill the pulsing bloom overlay and hide it. Always (even if we thought
+                // we were already deselected) so an interrupted toggle can't strand a lit
+                // glow. 2026-07-09 Spencer.
+                _editGlowPulse?.Kill();
+                _editGlowPulse = null;
+                ClearBloomGlow();
                 // 2026-06-03 Spencer: on toggle-off / expiry, fire the SAME springy
                 // pop as on select so turning it off feels symmetric. (Not on commit
                 // or board-shift reposition — those pass popOnExit=false.)
@@ -2921,6 +3061,85 @@ namespace WordDrop
                         .OnComplete(() => { if (this != null) transform.localScale = rest; });
                 }
             }
+        }
+
+        /// <summary>Quick teal "button selection" flash on TAP — used for the board-swap TARGET tile so the
+        /// second tile you tap gives the same tap feedback the source got. Self-clears in ~0.22s (before the
+        /// swap resolution could prime this tile), and bails if the tile is already edit-selected or primed, so
+        /// it never fights those glows. 2026-07-10 Spencer.</summary>
+        public void FlashEditTap()
+        {
+            if (_editSelected || _hasPrimedGlow || _spriteRenderer == null) return;
+            // Snap to the teal glint + a real bloom, then fade both back over a short beat.
+            _spriteRenderer.DOKill();
+            _spriteRenderer.color = EDIT_GLINT_HIGH;
+            _spriteRenderer.DOColor(Color.white, 0.22f).SetEase(Ease.OutQuad);
+            SetBloomGlow(EDIT_GLOW_HDR, EDIT_GLOW_ALPHA_HIGH, forceDesktop: true);
+            _editGlowPulse?.Kill();
+            _editGlowAlpha = EDIT_GLOW_ALPHA_HIGH;
+            _editGlowPulse = DOTween.To(() => _editGlowAlpha,
+                    x => { _editGlowAlpha = x; SetBloomGlow(EDIT_GLOW_HDR, x, forceDesktop: true); },
+                    0f, 0.22f)
+                .SetEase(Ease.OutQuad)
+                .OnComplete(() => { if (this != null && !_editSelected) ClearBloomGlow(); });
+        }
+
+        /// <summary>Quick "button push" on tap — a fast scale-DOWN press that springs back to rest (was a
+        /// scale-UP pop). Used on the tiles you tap to edit/swap so the press feels tactile. 2026-07-10 Spencer.</summary>
+        public void ButtonPushScale()
+        {
+            Vector3 rest = _editSelected ? _editBaseScale : CanonicalRestScale();
+            transform.DOKill();
+            transform.localScale = rest;
+            transform.DOScale(rest * 0.90f, 0.08f).SetEase(Ease.OutQuad)
+                .OnComplete(() =>
+                {
+                    if (this == null) return;
+                    transform.DOScale(rest, 0.24f).SetEase(Ease.OutBack, 2.4f)
+                        .OnComplete(() => { if (this != null) transform.localScale = rest; });
+                });
+        }
+
+        /// <summary>After a swap/edit resolves, let the teal glow "die out to white" — fade the face tint + the
+        /// additive teal bloom off over `dur`. If the tile ended up PRIMED (the swap formed a word), skip the
+        /// white fade and just drop the edit bloom so the primed glow stands. Stops the pulse + clears the
+        /// selected flag. 2026-07-10 Spencer.</summary>
+        public void FadeEditGlowOut(float dur = 0.1f)
+        {
+            _editSelected = false;
+            _editGlowPulse?.Kill(); _editGlowPulse = null;
+            bool primed = _hasPrimedGlow;
+            if (_spriteRenderer != null && !primed)
+            {
+                _spriteRenderer.DOKill();
+                _spriteRenderer.DOColor(Color.white, dur).SetEase(Ease.OutQuad);
+            }
+            if (!primed)
+            {
+                _editGlowAlpha = Mathf.Max(_editGlowAlpha, EDIT_GLOW_ALPHA_HIGH * 0.5f); // start the fade from a lit value
+                _editGlowPulse = DOTween.To(() => _editGlowAlpha,
+                        x => { _editGlowAlpha = x; SetBloomGlow(EDIT_GLOW_HDR, x, forceDesktop: true); },
+                        0f, dur)
+                    .SetEase(Ease.OutQuad) // drop fast off the top so the glow diminishes quickly after the exchange
+                    .OnComplete(() => { if (this != null) { ClearBloomGlow(); _editGlowPulse = null; } });
+            }
+            else ClearBloomGlow(); // primed → drop the edit bloom, let the primed glow take over
+        }
+
+        /// <summary>Steady (non-pulsing) bright teal hold used DURING a swap's shake/exchange so both tiles read
+        /// as "charged" through the wobble. Re-applied right after SetLetter (which wipes the face tint back to
+        /// white — the "swapped tile isn't still teal" bug). No scale pop, no breathe; FadeEditGlowOut ends it.
+        /// 2026-07-10 Spencer.</summary>
+        public void HoldEditGlow()
+        {
+            _editGlowPulse?.Kill(); _editGlowPulse = null;
+            if (_spriteRenderer != null)
+            {
+                _spriteRenderer.DOKill();
+                _spriteRenderer.color = EDIT_GLINT_HIGH;
+            }
+            _editGlowAlpha = EDIT_GLOW_ALPHA_HIGH;
+            SetBloomGlow(EDIT_GLOW_HDR, EDIT_GLOW_ALPHA_HIGH, forceDesktop: true);
         }
 
         /// <summary>2026-06-03 Spencer: the same springy "pop" used on edit toggle-off,

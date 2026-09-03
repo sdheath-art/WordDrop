@@ -35,6 +35,10 @@ namespace WordDrop
             if (field != null)
                 field.SetValue(null, cfg);
 
+            // Re-apply icon size / hue / saturation / value to every live coin + heart.
+            // These are built once, so without this a slider does nothing until a rebuild.
+            UIConfig.RefreshIcons();
+
             // Update HUD colors live
             if (HUDManager.Instance != null)
                 HUDManager.Instance.ApplyLiveConfig();

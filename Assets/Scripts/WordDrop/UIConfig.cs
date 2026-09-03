@@ -41,6 +41,167 @@ namespace WordDrop
         public Color textDim            = new Color(0.65f, 0.65f, 0.75f, 1f);
 
         // ═════════════════════════════════════════════════════════════════════
+        // 3D ICON TUNING  (coin + heart)  — 2026-07-30
+        // ═════════════════════════════════════════════════════════════════════
+        //
+        // The icons are BAKED renders, so these are runtime tints applied to the Image —
+        // they MULTIPLY the art. That means they can darken and re-tint freely, but they
+        // cannot make an icon brighter than its source render. If you need brighter than
+        // 1.0, the render itself has to change (ask me and I'll re-render).
+        //
+        // Applied wherever the icon is built: level-map pills, in-game HUD counter,
+        // vault REWARD panel, and the flying coins in both the cascade and chest bursts —
+        // so a change here keeps every instance consistent.
+
+        [Header("Coin — colour")]
+        [Tooltip("Rotate the hue. -0.5..0.5 is a full turn either way. 0 = the render as-is.")]
+        [Range(-0.5f, 0.5f)] public float coinHue = 0f;
+        [Tooltip("1 = unchanged, 0 = greyscale, >1 = more vivid.")]
+        [Range(0f, 2f)] public float coinSaturation = 1f;   // was 2f. At 2 the shader's saturate() clamped
+                                            // virtually the whole coin to max saturation, flattening
+                                            // the gradient into hard contour bands that read as "bends"
+                                            // in the bevel. The contrast now lives in the render
+                                            // instead, so the boost is no longer needed. 2026-07-30.
+        [Tooltip("Multiply. Good for darkening; on already-bright gold it clamps and stops lifting.")]
+        [Range(0f, 2f)] public float coinValue = 1.03f;
+        [Tooltip("Washes toward white (+) or black (-). THIS is the one that can genuinely brighten.")]
+        [Range(-1f, 1f)] public float coinLightness = 0f;
+
+        [Header("Coin — size")]
+        [Tooltip("ONE lever for every coin in the game: level-map pill, in-game HUD counter, " +
+                 "vault REWARD panel, the flying cascade coins and the chest-burst coins.")]
+        [Range(0.4f, 2.5f)] public float coinSizeScale = 1f;
+        [Tooltip("Base size in the level-map pill (px), before the scale above.")]
+        [Range(24f, 110f)] public float coinIconSize = 60f;
+        [Tooltip("Base size in the in-game HUD counter (px).")]
+        [Range(16f, 80f)] public float coinHudIconSize = 36f;
+        [Tooltip("Base size in the vault REWARD panel (px).")]
+        [Range(24f, 110f)] public float coinRewardIconSize = 60f;
+
+        [Header("Heart — colour")]
+        [Range(-0.5f, 0.5f)] public float heartHue = 0f;
+        [Range(0f, 2f)] public float heartSaturation = 1.1f;
+        [Range(0f, 2f)] public float heartValue = 1.33f;
+        [Tooltip("Washes toward white (+) or black (-). THIS is the one that can genuinely brighten.")]
+        [Range(-1f, 1f)] public float heartLightness = 0f;
+
+        [Header("Heart — size")]
+        [Range(0.4f, 2.5f)] public float heartSizeScale = 1f;
+        [Tooltip("Base size in the level-map pill (px), before the scale above.")]
+        [Range(24f, 110f)] public float heartIconSize = 60f;
+
+        // Computed sizes — every call site reads these, so one scale moves them together.
+        public static float CoinPillSize   => Instance != null ? Instance.coinIconSize       * Instance.coinSizeScale  : 60f;
+        public static float CoinHudSize    => Instance != null ? Instance.coinHudIconSize    * Instance.coinSizeScale  : 36f;
+        public static float CoinRewardSize => Instance != null ? Instance.coinRewardIconSize * Instance.coinSizeScale  : 60f;
+        public static float HeartPillSize  => Instance != null ? Instance.heartIconSize      * Instance.heartSizeScale : 60f;
+
+        // ── Live icon registry (Play-mode tuning) ───────────────────────────────
+        // Icons are BUILT ONCE, so moving a slider mid-game would otherwise do nothing until the
+        // screen was rebuilt. Every icon registers itself here; RefreshIcons() re-applies size,
+        // material and shadow offset to all of them, and the custom UIConfig editor calls it on
+        // every slider change. Dial values in live, then tell me the numbers to lock in. 2026-07-30.
+        public enum IconSlot { CoinPill, CoinHud, CoinReward, HeartPill }
+
+        private static readonly System.Collections.Generic.List<
+            System.Collections.Generic.KeyValuePair<UnityEngine.UI.Graphic, IconSlot>> _liveIcons =
+            new System.Collections.Generic.List<
+                System.Collections.Generic.KeyValuePair<UnityEngine.UI.Graphic, IconSlot>>();
+
+        public static float SizeFor(IconSlot slot)
+        {
+            switch (slot)
+            {
+                case IconSlot.CoinPill:   return CoinPillSize;
+                case IconSlot.CoinHud:    return CoinHudSize;
+                case IconSlot.CoinReward: return CoinRewardSize;
+                default:                  return HeartPillSize;
+            }
+        }
+
+        public static Material MaterialFor(IconSlot slot)
+            => slot == IconSlot.HeartPill ? HeartIconMaterial : CoinIconMaterial;
+
+        /// <summary>Call AFTER the drop shadow is added, so the shadow offset can track the size.</summary>
+        public static void RegisterIcon(UnityEngine.UI.Graphic g, IconSlot slot)
+        {
+            if (g == null) return;
+            _liveIcons.RemoveAll(e => e.Key == null);          // prune destroyed icons
+            _liveIcons.Add(new System.Collections.Generic.KeyValuePair<UnityEngine.UI.Graphic, IconSlot>(g, slot));
+            ApplyToIcon(g, slot);
+        }
+
+        private static void ApplyToIcon(UnityEngine.UI.Graphic g, IconSlot slot)
+        {
+            if (g == null) return;
+            float size = SizeFor(slot);
+            if (g.rectTransform != null) g.rectTransform.sizeDelta = new Vector2(size, size);
+            // null is fine — Graphic falls back to the default UI material, which is exactly what
+            // we want at neutral values (stock shader, zero risk).
+            g.material = MaterialFor(slot);
+            var sh = g.GetComponent<UnityEngine.UI.Shadow>();
+            if (sh != null) sh.effectDistance = new Vector2(0f, -Mathf.Max(1f, size * 0.035f));
+            g.SetMaterialDirty();
+            g.SetVerticesDirty();
+        }
+
+        /// <summary>Re-apply every slider to every live icon. Safe to call any time.</summary>
+        public static void RefreshIcons()
+        {
+            _liveIcons.RemoveAll(e => e.Key == null);
+            foreach (var e in _liveIcons) ApplyToIcon(e.Key, e.Value);
+        }
+
+        // ── HSV materials ───────────────────────────────────────────────────────
+        // Image.color can only MULTIPLY, so it can darken but never rotate hue or raise
+        // saturation/brightness. These wrap the WordDrop/IconHSV shader, which does the
+        // conversion per-pixel. One shared material per icon type, rebuilt when values change.
+        private static Material _coinMat, _heartMat;
+        private static Vector4  _coinMatKey = Vector4.one * -999f, _heartMatKey = Vector4.one * -999f;
+
+        private static Material BuildMat(ref Material mat, ref Vector4 key, float h, float sat, float val, float lit)
+        {
+            var want = new Vector4(h, sat, val, lit);
+            if (mat != null && key == want) return mat;
+            var sh = Shader.Find("WordDrop/IconHSV");
+            if (sh == null) return null;                       // shader missing -> callers leave material null
+            if (mat == null) mat = new Material(sh) { hideFlags = HideFlags.DontSave };
+            mat.SetFloat("_HueShift", h);
+            mat.SetFloat("_Saturation", sat);
+            mat.SetFloat("_Value", val);
+            mat.SetFloat("_Lightness", lit);
+            key = want;
+            return mat;
+        }
+
+        /// <summary>Material for coin icons, or null to leave the default. Null when the values
+        /// are neutral, so the default UI material is used and nothing changes.</summary>
+        public static Material CoinIconMaterial
+        {
+            get
+            {
+                var c = Instance;
+                if (c == null) return null;
+                if (Mathf.Approximately(c.coinHue, 0f) && Mathf.Approximately(c.coinSaturation, 1f)
+                    && Mathf.Approximately(c.coinValue, 1f) && Mathf.Approximately(c.coinLightness, 0f)) return null;
+                return BuildMat(ref _coinMat, ref _coinMatKey, c.coinHue, c.coinSaturation, c.coinValue, c.coinLightness);
+            }
+        }
+
+        /// <summary>Material for the heart icon, or null to leave the default.</summary>
+        public static Material HeartIconMaterial
+        {
+            get
+            {
+                var c = Instance;
+                if (c == null) return null;
+                if (Mathf.Approximately(c.heartHue, 0f) && Mathf.Approximately(c.heartSaturation, 1f)
+                    && Mathf.Approximately(c.heartValue, 1f) && Mathf.Approximately(c.heartLightness, 0f)) return null;
+                return BuildMat(ref _heartMat, ref _heartMatKey, c.heartHue, c.heartSaturation, c.heartValue, c.heartLightness);
+            }
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
         // MENU
         // ═════════════════════════════════════════════════════════════════════
 

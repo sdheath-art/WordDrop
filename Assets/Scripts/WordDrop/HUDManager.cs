@@ -61,6 +61,14 @@ namespace WordDrop
         // Reads from CoinWallet.Balance. Lives in upper-right slot shared with
         // AI/MOVES counters — Survival's HideAIScore() makes room for it.
         private TextMeshProUGUI _coinCounterText;
+        private RectTransform   _coinIconRT;          // 3D coin sprite left of the counter (2026-07-29)
+        /// <summary>Fallbacks only — the live values come from UIConfig so one scale there moves
+        /// every coin in the game at once. 2026-07-30.</summary>
+        private const float     COIN_HUD_ICON = 36f;  // in-game HUD coin icon size
+        /// <summary>Used only if the camera isn't orthographic or the sprite is missing — the old
+        /// hardcoded reward-coin scale (Spencer 2026-06-19).</summary>
+        private const float     COIN_SCALE_FALLBACK = 1.7f;
+        private const float     REWARD_COIN_ICON = 60f; // vault-level REWARD panel coin (matches LevelMapPanel.COIN_PILL_ICON)
 
         // ── Top-out danger indicator (Survival) ───────────────────────────────────
         // Countdown of MOVES until the board tops out (rises × cadence). A white
@@ -83,6 +91,9 @@ namespace WordDrop
         // text). Icon rebuilt only when the objective TYPE changes; badge number = RemainingCount,
         // ticking down as the player progresses; on completion the check drops onto the badge and
         // replaces the number. 2026-06-15 Spencer. ──
+        private RectTransform      _hudBarRT;            // top HUD strip — dropped in on level entry
+        private Vector2            _hudBarRestPos;       // captured rest anchoredPosition for the entry drop
+        private bool              _hudBarRestCaptured;
         private GameObject        _objectivePanel;      // "TARGET" framed box (left)
         private GameObject        _objectiveIconHolder;
         private GameObject        _objectiveIconGO;     // the built icon (rebuilt on type change)
@@ -156,6 +167,130 @@ namespace WordDrop
             }
             CoinWallet.OnBalanceChanged -= HandleCoinBalanceChanged;
             CoinWallet.OnBalanceChanged += HandleCoinBalanceChanged;
+            LevelIntroModal.OnPlayStarted -= PlayLevelEntry; // level-entry HUD/board spring-in
+            LevelIntroModal.OnPlayStarted += PlayLevelEntry;
+        }
+
+        // Royal-Match / Candy-Crush "springs into place" on level entry: the top HUD bar slides down and the
+        // board pops in. Fires when a level begins (LevelIntroModal PLAY). 2026-07-13 Spencer.
+        public void PlayLevelEntry()
+        {
+            // Park EVERYTHING off-screen NOW (synchronously, this frame) so the screen is BLANK. In the map-flow the
+            // map is still covering the board and about to fade — parking first means it fades into an empty screen,
+            // and the map calls AnimateLevelEntryIn() once it's fully gone (LevelMapPanel.FadeMapOut). Non-map flow:
+            // the intro has already exited, so park + animate right now. 2026-07-13 Spencer.
+            PrepLevelEntry();
+            if (LevelMapPanel.MapFlowEnabled && LevelMapPanel.Instance != null && LevelMapPanel.Instance.IsShowing)
+                return;
+            AnimateLevelEntryIn();
+        }
+
+        /// <summary>Park the top bar (above), the bottom HUD (below), and the board + tile holder + SWAPS (off to
+        /// the right) so the level begins on a BLANK screen. Runs before the map fade. 2026-07-13 Spencer.</summary>
+        public void PrepLevelEntry()
+        {
+            // Top bar → above the top edge.
+            if (_hudBarRT != null)
+            {
+                if (!_hudBarRestCaptured) { _hudBarRestPos = _hudBarRT.anchoredPosition; _hudBarRestCaptured = true; }
+                _hudBarRT.DOKill();
+                _hudBarRT.localScale = Vector3.one;
+                _hudBarRT.anchoredPosition = _hudBarRestPos + new Vector2(0f, 200f);
+            }
+            BoosterHUDSlot.Instance?.PrepBenchEntry();   // bottom HUD (panel + boosters + settings) → below
+            GridManager.Instance?.PrepBoardEntry();      // board → off right
+            HandManager.Instance?.PrepHandEntry();       // tile holder → off right
+            BoosterHUDSlot.Instance?.PrepSwapPanel();    // SWAPS panel → off right
+        }
+
+        /// <summary>Two-beat entry (everything already parked by PrepLevelEntry): (1) top bar DROPS down + bottom
+        /// HUD POPS UP together — mirror motion, one whoosh; (2) a beat later the board + tile holder + SWAPS slide
+        /// in from the right, second whoosh. 2026-07-13 Spencer.</summary>
+        public void AnimateLevelEntryIn()
+        {
+            // Beat 1 — top drops, bottom pops (mirror).
+            AnimateHudBarIn();
+            BoosterHUDSlot.Instance?.AnimateBenchIn();
+            GameAudio.Instance?.PlayWhooshFast();
+            // Beat 2 — board + tile holder + SWAPS shoot in from the right AS ONE. A SINGLE tween drives a normalized
+            // offset (1 = parked off right, 0 = rest, <0 = overshoot) into all three, so they move in perfect lockstep
+            // and overshoot the exact same on-screen distance — no per-element skew. 2026-07-13 Spencer.
+            DOVirtual.DelayedCall(BOARD_ENTRY_DELAY, () =>
+            {
+                DOTween.Kill("levelEntrySlide");
+                DOTween.To(() => 1f, t =>
+                {
+                    GridManager.Instance?.SetEntrySlideNorm(t);
+                    HandManager.Instance?.SetEntrySlideNorm(t);
+                    BoosterHUDSlot.Instance?.SetSwapSlideNorm(t);
+                }, 0f, 0.28f).SetEase(Ease.OutBack, 1.6f).SetId("levelEntrySlide").SetUpdate(true)
+                 .OnComplete(() =>
+                 {
+                     GridManager.Instance?.EndEntrySlide();
+                     HandManager.Instance?.EndEntrySlide();
+                     BoosterHUDSlot.Instance?.EndSwapSlide();
+                 });
+                GameAudio.Instance?.PlayWhooshFast();
+            }).SetUpdate(true);
+        }
+
+        private const float BOARD_ENTRY_DELAY = 0.06f; // board fires a beat AFTER the top/bottom have started
+
+        /// <summary>Level-EXIT: reverse of AnimateLevelEntryIn — the board + tile holder + SWAPS slide OUT to the right
+        /// (as one) while the top bar slides UP off the top and the bottom HUD slides DOWN off the bottom. Called by
+        /// the StageClearModal as the beige washes in, so the level "tweens off" the same way it came on. 2026-07-14
+        /// Spencer.</summary>
+        public void AnimateLevelExitOut()
+        {
+            // Board + tile holder + SWAPS shoot OUT to the right AS ONE — same shared-norm driver as the entry, run
+            // 0 (rest) → 1 (parked off right). Re-snapshot current rests first (tiles/cards changed during play).
+            // Ease OutCubic (front-loaded) so the board LEAVES promptly while the beige is still faint — an InBack
+            // wind-up delayed the motion until the beige had already covered it (looked like "no slide"). 2026-07-14.
+            GridManager.Instance?.PrepBoardExit();
+            HandManager.Instance?.PrepHandExit();
+            DOTween.Kill("levelExitSlide");
+            DOTween.To(() => 0f, t =>
+            {
+                GridManager.Instance?.SetEntrySlideNorm(t);
+                HandManager.Instance?.SetEntrySlideNorm(t);
+                BoosterHUDSlot.Instance?.SetSwapSlideNorm(t);
+            }, 1f, 0.30f).SetEase(Ease.OutCubic).SetId("levelExitSlide").SetUpdate(true);
+
+            // Top bar slides up off the top; bottom HUD slides down off the bottom.
+            if (_hudBarRT != null)
+            {
+                if (!_hudBarRestCaptured) { _hudBarRestPos = _hudBarRT.anchoredPosition; _hudBarRestCaptured = true; }
+                _hudBarRT.DOKill();
+                _hudBarRT.DOAnchorPos(_hudBarRestPos + new Vector2(0f, 200f), 0.30f)
+                    .SetEase(Ease.OutCubic).SetUpdate(true);
+            }
+            BoosterHUDSlot.Instance?.AnimateBenchOut();
+            GameAudio.Instance?.PlayWhooshFast();
+
+            // Once the beige is fully opaque (covering everything), restore the board/hand/SWAPS to their REST
+            // positions — invisible under the beige — so the NEXT level's entry snapshot captures correct rests and
+            // isn't corrupted by the parked-off-screen offset. 2026-07-14 Spencer.
+            DOVirtual.DelayedCall(0.55f, () =>
+            {
+                GridManager.Instance?.EndEntrySlide();
+                HandManager.Instance?.EndEntrySlide();
+                BoosterHUDSlot.Instance?.EndSwapSlide();
+            }).SetUpdate(true);
+        }
+
+        /// <summary>Top HUD bar DROPS down from above and overshoots (position, no scale/warp). The overshoot dips
+        /// the bar below rest, which would open a cyan gap above it — the BarTopExtend strip (a child that slides
+        /// with the bar) keeps that area filled with the bar colour, so it reads as the panel extending off the
+        /// top. 2026-07-13 Spencer.</summary>
+        public void AnimateHudBarIn()
+        {
+            if (_hudBarRT == null) return;
+            if (!_hudBarRestCaptured) { _hudBarRestPos = _hudBarRT.anchoredPosition; _hudBarRestCaptured = true; }
+            _hudBarRT.DOKill();
+            _hudBarRT.localScale = Vector3.one; // no warp
+            _hudBarRT.anchoredPosition = _hudBarRestPos + new Vector2(0f, 200f); // start above the top edge
+            _hudBarRT.DOAnchorPos(_hudBarRestPos, 0.24f).SetEase(Ease.OutBack, 1.4f)
+                .OnComplete(() => { if (_hudBarRT != null) _hudBarRT.anchoredPosition = _hudBarRestPos; });
         }
 
         private void HandleCoinBalanceChanged(int newBalance)
@@ -179,6 +314,7 @@ namespace WordDrop
             if (LevelController.Instance != null)
                 LevelController.Instance.OnLevelStarted -= HandleLevelStarted;
             CoinWallet.OnBalanceChanged -= HandleCoinBalanceChanged;
+            LevelIntroModal.OnPlayStarted -= PlayLevelEntry;
         }
 
         // Per-level HUD element gating: SWAP / EDIT charge counters hide on
@@ -219,6 +355,28 @@ namespace WordDrop
             {
                 SetLevelTarget(data.target);
                 SetLevelMoves(data.moveBudget);
+            }
+
+            // A completion pop (DOPunchRotation on the holder) interrupted by the level transition freezes the
+            // target icon tilted — and when the next level reuses the SAME objective type, EnsureObjectiveIcon
+            // skips the rebuild, so the tilt carries over. Kill any running pop and snap the holder + icon +
+            // badge back upright at the start of every level. 2026-07-10 Spencer.
+            if (_objectiveIconHolder != null)
+            {
+                _objectivePopTween?.Kill(); // kill via the handle — transform.DOKill() alone can't kill the pop's Sequence
+                _objectiveIconHolder.transform.DOKill();
+                _objectiveIconHolder.transform.localRotation = Quaternion.identity;
+                _objectiveIconHolder.transform.localScale = Vector3.one;
+            }
+            if (_objectiveIconGO != null)
+            {
+                _objectiveIconGO.transform.DOKill();
+                _objectiveIconGO.transform.localRotation = Quaternion.identity;
+            }
+            if (_objectiveBadge != null)
+            {
+                _objectiveBadge.transform.DOKill();
+                _objectiveBadge.transform.localRotation = Quaternion.identity;
             }
         }
 
@@ -303,6 +461,7 @@ namespace WordDrop
             barGO.transform.SetParent(safeAreaGO.transform, false);
 
             RectTransform barRT = barGO.AddComponent<RectTransform>();
+            _hudBarRT = barRT; // stored for the level-entry slide-in
             barRT.anchorMin = new Vector2(0f, 1f);
             barRT.anchorMax = new Vector2(1f, 1f);
             barRT.pivot     = new Vector2(0.5f, 1f);
@@ -317,6 +476,25 @@ namespace WordDrop
             // drag-drop (e.g. the FeelSnake particle material wandering in)
             // from changing the bar's look at runtime.
             barImg.material = null;
+
+            // Blue EXTENSION strip above the bar's top edge (child → slides with the bar). When the bar drops in
+            // and OVERSHOOTS downward on level-entry, this strip keeps the area above the bar filled with the bar's
+            // colour instead of showing the cyan background — the bar reads as extending off the top, no gap.
+            // Behind the content (first sibling). 2026-07-13 Spencer.
+            {
+                var barExtGO = new GameObject("BarTopExtend", typeof(RectTransform), typeof(Image));
+                barExtGO.transform.SetParent(barGO.transform, false);
+                barExtGO.transform.SetAsFirstSibling();
+                var barExtRT = barExtGO.GetComponent<RectTransform>();
+                barExtRT.anchorMin = new Vector2(0f, 1f);
+                barExtRT.anchorMax = new Vector2(1f, 1f);
+                barExtRT.pivot     = new Vector2(0.5f, 0f);   // grows UP from the bar top
+                barExtRT.sizeDelta = new Vector2(0f, 200f);
+                barExtRT.anchoredPosition = Vector2.zero;
+                var barExtImg = barExtGO.GetComponent<Image>();
+                barExtImg.color = barImg.color;
+                barExtImg.raycastTarget = false;
+            }
 
             TMP_FontAsset heavyFont = GameFont.GetUITMP();
 
@@ -668,8 +846,29 @@ namespace WordDrop
                 color:     PLAYER_COLOR,
                 align:     TextAnchor.MiddleRight);
             if (heavyFont != null) _coinCounterText.font = heavyFont;
+
+            // 2026-07-29: the "coin icon" here was never a sprite — it was the bullet glyph "●"
+            // inside the counter string. Replaced with the real 3D coin as a proper Image.
+            // It's a CHILD of the counter with a right pivot, and SetCoins re-positions it to
+            // the left of the text each update, so it tracks the number as digits are added
+            // (a fixed anchor would drift away from the value, since the text is right-aligned).
+            var coinIconGO = new GameObject("CoinIcon");
+            coinIconGO.transform.SetParent(_coinCounterText.rectTransform, false);
+            _coinIconRT = coinIconGO.AddComponent<RectTransform>();
+            _coinIconRT.anchorMin = _coinIconRT.anchorMax = new Vector2(1f, 0.5f);
+            _coinIconRT.pivot = new Vector2(1f, 0.5f);
+            float hudCoin = UIConfig.CoinHudSize;
+            _coinIconRT.sizeDelta = new Vector2(hudCoin, hudCoin);
+            var coinIconImg = coinIconGO.AddComponent<UnityEngine.UI.Image>();
+            coinIconImg.sprite = GetCoinSprite();
+            coinIconImg.preserveAspect = true;
+            coinIconImg.raycastTarget = false;
+            MenuUI.AddIconDropShadow(coinIconImg, hudCoin);
+            UIConfig.RegisterIcon(coinIconImg, UIConfig.IconSlot.CoinHud);   // live-tunable
+            if (coinIconImg.sprite == null) coinIconGO.SetActive(false); // no art → fall back to the bare number
+
             // Sync initial value from wallet so HUD reflects persistent balance on boot.
-            _coinCounterText.text = $"● {CoinWallet.Balance}";
+            SetCoins(CoinWallet.Balance);
 
             // ── Swaps + Rewrites — compact, under center ─────────────────────────
             Color swapCol = new Color(0.78f, 0.78f, 0.85f, 0.8f);
@@ -867,6 +1066,27 @@ namespace WordDrop
             if (_aiScoreNum  != null) _aiScoreNum.gameObject.SetActive(false);
         }
 
+        private Tween _objectivePopTween; // explicit handle to the completion pop so it can be reliably killed
+
+        /// <summary>Completion "pop" for the target-icon holder (icon + badge as one rigid group) — the original
+        /// WildCardPop scale + ROTATION ta-da, restored. Interruption-safe: we keep the sequence HANDLE (a plain
+        /// transform.DOKill() can't kill a DOTween Sequence — that's what let an interrupted pop freeze the icon
+        /// diagonal), kill it on level start, and OnKill snaps rotation back to identity. 2026-07-10 Spencer.</summary>
+        private void PopObjectiveIconHolder()
+        {
+            if (_objectiveIconHolder == null) return;
+            var t = _objectiveIconHolder.transform;
+            _objectivePopTween?.Kill();            // kill any in-flight pop (its OnKill resets rotation)
+            t.DOKill();
+            t.localRotation = Quaternion.identity;
+            t.localScale    = Vector3.one;
+            _objectivePopTween = UIAnimations.WildCardPop(t, Vector3.one);
+            _objectivePopTween?.OnKill(() =>
+            {
+                if (_objectiveIconHolder != null) _objectiveIconHolder.transform.localRotation = Quaternion.identity;
+            });
+        }
+
         /// <summary>MVP P1: update coin counter display with a small pop animation.
         /// Wired automatically via CoinWallet.OnBalanceChanged.
         ///
@@ -878,7 +1098,17 @@ namespace WordDrop
         public void SetCoins(int balance)
         {
             if (_coinCounterText == null) return;
-            _coinCounterText.text = $"● {balance}";
+            // Bullet only when there's no icon sprite — otherwise the Image below stands in for it.
+            bool hasIcon = _coinIconRT != null && _coinIconRT.gameObject.activeSelf;
+            _coinCounterText.text = hasIcon ? balance.ToString() : $"● {balance}";
+            if (hasIcon)
+            {
+                // Park the icon just left of the number. Text is right-aligned, so its left edge
+                // moves as digits are added — measure and follow it rather than using a fixed x.
+                _coinCounterText.ForceMeshUpdate();
+                float textW = _coinCounterText.textBounds.size.x;
+                _coinIconRT.anchoredPosition = new Vector2(-(textW + UIConfig.CoinHudSize * 0.35f), 0f);
+            }
             var rt = _coinCounterText.rectTransform;
             rt.DOKill();
             rt.localScale = Vector3.one;
@@ -1160,19 +1390,28 @@ namespace WordDrop
 
         // HeroWord: a collected escort tile flies up and lands ON the Target icon (same animation as the
         // HiddenWord letters — pops the icon + sparkle burst on arrival). 2026-06-17 Spencer.
+        // Count of letter/escort tiles currently flying up to the objective target. The StageClear modal waits for
+        // this to hit 0 before firing "Well Done!", so the celebration never cuts off the words reaching the goal.
+        // 2026-07-14 Spencer.
+        private static int _flyToTargetInFlight = 0;
+        public static bool HasFlyingToTarget => _flyToTargetInFlight > 0;
+
         public void FlyEscortToTarget(Vector3 startWorld, System.Action onLand = null, float startDelay = 0f)
         {
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
             Vector3 target = GetObjectiveIconScreenPos();
+            _flyToTargetInFlight++;
             System.Action onArrive = () =>
             {
+                _flyToTargetInFlight = Mathf.Max(0, _flyToTargetInFlight - 1);
                 onLand?.Invoke();
                 GameAudio.Instance?.PlayLine2();
                 if (_objectiveIconGO != null)
                 {
                     BringTargetChainToFront();
                     _objectiveIconGO.transform.SetAsLastSibling();
-                    UIAnimations.WildCardPop(_objectiveIconGO.transform, Vector3.one);
+            if (_objectiveBadge != null) _objectiveBadge.transform.SetAsLastSibling(); // keep the count number + checkmark ABOVE the popped icon. 2026-07-10 Spencer
+                    if (_objectiveIconHolder != null) PopObjectiveIconHolder(); // pop the whole holder (icon + badge) as ONE rigid group so the count stays pinned in its corner. 2026-07-10 // badge (count + check) pops WITH the icon so they read as one. 2026-07-10
                     if (_objectiveIconHolder != null && _objectiveIconHolder.transform is RectTransform hrt)
                         SpawnSlotSparkleBurst(hrt, Vector2.zero); // icon sits at the holder centre
                 }
@@ -1186,12 +1425,30 @@ namespace WordDrop
         // objective ICON — same routine + look as the HeroWord escorts / HiddenWord letters — landing
         // with a pop + chime, so a goal-satisfying explosion gets the same "collected!" travel. Flies to
         // the icon (there are no letter slots on these levels). 2026-07-06 Spencer.
-        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200)
+        // COMBO COLOUR ESCALATION fly-up ramp (2026-07-27 Spencer). The letters that pop + float off screen
+        // ramp in hue by their word's detonation order (comboStep). Indexed by (comboStep-1); comboStep 0 =
+        // the trigger word (no ramp — keeps the default look). HDR so it blooms; the VARYING channel is kept
+        // <1 (cool hues keep red<1, warm hues keep blue<1) so the hue survives the mobile Color32 clamp. Tune here.
+        // The TRIGGER word keeps the original magenta (default look). Only the CHAINED words ramp, starting
+        // ABOVE magenta so the first chain word already reads as escalated. comboStep 1 → index 0.
+        private static readonly Color[] s_comboFlyRamp = new Color[]
+        {
+            new Color(2.00f, 0.50f, 0.70f, 1f), // step 1 — hot pink
+            new Color(0.95f, 0.40f, 1.55f, 1f), // step 2 — violet (blue pulled down so the glow matches the purple tile)
+            new Color(0.65f, 0.45f, 1.95f, 1f), // step 3 — blue-violet
+            new Color(0.45f, 0.50f, 2.20f, 1f), // step 4+ — deep blue-violet
+        };
+
+        // comboStep: the flying letter's word position in the detonation order (0 = trigger, 1,2,3… = chained
+        // words). >= 1 ramps the fly-up tile + glow hue via s_comboFlyRamp; 0 keeps the default magenta. 2026-07-27.
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0)
         {
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
             Vector3 target = GetObjectiveIconScreenPos();
+            _flyToTargetInFlight++;
             System.Action onArrive = () =>
             {
+                _flyToTargetInFlight = Mathf.Max(0, _flyToTargetInFlight - 1);
                 onLand?.Invoke();
                 GameAudio.Instance?.PlayLine2();
                 // Pop the shared icon only ONCE per word — the caller passes popIcon=true for the LAST letter.
@@ -1201,7 +1458,8 @@ namespace WordDrop
                 {
                     BringTargetChainToFront();
                     _objectiveIconGO.transform.SetAsLastSibling();
-                    UIAnimations.WildCardPop(_objectiveIconGO.transform, Vector3.one);
+            if (_objectiveBadge != null) _objectiveBadge.transform.SetAsLastSibling(); // keep the count number + checkmark ABOVE the popped icon. 2026-07-10 Spencer
+                    if (_objectiveIconHolder != null) PopObjectiveIconHolder(); // pop the whole holder (icon + badge) as ONE rigid group so the count stays pinned in its corner. 2026-07-10 // badge (count + check) pops WITH the icon so they read as one. 2026-07-10
                     if (_objectiveIconHolder != null && _objectiveIconHolder.transform is RectTransform hrt)
                         SpawnSlotSparkleBurst(hrt, Vector2.zero); // icon sits at the holder centre
                 }
@@ -1212,6 +1470,15 @@ namespace WordDrop
             if (cascadeGreen)
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Tile.SCORED_TINT,
                     Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay, popPeak, sortBase));
+            else if (comboStep >= 1)
+            {
+                // COMBO COLOUR ESCALATION: this letter's word ramps in hue by its detonation order, so the
+                // letters that float off screen escalate pink→magenta→violet as the combo unrolls. The glow
+                // (the halo behind the letter) takes the ramp colour; the tile face is a lighter sibling of it.
+                Color glow = s_comboFlyRamp[Mathf.Min(comboStep - 1, s_comboFlyRamp.Length - 1)];
+                Color tile = new Color(glow.r * 0.92f, Mathf.Min(glow.g + 0.25f, 1f), glow.b * 0.95f, 1f);
+                StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, tile, glow, letter, target, onArrive, startDelay, popPeak, sortBase));
+            }
             else
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, new Color(1.7f, 0.7f, 1.5f, 1f),
                     new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay, popPeak, sortBase));
@@ -1243,11 +1510,17 @@ namespace WordDrop
         {
             if (_coinSpriteTried) return _coinSpriteCache;
             _coinSpriteTried = true;
-            _coinSpriteCache = Resources.Load<Sprite>("Tiles/Icon_ImageIcon_Coin");
-            if (_coinSpriteCache == null)
+            // 2026-07-29: 3D crown coin first, original as fallback.
+            foreach (string path in new[] { "Tiles/coin3d_icon", "Tiles/Icon_ImageIcon_Coin" })
             {
-                var tex = Resources.Load<Texture2D>("Tiles/Icon_ImageIcon_Coin");
-                if (tex != null) _coinSpriteCache = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+                _coinSpriteCache = Resources.Load<Sprite>(path);
+                if (_coinSpriteCache != null) break;
+                var tex = Resources.Load<Texture2D>(path);
+                if (tex != null)
+                {
+                    _coinSpriteCache = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+                    break;
+                }
             }
             return _coinSpriteCache;
         }
@@ -1260,9 +1533,18 @@ namespace WordDrop
         {
             if (_coinFramesTried) return _coinFramesCache;
             _coinFramesTried = true;
-            var tex = Resources.Load<Texture2D>("Coins/VFX_Coin_rotation");
+            // 2026-07-29: prefer the 3D crown coin (8×4 / 32 frames of a full 360°), same sheet
+            // the level-map cascade uses, so chest rewards and map rewards are the same object.
+            // Frames are 128px in both sheets, so PPU 200 still gives the original coin size.
+            // TO REVERT: delete Resources/Coins/coin3d_spin.png — falls back with no code change.
+            int COLS = 8, ROWS = 4;
+            var tex = Resources.Load<Texture2D>("Coins/coin3d_spin");
+            if (tex == null)
+            {
+                COLS = 4; ROWS = 4;
+                tex = Resources.Load<Texture2D>("Coins/VFX_Coin_rotation");
+            }
             if (tex == null) return null;
-            const int COLS = 4, ROWS = 4;
             int fw = tex.width / COLS, fh = tex.height / ROWS;
             var frames = new Sprite[COLS * ROWS];
             int idx = 0;
@@ -1348,8 +1630,31 @@ namespace WordDrop
             bool flip = frames != null && frames.Length > 0;
             if (flip) sr.sprite = frames[0];
             else { var sp = GetCoinSprite(); sr.sprite = sp; if (sp == null) sr.color = new Color(1f, 0.82f, 0.2f); }
-            const float COIN_SCALE = 1.7f; // bigger coins (Spencer 2026-06-19)
-            const float SPIN_FPS   = 16f;   // flipbook playback rate
+            // Tint AFTER the if/else so it applies on both paths — and only when a real sprite
+            // loaded, so it can't overwrite the flat-colour fallback above. 2026-07-30.
+            var rewardHsv = UIConfig.CoinIconMaterial;
+            if (rewardHsv != null && sr.sprite != null) sr.sharedMaterial = rewardHsv;
+            // Match the flying coin's ON-SCREEN size to the HUD coin icon. A constant can't express
+            // that: these are world-space sprites while the icon is UI, so the relationship depends
+            // on the camera's orthographic size and the screen height. Measuring the icon's actual
+            // RectTransform also survives any canvas scaling. Derived from the sprite's own bounds
+            // so it's right for both the spin frames (128px @ PPU 200) and the fallback icon sprite
+            // (640px @ PPU 100), which differ by 10x in world size. 2026-07-30.
+            float COIN_SCALE = COIN_SCALE_FALLBACK;
+            if (cam.orthographic && sr.sprite != null)
+            {
+                float iconPx = (_coinIconRT != null)
+                             ? _coinIconRT.rect.height * _coinIconRT.lossyScale.y   // real screen px
+                             : UIConfig.CoinHudSize;
+                float pxPerWorld = Screen.height / (2f * cam.orthographicSize);
+                float spriteWorld = sr.sprite.bounds.size.y;                        // world units at scale 1
+                if (pxPerWorld > 1e-4f && spriteWorld > 1e-4f)
+                    COIN_SCALE = (iconPx / pxPerWorld) / spriteWorld;
+            }
+            // Playback rate was tuned against a 16-frame sheet. The 3D sheet has 32, so scale
+            // FPS by the frame count to keep the SAME revolutions-per-second — otherwise
+            // swapping the art silently halves the spin speed.
+            float SPIN_FPS = 16f * (flip ? frames.Length / 16f : 1f);
             float spinT = 0f;
             go.transform.position = worldStart;
             go.transform.localScale = Vector3.one * (COIN_SCALE * 0.5f); // start at HALF size → pops to full as it shoots out
@@ -1462,7 +1767,7 @@ namespace WordDrop
             int cap = vault != null ? vault.RewardCoins : int.MaxValue;
             _displayedReward = Mathf.Min(_displayedReward + share, cap);
             RefreshObjectiveBadgeNumber();
-            if (_objectiveIconGO != null) { BringTargetChainToFront(); UIAnimations.WildCardPop(_objectiveIconGO.transform, Vector3.one); }
+            if (_objectiveIconGO != null) { BringTargetChainToFront(); if (_objectiveIconHolder != null) PopObjectiveIconHolder(); } // pop the whole holder (icon + badge) as one rigid group so the count stays pinned in its corner. 2026-07-10
             if (_objectiveIconHolder != null && _objectiveIconHolder.transform is RectTransform hrt)
                 SpawnSlotSparkleBurst(hrt, Vector2.zero);
             GameAudio.Instance?.PlayCoinLand(); // pitch-ramp + round-robin Coins2/3/4 + throttle
@@ -1478,6 +1783,24 @@ namespace WordDrop
         /// <summary>Generic "tile flies up to a HUD target" flight — wild pop + glow + sparkle trail, curved
         /// ease-in flight, dissolves at the HUD, then onArrive() does the landing (reveal/pop/collect).
         /// Shared by the HiddenWord letters and the HeroWord escorts. 2026-06-17 Spencer.</summary>
+        // ── Fly-up landing tunables (2026-07-29) ────────────────────────────────
+        /// <summary>End scale of a flying tile as a fraction of its base size. Was a hardcoded
+        /// 0.5, which left it half-size when it vanished. Near-zero reads as "sucked in".</summary>
+        private const float FLY_END_SCALE  = 0.50f;
+        /// <summary>Exponent on the approach fade. 1.0 = the old linear dissolve (visibly gone
+        /// far too early); lower holds opacity longer and drops it sharply at the end.</summary>
+        private const float FLY_FADE_CURVE = 0.55f;
+        /// <summary>Height of the terminal "land" window as a fraction of screen height.
+        /// The tile flies at full opacity until this close to the target, then collapses and
+        /// fades INSIDE this window so it reads as vanishing ON the icon.
+        /// Was 0.14 — a third of a phone screen spent dissolving, hence "gone before it lands".
+        /// Careful going much below 0.05: a world sprite cannot draw over the Overlay HUD, so
+        /// if it's still visible when it reaches the HUD panel it will clip against it.</summary>
+        private const float FLY_FADE_MARGIN = 0.055f;
+        /// <summary>Extra scale multiplier applied across the landing window — the "suck in".
+        /// Final size at the target = FLY_END_SCALE * FLY_SUCK_SCALE.</summary>
+        private const float FLY_SUCK_SCALE  = 0.16f;
+
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
             Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200)
         {
@@ -1500,7 +1823,7 @@ namespace WordDrop
             glowSR.sprite = GetGlowSprite();
             glowSR.color = new Color(glowColor.r, glowColor.g, glowColor.b, 0.75f);
             glowSR.sortingOrder = sortBase + 1;
-            glowSR.transform.localScale = Vector3.one * 3.3f;
+            glowSR.transform.localScale = Vector3.one * 2.9f; // 2026-07-27: toned the fly-up glow down a bit (was 3.3)
 
             var trail = go.AddComponent<TrailRenderer>();
             trail.time = 0.35f;
@@ -1567,15 +1890,27 @@ namespace WordDrop
                 float u = 1f - e;
                 Vector3 pos = (u * u) * from + (2f * u * e) * control + (e * e) * targetWorld;
                 go.transform.position = pos;
-                go.transform.localScale = Vector3.one * Mathf.Lerp(baseScale, baseScale * 0.5f, e);
-
-                // Dissolve + kill the trail before it reaches the overlay HUD (world can't render over it).
-                float marginPx = 0.14f * Screen.height;
+                // How close are we to the target? Needed BEFORE scale, because the landing
+                // collapse is driven off the same window as the fade — they have to happen
+                // together or the tile shrinks somewhere other than where it vanishes.
+                float marginPx = FLY_FADE_MARGIN * Screen.height;
                 float distBelowTargetPx = targetScreen.y - cam.WorldToScreenPoint(pos).y;
                 bool nearHud = distBelowTargetPx < marginPx;
+                // 1 at the edge of the landing window → 0 exactly on the target
+                float land = nearHud ? Mathf.Clamp01(distBelowTargetPx / marginPx) : 1f;
+
+                // Normal flight scale, then the terminal "suck in" collapse across the
+                // landing window only. Previously the shrink was spread over the ENTIRE
+                // flight, so the tile was already tiny long before it arrived.
+                float flightScale = Mathf.Lerp(baseScale, baseScale * FLY_END_SCALE, e);
+                go.transform.localScale = Vector3.one * flightScale * Mathf.Lerp(FLY_SUCK_SCALE, 1f, land);
+
                 if (nearHud)
                 {
-                    float fade = Mathf.Clamp01(distBelowTargetPx / marginPx);
+                    // pow<1 holds it near-opaque across most of the (now short) landing
+                    // window and drops off sharply right at the end, so the disappearance
+                    // happens ON the icon rather than on the way to it.
+                    float fade = Mathf.Pow(land, FLY_FADE_CURVE);
                     var cc = sr.color; sr.color = new Color(cc.r, cc.g, cc.b, fade);
                     if (tmp != null) tmp.color = new Color(1f, 1f, 1f, fade);
                     if (glowSR != null) { var gc = glowSR.color; glowSR.color = new Color(gc.r, gc.g, gc.b, 0.55f * fade); }
@@ -2515,7 +2850,10 @@ namespace WordDrop
             // Vault levels show the COIN (reward) in the HUD Target panel — the intro modal keeps the
             // treasure chest. 2026-06-18 Spencer.
             _objectiveIconGO = obj.Icon == Objective.HudIcon.Vault
-                ? ObjectiveIconBuilder.BuildRewardCoinIcon(_objectiveIconHolder.transform, 32f)
+                // 2026-07-30: coin sized to match the level-map HUD pill (50) instead of the
+                // generic 32 the other objective icons use — it was noticeably smaller than the
+                // same coin elsewhere.
+                ? ObjectiveIconBuilder.BuildRewardCoinIcon(_objectiveIconHolder.transform, UIConfig.CoinRewardSize)
                 : ObjectiveIconBuilder.Build(obj.Icon, _objectiveIconHolder.transform, 32f, 0, obj.IconWord);
             if (_objectiveBadge != null)
             {
@@ -2589,7 +2927,7 @@ namespace WordDrop
         public void FlashObjectiveComplete()
         {
             if (_objectiveIconHolder != null && _objectiveIconHolder.activeInHierarchy)
-                UIAnimations.WildCardPop(_objectiveIconHolder.transform, Vector3.one);
+                PopObjectiveIconHolder();
             if (_objectiveBadgeText != null) _objectiveBadgeText.gameObject.SetActive(false);
             ShowObjectiveCheck();
             PlayObjectiveCelebration();

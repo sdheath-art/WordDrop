@@ -35,6 +35,7 @@ namespace WordDrop
             public bool IsGold { get; set; } = false; // gold primed word — worth 3x on detonation
             public float CreatedAtTime { get; set; } // wall-clock time when primed (for idle expiry)
             public float MaxAgeSeconds { get; set; } = 30f; // how long this prime lives (longer words get more time)
+            public bool  PrimedByEdit { get; set; } = false; // true if a swap/EDIT formed this word (not a drop). Lets swap-only objectives count "edit to prime, drop to trigger". 2026-07-10 Spencer.
 
             public override string ToString()
                 => $"PrimedWord[id={Id} word={Word} owner={OwnerPlayer} " +
@@ -109,7 +110,11 @@ namespace WordDrop
                 IsGold        = isGold,
                 CreatedAtTime = Time.time,
                 MaxAgeSeconds = maxAge,
+                // Captured at prime time: was this word formed by a swap/EDIT (vs a drop)? Drives the
+                // "edit-primed words count even if a drop triggers the pop" rule on swap-only levels. 2026-07-10.
+                PrimedByEdit  = RulesEngine.LastResolutionWasSwap,
             };
+            Debug.Log($"[PrimeDiag] +id{id} '{record.Word}' primedByEdit={record.PrimedByEdit} (lastResWasSwap={RulesEngine.LastResolutionWasSwap})");
 
             _primedWords.Add(record);
 

@@ -29,7 +29,7 @@ namespace WordDrop
             get
             {
                 int side = 2 * Level + 1;
-                return $"Tap a tile — explode the {side}×{side} around it.";
+                return $"Tap a tile — pop the {side}×{side} around it.";
             }
         }
         public override bool   NeedsTarget      => true;

@@ -474,8 +474,8 @@ namespace WordDrop
         /// (it's not destroyed), so this is a celebratory shatter, not the detonation burst. 2026-06-12.</summary>
         public void PlayDefrost(Vector3 worldPos)
         {
-            EmitAt(_shimmerSystem, worldPos, 10); // cold sparkle scatter
-            EmitAt(_sparkleSystem, worldPos, 6);  // a few stars for the "crack"
+            EmitAt(_shimmerSystem, worldPos, 26); // cold sparkle scatter (bumped up for a visible burst)
+            EmitAt(_sparkleSystem, worldPos, 16); // stars for the "crack"
         }
 
         /// <summary>

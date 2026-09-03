@@ -18,6 +18,9 @@ namespace WordDrop
     {
         public static DropPreview Instance { get; private set; }
 
+        // Tutorial spotlight lifts the ghost above the dim scrim so the "green letter" preview shows. 2026-07-08.
+        public static int OrderBoost = 0;
+
         // ── Preview state ───────────────────────────────────────────────────────
         private char _previewLetter = '\0';
         private int  _previewCol = -1;
@@ -202,7 +205,7 @@ namespace WordDrop
             {
                 _ghostTile = new GameObject("PreviewGhost");
                 _ghostSR = _ghostTile.AddComponent<SpriteRenderer>();
-                _ghostSR.sortingOrder = 4; // behind real tiles (5)
+                _ghostSR.sortingOrder = 4 + OrderBoost; // behind real tiles (5); boosted above the scrim in tutorial
             }
 
             _ghostTile.transform.position = pos;
@@ -247,7 +250,7 @@ namespace WordDrop
                 letterGO.transform.SetParent(_ghostTile.transform, false);
                 _ghostLetterTMP = letterGO.AddComponent<TMPro.TextMeshPro>();
                 _ghostLetterTMP.alignment = TMPro.TextAlignmentOptions.Midline; // match board/hand centering
-                _ghostLetterTMP.sortingOrder = 6;
+                _ghostLetterTMP.sortingOrder = 6 + OrderBoost;
                 _ghostLetterTMP.enableAutoSizing = false;
 
                 var font = GameFont.GetTMP();

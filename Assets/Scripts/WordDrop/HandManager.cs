@@ -98,6 +98,9 @@ namespace WordDrop
         private static readonly Color CARD_BORDER_SWAP    = new Color(0.85f, 0.60f, 0.10f, 1f);
         private static readonly Color CARD_BORDER_SWAP_SEL= new Color(1.00f, 0.80f, 0.20f, 1f);
         private static readonly Color CARD_TEXT_SWAP      = new Color(0.75f, 0.45f, 0.05f, 1f);
+        // Bright cyan for the SELECTED swap card — matches the board tile's bloomed edit-glow appearance so the
+        // two tiles being swapped read as the same cyan selection. 2026-07-10 Spencer.
+        private static readonly Color SWAP_SELECTED_CYAN  = new Color(0.55f, 1.00f, 1.08f, 1f);
 
         // ── Singleton ─────────────────────────────────────────────────────────────
 
@@ -127,6 +130,12 @@ namespace WordDrop
         private TMPro.TextMeshPro[] _cardTexts    = new TMPro.TextMeshPro[PlayerHand.MAX_HAND_SIZE];
         private TMPro.TextMeshPro[] _cardPtsTexts = new TMPro.TextMeshPro[PlayerHand.MAX_HAND_SIZE];
         private SpriteRenderer[]   _cardShadows  = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
+        // Additive HDR cyan bloom overlay for the SELECTED swap card — the SAME mechanism the board tile's edit
+        // glow uses (WordDrop/AdditiveSprite + HDR _Color), so a swapped hand card glows with the identical cyan
+        // halo as the board tile it's exchanging with. 2026-07-10 Spencer.
+        private SpriteRenderer[]    _cardCyanGlowSRs = new SpriteRenderer[PlayerHand.MAX_HAND_SIZE];
+        private static Material               s_cardBloomMat;
+        private static MaterialPropertyBlock  s_cardBloomMPB;
 
         private Sprite           _spriteNormal;
         // 2026-06-04 Spencer: baked glassy tile + separate baked drop shadow for the
@@ -188,8 +197,10 @@ namespace WordDrop
         private GameObject       _nextTilePreview;
         private SpriteRenderer   _nextTileSR;
         private TMPro.TextMeshPro _nextTileLetter;
+        private bool             _suppressNextPreview; // blanks the NEXT preview between an early visual deal and turn-resolve
         private TMPro.TextMeshPro _nextTileLabel;
         private GameObject       _nextTileSocket;
+        private GameObject       _nextDivider;     // thin line between hand + NEXT — slides with the holder on entry
         private GameObject       _controlTray;
 
         public bool IsInteractable { get; set; } = false;
@@ -423,19 +434,18 @@ namespace WordDrop
 
             RefreshAllCardVisuals();
 
-            // Snap cards to their final position but at scale 0 first — the
-            // staggered coroutine below pops each one in with a high-overshoot
-            // OutBack so the rack assembles itself with a cartoony punch and
-            // settle. Same pattern as the bag-deal single-tile pop, just with
-            // more overshoot and a per-card delay.
+            // Snap cards to their final position AND full rest scale. (The old staggered deal-pop grew them from
+            // scale 0; it was removed 2026-07-13, so they must land at rest scale here — otherwise they stay at
+            // scale 0 and the tile holder looks EMPTY. The level-entry slide-in provides the motion now.)
             float baseY = GetCardRowY();
+            Vector3 cardRestScale = GetCardBaseScale();
             for (int i = 0; i < HAND_SIZE; i++)
             {
                 if (_cardObjects[i] == null) continue;
                 _cardObjects[i].SetActive(true);
                 _cardObjects[i].transform.DOKill();
                 _cardObjects[i].transform.position = new Vector3(GetCardX(i), baseY, -1f);
-                _cardObjects[i].transform.localScale = Vector3.zero;
+                _cardObjects[i].transform.localScale = cardRestScale;
                 if (_cardShadows[i] != null)
                 {
                     _cardShadows[i].color = new Color(0f, 0f, 0f, 0.15f);
@@ -450,7 +460,9 @@ namespace WordDrop
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(false);
 
-            StartCoroutine(StaggeredHandPopIn());
+            // Deal-pop removed 2026-07-13 (Spencer): the level-entry slide-in now animates the whole tile holder
+            // in from the right, so the per-card deal pop was redundant (and hidden under the entry). Cards just
+            // appear at rest; AnimateHandSlideIn provides the motion.
         }
 
         // Hand cards now run the canonical NewTilePop at speedMult=1.0 so
@@ -581,6 +593,117 @@ namespace WordDrop
         /// OutBack overshoot so the tiles pop back into place. No-op if
         /// AnimateHandTilesOut never ran.
         /// </summary>
+        /// <summary>Level-entry: collapse the hand tiles instantly, then spring them back to rest with the same
+        /// OutBack overshoot the settings-close uses — the bottom "pops in" on level start. 2026-07-13.</summary>
+        public void PlayEntrySpring()
+        {
+            if (!_handRestCached) return;
+            _handTilesTween?.Kill();
+            _handTilesT = 0f;
+            ApplyHandTilesGroupTransform(0f); // start collapsed (off), same frame it springs out
+            AnimateHandTilesIn();
+        }
+
+        private readonly System.Collections.Generic.List<Transform> _handSlideTfs   = new System.Collections.Generic.List<Transform>();
+        private readonly System.Collections.Generic.List<Vector3>   _handSlideRests = new System.Collections.Generic.List<Vector3>();
+
+        private float _handSlideParkedOffX;
+        private bool _handSlidePrepped; // true between PrepHandEntry (park) and AnimateHandSlideIn completion
+
+        /// <summary>Snapshot the tile-holder REST positions (while at rest) + park the whole holder off-screen
+        /// right, so the level can start blank behind the fading map. AnimateHandSlideIn then slides from here —
+        /// it must NOT re-snapshot, or it would capture the parked position as "rest". Called before the map fade.
+        /// 2026-07-13 Spencer.</summary>
+        public void PrepHandEntry()
+        {
+            if (_handSlidePrepped) return; // already snapshotted + parked — don't re-snapshot the parked pos as "rest"
+            _handSlidePrepped = true;
+            _handSlideTfs.Clear(); _handSlideRests.Clear();
+            void Add(Transform tr) { if (tr != null) { _handSlideTfs.Add(tr); _handSlideRests.Add(tr.position); } }
+            if (_controlTray != null) Add(_controlTray.transform);
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] != null) Add(_cardObjects[i].transform);
+                if (_cardShadows[i] != null) Add(_cardShadows[i].transform);
+            }
+            if (_nextTileSocket != null)  Add(_nextTileSocket.transform);
+            if (_nextTilePreview != null) Add(_nextTilePreview.transform);
+            if (_nextDivider != null)     Add(_nextDivider.transform);   // the thin divider line
+            if (_nextTileLabel != null)   Add(_nextTileLabel.transform);  // the "NEXT" text
+            if (_handSlideTfs.Count == 0) { _handSlideParkedOffX = 0f; return; }
+
+            float offX = 12f;
+            var cam = Camera.main;
+            // 2.6 half-widths clears the FULL tile holder off the right edge (at 1.35 it was still peeking in). 2026-07-13.
+            if (cam != null) offX = cam.orthographicSize * cam.aspect * 2.6f;
+            _handSlideParkedOffX = offX;
+            DOTween.Kill("handSlide");
+            ApplyHandSlideOffset(offX); // park off-screen right
+        }
+
+        /// <summary>Level-entry: the whole tile holder (tray background, cards + shadows, NEXT socket/preview/divider/
+        /// label) SHOOTS IN from the right and settles — the SAME motion as the board (Beat 2). Slides from wherever
+        /// PrepHandEntry parked it; preps itself if called standalone. 2026-07-13 Spencer.</summary>
+        public void AnimateHandSlideIn()
+        {
+            if (_handSlideTfs.Count == 0) PrepHandEntry(); // standalone / non-map: snapshot + park now
+            if (_handSlideTfs.Count == 0) return;
+            float offX = _handSlideParkedOffX;
+            DOTween.Kill("handSlide");
+            ApplyHandSlideOffset(offX);
+            DOTween.To(() => offX, ApplyHandSlideOffset, 0f, 0.52f)
+                .SetEase(Ease.OutBack, 1.3f).SetId("handSlide")
+                .OnComplete(() => { ApplyHandSlideOffset(0f); _handSlidePrepped = false; });
+        }
+
+        private void ApplyHandSlideOffset(float dx)
+        {
+            for (int i = 0; i < _handSlideTfs.Count; i++)
+                if (_handSlideTfs[i] != null)
+                    _handSlideTfs[i].position = _handSlideRests[i] + new Vector3(dx, 0f, 0f);
+        }
+
+        /// <summary>Level-entry UNIFIED slide: t=1 → parked off the right edge, t=0 → rest, t&lt;0 → overshoot left.
+        /// Driven by the SAME shared tween as the board + SWAPS so the whole thing moves as one. 2026-07-13 Spencer.</summary>
+        public void SetEntrySlideNorm(float t)
+        {
+            if (_handSlideTfs.Count == 0) PrepHandEntry(); // standalone: snapshot + park first
+            ApplyHandSlideOffset(t * _handSlideParkedOffX); // _handSlideParkedOffX is the park distance
+        }
+
+        /// <summary>Snap the tile holder to exact rest + clear the prep guard. Called from the shared slide's OnComplete.</summary>
+        public void EndEntrySlide()
+        {
+            ApplyHandSlideOffset(0f);
+            _handSlidePrepped = false;
+        }
+
+        /// <summary>Level-EXIT prep: re-snapshot the CURRENT tile holder at rest WITHOUT parking, so the shared slide
+        /// can drive it OUT to the right (norm 0→1) — the mirror of the entry. Re-snapshots because the cards changed
+        /// during play. 2026-07-14 Spencer.</summary>
+        public void PrepHandExit()
+        {
+            DOTween.Kill("handSlide");
+            // Leave _handSlidePrepped FALSE — the next level's PrepHandEntry must run fully to re-snapshot the new
+            // cards. SetEntrySlideNorm won't re-prep during the exit because the list below is non-empty.
+            _handSlideTfs.Clear(); _handSlideRests.Clear();
+            void Add(Transform tr) { if (tr != null) { _handSlideTfs.Add(tr); _handSlideRests.Add(tr.position); } }
+            if (_controlTray != null) Add(_controlTray.transform);
+            for (int i = 0; i < HAND_SIZE; i++)
+            {
+                if (_cardObjects[i] != null) Add(_cardObjects[i].transform);
+                if (_cardShadows[i] != null) Add(_cardShadows[i].transform);
+            }
+            if (_nextTileSocket != null)  Add(_nextTileSocket.transform);
+            if (_nextTilePreview != null) Add(_nextTilePreview.transform);
+            if (_nextDivider != null)     Add(_nextDivider.transform);
+            if (_nextTileLabel != null)   Add(_nextTileLabel.transform);
+            _handSlideParkedOffX = 12f;
+            var cam = Camera.main;
+            if (cam != null) _handSlideParkedOffX = cam.orthographicSize * cam.aspect * 2.6f;
+            // NOTE: no ApplyHandSlideOffset here — the holder stays at rest until the exit tween slides it out.
+        }
+
         public void AnimateHandTilesIn(float speedMult = 1f)
         {
             if (!_handRestCached) return;
@@ -700,7 +823,65 @@ namespace WordDrop
             }
         }
 
+        // ── Tutorial spotlight: raise the whole hand HOLDER (rack panel + cards + NEXT) above the dim scrim so
+        //    it reads bright — but leave the bag button dimmed (not part of the beat). 2026-07-08 Spencer.
+        private readonly System.Collections.Generic.Dictionary<Renderer, int> _handSpotlightSaved
+            = new System.Collections.Generic.Dictionary<Renderer, int>();
+        public void SetHandSpotlight(bool on)
+        {
+            if (on)
+            {
+                SetHandSpotlight(false); // clear any prior bump first
+                var bagSet = new System.Collections.Generic.HashSet<Renderer>();
+                if (_tileBagButton != null)
+                    foreach (var br in _tileBagButton.GetComponentsInChildren<Renderer>(true)) bagSet.Add(br);
+                foreach (var r in GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r == null || bagSet.Contains(r)) continue; // bag stays under the dim
+                    _handSpotlightSaved[r] = r.sortingOrder;
+                    r.sortingOrder += 30; // above the scrim (15)
+                }
+            }
+            else
+            {
+                foreach (var kv in _handSpotlightSaved) if (kv.Key != null) kv.Key.sortingOrder = kv.Value;
+                _handSpotlightSaved.Clear();
+            }
+        }
+
         /// <summary>Get world X position of a hand card (for tutorial arrow).</summary>
+        public float CardSize => _cardSize; // world-space card size, for the tutorial "dim unused cards" overlay
+        public bool HasNextTile => _nextTilePreview != null;
+        public Vector3 NextTileWorldPos => _nextTilePreview != null ? _nextTilePreview.transform.position : new Vector3(99999f, 99999f, 0f);
+
+        // Tutorial: dim the WHOLE NEXT unit uniformly (socket + tile + label) by pushing it below the scrim, so it
+        // reads as a properly-dimmed element instead of a bright tile on a dimmed socket. 2026-07-08 Spencer.
+        private readonly System.Collections.Generic.Dictionary<Renderer, int> _nextDimSaved
+            = new System.Collections.Generic.Dictionary<Renderer, int>();
+        public void SetNextTileDimmed(bool dim)
+        {
+            if (dim)
+            {
+                SetNextTileDimmed(false); // clear any prior bump first
+                BumpNextTree(_nextTileSocket);
+                BumpNextTree(_nextTilePreview);
+            }
+            else
+            {
+                foreach (var kv in _nextDimSaved) if (kv.Key != null) kv.Key.sortingOrder = kv.Value;
+                _nextDimSaved.Clear();
+            }
+        }
+        private void BumpNextTree(GameObject root)
+        {
+            if (root == null) return;
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r == null || _nextDimSaved.ContainsKey(r)) continue;
+                _nextDimSaved[r] = r.sortingOrder;
+                r.sortingOrder -= 8; // below the tutorial scrim (9) — whole unit dims together
+            }
+        }
         public float GetCardWorldX(int index) => GetCardX(index);
 
         /// <summary>Get world Y position of the hand card row (for tutorial arrow).</summary>
@@ -738,6 +919,13 @@ namespace WordDrop
         private float _intentSlopPx = 14f;
         private const float DROP_LOCK_RATIO = 1.1f;
         private const float REORDER_LOCK_RATIO = 1.25f;
+
+        // Hand reordering is HARD-LOCKED on gated tutorial levels (e.g. L5 EDIT). CurrentLevelIsGated is timing-
+        // independent — it covers the WHOLE level, including the entry-anim window BEFORE the coaching dim fires,
+        // which BlockShuffleAndSwap (only set once the gate starts) does not. Gating the reorder ENTRY points here
+        // means the rack can never even lock into reorder mode, so nothing shuffles visually either. 2026-07-13.
+        private static bool HandReorderLocked =>
+            TutorialManager.BlockShuffleAndSwap || TutorialManager.EditGateActive || TutorialManager.CurrentLevelIsGated;
 
         // ── Legacy drag compat ──
         private int  _dragIndex = -1;
@@ -970,10 +1158,17 @@ namespace WordDrop
             // visually dim, but the input gate is what actually disables it.
             bool aimModeActive = BoosterManager.Instance != null
                                  && BoosterManager.Instance.AimMode;
+            // 2026-07-29: gated tutorial levels. Between scripted steps nothing is armed, and
+            // the coroutines below re-enable IsInteractable when a drop finishes resolving —
+            // so relying on the tutorial's SetInteractable(false) alone left a window where a
+            // stray drop could go in and desync the script. Same reasoning as levelLocked:
+            // this must be checked independently of IsInteractable.
+            bool tutorialGateClosed = TutorialManager.GateClosed;
             if (!IsInteractable ||
                 levelLocked ||
                 overlayPaused ||
                 aimModeActive ||
+                tutorialGateClosed ||
                 (MatchController.Instance != null && MatchController.Instance.IsProcessing))
             {
                 if (DropPreview.Instance != null)
@@ -1017,8 +1212,30 @@ namespace WordDrop
                         {
                             // Check if tapped any board tile → Board Swap (any two regular tiles)
                             Vector2Int boardTap = _grid.WorldToCell(worldPos);
+                            // EDIT-gated tutorial: lock the board-swap to the script.
+                            //  • Gated STAMP step (AllowedEditCol>=0, no swap target): board-swap is
+                            //    FORBIDDEN — the player must stamp the scripted letter, not swap the
+                            //    target tile with a neighbour (Spencer 2026-07-09: was able to swap an
+                            //    N during the HAND step because AllowedSwapCol<0 read as "unrestricted").
+                            //  • Gated SWAP step (AllowedSwapCol>=0): allow ONLY the scripted 2nd tile.
+                            //  • Outside the tutorial (AllowedEditCol<0): swaps are unrestricted.
+                            bool gatedEdit  = TutorialManager.AllowedEditCol >= 0;
+                            bool swapGateOk = gatedEdit
+                                ? (TutorialManager.AllowedSwapCol >= 0
+                                   && boardTap.x == TutorialManager.AllowedSwapCol
+                                   && boardTap.y == TutorialManager.AllowedSwapRow)
+                                : true;
+                            // Teal glow + button-push on the swap TARGET the instant it's tapped — the source tile
+                            // already glowed when it was selected; now the 2nd tile matches. Persistent (not a
+                            // quick flash) so BOTH tiles keep the magical teal glow through the exchange wobble,
+                            // then fade to white at the end (FadeEditGlowOut in BoardSwapTurnSequence). If the swap
+                            // is invalid, CancelRewriteMode's normal cleanup handles it. 2026-07-10 Spencer.
+                            if (boardTap.x >= 0 && boardTap.y >= 0 && swapGateOk
+                                && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow))
+                                _grid.GetTile(boardTap.x, boardTap.y)?.SetEditSelected(true);
                             if (boardTap.x >= 0 && boardTap.y >= 0
                                 && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow)
+                                && swapGateOk
                                 && TryBoardSwap(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y))
                             {
                                 // Swap succeeded — rewrite mode exits inside TryBoardSwap
@@ -1109,7 +1326,12 @@ namespace WordDrop
 
                         if (totalMove > _intentSlopPx)
                         {
-                            if (dy > dx * DROP_LOCK_RATIO)
+                            // During the tutorial the hand is rigged + gated to one card, so a drag must ALWAYS
+                            // pick up toward the board — NEVER reorder. A diagonal drag to a side column was
+                            // hitting the reorder branch, which read as "the card won't select". 2026-07-08 Spencer.
+                            bool tutorialForcePickup = TutorialManager.AllowedColumn >= 0
+                                || TutorialManager.AllowedCardIndex >= 0 || TutorialManager.EditGateActive;
+                            if (dy > dx * DROP_LOCK_RATIO || tutorialForcePickup)
                             {
                                 // Lock into CARRY TO BOARD
                                 _inputMode = InputMode.CarryToBoard;
@@ -1156,9 +1378,9 @@ namespace WordDrop
 //                                 Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
                             }
                             else if (dx > dy * REORDER_LOCK_RATIO
-                                     && !TutorialManager.BlockShuffleAndSwap)
+                                     && !HandReorderLocked)
                             {
-                                // Lock into REORDERING (blocked during tutorial)
+                                // Lock into REORDERING (blocked on gated tutorial levels)
                                 _inputMode = InputMode.Reordering;
                                 _dragIndex = _touchCardIndex;
                                 _isDragging = true;
@@ -1212,7 +1434,7 @@ namespace WordDrop
                         float cardRowY = GetCardRowY();
                         float reorderZone = _cardSize * 2.0f; // within 2 card-heights of hand
                         if (worldPos.y < cardRowY + reorderZone && _touchCardIndex >= 0
-                            && !TutorialManager.BlockShuffleAndSwap)
+                            && !HandReorderLocked)
                         {
                             float cardSpacing = (HAND_SIZE > 1) ? GetCardX(1) - GetCardX(0) : _cardSize * 1.2f;
                             for (int i = 0; i < HAND_SIZE; i++)
@@ -1268,16 +1490,12 @@ namespace WordDrop
                         int dropCol = _grid.WorldXToColumn(worldPos.x);
                         bool overBoard = worldPos.y >= _grid.GridBottom - _grid.CellSize * 0.5f;
 
-                        // Tutorial forgiveness: the taught move must be trivially easy. On an
-                        // (often empty) tutorial board, a single-column release-gate is finicky —
-                        // a near-miss snaps back and reads as "it won't drop". So redirect ANY
-                        // release over the board with the allowed card into the gated column.
-                        if (TutorialManager.AllowedColumn >= 0 && overBoard
-                            && (TutorialManager.AllowedCardIndex < 0
-                                || _touchCardIndex == TutorialManager.AllowedCardIndex))
-                        {
-                            dropCol = TutorialManager.AllowedColumn;
-                        }
+                        // 2026-07-08 Spencer: REMOVED the old "tutorial forgiveness" that redirected any board
+                        // release into the gated column. It hid the single most important lesson — that WHICH
+                        // COLUMN you drop into is what makes the word. Now a wrong-column release snaps back
+                        // (else branch below) while the pointing hand + marching-ants keep showing the correct
+                        // column, so the player actually learns to aim. The taught column is a full 1/6 of the
+                        // board, so hitting it is not finicky — dropCol stays wherever the player released.
 
                         // Tutorial restrictions on drag-to-drop
                         bool tutColOk  = TutorialManager.AllowedColumn < 0    || dropCol == TutorialManager.AllowedColumn;
@@ -1779,6 +1997,15 @@ namespace WordDrop
             if (cell.IsFrozen)
                 return;
 
+            // Special NON-LETTER tiles can't be edited — editing them would break their mechanic (or hand you a
+            // free letter). Treasure chests / anchored rocks are IsAnchored (the chest's IsStone lives on the tile
+            // visual, not the cell, so the cell.IsStone check above misses them); escort chickens are IsDropTarget.
+            // 2026-07-10 Spencer.
+            if (cell.IsAnchored || cell.IsDropTarget)
+                return;
+            if (existingTile != null && existingTile.IsVault) // belt-and-suspenders: any tile drawn as a chest
+                return;
+
             var primed = RulesEngine.Instance.PrimedRegistry
                 .GetPrimedWordsContaining(new Vector2Int(col, row));
             if (primed != null && primed.Count > 0)
@@ -1843,6 +2070,10 @@ namespace WordDrop
         /// Board Swap: swap any two regular tiles on the board (no adjacency required,
         /// no word requirement). Costs 1 edit charge. Cannot swap primed, gold, or stone tiles.
         /// </summary>
+        // Fired when a board-to-board tile SWAP completes. The EDIT-gated tutorial advances on this, since a
+        // board-swap doesn't fire MatchController.OnRewriteUsed the way a hand-STAMP does. 2026-07-07 Spencer.
+        public static event System.Action OnBoardSwapDone;
+
         private bool TryBoardSwap(int col1, int row1, int col2, int row2)
         {
             var rules = RulesEngine.Instance;
@@ -1923,7 +2154,7 @@ namespace WordDrop
                 new Vector2Int(col1, row1), new Vector2Int(col2, row2)
             });
 
-            CancelRewriteMode();
+            CancelRewriteMode(keepGlow: true); // keep the source's teal glow alive through the swap; faded out at the end
 
 //             Debug.Log($"[HandManager] Board swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}'");
 
@@ -1935,6 +2166,7 @@ namespace WordDrop
 
             // Use BoardSwapTurnSequence which animates both tiles then runs full resolution
             StartCoroutine(BoardSwapTurnSequence(col1, row1, letter2, col2, row2, letter1));
+            OnBoardSwapDone?.Invoke();   // EDIT-gated tutorial advances the step on this (board-swap fires no OnRewriteUsed)
             return true;
         }
 
@@ -1971,6 +2203,12 @@ namespace WordDrop
 
             GameAudio.Instance?.PlayShuffle();
 
+            // Hold both tiles at a steady bright teal through the shake+exchange (kills the selection breathe so the
+            // dramatic wobble reads as "charged"). Re-asserted after SetLetter below, faded right after the squish
+            // — BEFORE the pop — so the teal never lingers through the detonation. 2026-07-10 Spencer.
+            if (tile1 != null) tile1.HoldEditGlow();
+            if (tile2 != null) tile2.HoldEditGlow();
+
             // Phase 1: shake both
             while (elapsed < shakeDur)
             {
@@ -1990,9 +2228,10 @@ namespace WordDrop
                 yield return null;
             }
 
-            // Phase 2: swap letters
-            if (tile1 != null) { tile1.SetLetter(newLetter1); tile1.transform.position = restPos1; tile1.transform.localRotation = Quaternion.identity; }
-            if (tile2 != null) { tile2.SetLetter(newLetter2); tile2.transform.position = restPos2; tile2.transform.localRotation = Quaternion.identity; }
+            // Phase 2: swap letters — SetLetter resets the face tint to white, so re-assert the teal hold on each
+            // tile so the newly-swapped letter stays cyan through the exchange too. 2026-07-10 Spencer.
+            if (tile1 != null) { tile1.SetLetter(newLetter1); tile1.transform.position = restPos1; tile1.transform.localRotation = Quaternion.identity; tile1.HoldEditGlow(); }
+            if (tile2 != null) { tile2.SetLetter(newLetter2); tile2.transform.position = restPos2; tile2.transform.localRotation = Quaternion.identity; tile2.HoldEditGlow(); }
 
             // Phase 3: squish
             if (tile1 != null) tile1.PlayLandingSquish();
@@ -2123,6 +2362,12 @@ namespace WordDrop
                 if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
                     SurvivalManager.Instance.CheckStageClear();
 
+                // Teal dies out NOW — right after the exchange/prime, BEFORE the 0.3s wait and the detonation —
+                // so primed tiles hand straight to magenta and un-worded swapped tiles fade to white at the SAME
+                // time, instead of one tile sitting cyan through the whole pop animation. 2026-07-10 Spencer.
+                grid.GetTile(col1, row1)?.FadeEditGlowOut();
+                grid.GetTile(col2, row2)?.FadeEditGlowOut();
+
                 yield return WaitCache.Get(0.3f);
 
                 // Check for detonation triggers
@@ -2166,6 +2411,14 @@ namespace WordDrop
                     if (GameManager.IsLevelMode)
                         LevelController.Instance?.NotifyScore(swapBaseScore);
                 }
+
+                // A board-swap is an EDIT (it costs a charge). On edit-counting levels (L6/L8) it must
+                // tick the move counter too — but board-swaps bypass CompleteDropBookkeeping, so do it
+                // here. Fires once per swap regardless of whether a word formed. 2026-07-09 Spencer.
+                Debug.Log($"[BoardSwapMove] board swap resolved. survival={SurvivalManager.IsSurvivalMode}, editsCountAsMoves={(SurvivalManager.Instance != null ? SurvivalManager.Instance.EditsCountAsMoves.ToString() : "null")} → {((SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && SurvivalManager.Instance.EditsCountAsMoves) ? "COUNTING" : "not counted")}.");
+                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                    && SurvivalManager.Instance.EditsCountAsMoves)
+                    SurvivalManager.Instance.NotifyDropCommitted();
 
                 // If detonation triggered, run full step resolution
                 if (triggeredPrimed)
@@ -2290,6 +2543,14 @@ namespace WordDrop
                 if (grid != null) grid.SyncToRulesState(rules);
             }
 
+            // No-word swaps fade their teal HERE — right after the instant exchange (no pop happened). Word-forming
+            // swaps already faded above, before the detonation, so skip them here. 2026-07-10 Spencer.
+            if (grid != null && allNew.Count == 0)
+            {
+                grid.GetTile(col1, row1)?.FadeEditGlowOut();
+                grid.GetTile(col2, row2)?.FadeEditGlowOut();
+            }
+
             IsInteractable = true;
             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
         }
@@ -2306,12 +2567,20 @@ namespace WordDrop
             if (cell1 == null || cell2 == null) return false;
             if (cell1.IsStone || cell2.IsStone) return false;
             if (cell1.IsWild || cell2.IsWild) return false;
+            // Special non-letter tiles can't be swapped either — treasure chests / anchored rocks (IsAnchored),
+            // escort chickens (IsDropTarget), and frozen/ice tiles are all locked. Mirrors TryEnterRewriteMode.
+            // 2026-07-10 Spencer.
+            if (cell1.IsAnchored || cell2.IsAnchored) return false;
+            if (cell1.IsDropTarget || cell2.IsDropTarget) return false;
+            if (cell1.IsFrozen || cell2.IsFrozen) return false;
 
             // Gold tiles can't be swapped
             Tile t1Check = _grid.GetTile(col1, row1);
             Tile t2Check = _grid.GetTile(col2, row2);
             if (t1Check != null && t1Check.IsGoldBonus) return false;
             if (t2Check != null && t2Check.IsGoldBonus) return false;
+            if (t1Check != null && t1Check.IsVault) return false;
+            if (t2Check != null && t2Check.IsVault) return false;
 
             var reg = rules.PrimedRegistry;
             if (reg != null)
@@ -2683,12 +2952,14 @@ namespace WordDrop
             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
         }
 
-        private void CancelRewriteMode()
+        private void CancelRewriteMode(bool keepGlow = false)
         {
             if (_rewriteTargetCol >= 0 && _rewriteTargetRow >= 0)
             {
                 Tile targetTile = _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow);
-                if (targetTile != null)
+                // keepGlow: a board SWAP wants the source tile to KEEP its teal glow through the exchange
+                // (faded out at the end of BoardSwapTurnSequence), so don't clear it here. 2026-07-10 Spencer.
+                if (targetTile != null && !keepGlow)
                 {
                     targetTile.SetEditSelected(false, popOnExit: true);
                     targetTile.ResetVisuals();
@@ -2751,13 +3022,22 @@ namespace WordDrop
         private void DefrostThawedTiles(GridManager grid, RulesEngine.StepResult step)
         {
             if (grid == null || step == null || step.ThawedCells == null || step.ThawedCells.Count == 0) return;
+            bool anyThawed = false;
             for (int i = 0; i < step.ThawedCells.Count; i++)
             {
                 Tile thawed = null;
                 try { thawed = grid.GetTile(step.ThawedCells[i].x, step.ThawedCells[i].y); }
                 catch { /* ignore */ }
-                if (thawed != null) thawed.PlayDefrost();
+                if (thawed != null)
+                {
+                    thawed.ClearPrimedGlow(); // thawed tile becomes a PLAIN letter — no lingering magenta (obscured the melt). 2026-07-07 Spencer.
+                    thawed.PlayDefrost();
+                    anyThawed = true;
+                }
             }
+            // ONE melt sound per batch. The clip is a ~0.94s ascending run of pops, so playing it
+            // per tile would overlap into mush when a detonation thaws several at once. 2026-07-30.
+            if (anyThawed) GameAudio.Instance?.PlayIceMelt();
         }
 
         private const float TILE_FLASH_BOX_CHANCE = 0.6f; // 60% of detonations show boxes
@@ -3152,6 +3432,20 @@ namespace WordDrop
 
             if (_wildInjectedThisResolution) return;
             if (MatchController.Instance == null) return;
+
+            // FIRST wild ever earned (unlocks at L7) → play the one-time UNLOCK celebration: "Wild!" modal →
+            // on Claim inject the wild → placement hint. Teaches the mechanic once so a fresh player isn't handed
+            // an unexplained tile. Persisted, so every wild after this is the normal silent reward below.
+            // 2026-07-10 Spencer.
+            if (PlayerPrefs.GetInt("wild_unlock_taught", 0) == 0)
+            {
+                PlayerPrefs.SetInt("wild_unlock_taught", 1);
+                PlayerPrefs.Save();
+                _wildInjectedThisResolution = true;
+                TriggerWildUnlockFlow(); // modal → inject wild on Claim → contextual placement hint
+                return;
+            }
+
             PlayerHand hand = MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN);
             if (hand == null) return;
             if (!hand.InjectWildFromChainReward()) return;
@@ -3173,6 +3467,84 @@ namespace WordDrop
         /// Executes the rewrite: replaces the board tile at the stored target
         /// with the card from the given hand slot.
         /// </summary>
+        // Throwaway ghost for a hand card being consumed by a stamp/rewrite. Copies the card's sprite, lights it
+        // up bright cyan (matching the board's edit teal), does the SAME shake/wobble the board tiles do during a
+        // swap, then abruptly vanishes — no scale-down, no fade. Decoupled from the real card object so the later
+        // slot refill can safely reuse it. 2026-07-10 Spencer.
+        private void SpawnStampCardGhost(GameObject card, int handSlot)
+        {
+            if (card == null) return;
+
+            // Instantiate the WHOLE card (keeps its letter — a TextMeshPro child — so the letter doesn't vanish),
+            // then tint just the card body bright cyan so it lights up to match the board's edit teal. The clone
+            // is a throwaway, decoupled from the real card object that the slot refill reuses later. 2026-07-10.
+            GameObject ghost = Instantiate(card, card.transform.parent, true);
+            ghost.name = "StampCardGhost";
+
+            SpriteRenderer gSR = ghost.GetComponent<SpriteRenderer>();
+            if (gSR != null)
+            {
+                // Match the board tile's edit-glow EXACTLY: same face tint (EDIT_GLINT_HIGH) PLUS the same additive
+                // HDR bloom overlay. The board tile the card is swapping with looks like this, so now they match.
+                // 2026-07-10 Spencer.
+                gSR.color = new Color(0.24f, 1.06f, 1.26f, 1f); // = Tile.EDIT_GLINT_HIGH
+
+                if (s_cardBloomMat == null)
+                {
+                    Shader sh = Shader.Find("WordDrop/AdditiveSprite")
+                             ?? Resources.Load<Shader>("Shaders/AdditiveSprite");
+                    if (sh != null) s_cardBloomMat = new Material(sh) { name = "CardBloomGlowShared" };
+                }
+                if (s_cardBloomMPB == null) s_cardBloomMPB = new MaterialPropertyBlock();
+                if (s_cardBloomMat != null)
+                {
+                    var glowGO = new GameObject("GhostCyanGlow");
+                    glowGO.transform.SetParent(ghost.transform, false);
+                    glowGO.transform.localPosition = new Vector3(0f, 0f, -0.04f); // in front of face, behind letter
+                    glowGO.transform.localScale    = Vector3.one;
+                    var glowSR = glowGO.AddComponent<SpriteRenderer>();
+                    glowSR.sprite = gSR.sprite;
+                    glowSR.sharedMaterial = s_cardBloomMat;
+                    glowSR.color = Color.white; // HDR from _Color (MPB), not vertex color
+                    glowSR.sortingLayerID = gSR.sortingLayerID;
+                    glowSR.sortingOrder   = gSR.sortingOrder + 1; // one above the face, like the tile bloom
+                    glowSR.GetPropertyBlock(s_cardBloomMPB);
+                    s_cardBloomMPB.SetColor("_Color", new Color(0.28f, 1.18f, 1.42f, 1f)); // = Tile.EDIT_GLOW_HDR
+                    glowSR.SetPropertyBlock(s_cardBloomMPB);
+
+                    // Keep the ghost's letter/points readable ABOVE the glow (glow is body+1, so bump these to +2).
+                    var letterTmp = ghost.transform.Find("CardLetter")?.GetComponent<TMPro.TextMeshPro>();
+                    if (letterTmp != null) letterTmp.sortingOrder = gSR.sortingOrder + 2;
+                    var ptsTmp = ghost.transform.Find("CardPoints")?.GetComponent<TMPro.TextMeshPro>();
+                    if (ptsTmp != null) ptsTmp.sortingOrder = gSR.sortingOrder + 2;
+                }
+            }
+
+            // Jitter magnitude scaled to the card's on-screen size, matching the board tile shake feel.
+            float jitter = (gSR != null && gSR.sprite != null)
+                ? gSR.sprite.bounds.size.x * ghost.transform.lossyScale.x * 0.08f
+                : 0.05f;
+            StartCoroutine(WobbleGhostThenVanish(ghost, ghost.transform.position, jitter));
+        }
+
+        // Shake a consumed-card ghost in place (same feel as the board swap's Phase-1 shake) for a short beat,
+        // then abruptly destroy it — no scale, no fade. 2026-07-10 Spencer.
+        private IEnumerator WobbleGhostThenVanish(GameObject ghost, Vector3 rest, float jitter)
+        {
+            const float dur = 0.2f;
+            const float rotJitter = 10f;
+            float elapsed = 0f;
+            while (elapsed < dur && ghost != null)
+            {
+                elapsed += Time.deltaTime;
+                ghost.transform.position = rest + new Vector3(
+                    Random.Range(-jitter, jitter), Random.Range(-jitter, jitter) * 0.5f, 0f);
+                ghost.transform.localRotation = Quaternion.Euler(0f, 0f, Random.Range(-rotJitter, rotJitter));
+                yield return null;
+            }
+            if (ghost != null) Destroy(ghost);
+        }
+
         private void TryExecuteRewrite(int col, int row, int handSlot)
         {
             if (MatchController.Instance == null || RulesEngine.Instance == null)
@@ -3243,6 +3615,7 @@ namespace WordDrop
 
         private IEnumerator RewriteTurnSequence(int col, int row, char letter, int handSlot, bool isWild = false)
         {
+            RulesEngine.LastResolutionWasSwap = true; // hand-STAMP edit → counts on swap-only levels
             if (JamHint.Instance != null) JamHint.Instance.ClearHint();
             if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
 
@@ -3267,9 +3640,14 @@ namespace WordDrop
             bool rewriteScoredWord = false;
             bool rewriteTriggeredPrimed = false;
 
-            // Hide the hand card
+            // Hide the hand card — but first spawn a teal "absorb" ghost so the consumed card dissolves into the
+            // board with a magical teal glint instead of blinking out. Ghost is throwaway so it can't race the
+            // slot refill that reuses this same card object later in the coroutine. 2026-07-10 Spencer.
             if (handSlot >= 0 && handSlot < HAND_SIZE && _cardObjects[handSlot] != null)
+            {
+                SpawnStampCardGhost(_cardObjects[handSlot], handSlot);
                 _cardObjects[handSlot].SetActive(false);
+            }
 
             // Animate the tile edit — shake then letter change then squish
             Tile boardTile = grid.GetTile(col, row);
@@ -3281,6 +3659,11 @@ namespace WordDrop
                 float rotJitter = 10f;
 
                 GameAudio.Instance?.PlayShuffle();
+
+                // Hold the edited tile at a steady bright teal through the shake+letter-change so it stays cyan
+                // during the wobble (was losing its selection cyan the moment SetLetter reset the face tint).
+                // Faded out after the resolution below. 2026-07-10 Spencer.
+                boardTile.HoldEditGlow();
 
                 // Phase 1: shake/jitter
                 float shakeDur = 0.2f;
@@ -3308,9 +3691,15 @@ namespace WordDrop
                 }
                 boardTile.transform.position = restPos;
                 boardTile.transform.localRotation = Quaternion.identity;
+                boardTile.HoldEditGlow(); // re-assert teal — SetLetter above reset the face to white
 
                 // Phase 3: settle pop
                 boardTile.PlayLandingSquish();
+
+                // Teal dies out now — right after the wobble, before the rewrite resolves + pops — so it
+                // diminishes quickly instead of lingering. If this tile primes, SetPrimedGlow (post-resolution)
+                // cleanly hands it off to the magenta primed glow. 2026-07-10 Spencer.
+                boardTile.FadeEditGlowOut();
             }
             else
             {
@@ -3342,6 +3731,29 @@ namespace WordDrop
                 DetonationRecorder.Instance.RecordRewrite(letter, col, row);
 
             yield return WaitCache.Get(0.15f);
+
+            // ── EARLY VISUAL DEAL (2026-07-14 Spencer) ──────────────────────────────────────────────────────────
+            // Deal the replacement card in NOW — while the rewrite RESOLVES — instead of waiting for it to finish.
+            // Placed AFTER the edit shake/letter-swap so the consumed-card ghost (0.2s wobble-and-vanish) has already
+            // cleared the slot; popping earlier stacked the new letter on top of the ghost. VISUAL-ONLY (the real
+            // bag/model draw still runs in CompleteDropBookkeeping below); a wild injected during resolution is
+            // corrected by the guarded deal further down. Gated to the shipping modes.
+            bool dealtEarly = false;
+            if ((SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
+                && handSlot >= 0 && handSlot < HAND_SIZE)
+            {
+                var earlyHand = mc != null ? mc.GetHand(MatchController.PLAYER_HUMAN) : null;
+                char earlyLetter = earlyHand != null ? earlyHand.CachedNextLetter : '\0';
+                if (earlyLetter != '\0')
+                {
+                    _selectedIndex = -1;
+                    UpdateSingleCard(handSlot, earlyLetter);  // VISUAL letter only — model slot stays empty until resolve
+                    DealCardPop(handSlot);
+                    _suppressNextPreview = true;              // blank NEXT preview until the real draw runs
+                    UpdateNextTilePreview();
+                    dealtEarly = true;
+                }
+            }
 
             // Step-by-step resolution loop (mirrors GameVisualBridge phases)
             bool resolving = true;
@@ -3695,6 +4107,19 @@ namespace WordDrop
             RefreshHandFromMatchController();
             RefreshAllCardVisuals();
 
+            // Turn resolved: the real draw + re-cache has run — un-blank the NEXT preview.
+            _suppressNextPreview = false;
+            UpdateNextTilePreview();
+
+            // Play the "new tile dealt" pop on the refilled slot. If it was already dealt EARLY (visual-early deal at
+            // edit time) and resolution didn't turn it into a wild, it's already popped in — skip to avoid a double
+            // pop. A wild injected during resolution still needs its proper entry. 2026-07-14 Spencer.
+            bool skipDeal = dealtEarly && !IsWildSlotChecked(handSlot);
+            if (!skipDeal && handSlot >= 0 && handSlot < HAND_SIZE && _cardObjects[handSlot] != null && _hand[handSlot] != '\0')
+            {
+                DealCardPop(handSlot);
+            }
+
             // Check if match ended during rewrite resolution
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
@@ -3792,6 +4217,55 @@ namespace WordDrop
             }
         }
 
+        /// <summary>Pops the replacement card into <paramref name="handSlot"/> — the "new tile arrives" animation
+        /// (wild gets the juicy entry, else the canonical NewTilePop) plus its drop shadow. Reads the letter already
+        /// set on the visual hand (_hand[handSlot]). Called at the end of a turn (STEP 5) OR early, at drop time, for
+        /// the visual-early deal. 2026-07-14 Spencer.</summary>
+        private void DealCardPop(int handSlot)
+        {
+            if (handSlot < 0 || handSlot >= HAND_SIZE || _cardObjects[handSlot] == null) return;
+
+            float baseY = GetCardRowY();
+            Vector3 cardPos = new Vector3(GetCardX(handSlot), baseY, -1f);
+
+            _cardObjects[handSlot].transform.DOKill();
+            _cardObjects[handSlot].SetActive(true);
+            _cardObjects[handSlot].transform.position = cardPos;
+
+            // Single-card refill: start scale zero, soft OutElastic sprout via UIAnimations.NewTilePop — the SAME
+            // curve as the row-rise new-tile pop and the initial hand deal.
+            Vector3 baseScale = GetCardBaseScale();
+            if (IsWildSlotChecked(handSlot))
+            {
+                // Awarded WILD — juicy oversized entry (big pop + hold) so the player registers the reward.
+                PlayWildCardEntry(handSlot);
+            }
+            else
+            {
+                _cardObjects[handSlot].transform.localScale = Vector3.zero;
+                UIAnimations.NewTilePop(
+                    _cardObjects[handSlot].transform,
+                    baseScale,
+                    speedMult: HAND_POP_SPEED_MULT);
+            }
+            // No sound on this site — the row-rise bloop would double up with the tile-drop / detonation SFX firing in
+            // the same moment. (Call GameAudio.Instance?.PlayTileArrival() here to make it audible again.)
+
+            if (_cardShadows[handSlot] != null)
+            {
+                _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.25f);
+                _cardShadows[handSlot].transform.position = cardPos + new Vector3(0.03f, -0.03f, 0.5f);
+            }
+            _cardObjects[handSlot].transform.position = cardPos;
+
+            // Show shadow now that card has landed
+            if (_cardShadows[handSlot] != null)
+            {
+                _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.15f);
+                _cardShadows[handSlot].transform.position = new Vector3(cardPos.x, cardPos.y - _cardSize * 0.03f, 0f);
+            }
+        }
+
         // ── Deal animation (Balatro style) ──────────────────────────────────
 
         private IEnumerator DealCardsAnimation(System.Action onComplete)
@@ -3852,6 +4326,64 @@ namespace WordDrop
         private const float CARD_SELECT_RAISE = 0.2f; // was 0.4 — halved
         private const float CARD_ANIM_SPEED = 12f;  // Lerp speed for smooth movement
 
+        /// <summary>Toggle the additive HDR cyan bloom overlay on a hand card — mirrors the board tile's edit
+        /// glow (same shader + HDR _Color) so a selected swap card glows with the identical cyan halo. Lazily
+        /// builds the overlay child the first time a card needs it. 2026-07-10 Spencer.</summary>
+        private void SetCardCyanGlow(int index, bool on)
+        {
+            if (index < 0 || index >= HAND_SIZE) return;
+            var existing = _cardCyanGlowSRs[index];
+            var faceSR   = _cardSRs[index];
+            int faceOrder = (faceSR != null ? faceSR.sortingOrder : 10);
+            if (!on)
+            {
+                if (existing != null) existing.enabled = false;
+                // Restore the letter/points to their normal order (they get bumped above the glow when it's on).
+                if (_cardTexts[index]    != null) _cardTexts[index].sortingOrder    = faceOrder + 1;
+                if (_cardPtsTexts[index] != null) _cardPtsTexts[index].sortingOrder = faceOrder + 1;
+                return;
+            }
+
+            GameObject card = _cardObjects[index];
+            if (card == null) return;
+
+            // (Re)build if missing or orphaned by a card rebuild (Unity-null or reparented).
+            if (existing == null || existing.transform.parent != card.transform)
+            {
+                if (s_cardBloomMat == null)
+                {
+                    Shader sh = Shader.Find("WordDrop/AdditiveSprite")
+                             ?? Resources.Load<Shader>("Shaders/AdditiveSprite");
+                    if (sh != null) s_cardBloomMat = new Material(sh) { name = "CardBloomGlowShared" };
+                }
+                if (s_cardBloomMPB == null) s_cardBloomMPB = new MaterialPropertyBlock();
+
+                var go = new GameObject("CardCyanGlow");
+                go.transform.SetParent(card.transform, false);
+                go.transform.localPosition = new Vector3(0f, 0f, -0.04f); // in front of the face, behind the letter
+                go.transform.localScale    = Vector3.one;                 // same shape/scale as the card face
+                existing = go.AddComponent<SpriteRenderer>();
+                existing.sprite = _spriteNormal; // neutral card shape (not glossy) so the additive hue stays clean
+                if (s_cardBloomMat != null) existing.sharedMaterial = s_cardBloomMat;
+                existing.color = Color.white; // HDR comes from _Color (MPB), not vertex color
+                _cardCyanGlowSRs[index] = existing;
+            }
+
+            // Glow sits ONE ABOVE the face (like the tile bloom) so the opaque face can't hide it; bump the
+            // letter + points TWO above so they stay readable on top of the glow. Match the face's sorting layer.
+            if (faceSR != null) existing.sortingLayerID = faceSR.sortingLayerID;
+            existing.sortingOrder = faceOrder + 1;
+            if (_cardTexts[index]    != null) _cardTexts[index].sortingOrder    = faceOrder + 2;
+            if (_cardPtsTexts[index] != null) _cardPtsTexts[index].sortingOrder = faceOrder + 2;
+
+            if (s_cardBloomMPB == null) s_cardBloomMPB = new MaterialPropertyBlock();
+            existing.GetPropertyBlock(s_cardBloomMPB);
+            // Same HDR cyan the tile edit glow uses (EDIT_GLOW_HDR) so the bloom color matches exactly.
+            s_cardBloomMPB.SetColor("_Color", new Color(0.28f, 1.18f, 1.42f, 1f));
+            existing.SetPropertyBlock(s_cardBloomMPB);
+            existing.enabled = true;
+        }
+
         private void SelectCard(int index)
         {
             if (index < 0 || index >= HAND_SIZE) return;
@@ -3908,6 +4440,12 @@ namespace WordDrop
         private void SwapCardPositions(int a, int b)
         {
             if (a < 0 || a >= HAND_SIZE || b < 0 || b >= HAND_SIZE) return;
+            // HARD-LOCK the hand order on any GATED tutorial level (e.g. L5). Rearranging the rack moved the
+            // scripted spotlighted tile and caused a pile of ordering bugs, so players simply can't reorder here.
+            // CurrentLevelIsGated is timing-independent (covers the whole level, incl. the entry-anim delay window);
+            // EditGateActive kept as a belt-and-suspenders. Single choke point — both reorder paths call this.
+            // 2026-07-13 Spencer.
+            if (TutorialManager.EditGateActive || TutorialManager.CurrentLevelIsGated) return;
 
             // Swap in local hand array
             char tempChar = _hand[a];
@@ -4040,6 +4578,10 @@ namespace WordDrop
             if (col < 0) return;
 
             // Tutorial column restriction
+            // Between gated tutorial steps nothing new is armed yet, but AllowedColumn still
+            // holds the PREVIOUS step's value — so the checks below would happily let a repeat
+            // drop into that same column through. Hard-stop first. 2026-07-29.
+            if (TutorialManager.GateClosed) return;
             if (TutorialManager.AllowedColumn >= 0 && col != TutorialManager.AllowedColumn)
                 return;
 
@@ -4099,6 +4641,10 @@ namespace WordDrop
             }
 
             // Tutorial card restriction — only the highlighted card can be played
+            // Between gated tutorial steps nothing new is armed yet, but AllowedColumn still
+            // holds the PREVIOUS step's value — so the checks below would happily let a repeat
+            // drop into that same column through. Hard-stop first. 2026-07-29.
+            if (TutorialManager.GateClosed) return;
             if (TutorialManager.AllowedCardIndex >= 0 && _selectedIndex != TutorialManager.AllowedCardIndex)
                 return;
 
@@ -4227,9 +4773,19 @@ namespace WordDrop
                     if (t != null) dyingByCell[new Vector2Int(t.Col, t.Row)] = t;
                 }
 
+                // A tile SHARED between two words (e.g. the A/N/T shared by ANT and ANTS) used to fly UP once
+                // per word it belongs to → two overlapping sets travelling to the target. Fly each physical
+                // tile only in its FRONTMOST (highest-stage, ahead-in-sort) group; earlier groups skip it so no
+                // duplicate letters float up behind the last explosion. lastStageForCell records the MAX stage
+                // index that owns each cell (later s overwrites). 2026-07-27 Spencer.
+                var lastStageForCell = new Dictionary<Vector2Int, int>();
+                for (int s = 0; s < stageCells.Count; s++)
+                    foreach (var cell in stageCells[s])
+                        lastStageForCell[cell] = s;
+
                 var claimed = new HashSet<Vector2Int>();
                 var pops = new List<List<Tile>>();      // DISJOINT — each tile detonates once
-                var flyGroups = new List<List<Tile>>(); // per WORD — a shared letter appears in every word it's in
+                var flyGroups = new List<List<Tile>>(); // per WORD — each shared letter flies ONCE, in its frontmost word
                 for (int s = 0; s < stageCells.Count; s++)
                 {
                     var cells = stageCells[s];
@@ -4238,8 +4794,10 @@ namespace WordDrop
                     for (int c = 0; c < cells.Count; c++)
                     {
                         if (!dyingByCell.TryGetValue(cells[c], out var t) || t == null) continue;
-                        if ((t.WasInScoredWord || t.HasPermanentGlow) && char.IsLetter(t.Letter))
-                            flyTiles.Add(t);                                                   // FLY: every letter of this word
+                        // FLY only in the frontmost stage that owns this cell — dedupes shared letters.
+                        if ((t.WasInScoredWord || t.HasPermanentGlow) && char.IsLetter(t.Letter)
+                            && lastStageForCell.TryGetValue(cells[c], out int lastS) && lastS == s)
+                            flyTiles.Add(t);
                         if (!claimed.Contains(cells[c])) { claimed.Add(cells[c]); popTiles.Add(t); } // POP: disjoint
                     }
                     pops.Add(popTiles);
@@ -4257,7 +4815,8 @@ namespace WordDrop
                 Debug.Log($"[ChainFX] STAGGER combo(4-part): stages={pops.Count} dying={dying.Count} chain={chainDepth}");
 
                 var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
-                bool flyUpGoal = HUDManager.Instance != null && (flyObj is LongWordObjective || flyObj is ComboObjective);
+                bool flyUpGoal = HUDManager.Instance != null && (flyObj is LongWordObjective || flyObj is ComboObjective)
+                    && (ObjectiveManager.Instance == null || ObjectiveManager.Instance.CurrentExplosionCounts); // no fly-up if it won't count (drop on a swap-only level)
                 int flyMinLen = flyObj is LongWordObjective lwFly ? lwFly.MinLen : 0;
 
                 int popCount = pops.Count;
@@ -4274,7 +4833,7 @@ namespace WordDrop
                     // POP (detonation visual) — fire-and-forget for the overlapping cascade feel. Fly-up is
                     // SUPPRESSED here; we drive it per WORD just below so a shared letter flies in two stages.
                     Coroutine boom = (groupTiles != null && groupTiles.Count > 0)
-                        ? WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, wordFlash: false, cascade: false, suppressFlyUp: true)
+                        ? WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, wordFlash: false, cascade: false, suppressFlyUp: true, comboStagger: true)
                         : null;
 
                     // FLY-UP — this WORD's full letters travel up to the target, ramping per word (finale
@@ -4282,10 +4841,10 @@ namespace WordDrop
                     if (flyUpGoal && g < flyGroups.Count && stageCells[g].Count >= flyMinLen)
                     {
                         var flyTiles = flyGroups[g];
-                        // Crescendo: an ACCELERATING ramp (t^1.6 across the chain) so the build is obvious and the
-                        // FINALE pops noticeably harder — ~1.2× (first) → ~1.9× (last). Wider + non-linear beats
-                        // the old gentle linear 1.28→1.58. 2026-07-06 Spencer.
-                        float popPeak = 1.2f + 0.72f * Mathf.Pow(t01, 1.6f);
+                        // Crescendo: an ACCELERATING ramp (t^1.6 across the chain) so the build still reads, but
+                        // GENTLER — the letters don't balloon during chains. ~1.05× (first) → ~1.35× (last).
+                        // Toned down from 1.2→1.9 per Spencer 2026-07-27 (was ballooning on combos).
+                        float popPeak = 1.05f + 0.30f * Mathf.Pow(t01, 1.6f);
                         for (int i = 0; i < flyTiles.Count; i++)
                         {
                             bool lastLetter = (i == flyTiles.Count - 1);
@@ -4296,9 +4855,14 @@ namespace WordDrop
                             // Each flying tile gets its OWN 4-slot sorting band: +4 per LETTER (so a letter
                             // never bleeds onto a neighbour's tile) and +40 per STAGE (later stages fully in
                             // front → CAT covers SOFT covers FINE). 2026-07-06 Spencer.
-                            int sortBase = 200 + g * 40 + i * 4;
+                            // Sorting reads LEFT-TO-RIGHT within a word: the leftmost letter sits in FRONT
+                            // (highest band), each letter behind the one to its left. (count-1-i) reverses the
+                            // old right-to-left stacking. +g*40 still keeps later STAGES in front of earlier. 2026-07-27.
+                            int sortBase = 200 + g * 40 + (flyTiles.Count - 1 - i) * 4;
+                            // The TRIGGER word (stage 0, e.g. YES) keeps the ORIGINAL magenta; only the chained
+                            // words (comboStep >= 1) ramp in hue via s_comboFlyRamp. 2026-07-27.
                             HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter,
-                                popIcon, null, i * 0.07f, false, popPeak, sortBase);
+                                popIcon, null, i * 0.07f, false, popPeak, sortBase, comboStep: g);
                         }
                     }
 
@@ -4349,6 +4913,7 @@ namespace WordDrop
 
         private IEnumerator FullTurnSequence(int col, char letter, int handSlot, bool isWild)
         {
+            RulesEngine.LastResolutionWasSwap = false; // DROP-initiated resolution (won't count on swap-only levels)
             // Mark processing so BlitzManager defers game-over until resolution completes
             if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
 
@@ -4479,6 +5044,29 @@ namespace WordDrop
 
                     handCard.SetActive(false);
                     ct.localScale = cardScale;
+                }
+            }
+
+            // ── EARLY VISUAL DEAL (2026-07-14 Spencer) ──────────────────────────────────────────────────────────
+            // Deal the replacement card in NOW — concurrent with the tile drop + resolution — instead of waiting for
+            // the whole turn to resolve. The next letter is already known (the "next" preview is a contract), so this
+            // is VISUAL-ONLY: the real bag/model draw still happens in STEP 5's CompleteDropBookkeeping. If resolution
+            // injects a wild into this slot, STEP 5 corrects the card. Gated to the shipping modes (Survival/Level).
+            bool dealtEarly = false;
+            if ((SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
+                && handSlot >= 0 && handSlot < HAND_SIZE)
+            {
+                var earlyHand = MatchController.Instance != null
+                    ? MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN) : null;
+                char earlyLetter = earlyHand != null ? earlyHand.CachedNextLetter : '\0';
+                if (earlyLetter != '\0')
+                {
+                    _selectedIndex = -1;                     // new card shows normal, not selected
+                    UpdateSingleCard(handSlot, earlyLetter); // VISUAL letter only — model slot stays empty until STEP 5
+                    DealCardPop(handSlot);
+                    _suppressNextPreview = true;             // blank the NEXT preview until the turn's real draw runs
+                    UpdateNextTilePreview();
+                    dealtEarly = true;
                 }
             }
 
@@ -5003,58 +5591,16 @@ namespace WordDrop
                 SetHand(updatedHand.GetAllSlots());
             RefreshAllCardVisuals();
 
-            if (handSlot >= 0 && handSlot < HAND_SIZE && _cardObjects[handSlot] != null)
-            {
-                float baseY = GetCardRowY();
-                Vector3 cardPos = new Vector3(GetCardX(handSlot), baseY, -1f);
+            // Turn resolved: the real draw + re-cache has run, so the NEXT preview is truthful again — un-blank it.
+            _suppressNextPreview = false;
+            UpdateNextTilePreview();
 
-                _cardObjects[handSlot].transform.DOKill();
-                _cardObjects[handSlot].SetActive(true);
-                _cardObjects[handSlot].transform.position = cardPos;
-
-                // Single-card refill after a tile drop. Uses the SAME curve
-                // as the row-rise new-tile pop and the initial hand deal —
-                // start scale zero, soft OutElastic sprout via
-                // UIAnimations.NewTilePop. Any tuning of NEW_TILE_POP_*
-                // constants propagates to every "new tile/card arrives"
-                // moment in the game.
-                Vector3 baseScale = GetCardBaseScale();
-                if (IsWildSlotChecked(handSlot))
-                {
-                    // Awarded WILD — juicy oversized entry (big pop + hold) instead
-                    // of the normal sprout, so the player registers the reward.
-                    PlayWildCardEntry(handSlot);
-                }
-                else
-                {
-                    _cardObjects[handSlot].transform.localScale = Vector3.zero;
-                    UIAnimations.NewTilePop(
-                        _cardObjects[handSlot].transform,
-                        baseScale,
-                        speedMult: HAND_POP_SPEED_MULT);
-                }
-                // No sound on this site (per-tile-drop refill) — the row-rise
-                // bloop here would double up with all the other tile-drop /
-                // detonation SFX firing in the same moment. Animation still
-                // shares the canonical NewTilePop curve; only the audio
-                // diverges. If you want this site audible again, call
-                // GameAudio.Instance?.PlayTileArrival() here.
-
-                if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
-                {
-                    _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.25f);
-                    _cardShadows[handSlot].transform.position = cardPos + new Vector3(0.03f, -0.03f, 0.5f);
-                }
-                if (_cardObjects[handSlot] != null)
-                    _cardObjects[handSlot].transform.position = cardPos;
-
-                // Show shadow now that card has landed
-                if (handSlot < HAND_SIZE && _cardShadows[handSlot] != null)
-                {
-                    _cardShadows[handSlot].color = new Color(0f, 0f, 0f, 0.15f);
-                    _cardShadows[handSlot].transform.position = new Vector3(cardPos.x, cardPos.y - _cardSize * 0.03f, 0f);
-                }
-            }
+            // If the replacement was already dealt EARLY (visual-early deal at drop time), it's already popped in —
+            // skip the re-deal to avoid a double pop. A wild injected DURING resolution still needs its proper entry,
+            // so fall through in that case (corrects the optimistic early card). 2026-07-14 Spencer.
+            bool skipDeal = dealtEarly && !IsWildSlotChecked(handSlot);
+            if (!skipDeal)
+                DealCardPop(handSlot);
 
             if (!SurvivalManager.IsSurvivalMode)
                 _selectedIndex = -1; // Deselect after placing (skip in Survival — player may have selected a new card)
@@ -5347,7 +5893,7 @@ namespace WordDrop
         /// <summary>
         /// Pulls the current hand from MatchController and refreshes card visuals.
         /// </summary>
-        private void RefreshHandFromMatchController()
+        public void RefreshHandFromMatchController()
         {
             if (MatchController.Instance == null) return;
 
@@ -5417,6 +5963,35 @@ namespace WordDrop
         /// <summary>DEBUG: force a wild ('*') into the hand immediately (first non-empty
         /// slot, or slot 0) and refresh so it's visible right away. Bypasses the mechanic
         /// gate / pending-queue. 2026-06-03 Spencer — to test the iridescent wild tile.</summary>
+        /// <summary>The full first-wild UNLOCK payoff, decoupled from the trigger: "Unlocked! Wild" modal →
+        /// on Claim, inject a wild into hand (juicy entry) → after it lands, pin a CONTEXTUAL placement hint on
+        /// the live board. Callable from the FX test button now; wired to the real first-cascade trigger later.
+        /// 2026-07-07 Spencer.</summary>
+        public void TriggerWildUnlockFlow()
+        {
+            _wildUnlockFlowActive = true; // hold the level-clear modal until the wild is explained + dealt
+            if (UnlockModal.Instance == null) { StartCoroutine(WildRevealAfterClaim()); return; }
+            Sprite icon = Resources.Load<Sprite>("Tiles/wild@2x"); // null-safe: modal just shows no icon if missing
+            UnlockModal.Instance.Show(
+                "Wild",
+                "It becomes any letter you need — drop it to complete a word!",
+                icon,
+                onClaimed: () => StartCoroutine(WildRevealAfterClaim()));
+        }
+
+        private System.Collections.IEnumerator WildRevealAfterClaim()
+        {
+            // Inject the wild with its entry pop, then let the player decide WHERE to use it — no immediate forced
+            // hint (that read as the game playing for them). The wild-aware IDLE hint is the fallback if they
+            // stall, and the "?" tile's glow already signals it's special. 2026-07-08 Spencer.
+            DebugForceWildIntoHand();
+            // Keep the unlock flow "active" (so the level-clear modal keeps holding) until the wild's entry pop has
+            // finished + a short beat — the player actually sees it dealt before "Well Done!". 2026-07-14 Spencer.
+            while (IsWildEntryAnimating) yield return null;
+            yield return new WaitForSecondsRealtime(0.5f);
+            _wildUnlockFlowActive = false;
+        }
+
         public void DebugForceWildIntoHand()
         {
             if (MatchController.Instance == null) return;
@@ -5441,6 +6016,13 @@ namespace WordDrop
         // never get stuck even if the card is destroyed mid-animation.
         private float _wildEntryEndsAt = -1f;
         public bool IsWildEntryAnimating => Time.unscaledTime < _wildEntryEndsAt;
+
+        // True for the WHOLE one-time first-wild UNLOCK flow: from the "Wild!" modal opening, through Claim, until the
+        // wild has been dealt into the hand and its entry pop finished. The level-clear (StageClear) modal holds on
+        // this so — when the wild unlocks on the SAME move that clears the level — the player actually SEES the wild
+        // explained + dealt before "Well Done!" pops. 2026-07-14 Spencer.
+        private bool _wildUnlockFlowActive;
+        public bool IsWildUnlockFlowActive => _wildUnlockFlowActive;
 
         private void PlayWildCardEntry(int slot)
         {
@@ -6188,13 +6770,16 @@ namespace WordDrop
         private void BoostCardSortOrder(int index)
         {
             if (index < 0 || index >= HAND_SIZE || _cardObjects[index] == null) return;
+            // 45/46 (was 20/21): a dragged card must sort ABOVE the tutorial hand-spotlight bump (base+30 ≈ 40),
+            // or on tutorial levels the OTHER spotlighted cards render in front of the one you're carrying (it
+            // looked "dimmed"). Still below the HUD (50). 2026-07-13 Spencer.
             var sr = _cardObjects[index].GetComponent<SpriteRenderer>();
-            if (sr != null) sr.sortingOrder = 20;
+            if (sr != null) sr.sortingOrder = 45;
             // Boost all child renderers (text, points)
             foreach (var child in _cardObjects[index].GetComponentsInChildren<MeshRenderer>())
-                child.sortingOrder = 21;
+                child.sortingOrder = 46;
             foreach (var child in _cardObjects[index].GetComponentsInChildren<TMPro.TextMeshPro>())
-                child.sortingOrder = 21;
+                child.sortingOrder = 46;
         }
 
         /// <summary>Restore sorting order on all cards to default.</summary>
@@ -6462,8 +7047,20 @@ namespace WordDrop
             }
             else if (_swapModeActive)
             {
-                _cardSRs[index].sprite = isSelected ? _spriteSwapSelected : _spriteSwap;
-                _cardSRs[index].color  = Color.white;
+                if (isSelected)
+                {
+                    // Match the board tile's cyan edit glow instead of the flat blue swap sprite, so the swapped
+                    // hand card and the board tile it's exchanging with read as the SAME cyan selection. The board
+                    // tile's brightness comes from an additive bloom the card can't cheaply replicate, so we tint
+                    // the glossy sprite a bright cyan that matches its bloomed appearance. 2026-07-10 Spencer.
+                    _cardSRs[index].sprite = _spriteGlossy ?? _spriteNormal;
+                    _cardSRs[index].color  = SWAP_SELECTED_CYAN;
+                }
+                else
+                {
+                    _cardSRs[index].sprite = _spriteSwap;
+                    _cardSRs[index].color  = Color.white;
+                }
             }
             else
             {
@@ -6480,6 +7077,10 @@ namespace WordDrop
                     _cardSRs[index].color  = Color.white;
                 }
             }
+
+            // Cyan bloom halo ON only for the selected swap card (the dormant tile-bag swap mode), so it glows
+            // like the board tile; OFF for every other state. 2026-07-10 Spencer.
+            SetCardCyanGlow(index, _swapModeActive && isSelected && !isWild && !isEmpty);
 
             // Update letter text. Default to a flat color + the tile font; the wild
             // "?" turns on a holographic gradient + the Geometos font below (and we
@@ -6515,7 +7116,9 @@ namespace WordDrop
             else if (_swapModeActive)
             {
                 _cardTexts[index].text  = letter.ToString().ToUpper();
-                _cardTexts[index].color = CARD_TEXT_SWAP;
+                // Selected swap card now shows the cyan edit glow, so its letter goes dark like a board tile's
+                // (not the swap orange) to match the tile it's being exchanged with. 2026-07-10 Spencer.
+                _cardTexts[index].color = isSelected ? CARD_TEXT_COLOR : CARD_TEXT_SWAP;
             }
             else
             {
@@ -7021,6 +7624,7 @@ namespace WordDrop
                 // Divider Y matches card row, not the offset NEXT slot.
                 float dividerY = GetCardRowY();
                 GameObject dividerGO = new GameObject("NextDivider");
+                _nextDivider = dividerGO; // stored so the level-entry slide can carry it with the holder
                 dividerGO.transform.SetParent(transform, false);
                 dividerGO.transform.position = new Vector3(dividerX, dividerY, -0.4f);
                 var divSR = dividerGO.AddComponent<SpriteRenderer>();
@@ -7267,6 +7871,15 @@ namespace WordDrop
         public void UpdateNextTilePreview()
         {
             if (_nextTileLetter == null) return;
+
+            // Suppressed while a turn is resolving after an EARLY visual deal: the cached "next" letter is the one we
+            // already dealt into the hand (the real draw + re-cache doesn't run until the turn resolves), so showing it
+            // would repeat the just-dealt letter. Blank it until STEP 5 restores the true next. 2026-07-14 Spencer.
+            if (_suppressNextPreview)
+            {
+                _nextTileLetter.text = "";
+                return;
+            }
 
             if (MatchController.Instance == null || MatchController.Instance.Bag == null)
             {

@@ -33,9 +33,11 @@ namespace WordDrop
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoCreate()
         {
-            if (Instance != null) return;
-            var go = new GameObject("ChainPrototype");
-            go.AddComponent<ChainPrototype>();
+            // Chain-prototype debug menu RETIRED 2026-07-09 (Spencer) — the chain design is validated + shipped,
+            // so stop spawning the OnGUI panel. Class kept for reference; restore the three lines below to re-enable.
+            // if (Instance != null) return;
+            // var go = new GameObject("ChainPrototype");
+            // go.AddComponent<ChainPrototype>();
         }
 
         private void Awake()

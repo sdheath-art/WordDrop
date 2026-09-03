@@ -20,6 +20,8 @@ namespace WordDrop
         private Text  _subtitleText;
         private Text  _descText;
         private Image _iconImage;
+        private Text  _countBadge; // "xN" reward-count chip on the icon corner (hidden unless a counted reward sets it)
+        private bool  _midMatch;   // true for the mid-match wild unlock: don't restart the song on claim
         private bool  _isShowing;
 
         // Match StageClearModal's palette.
@@ -51,10 +53,25 @@ namespace WordDrop
         }
 
         /// <summary>Present the unlock reward. subtitle/description/icon are passed so this can announce any tool.</summary>
-        public void Show(string subtitle, string description, Sprite icon)
+        private System.Action _onClaimed; // fired after Claim's pop-out finishes (wild flow: inject wild + hint)
+
+        /// <summary>Show + run <paramref name="onClaimed"/> once the player taps Claim (after the pop-out).
+        /// Used by the wild-unlock flow to inject the wild + pin its hint at the right moment. 2026-07-07.</summary>
+        public void Show(string subtitle, string description, Sprite icon, System.Action onClaimed)
+        {
+            // Wild unlock appears MID-MATCH → pass midMatch so it neither swaps to stage-clear music on show nor
+            // restarts the song on claim (gameplay is still running underneath). 2026-07-13 Spencer.
+            Show(subtitle, description, icon, midMatch: true);
+            _onClaimed = onClaimed;
+            if (_countBadge != null) { _countBadge.text = "x1"; _countBadge.gameObject.SetActive(true); }
+        }
+
+        public void Show(string subtitle, string description, Sprite icon, bool midMatch = false)
         {
             if (_isShowing || _canvas == null) return;
             _isShowing = true;
+            _midMatch  = midMatch;
+            if (_countBadge != null) _countBadge.gameObject.SetActive(false); // no count chip unless a reward sets it
 
             if (_subtitleText != null) _subtitleText.text = subtitle;
             if (_descText != null) _descText.text = description;
@@ -75,7 +92,9 @@ namespace WordDrop
             }
             StartCoroutine(RevealPanelAfterBeat());
 
-            GameAudio.Instance?.PlayStageClearMusic();
+            // Only a level-progression unlock (shown on the cleared screen) swaps to the stage-clear song. A
+            // MID-MATCH unlock (the wild) must NOT change the music — gameplay is still playing. 2026-07-13 Spencer.
+            if (!midMatch) GameAudio.Instance?.PlayStageClearMusic();
         }
 
         private System.Collections.IEnumerator RevealPanelAfterBeat()
@@ -86,10 +105,25 @@ namespace WordDrop
             // game) with a gentler overshoot than the old OutBack 2.2, whose big overshoot peak itself read as
             // a "jump to bigger then settle." Same backdrop-first staging as StageClearModal. 2026-07-06 Spencer.
             yield return new WaitForSecondsRealtime(0.12f);
+            // A FIXED wait isn't enough on the FIRST unlock: it's the canvas's first activation AND the first
+            // stage-clear's heavy work (music track load, star anims, teardown), which can hitch a LONG frame the
+            // pop would otherwise advance through and "teleport." Hold until we see a couple of SMOOTH frames in a
+            // row so the pop always starts on a clean stretch — robust regardless of what caused the spike. Capped
+            // so it can never hang. 2026-07-13 Spencer.
+            int smooth = 0, guard = 0;
+            while (smooth < 2 && guard < 120)
+            {
+                yield return null;
+                guard++;
+                if (Time.unscaledDeltaTime < 0.05f) smooth++; else smooth = 0; // >0.05s (<20fps) = a hitch → restart
+            }
             if (_panel != null && _isShowing)
             {
-                UIAnimations.PopIn(_panel.transform, UIAnimations.Overshoot.Heavy);
-                GameAudio.Instance?.PlaySparkleWhoosh();
+                // Big "tossed in from the centre" bounce — same overshoot as the level Play modal's entry.
+                // The old show-time hitch (which read as a teleport) is handled by the smooth-frame wait above,
+                // so the large overshoot now bounces + settles cleanly. 2026-07-27 Spencer.
+                UIAnimations.PopIn(_panel.transform, UIAnimations.Overshoot.Toss);
+                GameAudio.Instance?.PlayUnlockWhoosh(); // zap chime, 7.14s cut (2026-07-30)
             }
         }
 
@@ -98,6 +132,7 @@ namespace WordDrop
             if (!_isShowing) return;
             _isShowing = false;
             GameAudio.Instance?.PlayMultiPopRelease();
+            GameAudio.Instance?.PlayConfirmChoice(); // confirmchoice chime on Claim (2026-07-14 Spencer)
             StopAllCoroutines();
 
             // Pop OUT (scale-down, mirror of the scale-in) so the modal LEAVES with a beat instead of vanishing.
@@ -125,8 +160,11 @@ namespace WordDrop
             else
             {
                 if (SurvivalManager.Instance != null) SurvivalManager.Instance.SetOverlayPaused(false);
-                GameAudio.Instance?.PlaySurvivalMusic();
+                if (!_midMatch) GameAudio.Instance?.PlaySurvivalMusic(); // mid-match wild modal: don't restart the song
             }
+
+            // Post-claim hook (wild flow: inject the wild + pin its placement hint now that gameplay resumed).
+            var cb = _onClaimed; _onClaimed = null; cb?.Invoke();
         }
 
         // ── Dev/test entry (FX test menu) — show/hide in isolation, no overlay pause or level advance ──
@@ -136,7 +174,18 @@ namespace WordDrop
             _isShowing = true;
             if (_subtitleText != null) _subtitleText.text = "Swap";
             if (_descText != null) _descText.text = "Swap any tile on the board for a new one!";
-            if (_iconImage != null) _iconImage.sprite = Resources.Load<Sprite>("Tiles/swap_tile");
+            if (_iconImage != null)
+            {
+                // Energy icon for the SWAP unlock (matches the real modal). Fall back to Texture→Sprite since
+                // Icon_ItemIcon_* assets are imported as plain Textures. 2026-07-10 Spencer.
+                var icon = Resources.Load<Sprite>("Tiles/Icon_ItemIcon_Energy");
+                if (icon == null)
+                {
+                    var tex = Resources.Load<Texture2D>("Tiles/Icon_ItemIcon_Energy");
+                    if (tex != null) icon = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+                }
+                _iconImage.sprite = icon;
+            }
             _canvas.gameObject.SetActive(true);
             if (_panel != null)
             {
@@ -167,7 +216,7 @@ namespace WordDrop
             canvasGO.transform.SetParent(transform, false);
             _canvas = canvasGO.AddComponent<Canvas>();
             _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            _canvas.sortingOrder = 165; // above StageClearModal (160) so it sits on top
+            _canvas.sortingOrder = 172; // above the level MAP (170) so it can show OVER the map (Candy-Crush unlock beat)
 
             var scaler = canvasGO.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -220,6 +269,10 @@ namespace WordDrop
             _iconImage.sprite = Resources.Load<Sprite>("Tiles/swap_tile"); // placeholder — swap for real art later
             _iconImage.preserveAspect = true;
             _iconImage.raycastTarget = false;
+            // Soft drop shadow so the icon lifts off the cream panel. 2026-07-10 Spencer.
+            var iconShadow = iconGO.AddComponent<UnityEngine.UI.Shadow>();
+            iconShadow.effectColor    = new Color(0f, 0f, 0f, 0.35f);
+            iconShadow.effectDistance = new Vector2(5f, -5f);
 
             // "x3" reward-count badge — bottom-right of the icon, Royal-Match style. Overhangs slightly so it
             // reads as a count chip on the corner. Placeholder count for now. 2026-07-06 Spencer.
@@ -230,6 +283,7 @@ namespace WordDrop
             countBadge.horizontalOverflow = HorizontalWrapMode.Overflow;
             countBadge.verticalOverflow = VerticalWrapMode.Overflow;
             countBadge.raycastTarget = false;
+            _countBadge = countBadge; // hidden by default in Show; a counted reward (wild = x1) turns it on
 
             // Description — brief "what it does".
             _descText = CreateLabel(_panel.transform, "Desc",

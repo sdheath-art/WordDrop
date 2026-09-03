@@ -93,6 +93,9 @@ namespace WordDrop
                                      // Read in ObjectiveManager.InstallLevel — replaces the random reseed.
         public bool RisesOff;        // tutorial/authored: run with rising rows OFF (board stays put).
         public int  MoveBudget;      // tutorial/authored: move budget for THIS level (0 = default curve).
+        public bool MoveLimitTopOut; // authored non-rising level: TOP OUT (lose) when the move budget is spent without meeting the goal. Only DROPS consume moves (edits are free). Scoped so tutorial move budgets aren't affected.
+        public bool EditsCountAsMoves; // authored: on THIS level, edits/swaps also tick the move counter (default: edits are free). For edit-focused levels (e.g. L6) so the MOVES budget reflects the actual play.
+        public bool PrimeDecayIntro;   // authored (L7): one-shot teaching beat — the first time a charged/primed word flips to its warning color (about to lose charge), freeze + spotlight it + "charged words fade" line + Tap to Skip.
         public bool Gated;           // tutorial: run the input-gating + hand_point coaching on this level.
         public bool CountConnecting; // tutorial: also count the connecting/trigger word toward the goal,
                                      // so a "2 explosions of 4 words" board reads 4 on the TARGET.
@@ -101,6 +104,18 @@ namespace WordDrop
         public bool  GuaranteeFirstWord; // reroll the opening hand until a word is makeable on this board.
         public bool  FuseOff;            // tutorial: primed words DON'T fizzle (the fuse is its own later lesson).
         public bool  SplashOff;          // tutorial/authored: NO junk-splash collateral — detonations clear only the word tiles (deterministic board).
+        public int   SeedNearWords;      // edit-practice: sprinkle N obvious "near-words" (2 letters + a decoy tile) into row 0 + rig the completing letters into the hand.
+        public bool  SwapExplosionsOnly; // swap-tutorial: ONLY explosions caused by a swap/edit count toward the objective (drop-caused don't).
+        public int   RewriteCharges;     // per-level swap/EDIT charge grant AT INSTALL (0 = leave the running total). Bootstraps swap-only levels so the first swap is possible.
+        public bool  RisingIntro;        // fire the one-time "board rises" spotlight pause on this level's FIRST rise (L9 survival graduation).
+        public bool  StonesOff;          // suppress rising-row stone/rock tiles for this level (introduce rocks later).
+        public bool  SeedCrossing;       // stamp ONE guaranteed crossing pop + carve its drop lane open onto the normal random board (early self-explanatory levels).
+        public int    HintCrossCol;      // authored crossing level: force the idle nudge to drop into this lane column in sequence (-1 = off).
+        public string HintCrossLetters;  // ordered completing letters to nudge into HintCrossCol one at a time (e.g. "OW" → O for COIN, then W for WORD).
+        public int[]  HintCrossCols;      // per-letter drop columns (parallel to HintCrossLetters) when the steps drop into DIFFERENT columns (e.g. combo build); null → all use HintCrossCol.
+        public int[]  HintEditCols;       // authored EDIT nudge: ordered sequence of target board COLUMNS to edit (parallel to HintEditRows/HintEditLetters). null = off. Idle hint points at each edit in turn.
+        public int[]  HintEditRows;       // target board ROWS for the edit nudge (parallel).
+        public string HintEditLetters;    // the completing HAND letter to stamp for each edit step (parallel), e.g. "EM" → E (LOVE) then M (HOME).
         public string GoalText;          // tutorial/authored: custom pre-level GOAL text (null = auto from the objective).
         public string RigHand;           // authored: FORCE this opening hand (each char = a card); free placement, no gating.
 
@@ -175,10 +190,17 @@ namespace WordDrop
                 //   so opportunities are abundant + easy. Rises ON (the REFILL engine keeps the board fed;
                 //   gentle Breezy cadence). The idle marching-ants hint is the safety net if they stall.
                 //   Goal: explode 3 ANY words. ⚠️ Needs NoAssistMode OFF (N) or all the help is disabled.
-                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:4,
-                    assistFreq:0.90f, risesOff:true, moveBudget:30, boardFillRows:4, boardDensity:0.55f,
-                    guaranteeFirstWord:true, fuseOff:true,
-                    why:"TUTORIAL L2 — comprehension: explode 4 words YOUR way. LIGHT/open board (no edits or swaps to dig out of clutter, so keep it forgiving) + MAX assists feed the opportunities; rises off, 30 moves, free play, idle hint = safety net."),
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
+                    fixedBoard: new[] {
+                        ".C.IN.",   // row 4 (top)    — COIN missing its O; col2 gap = the open drop lane
+                        ".DRES.",   // row 3          — WORD's R, directly under the O-gap
+                        "LODEOE",   // row 2          — WORD's D
+                        "AIFNDT",   // row 1
+                        "YDLUES",   // row 0 (bottom)
+                    },
+                    rigHand:"OWRES", assistFreq:0.90f, risesOff:true, moveBudget:30, fuseOff:true, splashOff:true,
+                    hintCrossCol:2, hintCrossLetters:"OW",
+                    why:"TUTORIAL L2 — LOCKED authored board (Spencer 2026-07-09, 'perfect arrangement'): filled + supported, COIN x WORD crossing seeded with the O-drop lane open at col2. Drop O into col2 → charges COIN + reveals _ORD; drop W → WORD (longest word in the col run) crosses COIN's O → pop. Hand O,W,R,E + S next."),
 
                 // TUTORIAL L3 — teaches the COMBO: STACK a cluster of charged words, then DETONATE them all
                 //   at once. Gated. The col-1 tower (Spencer's authored board):
@@ -196,7 +218,7 @@ namespace WordDrop
                         "RVIERT",   // row 0 (bottom)
                     },
                     risesOff:true, moveBudget:30, gated:true, countConnecting:false, fuseOff:true,
-                    goalText:"Explode a 3-word cluster!",
+                    goalText:"Pop a 3-word combo!",
                     why:"TUTORIAL L3 — COMBO: stack TOW/STAR/ZIP (col-1 tower), then DAY triggers all 3 at once."),
 
                 // TUTORIAL L4 — COMBO PRACTICE (free play, ungated). They learned the combo on L3's rigged
@@ -218,9 +240,10 @@ namespace WordDrop
                     },
                     assistFreq:0.90f, risesOff:true, moveBudget:30,
                     guaranteeFirstWord:true, fuseOff:true,
-                    goalText:"Blow up a 3-word combo!",
+                    goalText:"Pop a 3+ word combo!",
                     rigHand:"CTEYR",   // FORCE the combo letters (C,T,E,Y) + one distractor into the opening hand
-                    why:"TUTORIAL L4 — combo practice: authored CAT/SOFT/FINE + YES-trigger 3-word combo; ComboObjective, free play."),
+                    hintCrossLetters:"CTEY", hintCrossCols:new[]{0,3,4,4},   // idle-suggestion ORDER: C→CAT · T→SOFT · E→FINE · Y→YES
+                    why:"TUTORIAL L4 — combo practice: authored CAT/SOFT/FINE + YES-trigger 3-word combo; ComboObjective, free play. Idle hint walks C→CAT · T→SOFT · E→FINE · Y→YES."),
 
                 // TUTORIAL L5 — TEACH EDIT (Spencer authored 2026-07-07). First EDIT level (Edit unlocks @ L5).
                 //   Player EDITS wrong tiles (tap a board tile → tap a hand letter) to build words on a fixed board:
@@ -235,27 +258,51 @@ namespace WordDrop
                         ".RH...",   // row 4
                         "SWAZJ.",   // row 3   Z→P = SWAP (primes)
                         "OFNGEI",   // row 2
-                        "UIBNSH",   // row 1   B→D = HAND (triggers blast) ; then S→T = ANT ; H→S = ANTS
-                        "YCXOMW",   // row 0   (bottom) — X/O break the accidental words Spencer hit
+                        "TIBNSH",   // row 1   B→D=HAND(blast) · ANT via board-swap S(4,1)↔T(0,1) · ANTS via swap H(5,1)↔S(5,0)
+                        "YCXOMS",   // row 0   (bottom) — S at col5 is the loose tile swapped UP into the ANTS spot
                     },
-                    risesOff:true, moveBudget:30, gated:true, fuseOff:true, splashOff:true,
-                    goalText:"Cause 2 explosions with edits!",
-                    rigHand:"PDTSA",   // FORCE the edit letters P,D,T,S (+A distractor) into the opening hand
-                    why:"TUTORIAL L5 — TEACH EDIT: edit tiles → SWAP/HAND (blast) then ANT/ANTS. UNGATED for now (verify)."),
+                    risesOff:true, moveBudget:30, gated:true, fuseOff:true, splashOff:true, swapExplosionsOnly:true, rewriteCharges:5,
+                    goalText:"Cause 2 explosions with swaps!",
+                    rigHand:"PDKMA",   // P (Z→P) + D (B→D) hand-stamps; K,M,A distractors (ANT/ANTS are BOARD swaps)
+                    why:"TUTORIAL L5 — TEACH EDIT (gated): edit tiles → SWAP/HAND (blast) then ANT/ANTS."),
 
-                // L1 — LongWord Ki. Knife-through-butter hook: explode 3 ANY words, every helper ON. VALLEY (run floor).
-                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:3,
-                    why:"L1 VALLEY — LongWord Ki: 3 any-words, all helpers ON. Feel-good fast start."),
+                // TUTORIAL L6 — EDIT PRACTICE (free play, 2026-07-07 Spencer). Learned Edit on L5's gated board;
+                //   now they use it themselves. Board is DENSER than usual (high fill) so there are few open
+                //   columns to DROP into — editing existing tiles into words becomes the natural move. Lots of
+                //   adjacencies = lots of edit opportunities. Edit unlocked (+ generous charges); boosters/swaps
+                //   still locked. Free play + heavy assists + idle hint help them find edits.
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:6,
+                    fixedBoard: new[] {
+                        "EWSOPU",   // row 5 (top)
+                        "PEYZLL",   // row 4
+                        "ENHKTO",   // row 3
+                        "RMRGIV",   // row 2
+                        "DOHOZN",   // row 1   H(2,1) O(3,1) Z(4,1) N(5,1). COMBO seed: LOVE edits N(5,1)→E (col5),
+                                    //          which turns row1 cols2-5 into H-O-Z-E → then edit Z(4,1)→M = HOME (pops the combo).
+                        "SUZBAZ",   // row 0 (bottom)
+                    },
+                    assistFreq:0.90f, risesOff:true, moveBudget:30, editsCountAsMoves:true,   // edit-focused level → edits AND drops both tick the move counter
+                    fuseOff:true, swapExplosionsOnly:true, rewriteCharges:5,
+                    rigHand:"MTAE",   // M (Z→M for HOME) + E (N→E for LOVE); T,A distractors
+                    // Sequential idle EDIT nudge: step0 = LOVE (edit N at (5,1)→E), step1 = HOME (edit Z at (4,1)→M).
+                    // HOME only resolves after LOVE, since LOVE supplies the E at (5,1) that HOME's word ends on.
+                    hintEditCols:new[]{5,4}, hintEditRows:new[]{1,1}, hintEditLetters:"EM",
+                    goalText:"Swap tiles to pop 6 words!",
+                    why:"TUTORIAL L6 — EDIT PRACTICE (authored board, 2026-07-09 Spencer): full fixed board seeded with lots of edit opportunities, free play. Edit existing tiles to make/trigger words. Hand NTAE (no set sequence)."),
 
-                // ⚠️ TEST PLACEMENT (2026-06-17 Spencer) — HiddenWord thin slice, parked at L2 so it's reachable
-                //    fast. Common 4-letter word + Breezy board so it completes without seeding-guarantee work.
-                //    Move/remove once the mode is validated; instant reveal for now (no fly-up yet).
-                Entry(LevelMode.HiddenWord, DifficultyProfile.A_Breezy, hidden:"STAR",
-                    why:"L2 TEST — HiddenWord thin slice: uncover STAR. Feel-test the reveal loop."),
+                // L7 (this entry installs as level 7 after the tutorial shift) — LongWord: explode 6 any-words on a
+                // fuller board. Wild-unlock test bed. 2026-07-07 Spencer. (Was the old "L1 VALLEY" feel-good opener.)
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:6,
+                    boardFillRows:6, boardDensity:0.78f, seedNearWords:3, risesOff:true,
+                    moveBudget:20, moveLimitTopOut:true, editsCountAsMoves:true, primeDecayIntro:true,   // rises off → 20 moves (DROPS + EDITS both count) is the pressure; top out if the goal isn't met. Teach prime-decay here. 2026-07-09 Spencer.
+                    why:"L7 — LongWord: explode 6 any-words, FULLER board (6 rows / 0.78) + 3 near-word seeds, all helpers ON, RISES OFF, 20-move top-out (drops + edits count). Teaches charged-tiles-decay. Wild-unlock test bed."),
 
-                // L2 — HeroWord Ki. Introduce the escort-down flagship gently (drop 2). Still breezy.
-                Entry(LevelMode.HeroWord, DifficultyProfile.A_Breezy, hero:2,
-                    why:"L2 VALLEY — HeroWord Ki: escort 2 down, breezy. Teach the flagship escort, cold-free."),
+                // L8 — RISES ON: the survival graduation. Moved up from L9 (2026-07-09 Spencer: dropped the
+                //    redundant chill L8 so survival starts a level earlier — no more chill→chill→rise). Familiar
+                //    LongWord so the rising board is the ONLY new thing. NEEDS: rising-intro bubble + danger cue (TODO).
+                Entry(LevelMode.LongWord, DifficultyProfile.A_Breezy, longMin:2, longGoal:5, risingIntro:true, stonesOff:true,
+                    editsCountAsMoves:true,   // rising level → edits advance the rise like a drop (editing isn't free); keeps parity with L6/L7. 2026-07-09 Spencer.
+                    why:"L8 — LongWord, RISES ON: first survival level (moved up from L9). Edits count as turns (advance the rise). Introduce the rising board + top-out. Rocks OFF (introduced later)."),
 
                 // L3 — LongWord Shō. Same mode, a touch harder (4 any-words), Normal. Small rise.
                 Entry(LevelMode.LongWord, DifficultyProfile.B_Normal, longMin:2, longGoal:5,
@@ -322,9 +369,9 @@ namespace WordDrop
             LevelMode mode, DifficultyProfile profile, string why,
             int longMin = 3, int longGoal = 3, int hero = 2, int ice = 4,
             int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
-            bool risesOff = false, int moveBudget = 0, bool gated = false, bool countConnecting = false,
+            bool risesOff = false, int moveBudget = 0, bool moveLimitTopOut = false, bool editsCountAsMoves = true, bool primeDecayIntro = false, bool gated = false, bool countConnecting = false,
             float assistFreq = -1f, int boardFillRows = 0, float boardDensity = 0f,
-            bool guaranteeFirstWord = false, bool fuseOff = false, bool splashOff = false, string goalText = null, string rigHand = null)
+            bool guaranteeFirstWord = false, bool fuseOff = false, bool splashOff = false, int seedNearWords = 0, bool swapExplosionsOnly = false, int rewriteCharges = 0, bool risingIntro = false, bool stonesOff = false, bool seedCrossing = false, int hintCrossCol = -1, string hintCrossLetters = null, int[] hintCrossCols = null, int[] hintEditCols = null, int[] hintEditRows = null, string hintEditLetters = null, string goalText = null, string rigHand = null)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -345,6 +392,9 @@ namespace WordDrop
                 FixedBoard  = fixedBoard,
                 RisesOff    = risesOff,
                 MoveBudget  = moveBudget,
+                MoveLimitTopOut = moveLimitTopOut,
+                EditsCountAsMoves = editsCountAsMoves,
+                PrimeDecayIntro = primeDecayIntro,
                 Gated           = gated,
                 CountConnecting = countConnecting,
                 BoardFillRows   = boardFillRows,
@@ -352,6 +402,18 @@ namespace WordDrop
                 GuaranteeFirstWord = guaranteeFirstWord,
                 FuseOff         = fuseOff,
                 SplashOff       = splashOff,
+                SeedNearWords      = seedNearWords,
+                SwapExplosionsOnly = swapExplosionsOnly,
+                RewriteCharges     = rewriteCharges,
+                RisingIntro        = risingIntro,
+                StonesOff          = stonesOff,
+                SeedCrossing       = seedCrossing,
+                HintCrossCol       = hintCrossCol,
+                HintCrossLetters   = hintCrossLetters,
+                HintCrossCols      = hintCrossCols,
+                HintEditCols       = hintEditCols,
+                HintEditRows       = hintEditRows,
+                HintEditLetters    = hintEditLetters,
                 GoalText        = goalText,
                 RigHand         = rigHand,
                 Why = why,

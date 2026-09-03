@@ -342,9 +342,10 @@ namespace WordDrop
                     if (displayFont != null) _winnerText.font = displayFont;
                 }
                 int stage = SurvivalManager.Instance != null ? SurvivalManager.Instance.GetCurrentStage() : 1;
+                int runStage = LevelMapPanel.DisplayNum(stage); // run level (tutorial doesn't inflate it)
                 if (_playerScoreText != null)
                 {
-                    _playerScoreText.text = $"{timeStr}  |  S{stage}  |  {humanDrops} drops";
+                    _playerScoreText.text = $"{timeStr}  |  S{runStage}  |  {humanDrops} drops";
                     _playerScoreText.fontSize = 24; // tighter fit for stats line
                 }
                 if (_aiScoreText != null)

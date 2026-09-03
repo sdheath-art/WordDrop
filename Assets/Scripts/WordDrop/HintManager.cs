@@ -196,6 +196,9 @@ namespace WordDrop
             // shouldn't compete with the dim scrim while the player decides
             // whether to play on.
             if (ContinueModal.Instance != null && ContinueModal.Instance.IsShowing) return false;
+            // Overlay pause (rising-intro spotlight beat) up → suppress the idle hint so a dimmed hand card
+            // doesn't hop out from behind the dim scrim. 2026-07-08 Spencer.
+            if (SurvivalManager.Instance != null && SurvivalManager.Instance.IsOverlayPaused) return false;
             return true;
         }
 
@@ -230,7 +233,20 @@ namespace WordDrop
             {
                 char letter = handArr[i];
                 if (letter == '\0') continue;
-                if (letter == TileBag.WILD_CHAR) continue; // skip wild — can't resolve a single letter to hint
+                if (letter == TileBag.WILD_CHAR)
+                {
+                    // WILD: it can be ANY letter, so evaluate it as every A-Z and take the best word it forms
+                    // in each column. Lets the hint point at a good wild placement instead of ignoring it.
+                    for (int col = 0; col < cols; col++)
+                    {
+                        if (rules.GetLowestEmptyRow(col) < 0) continue;
+                        int wScore; List<Vector2Int> wCells;
+                        if (!BestWildDropInColumn(rules, col, out wScore, out wCells)) continue;
+                        if (wScore <= best.Score) continue;
+                        best = new BestMove { CardIndex = i, Col = col, WordCells = wCells, Score = wScore };
+                    }
+                    continue;
+                }
 
                 for (int col = 0; col < cols; col++)
                 {
@@ -253,6 +269,58 @@ namespace WordDrop
             }
 
             return best.CardIndex >= 0;
+        }
+
+        /// <summary>Evaluate a WILD dropped in <paramref name="col"/> by trying every letter A-Z and returning
+        /// the best word it forms (highest ScoreMatches). Shared by the general hint scan and the first-wild
+        /// teaching hint. 2026-07-07 Spencer.</summary>
+        private bool BestWildDropInColumn(RulesEngine rules, int col, out int bestScore, out List<Vector2Int> bestCells)
+        {
+            bestScore = -1; bestCells = null;
+            if (rules.GetLowestEmptyRow(col) < 0) return false; // column full
+            for (char c = 'A'; c <= 'Z'; c++)
+            {
+                bool wouldTrigger;
+                var matches = rules.SimulateDropWithTriggerCheck(col, c, MatchController.PLAYER_HUMAN, out wouldTrigger);
+                if (matches == null || matches.Count == 0) continue;
+                int score = ScoreMatches(matches, wouldTrigger);
+                if (score <= bestScore) continue;
+                bestScore = score;
+                bestCells = new List<Vector2Int>(matches[0].Cells != null ? matches[0].Cells : new List<Vector2Int>());
+            }
+            return bestScore > 0 && bestCells != null;
+        }
+
+        /// <summary>Teaching hook: find the WILD in hand + the single best placement for it, and pin the idle
+        /// hint there (card-hop + marching-ants, same render as the swap nudge). For the first-wild "here's how
+        /// to use it" moment on a live board. Returns false if there's no wild or nowhere useful to place it.
+        /// 2026-07-07 Spencer.</summary>
+        public bool ForceWildHint()
+        {
+            var rules = RulesEngine.Instance;
+            var pHand = MatchController.Instance != null ? MatchController.Instance.GetHand(MatchController.PLAYER_HUMAN) : null;
+            if (rules == null || pHand == null) return false;
+            char[] handArr = pHand.GetAllSlots();
+            if (handArr == null) return false;
+
+            int wildSlot = -1;
+            for (int i = 0; i < handArr.Length; i++)
+                if (handArr[i] == TileBag.WILD_CHAR) { wildSlot = i; break; }
+            if (wildSlot < 0) return false;
+
+            int bestCol = -1, bestScore = -1;
+            List<Vector2Int> bestCells = null;
+            for (int col = 0; col < RulesEngine.COLS; col++)
+            {
+                int s; List<Vector2Int> cells;
+                if (!BestWildDropInColumn(rules, col, out s, out cells)) continue;
+                if (s <= bestScore) continue;
+                bestScore = s; bestCol = col; bestCells = cells;
+            }
+            if (bestCol < 0) return false;
+
+            SetForcedHint(wildSlot, bestCol, bestCells);
+            return true;
         }
 
         private int ScoreMatches(List<RulesWordMatch> matches, bool wouldTriggerPrimed)

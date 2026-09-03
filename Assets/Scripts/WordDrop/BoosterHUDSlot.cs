@@ -211,7 +211,7 @@ namespace WordDrop
         private const float EDIT_PANEL_W = 340f;
         private const float EDIT_PANEL_H = 100f;   // condensed height (was 150 → 120 → 100)
         private const int   EDIT_PIP_COUNT = 3;    // matches the survival rewrite cap of 3
-        private static readonly Color PIP_FULL  = new Color(0.95f, 0.48f, 0.64f, 1f);   // 2026-06-24: candy pink (matches HUD/modal/stripe pink) — was gold, off vs the cool palette
+        private static readonly Color PIP_FULL  = new Color(0.52f, 0.92f, 1.00f, 1f);   // 2026-07-10: light candy CYAN — matches the bright bloomed swap tile (was too deep/blue at 0.30,0.82,0.96)
         private static readonly Color PIP_EMPTY = new Color(0.30f, 0.36f, 0.46f, 0.85f); // dim = used
         private Image[]         _editPips;
         private RectTransform[] _editPipRects;
@@ -480,6 +480,25 @@ namespace WordDrop
             benchImg.sprite = GetBenchSprite();
             benchImg.color  = new Color(0.10f, 0.27f, 0.50f, 0.92f); // 2026-06-02: deep ocean blue (was garden-purple) — candy-palette chrome
             benchImg.raycastTarget = false;
+
+            // Blue EXTENSION strip BELOW the bench (child → slides with it). When the bench pops UP and overshoots
+            // on level-entry, this keeps the area below it filled with the bench colour instead of the cyan
+            // background — reads as the panel extending off the bottom, no gap. Mirrors the top bar's strip.
+            // 2026-07-13 Spencer.
+            {
+                var extGO = new GameObject("BenchBottomExtend", typeof(RectTransform), typeof(Image));
+                extGO.transform.SetParent(benchGO.transform, false);
+                extGO.transform.SetAsFirstSibling();
+                var extRT = extGO.GetComponent<RectTransform>();
+                extRT.anchorMin = new Vector2(0f, 0f);
+                extRT.anchorMax = new Vector2(1f, 0f);
+                extRT.pivot     = new Vector2(0.5f, 1f);  // hangs DOWN from the bench bottom
+                extRT.sizeDelta = new Vector2(0f, 400f);
+                extRT.anchoredPosition = Vector2.zero;
+                var extImg = extGO.GetComponent<Image>();
+                extImg.color = benchImg.color;
+                extImg.raycastTarget = false;
+            }
 
             int slotCount = DISPLAY_ORDER.Length;
             _slotButtons           = new GameObject[slotCount];
@@ -787,6 +806,30 @@ namespace WordDrop
 
         /// <summary>Refreshes the EDITS pips to reflect the current rewrite count. Newly-FILLED pips
         /// (an edit was restored) pop with an additive gold glow burst.</summary>
+        // Tutorial (swap level): lift the SWAPS/EDITS pip panel above the dim scrim so it stays lit + readable
+        // while the player learns swaps. A sub-canvas with overrideSorting raises just this panel. 2026-07-08 Spencer.
+        private Canvas _editPanelSpotlightCanvas;
+        public void SetEditPanelBright(bool bright)
+        {
+            if (_editPanelSlot == null) return;
+            if (bright)
+            {
+                if (_editPanelSpotlightCanvas == null)
+                {
+                    _editPanelSpotlightCanvas = _editPanelSlot.GetComponent<Canvas>() ?? _editPanelSlot.AddComponent<Canvas>();
+                    if (_editPanelSlot.GetComponent<UnityEngine.UI.GraphicRaycaster>() == null)
+                        _editPanelSlot.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+                }
+                _editPanelSpotlightCanvas.overrideSorting = true;
+                _editPanelSpotlightCanvas.sortingOrder = 12; // above the tutorial scrim (9)
+                _editPanelSpotlightCanvas.enabled = true;
+            }
+            else if (_editPanelSpotlightCanvas != null)
+            {
+                _editPanelSpotlightCanvas.overrideSorting = false;
+            }
+        }
+
         private void RefreshEditPips(int count)
         {
             if (_editPips == null) return;
@@ -815,7 +858,7 @@ namespace WordDrop
                     _editPips[p].color = filled ? PIP_FULL : PIP_EMPTY;
                 }
                 if (filled && !wasFilled && _lastPipCount >= 0)
-                    AnimateEditPipGain(p); // restored this pip → celebrate (green glow)
+                    AnimateEditPipGain(p); // restored this pip → celebrate (cyan glow)
             }
             _lastPipCount = count;
 
@@ -883,7 +926,7 @@ namespace WordDrop
             SpawnEditPipGlow(rt);
         }
 
-        /// <summary>Fake-bloom: an additive gold glow behind the pip that expands and fades out.
+        /// <summary>Fake-bloom: an additive cyan glow behind the pip that expands and fades out.
         /// Over the dark navy panel the additive blend reads as a real glow. Self-destroys.</summary>
         private void SpawnEditPipGlow(RectTransform pip)
         {
@@ -898,7 +941,7 @@ namespace WordDrop
             grt.offsetMin = new Vector2(-34f, -34f); grt.offsetMax = new Vector2(34f, 34f); // spill past the pip
             var gimg = gGO.GetComponent<Image>();
             gimg.sprite = glow;
-            gimg.color  = new Color(0.40f, 1f, 0.35f, 0.95f); // green = "you gained an edit"
+            gimg.color  = new Color(0.35f, 0.98f, 1.12f, 0.95f); // cyan = "swap charge restored" — matches the swap edit-glow
             gimg.raycastTarget = false;
             var addMat = LoadAdditiveGlowMaterial();
             if (addMat != null) gimg.material = addMat;
@@ -1502,6 +1545,118 @@ namespace WordDrop
         /// cartoon overshoot, so the row pops back into existence at its
         /// rest position. No-op if AnimateGroupOut never ran.
         /// </summary>
+        private Vector2 _benchRest; private bool _benchRestCaptured;
+        private float _bottomHudOffY;
+        private const float BENCH_ENTRY_DROP = 340f; // how far below the bottom edge the bottom HUD parks
+
+        /// <summary>Offset the WHOLE bottom HUD — bench panel + booster row + settings — vertically by <paramref
+        /// name="dy"/> from rest, in lockstep. The boosters/settings are canvas children (not bench children), so
+        /// we move them alongside the panel by hand; the SWAPS/Edit slot is EXCLUDED (it slides in from the right
+        /// on its own). dy=0 → rest. 2026-07-13 Spencer.</summary>
+        private void ApplyBottomHudOffset(float dy)
+        {
+            if (_benchGO != null)
+            {
+                var brt = _benchGO.transform as RectTransform;
+                if (brt != null) brt.anchoredPosition = _benchRest + new Vector2(0f, dy);
+            }
+            if (_slotButtons != null && _slotRestPositions != null)
+            {
+                for (int i = 0; i < _slotButtons.Length && i < _slotRestPositions.Length; i++)
+                {
+                    if (_slotButtons[i] == null) continue;
+                    if (_slotButtons[i] == _editPanelSlot) continue; // SWAPS panel slides from the right separately
+                    var rt = _slotButtons[i].GetComponent<RectTransform>();
+                    if (rt != null) rt.anchoredPosition = _slotRestPositions[i] + new Vector2(0f, dy);
+                }
+            }
+            _bottomHudOffY = dy;
+        }
+
+        /// <summary>Snapshot the bottom-HUD rests + park it BELOW the bottom edge, so the map can fade into a blank
+        /// screen before the pop-up plays. Called before the map fade. 2026-07-13 Spencer.</summary>
+        public void PrepBenchEntry()
+        {
+            if (_benchGO == null) return;
+            var rt = _benchGO.transform as RectTransform;
+            if (rt == null) return;
+            if (!_benchRestCaptured) { _benchRest = rt.anchoredPosition; _benchRestCaptured = true; }
+            CacheRestPositionsIfNeeded(); // captures slot rests into _slotRestPositions
+            rt.DOKill(); rt.localScale = Vector3.one; // no warp
+            ApplyBottomHudOffset(-BENCH_ENTRY_DROP); // park below
+        }
+
+        /// <summary>Level-entry: the whole bottom HUD (bench panel + boosters + settings) POPS UP from below the
+        /// bottom edge and overshoots (position, no scale/warp) — the mirror of the top bar dropping down. The
+        /// boosters/settings ride with the panel in lockstep. BenchBottomExtend fills the overshoot gap so no cyan
+        /// shows. Slides from wherever PrepBenchEntry parked it (prepping itself if called standalone). 2026-07-13.</summary>
+        public void AnimateBenchIn()
+        {
+            if (_benchGO == null) return;
+            var rt = _benchGO.transform as RectTransform;
+            if (rt == null) return;
+            if (!_benchRestCaptured) { _benchRest = rt.anchoredPosition; _benchRestCaptured = true; }
+            CacheRestPositionsIfNeeded();
+            rt.DOKill(); rt.localScale = Vector3.one; // no warp
+            DOTween.Kill("benchEntry");
+            ApplyBottomHudOffset(-BENCH_ENTRY_DROP); // ensure parked below, then pop up
+            DOTween.To(() => _bottomHudOffY, ApplyBottomHudOffset, 0f, 0.24f)
+                .SetEase(Ease.OutBack, 1.4f).SetId("benchEntry")
+                .OnComplete(() => ApplyBottomHudOffset(0f));
+        }
+
+        /// <summary>Level-EXIT: the whole bottom HUD (bench panel + boosters + settings) slides back DOWN off the
+        /// bottom edge — the mirror of AnimateBenchIn. 2026-07-14 Spencer.</summary>
+        public void AnimateBenchOut()
+        {
+            if (_benchGO == null) return;
+            var rt = _benchGO.transform as RectTransform;
+            if (rt == null) return;
+            if (!_benchRestCaptured) { _benchRest = rt.anchoredPosition; _benchRestCaptured = true; }
+            CacheRestPositionsIfNeeded();
+            rt.DOKill();
+            DOTween.Kill("benchEntry");
+            DOTween.To(() => _bottomHudOffY, ApplyBottomHudOffset, -BENCH_ENTRY_DROP, 0.34f)
+                .SetEase(Ease.InBack, 1.2f).SetId("benchEntry").SetUpdate(true);
+        }
+
+        private Vector2 _swapPanelRest; private bool _swapPanelRestCaptured;
+        // Park distance in UI units for ONE screen-width × 1.3 — matches the board/hand's 1.3-screen-width world park,
+        // so the shared normalized slide overshoots the exact same on-screen distance for all three. Canvas reference
+        // width (CANVAS_W) == one screen width. 2026-07-13 Spencer.
+        private const float SWAP_PARK_DIST = CANVAS_W * 1.3f;
+
+        /// <summary>Park the SWAPS panel off-screen right (before the map fade), so the level starts blank.
+        /// 2026-07-13 Spencer.</summary>
+        public void PrepSwapPanel()
+        {
+            if (_editPanelSlot == null) return;
+            var rt = _editPanelSlot.transform as RectTransform;
+            if (rt == null) return;
+            if (!_swapPanelRestCaptured) { _swapPanelRest = rt.anchoredPosition; _swapPanelRestCaptured = true; }
+            rt.DOKill();
+            rt.anchoredPosition = _swapPanelRest + new Vector2(SWAP_PARK_DIST, 0f);
+        }
+
+        /// <summary>Level-entry UNIFIED slide: t=1 → parked off the right edge, t=0 → rest, t&lt;0 → overshoot left.
+        /// Driven by the SAME shared tween as the board + tile holder so all three move as one. 2026-07-13 Spencer.</summary>
+        public void SetSwapSlideNorm(float t)
+        {
+            if (_editPanelSlot == null) return;
+            var rt = _editPanelSlot.transform as RectTransform;
+            if (rt == null) return;
+            if (!_swapPanelRestCaptured) { _swapPanelRest = rt.anchoredPosition; _swapPanelRestCaptured = true; }
+            rt.anchoredPosition = _swapPanelRest + new Vector2(t * SWAP_PARK_DIST, 0f);
+        }
+
+        /// <summary>Snap the SWAPS panel to exact rest. Called from the shared slide's OnComplete.</summary>
+        public void EndSwapSlide()
+        {
+            if (_editPanelSlot == null) return;
+            var rt = _editPanelSlot.transform as RectTransform;
+            if (rt != null) rt.anchoredPosition = _swapPanelRest;
+        }
+
         public void AnimateGroupIn(float speedMult = 1f)
         {
             if (!_restPositionsCached) return;

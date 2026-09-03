@@ -42,6 +42,7 @@ namespace WordDrop
             Light,   // amount 1.08 — subtle pop-in
             Medium,  // amount 1.25 — modal appearance (default, bumped from 1.15 for punchier feel)
             Heavy,   // amount 1.40 — star pop, spectacle moments
+            Toss,    // amount 3.00 — big "tossed in from centre" bounce (matches LevelIntroModal's play-modal entry)
         }
 
         private static float OvershootAmount(Overshoot level)
@@ -50,6 +51,7 @@ namespace WordDrop
             {
                 case Overshoot.Light:  return 1.08f;
                 case Overshoot.Heavy:  return 1.40f;
+                case Overshoot.Toss:   return 3.00f;
                 default:               return 1.25f;
             }
         }

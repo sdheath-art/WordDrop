@@ -29,7 +29,7 @@ namespace WordDrop
         public const int BOOSTER_UNLOCK_LEVEL  = 41;  // boosters/mallet — drip ~L41 (teach-level TBD)
         public const int EDIT_UNLOCK_LEVEL     = 5;   // rewrite/EDIT — TAUGHT at tutorial L5
         public const int BAG_UNLOCK_LEVEL      = 41;  // tile-bag — drip later (teach-level TBD)
-        public const int WILD_UNLOCK_LEVEL     = 36;  // chain-reward wild — drip ~L36 (teach-level TBD)
+        public const int WILD_UNLOCK_LEVEL     = 7;   // chain-reward wild — unlocks at L7 (2026-07-10 Spencer; was a placeholder 36). Permanent from L7 on.
 
         /// <summary>Set every lock from the current level index. Called per-level in
         /// ObjectiveManager.InstallLevel. Both the UI (BoosterHUDSlot / SWAPS panel) and the mechanics

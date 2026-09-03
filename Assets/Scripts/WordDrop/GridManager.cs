@@ -145,6 +145,97 @@ namespace WordDrop
             StartCoroutine(ShakeBoardCoroutine(magnitude, duration));
         }
 
+        private readonly List<Transform> _boardEntryTfs   = new List<Transform>();
+        private readonly List<Vector3>   _boardEntryRests = new List<Vector3>();
+        private bool _boardEntryPrepped; // true between PrepBoardEntry (park) and AnimateBoardIn completion
+
+        /// <summary>Level-entry: the board SHOOTS IN from the right, overshoots, and settles. The grid FRAME
+        /// (cells/bg under _gridRoot) AND every letter tile (tiles live at scene root, NOT under _gridRoot) are
+        /// offset together by the same amount, so the letters slide WITH the board. Snaps back to exact rest on
+        /// complete. 2026-07-13 Spencer.</summary>
+        private float _boardEntryOffX;
+
+        /// <summary>t=0 of the level-entry: snapshot the board's rest + PARK it off-screen to the right immediately,
+        /// so it's never seen sitting at centre during the beat before it slides in. 2026-07-13 Spencer.</summary>
+        public void PrepBoardEntry()
+        {
+            if (_gridRoot == null) return;
+            if (_boardEntryPrepped) return; // already snapshotted + parked — don't re-snapshot the parked pos as "rest"
+            _boardEntryPrepped = true;
+            _boardEntryTfs.Clear(); _boardEntryRests.Clear();
+            _boardEntryTfs.Add(_gridRoot.transform); _boardEntryRests.Add(_gridRoot.transform.position);
+            for (int i = 0; i < _allTileObjects.Count; i++)
+                if (_allTileObjects[i] != null)
+                {
+                    _boardEntryTfs.Add(_allTileObjects[i].transform);
+                    _boardEntryRests.Add(_allTileObjects[i].transform.position);
+                }
+            _boardEntryOffX = 12f;
+            var cam = Camera.main;
+            // 2.6 half-widths clears the FULL board off the right edge (1 half-width to reach the edge + up to 1 for
+            // the board's own half-width + margin) — at 1.35 the board's left half was still peeking in. 2026-07-13.
+            if (cam != null) _boardEntryOffX = cam.orthographicSize * cam.aspect * 2.6f;
+            ApplyBoardEntryOffset(_boardEntryOffX); // park off-screen NOW
+        }
+
+        /// <summary>Slide the (already-parked) board in from the right, overshoot, settle. 2026-07-13.</summary>
+        public void AnimateBoardIn()
+        {
+            if (_gridRoot == null) return;
+            if (_boardEntryTfs.Count == 0) PrepBoardEntry(); // FX-test / direct call: park first
+            DOTween.Kill("boardEntry");
+            DOTween.To(() => _boardEntryOffX, ApplyBoardEntryOffset, 0f, 0.52f)
+                .SetEase(Ease.OutBack, 1.3f).SetId("boardEntry")
+                .OnComplete(() => { ApplyBoardEntryOffset(0f); _boardEntryPrepped = false; });
+        }
+
+        private void ApplyBoardEntryOffset(float dx)
+        {
+            for (int i = 0; i < _boardEntryTfs.Count; i++)
+                if (_boardEntryTfs[i] != null)
+                    _boardEntryTfs[i].position = _boardEntryRests[i] + new Vector3(dx, 0f, 0f);
+        }
+
+        /// <summary>Level-entry UNIFIED slide: t=1 → parked off the right edge, t=0 → rest, t&lt;0 → overshoot left.
+        /// Driven by a single shared tween (HUDManager) so the board moves in perfect lockstep with the tile holder
+        /// + SWAPS and they all overshoot the exact same distance. 2026-07-13 Spencer.</summary>
+        public void SetEntrySlideNorm(float t)
+        {
+            if (_boardEntryTfs.Count == 0) PrepBoardEntry(); // standalone: park first
+            ApplyBoardEntryOffset(t * _boardEntryOffX);       // _boardEntryOffX is the park distance
+        }
+
+        /// <summary>Snap the board to exact rest + clear the prep guard. Called from the shared slide's OnComplete.</summary>
+        public void EndEntrySlide()
+        {
+            ApplyBoardEntryOffset(0f);
+            _boardEntryPrepped = false;
+        }
+
+        /// <summary>Level-EXIT prep: re-snapshot the CURRENT board (grid frame + whatever tiles exist right now) at
+        /// rest WITHOUT parking, so the shared slide can drive it OUT to the right (norm 0→1) — the mirror of the
+        /// entry. Must re-snapshot because tiles were created/destroyed during play; the entry's list is stale.
+        /// 2026-07-14 Spencer.</summary>
+        public void PrepBoardExit()
+        {
+            if (_gridRoot == null) return;
+            DOTween.Kill("boardEntry");
+            // Leave _boardEntryPrepped FALSE — the next level's PrepBoardEntry must run fully to re-snapshot the new
+            // tiles. SetEntrySlideNorm won't re-prep during the exit because the list below is non-empty.
+            _boardEntryTfs.Clear(); _boardEntryRests.Clear();
+            _boardEntryTfs.Add(_gridRoot.transform); _boardEntryRests.Add(_gridRoot.transform.position);
+            for (int i = 0; i < _allTileObjects.Count; i++)
+                if (_allTileObjects[i] != null)
+                {
+                    _boardEntryTfs.Add(_allTileObjects[i].transform);
+                    _boardEntryRests.Add(_allTileObjects[i].transform.position);
+                }
+            _boardEntryOffX = 12f;
+            var cam = Camera.main;
+            if (cam != null) _boardEntryOffX = cam.orthographicSize * cam.aspect * 2.6f;
+            // NOTE: no ApplyBoardEntryOffset here — the board stays at rest until the exit tween slides it out.
+        }
+
         private System.Collections.IEnumerator ShakeBoardCoroutine(float mag, float dur)
         {
             // Shake the board letter tiles via an ADDITIVE per-frame DELTA (not a captured base) so it

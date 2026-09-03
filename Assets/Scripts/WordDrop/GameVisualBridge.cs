@@ -762,6 +762,7 @@ namespace WordDrop
                                 if (thawed != null) thawed.PlayDefrost(); // ice-shatter burst + clears overlay; tile stays
                             }
                             HapticsManager.ExplosionImpact();
+                            GameAudio.Instance?.PlayIceMelt(); // once per batch (2026-07-30)
                         }
 
                         // Null-safe: treat null ExplodedCells as empty list
@@ -895,7 +896,7 @@ namespace WordDrop
                                             if (finale)
                                                 yield return StartCoroutine(WordDropFX.HitStop(0.05f));
 
-                                            yield return WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count);
+                                            yield return WordDropFX.Instance.PlayExplosion(groupTiles, g, groupTiles.Count, comboStagger: true);
 
                                             // Climax burst (prototype values).
                                             if (finale && BigBurstFlash.Instance != null)

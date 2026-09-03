@@ -168,6 +168,15 @@ namespace WordDrop
             return _rewritesRemaining[playerIndex];
         }
 
+        /// <summary>Grant the human player's swap/EDIT (rewrite) charges — used by per-level RewriteCharges so a
+        /// swap-tutorial level starts with enough to make the first swap (Survival's running total can be 0 by
+        /// then). 2026-07-07 Spencer.</summary>
+        public void SetRewriteCharges(int n)
+        {
+            _rewritesRemaining[PLAYER_HUMAN] = Mathf.Max(0, n);
+            if (HUDManager.Instance != null) HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[PLAYER_HUMAN]);
+        }
+
         public PlayerHand GetHand(int playerIndex)
         {
             if (playerIndex < 0 || playerIndex >= NUM_PLAYERS) return null;
@@ -972,12 +981,17 @@ namespace WordDrop
             {
                 SurvivalManager.Instance.ConsumeBoostDrop();
                 SurvivalManager.Instance.NotifyScoreDelta(totalScore);
-                // Edits/rewrites are recovery tools, not plays — they shouldn't
-                // tick the turn counter or fire a per-move rise. Skip the drop
-                // commit so the player isn't punished for using a rewrite to
-                // prime/fix the board.
-                if (!isRewrite)
+                // Edits/rewrites are recovery tools, not plays — they normally shouldn't
+                // tick the turn counter or fire a per-move rise, so the player isn't
+                // punished for using a rewrite to prime/fix the board. EXCEPTION: edit-focused
+                // levels (EditsCountAsMoves, e.g. L6) opt edits INTO the move counter so the
+                // MOVES budget reflects the actual play. 2026-07-09 Spencer.
+                if (!isRewrite || SurvivalManager.Instance.EditsCountAsMoves)
+                {
+                    if (isRewrite)
+                        Debug.Log($"[EditMove] edit ticked the move counter (globalOverride={SurvivalManager.EditsCountAsMovesGlobalOverride}, perLevel-or-override={SurvivalManager.Instance.EditsCountAsMoves}).");
                     SurvivalManager.Instance.NotifyDropCommitted();
+                }
             }
 
             // Bonus Mode: notify drop completion. If bonus is active, this either
@@ -1704,7 +1718,9 @@ namespace WordDrop
                 SwapsRemaining = _rewritesRemaining[player],
             };
             OnRewriteUsed?.Invoke(evt);
-            GameAudio.Instance?.PlayRewrite();
+            // Tile-holder swap uses the SAME sound as a board swap (PlayShuffle), not the old rewrite SFX, so both
+            // swap actions sound identical. 2026-07-14 Spencer.
+            GameAudio.Instance?.PlayShuffle();
 
             if (HUDManager.Instance != null)
                 HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[player]);

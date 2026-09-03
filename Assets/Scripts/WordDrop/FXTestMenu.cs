@@ -202,48 +202,16 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Meltdown Prefab @ center", _btnStyle))
-                FireMeltdownPrefab();
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flipbook Glow (bubble@2x) @ center", _btnStyle))
-                FireFlipbookGlow();
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "BigBurstFlash horizontal", _btnStyle))
-                FireBigBurst(vertical: false);
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "BigBurstFlash vertical", _btnStyle))
-                FireBigBurst(vertical: true);
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Shockwave Ring @ center", _btnStyle))
-                ShockwaveRing.Instance?.Play(ScreenCenterWorld(), 1.6f, null);
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Sparkle Spray", _btnStyle))
-                FireSparkleSpray();
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Sparkle Line (horizontal)", _btnStyle))
-                FireSparkleLine();
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Confetti / Meltdown particles", _btnStyle))
-                FireConfetti();
-            innerY += BTN_H + GAP;
-
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Detonation Audio (tier 2)", _btnStyle))
-                GameAudio.Instance?.PlayDetonation(1);
-            innerY += BTN_H + GAP;
-
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Board Shake (tier 2)", _btnStyle))
                 WordDropFX.Instance?.PlayBoardShake(1, 5);
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Cascade Pops (3x climb)", _btnStyle))
                 FireCascadePops();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "★ LEVEL COMPLETED — Test celebration", _btnStyle))
+                FireStageClearShow();
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Show", _btnStyle))
@@ -260,6 +228,33 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Unlock Modal — Hide", _btnStyle))
                 UnlockModal.Instance?.HideForDebug();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "WILD Unlock — Full Flow (modal→claim→inject→hint)", _btnStyle))
+                HandManager.Instance?.TriggerWildUnlockFlow();
+            innerY += BTN_H + GAP;
+
+            // Re-arm the ONE-TIME first-wild tutorial: clear the persisted flag so the NEXT wild earned in real
+            // gameplay fires the unlock flow again (the flow otherwise never repeats). 2026-07-10 Spencer.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "WILD Unlock — RESET flag (arm first-wild)", _btnStyle))
+            {
+                PlayerPrefs.DeleteKey("wild_unlock_taught");
+                PlayerPrefs.Save();
+                Debug.Log("[FXTest] wild_unlock_taught cleared — next wild earned in gameplay will re-trigger the unlock tutorial.");
+            }
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H),
+                    $"Tutorial — RESET (as if never played)  done={SurvivalManager.TutorialDone}", _btnStyle))
+            {
+                // Full clean-slate: the one-time run flag, the interactive-coaching flags (ResetTutorial), the
+                // wild-unlock coaching, and the tool-teach hints — so the whole onboarding runs fresh. 2026-07-14.
+                SurvivalManager.TutorialDone = false;
+                TutorialManager.ResetTutorial();            // clears tutorial_complete + hint_rewrite/hint_swap
+                PlayerPrefs.DeleteKey("wild_unlock_taught"); // wild-unlock tutorial re-arms
+                PlayerPrefs.Save();
+                Debug.Log("[FXTest] tutorial fully reset — next run starts at level 1 and every onboarding beat re-fires.");
+            }
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Top Out Panel (drop / dwell / exit)", _btnStyle))
@@ -284,10 +279,43 @@ namespace WordDrop
                 SurvivalManager.RisePerMoveDebug = !SurvivalManager.RisePerMoveDebug;
             innerY += BTN_H + GAP;
 
+            // ── Global "edits count as moves" override (feel-test on every level) ─────
+            string editMovesLabel = SurvivalManager.EditsCountAsMovesGlobalOverride
+                ? "Edits Count As Moves:  ON  (all levels)"
+                : "Edits Count As Moves:  OFF (per-level)";
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), editMovesLabel, _btnStyle))
+                SurvivalManager.EditsCountAsMovesGlobalOverride = !SurvivalManager.EditsCountAsMovesGlobalOverride;
+            innerY += BTN_H + GAP;
+
             // ── Booster cheat: refill all 4 boosters to 99 charges ───────────────
             // Lets us spam boosters during the cascade-bug repro session.
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Refill Boosters (99 each)", _btnStyle))
                 RefillAllBoosters(99);
+            innerY += BTN_H + GAP;
+
+            // ── Between-level progression map (preview the avatar hop in isolation) ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Map — Show (avatar hop)", _btnStyle))
+                LevelMapPanel.Instance?.ShowForDebug();
+            innerY += BTN_H + GAP;
+
+            // Coin cascade in isolation — for tuning coin size / spin / landing feel without
+            // replaying a level. Shows the map first if it isn't up. 2026-07-29.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Coins — Test cascade (+250 to pill)", _btnStyle))
+            {
+                if (LevelMapPanel.Instance != null) LevelMapPanel.Instance.CoinCascadeForDebug(250);
+                else Debug.LogWarning("[FXTest] LevelMapPanel.Instance missing — open the map once first.");
+            }
+            innerY += BTN_H + GAP;
+
+            // Phase 1: route the level-intro loop through the map (Candy-Crush: completed → MAP → play modal).
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H),
+                    LevelMapPanel.MapFlowEnabled ? "Map-in-Loop:  ON  (map between levels)" : "Map-in-Loop:  OFF (direct to level)", _btnStyle))
+                LevelMapPanel.MapFlowEnabled = !LevelMapPanel.MapFlowEnabled;
+            innerY += BTN_H + GAP;
+
+            // Preview the level-entry spring-in (board pop + HUD bar slide) without re-entering a level.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Entry — Test spring-in (board + HUD)", _btnStyle))
+                HUDManager.Instance?.PlayLevelEntry();
             innerY += BTN_H + GAP;
 
             // ── Force a WILD into the hand (to test the iridescent wild tile) ────

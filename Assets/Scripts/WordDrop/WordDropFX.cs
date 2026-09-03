@@ -821,9 +821,25 @@ namespace WordDrop
             }
         }
 
+        // COMBO COLOUR ESCALATION ramp (2026-07-27 Spencer). Each successive word in a blast lights up
+        // a different shade in the split-second before it pops, so the chain reads as a rolling hue
+        // escalation. Indexed by (chainStep - 1): chainStep 0 = the TRIGGER word, deliberately SKIPPED so
+        // it keeps its green scored-flash. These are HDR TINTS that multiply the pink primed sprite
+        // (primed_test@2x ≈ 246,135,233), so the on-screen hue is sprite×tint. Tune freely.
+        private static readonly Color[] s_comboDetonationRamp = new Color[]
+        {
+            new Color(2.20f, 0.50f, 0.95f, 1f), // step 1 — hot pink (trigger stays magenta; chain ramps above it)
+            new Color(1.40f, 0.45f, 2.10f, 1f), // step 2 — violet
+            new Color(1.10f, 0.50f, 2.40f, 1f), // step 3 — blue-violet
+            new Color(0.90f, 0.50f, 2.60f, 1f), // step 4+ — deep blue-violet
+        };
+
         // wordFlash: true for tiles that form a detonating WORD (they get the green cascade-flash);
         // false for pure splash/collateral tiles (they stay white per design). 2026-06-23.
-        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false, bool suppressFlyUp = false)
+        // comboStagger: true ONLY on the staggered multi-word combo paths, where chainStep is a clean
+        // 0-based per-word order (0 = trigger, 1,2,3… = chained words). Gates the combo colour escalation
+        // so a single-word detonation — whose chainStep is an unrelated counter — never mis-tints. 2026-07-27.
+        public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false, bool suppressFlyUp = false, bool comboStagger = false)
         {
             if (tiles == null || tiles.Count == 0) return null;
 
@@ -870,6 +886,7 @@ namespace WordDrop
             // any qualifying word. 2026-07-06 Spencer.
             var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
             bool flyUpGoal = HUDManager.Instance != null && !suppressFlyUp
+                && (ObjectiveManager.Instance == null || ObjectiveManager.Instance.CurrentExplosionCounts) // no fly-up if it won't count (drop on a swap-only level)
                 && ((flyObj is LongWordObjective lwObj && wordLength >= lwObj.MinLen)
                     || flyObj is ComboObjective);
             if (flyUpGoal)
@@ -901,8 +918,13 @@ namespace WordDrop
                 for (int i = 0; i < flyTiles.Count; i++)
                 {
                     bool last = (i == flyTiles.Count - 1);
+                    // The LAST letter to land releases any held objective-complete payoff (bing/checkmark/modal),
+                    // so the win fires as a RESULT of the tiles hitting the target. 2026-07-10 Spencer.
+                    System.Action landCb = last
+                        ? (System.Action)(() => ObjectiveManager.Instance?.NotifyObjectiveFlyUpsLanded())
+                        : null;
                     // Own 4-slot sorting band per letter (+4) so a letter never bleeds onto a neighbour tile.
-                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, null, i * 0.07f, cascade, popPeak, 200 + i * 4);
+                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, landCb, i * 0.07f, cascade, popPeak, 200 + (flyTiles.Count - 1 - i) * 4, comboStep: comboStagger ? chainStep : 0);
                 }
             }
 
@@ -936,6 +958,33 @@ namespace WordDrop
                     GameAudio.Instance?.PlayCoinExplodeBlip(); // 0.232s jackpot coin "ding"
                     GridManager.Instance?.ShakeBoard(0.09f, 0.18f); // subtle board-tile shake (not the hand rack)
                 }
+            }
+
+            // COMBO COLOUR ESCALATION (2026-07-27 Spencer). Tint each CHAINED word's tiles by its
+            // detonation order so the blast ramps in hue right before each word pops (the wind-up feel).
+            // chainStep 0 is the TRIGGER word — skipped, so it keeps its green scored-flash. Scoped to
+            // WORD tiles via the SAME predicate as the fly-up above (WasInScoredWord || HasPermanentGlow)
+            // so splash/junk collateral stays neutral. SetDetonationColor latches the tint on the tile so
+            // the primed pulse (and any late re-glow) renders the new hue instead of magenta through the
+            // pop. The big-blast/meltdown shatter path honours it via Tile.DetonationColor (~line 1660).
+            if (comboStagger && chainStep >= 1)
+            {
+                Color detoTint = s_comboDetonationRamp[Mathf.Min(chainStep - 1, s_comboDetonationRamp.Length - 1)];
+                int _tinted = 0;
+                var _dbg = new System.Text.StringBuilder();
+                for (int i = 0; i < tiles.Count; i++)
+                {
+                    var ct = tiles[i];
+                    if (ct == null) continue;
+                    bool isWordTile = (ct.WasInScoredWord || ct.HasPermanentGlow) && char.IsLetter(ct.Letter);
+                    _dbg.Append($"{ct.Letter}(s{(ct.WasInScoredWord?1:0)}g{(ct.HasPermanentGlow?1:0)}{(isWordTile?"→tint":"")}) ");
+                    if (isWordTile) { ct.SetDetonationColor(detoTint); _tinted++; }
+                }
+                Debug.Log($"[ComboRamp] chainStep={chainStep} tint=({detoTint.r:F2},{detoTint.g:F2},{detoTint.b:F2}) tiles={tiles.Count} tinted={_tinted} | {_dbg}");
+            }
+            else if (chainStep >= 1)
+            {
+                Debug.Log($"[ComboRamp] SKIPPED (comboStagger=false) chainStep={chainStep} tiles={tiles.Count}");
             }
 
             return StartCoroutine(ExplosionCoroutineTracked(tiles, chainStep, wordLength, wordFlash));
@@ -1649,7 +1698,8 @@ namespace WordDrop
 
                 if (mt.HasPermanentGlow)
                 {
-                    meltdownOriginalColors[i]  = Tile.PRIMED_TILE_TINT;
+                    // Combo escalation: honour this tile's per-word detonation hue if it got one, else magenta.
+                    meltdownOriginalColors[i]  = mt.HasDetonationColor ? mt.DetonationFaceColor : Tile.PRIMED_TILE_TINT;
                     meltdownOriginalSprites[i] = Tile.PrimedSprite;
                 }
                 else if (mt.WasInScoredWord)

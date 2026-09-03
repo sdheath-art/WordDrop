@@ -277,6 +277,7 @@ namespace WordDrop
             new GameObject("LevelCompletedModal").AddComponent<LevelCompletedModal>();
             new GameObject("StageClearModal").AddComponent<StageClearModal>();
             new GameObject("LevelIntroModal").AddComponent<LevelIntroModal>();
+            new GameObject("LevelMapPanel").AddComponent<LevelMapPanel>();   // between-level progression map (2026-07-10)
             new GameObject("TopOutPanel").AddComponent<TopOutPanel>();
             new GameObject("BoosterManager").AddComponent<BoosterManager>();
             new GameObject("BoosterHUDSlot").AddComponent<BoosterHUDSlot>();

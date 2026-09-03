@@ -98,10 +98,10 @@ namespace WordDrop
         /// so a qualifying detonation sends its letters up to the objective icon. 2026-07-06 Spencer.</summary>
         public int MinLen => _minLen;
 
-        public override string Title        => _minLen <= 2 ? "Explode words" : $"Explode {_minLen}+ letter words";
+        public override string Title        => _minLen <= 2 ? "Pop words" : $"Pop {_minLen}+ letter words";
         public override string ProgressText => $"{Mathf.Min(_count, _goal)} / {_goal}";
         public override bool   IsComplete   => _count >= _goal;
-        public override string RemainingText { get { int r = Mathf.Max(0, _goal - _count); return $"{r} more word{(r == 1 ? "" : "s")} to explode"; } }
+        public override string RemainingText { get { int r = Mathf.Max(0, _goal - _count); return $"{r} more word{(r == 1 ? "" : "s")} to pop"; } }
         public override HudIcon Icon         => HudIcon.Word;
         // Icon spells a word whose LENGTH = the required letter count: 5+ → "WORDS" (5 tiles),
         // 4 → "FOUR" (4 tiles), generic "explode words" → "WORD". 2026-06-17 Spencer.
@@ -109,8 +109,8 @@ namespace WordDrop
         public override int     RemainingCount => Mathf.Max(0, _goal - _count);
         public override string  IntroDescription =>
             !string.IsNullOrEmpty(_customIntro) ? _customIntro
-            : (_minLen <= 2 ? $"Explode {_goal} words to win!"
-                            : $"Explode {_goal} words of {_minLen}+ letters!");
+            : (_minLen <= 2 ? $"Pop {_goal} words!"
+                            : $"Pop {_goal} words of {_minLen}+ letters!");
 
         // Counts a word whenever its tiles actually blow up — doesn't matter if it was the
         // primed word that got set off or the word that set it off; if it explodes, it counts.
@@ -209,7 +209,7 @@ namespace WordDrop
             get { for (int i = 0; i < _revealed.Length; i++) if (!_revealed[i]) return false; return _revealed.Length > 0; }
         }
         public override int    RemainingCount { get { int c = 0; for (int i = 0; i < _revealed.Length; i++) if (!_revealed[i]) c++; return c; } }
-        public override string IntroDescription => "Explode words to uncover the hidden word at the top!";
+        public override string IntroDescription => "Pop words to uncover the hidden word at the top!";
 
         // Standard Target panel (icon + count badge), same as the other modes. The icon is a row of black
         // rocks — one per blank — with revealed letters showing in place. IconWord carries the MASKED state

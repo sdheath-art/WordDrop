@@ -460,6 +460,21 @@ namespace WordDrop
         /// Assign to an Image with <c>type = Image.Type.Sliced</c> and tint via <c>Image.color</c>; the
         /// 9-slice border keeps the corners crisp at any size. Generated once per radius and cached.
         /// Used to give modals/buttons a cartoonish rounded look. 2026-06-23 Spencer.</summary>
+        /// <summary>Soft drop shadow on a HUD icon (coin, heart) so it lifts off the pill behind it.
+        /// Same look UnlockModal already uses for its reward icon (black 35%), but offset straight DOWN,
+        /// but scaled to the icon so different HUD sizes cast proportionate shadows.
+        /// Safe to call twice — replaces any existing Shadow rather than stacking. 2026-07-30.</summary>
+        internal static void AddIconDropShadow(Graphic target, float iconSize)
+        {
+            if (target == null) return;
+            var existing = target.GetComponent<UnityEngine.UI.Shadow>();
+            if (existing != null) Object.Destroy(existing);
+            var sh = target.gameObject.AddComponent<UnityEngine.UI.Shadow>();
+            sh.effectColor = new Color(0f, 0f, 0f, 0.35f);
+            float d = Mathf.Max(1f, iconSize * 0.035f); // tight to the coin (was 0.09 — too detached)
+            sh.effectDistance = new Vector2(0f, -d); // straight down — no sideways offset
+        }
+
         internal static Sprite GetRoundedRectSprite(int radius)
             => GetRoundedRectSprite(radius, true, true);
 

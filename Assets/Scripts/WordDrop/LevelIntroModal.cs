@@ -35,6 +35,7 @@ namespace WordDrop
         private CanvasGroup _iconGroup;
         private GameObject  _btnPlay;
         private CanvasGroup _btnGroup;
+        private GameObject  _closeBtn;     // X (map-flow only): cancel → bare map
 
         private Sequence _entranceSeq;
         private float    _titleZRot;       // shared state for the title toss rotation tween
@@ -43,7 +44,7 @@ namespace WordDrop
 
         private static readonly Color OVERLAY_BG = new Color(0.05f, 0.04f, 0.12f, 0.80f); // dim — board shows through
         private static readonly Color CARD_BG    = new Color(0.99f, 0.95f, 0.86f, 1f);    // warm cream (CC card)
-        private static readonly Color HEADER_BG  = new Color(0.93f, 0.45f, 0.62f, 1f);    // candy pink header
+        private static readonly Color HEADER_BG  = new Color(0.56f, 0.31f, 0.78f, 1f);    // boss-node purple header (matches LevelMapPanel.BOSS_COLOR) — reads as "a bit more difficulty". 2026-07-13 Spencer
         private static readonly Color TITLE_COL  = Color.white;
         private static readonly Color DESC_COL   = new Color(0.32f, 0.24f, 0.30f, 1f);
 
@@ -89,7 +90,7 @@ namespace WordDrop
             _isPresenting = true;
             _isDismissing = false;
 
-            if (_titleText != null) _titleText.text = $"LEVEL {levelNum}";
+            if (_titleText != null) _titleText.text = $"LEVEL {LevelMapPanel.DisplayNum(levelNum)}"; // run level (tutorial 1..10)
             if (_descText  != null) _descText.text  = obj.IntroDescription; // verbose, instructive (not the terse HUD Title)
 
             // Layout per objective type: HiddenWord centers the row of blanks across the top of the card
@@ -107,6 +108,7 @@ namespace WordDrop
             }
 
             if (SurvivalManager.Instance != null) SurvivalManager.Instance.SetOverlayPaused(true);
+            if (_closeBtn != null) _closeBtn.SetActive(LevelMapPanel.MapFlowEnabled); // X only where there's a map to cancel back to
             GameAudio.Instance?.PlayWhooshFast(); // 2026-06-15 Spencer: level-intro entry uses whoosh_fast
 
             KillTweens();
@@ -136,9 +138,14 @@ namespace WordDrop
                 {
                     if (_panel == null) return;
                     var rt = _panel.transform as RectTransform;
-                    if (rt != null) UIAnimations.DropInWithBounce(rt, speedMult: DROP_SPEED);
+                    // Restore rest (0,0) so DropInWithBounce reads the correct rest, then it re-parks above and drops
+                    // in — all this frame, so the card was never seen sitting at rest during the backdrop fade.
+                    if (rt != null) { rt.anchoredPosition = Vector2.zero; UIAnimations.DropInWithBounce(rt, speedMult: DROP_SPEED); }
                 });
-                seq.AppendInterval(UIAnimations.DROP_TOTAL_DUR / DROP_SPEED + 0.25f);
+                // Start the content DURING the drop's overshoot — after just the drop phase, while the card is still
+                // rebounding/settling — instead of waiting for the full bounce to finish. Everything lands on screen
+                // ~0.6s sooner and the children ride the bounce. 2026-07-13 Spencer.
+                seq.AppendInterval(UIAnimations.DROP_PHASE_DROP_DUR / DROP_SPEED);
             }
 
             // Phase 3: children fade/toss in with a Playrix-style stagger.
@@ -148,9 +155,17 @@ namespace WordDrop
             seq.AppendInterval(0.06f);
             seq.AppendCallback(() => { FadeInText(_goalText, 0.18f); FadeInText(_descText, 0.18f); });
             seq.AppendInterval(0.10f);
-            seq.AppendCallback(() => { if (_btnGroup != null) _btnGroup.DOFade(1f, 0.18f); });
-            seq.AppendInterval(0.22f);
-            seq.AppendCallback(StartPlayPulse);
+            // Button row fades in, and PLAY punches out on top of that fade — the pop hands off
+            // to the idle pulse itself, so StartPlayPulse is no longer called separately here
+            // (two things driving the same transform would fight).
+            seq.AppendCallback(() =>
+            {
+                // Alpha SNAPS to full — no fade. A 0.18s fade ran concurrently with the pop, so
+                // the button was semi-transparent through the exact frames where the punch reads,
+                // which washed it out. The reveal is carried entirely by scale. 2026-07-29.
+                if (_btnGroup != null) { _btnGroup.DOKill(); _btnGroup.alpha = 1f; }
+                PopInPlayButton();
+            });
 
             _entranceSeq = seq;
         }
@@ -207,12 +222,15 @@ namespace WordDrop
             Transform t = _titleText.transform;
             t.DOKill();
 
-            t.localScale    = Vector3.one * 0.1f;
+            t.localScale    = Vector3.one * TITLE_START_SCALE;
             t.localRotation = Quaternion.Euler(0f, 0f, 8f);
-            SetTextAlpha(_titleText, 0f);
+            // FULLY OPAQUE from frame one. The old 0.12s alpha fade ran concurrently with the
+            // scale, so the title was translucent through exactly the frames where it grows —
+            // you never clearly saw it appear from small. Scale alone carries the entrance now.
+            SetTextAlpha(_titleText, 1f);
 
             const float TOSS_DURATION = 0.28f;
-            const float OVERSHOOT     = 3.0f;
+            const float OVERSHOOT     = 5.2f;   // peak ~1.54x (was 3.0 -> ~1.25x)
 
             t.DOScale(1.0f, TOSS_DURATION).SetEase(Ease.OutBack, OVERSHOOT);
 
@@ -225,8 +243,71 @@ namespace WordDrop
             _titleZRot = 8f;
             DOTween.To(getZ, setZ, 0f, TOSS_DURATION).SetEase(Ease.OutBack, OVERSHOOT);
 
-            Color c = _titleText.color;
-            _titleText.DOColor(new Color(c.r, c.g, c.b, 1f), 0.12f).SetEase(Ease.OutQuad);
+            // Plop fires on the POP-OUT — the same frame the toss starts — not on the landing.
+            // (The delayed land hit was removed 2026-07-30.)
+            GameAudio.Instance?.PlayTitleDrop(1f);
+        }
+
+        // ── PLAY button reveal ──────────────────────────────────────────────────
+        // Rebuilt 2026-07-29 from research on mobile-casual UI motion. The previous version was
+        // 420ms with a ~1.94x uniform overshoot — big and slow reads FLOATY, not snappy. Crisp
+        // menu pops land around 120ms out + ~90ms settle, with a MODEST overshoot, and get their
+        // energy from squash-and-stretch (scaleX/scaleY moving in OPPOSITION, conserving area)
+        // rather than from raw scale. Uniform scaling just reads as a zoom.
+        /// <summary>Scale the title is visible at before it punches out. At full alpha this is
+        /// legible for a frame or two, which is what makes the growth read.</summary>
+        private const float TITLE_START_SCALE = 0.08f;
+
+        // Idle breath extremes. Kept mild so that if the loop is killed mid-cycle the button is
+        // never far off its authored size.
+        private static readonly Vector3 PLAY_IDLE_SQUASH  = new Vector3(0.992f, 1.010f, 1f); // narrow + tall
+        private static readonly Vector3 PLAY_IDLE_STRETCH = new Vector3(1.058f, 1.008f, 1f); // WIDE + barely taller
+        private const float PLAY_IDLE_DUR = 0.44f;
+
+        private static readonly Vector3 PLAY_POP_STRETCH = new Vector3(1.20f, 0.86f, 1f); // punch out: wide + flat
+        private static readonly Vector3 PLAY_POP_SQUASH  = new Vector3(0.93f, 1.08f, 1f); // counter-swing: narrow + tall
+        private const float PLAY_POP_OUT_DUR     = 0.11f;  // 0 -> stretched
+        private const float PLAY_POP_COUNTER_DUR = 0.07f;  // stretched -> squashed
+        private const float PLAY_POP_SETTLE_DUR  = 0.09f;  // squashed -> rest
+        private const float PLAY_POP_TILT        = 12f;    // degrees of rotational kick
+        /// <summary>Scale the button is visible at before it fires. Not 0: at full alpha a tiny
+        /// button is legible for a frame or two, which is what sells "it grew from nothing".</summary>
+        private static readonly Vector3 PLAY_POP_START = new Vector3(0.10f, 0.10f, 1f);
+
+        /// <summary>Candy-Crush style PLAY reveal: punches out past full size with a rotational
+        /// kick, then bounces back down elastically before handing off to the idle pulse.
+        /// Runs on scaled time to match the rest of the entrance sequence. 2026-07-29.</summary>
+        private void PopInPlayButton()
+        {
+            if (_btnPlay == null) return;
+            var t = _btnPlay.transform;
+            t.DOKill();
+            t.localRotation = Quaternion.identity;   // never punch from a leftover tilt
+            t.localScale = PLAY_POP_START;
+
+            // Squash-and-stretch, three short beats totalling ~270ms:
+            //   0 -> WIDE+FLAT   (the punch out; area-conserving stretch sells the force)
+            //     -> NARROW+TALL (counter-swing, smaller — a decaying spring)
+            //     -> rest        (tiny OutBack so it doesn't land dead)
+            // The direction REVERSES at each seam, so momentary zero velocity there is correct —
+            // that's the turnaround. The earlier "stop at the top" was different: OutBack's long
+            // deceleration tail made it LINGER at the peak while still travelling the same way.
+            Sequence pop = DOTween.Sequence();
+            // InQuad, NOT OutQuad. OutQuad is front-loaded — it covers most of the distance in
+            // the first frames, so the button never visibly reads as small. InQuad accelerates
+            // INTO the peak: it stays tiny for a beat, then rockets out and slams into the
+            // stretch at max velocity, which is what the counter-swing then reverses.
+            pop.Append(t.DOScale(PLAY_POP_STRETCH, PLAY_POP_OUT_DUR).SetEase(Ease.InQuad));
+            pop.Append(t.DOScale(PLAY_POP_SQUASH,  PLAY_POP_COUNTER_DUR).SetEase(Ease.InOutQuad));
+            pop.Append(t.DOScale(Vector3.one,      PLAY_POP_SETTLE_DUR).SetEase(Ease.OutBack, 2.2f));
+            // Rotation across the whole pop so the wobble decays with the scale.
+            pop.Join(t.DOPunchRotation(new Vector3(0f, 0f, PLAY_POP_TILT),
+                                       PLAY_POP_OUT_DUR + PLAY_POP_COUNTER_DUR + PLAY_POP_SETTLE_DUR,
+                                       7, 0.9f));
+            // Cartoon plop on the IMPACT — the instant it reaches max stretch and the counter-swing
+            // reverses. (Replaced the tile_land hit, removed 2026-07-30.)
+            pop.InsertCallback(PLAY_POP_OUT_DUR, () => GameAudio.Instance?.PlayPlayButtonPop());
+            pop.OnComplete(StartPlayPulse);          // idle pulse only AFTER the pop finishes
         }
 
         private void StartPlayPulse()
@@ -235,7 +316,13 @@ namespace WordDrop
             var t = _btnPlay.transform;
             t.DOKill();
             t.localScale = Vector3.one;
-            t.DOScale(1.07f, 0.7f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
+            t.localRotation = Quaternion.identity;   // clear any tilt left by an interrupted pop
+            // Cartoon breath, not a zoom: X grows much more than Y, so the button INFLATES wide
+            // as it swells and narrows as it settles. A uniform 1.07 scale reads as a camera
+            // push-in; opposing the axes is what makes it feel like a squashy object.
+            t.localScale = PLAY_IDLE_SQUASH;
+            t.DOScale(PLAY_IDLE_STRETCH, PLAY_IDLE_DUR)
+             .SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
         }
 
         private void OnPlay()
@@ -245,6 +332,10 @@ namespace WordDrop
 
             KillTweens();
             // (press/release SFX are wired on the button's PointerDown + onClick — no extra SFX here)
+
+            // Shimmer fires on the SAME frame as the tap, layered over the button's press/release
+            // SFX rather than following them. 2026-07-29.
+            GameAudio.Instance?.PlayLevelLoadShimmer();
 
             // Pause is held THROUGH the exit (board frozen while the card flies up), released in Hide —
             // same as StageClearModal so the board doesn't lurch while the panel exits.
@@ -257,14 +348,44 @@ namespace WordDrop
             else Hide();
         }
 
+        // X / cancel (map-flow only): fly the card out like PLAY, but DON'T start the level — return to the bare
+        // map instead. Gameplay stays paused (the map holds the pause); tapping the node re-opens this. 2026-07-13.
+        private void OnCancel()
+        {
+            if (_isDismissing) return;
+            _isDismissing = true;
+            KillTweens();
+            if (_panel != null)
+            {
+                var rt = _panel.transform as RectTransform;
+                if (rt != null) UIAnimations.ExitUp(rt, HideCancelled, speedMult: 1.5f);
+                else HideCancelled();
+            }
+            else HideCancelled();
+        }
+
+        private void HideCancelled()
+        {
+            if (_canvas != null) _canvas.gameObject.SetActive(false);
+            _isPresenting = false;
+            OnCancelled?.Invoke(); // map goes bare (no pause release, no OnPlayStarted → level doesn't start)
+        }
+
         /// <summary>Fires when the goal modal is dismissed → gameplay begins. The tutorial gating layer
         /// uses this to start its coaching at the moment the board becomes interactive. 2026-06-25.</summary>
         public static event System.Action OnPlayStarted;
+        /// <summary>Fires when the modal is X-cancelled (map-flow) → return to the bare map without starting.</summary>
+        public static event System.Action OnCancelled;
 
         private void Hide()
         {
             bool wasPresenting = _isPresenting;
             if (SurvivalManager.Instance != null) SurvivalManager.Instance.SetOverlayPaused(false);
+            // Map-flow (Phase 1): the map was playing Skybound and StageClearModal.FinalizeDismiss no longer starts
+            // the gameplay track (it hands off to the map), so START the level's music HERE on PLAY. Each level gets
+            // a fresh survival track — same as the non-map flow did on stage-clear. 2026-07-13 Spencer.
+            if (LevelMapPanel.MapFlowEnabled && wasPresenting)
+                GameAudio.Instance?.PlaySurvivalMusic();
             if (_canvas != null) _canvas.gameObject.SetActive(false);
             _isPresenting = false;
             if (wasPresenting) OnPlayStarted?.Invoke();
@@ -282,7 +403,11 @@ namespace WordDrop
             if (_panel != null)
             {
                 _panel.transform.localScale = Vector3.one;
-                if (_panel.transform is RectTransform rt) rt.anchoredPosition = Vector2.zero;
+                // Park the card OFF-SCREEN (not at rest) so it stays hidden during the backdrop fade — otherwise the
+                // cream card sits visible at center for 0.12s, THEN DropInWithBounce snaps it up and drops it, which
+                // reads as the entry animation playing twice. AnimateEntrance restores rest right before the drop.
+                // Mirrors StageClearModal. 2026-07-13 Spencer.
+                if (_panel.transform is RectTransform rt) rt.anchoredPosition = new Vector2(0f, UIAnimations.DROP_OFFSCREEN_OFFSET);
             }
             SetTextAlpha(_titleText, 0f);
             SetTextAlpha(_goalText, 0f);
@@ -327,7 +452,8 @@ namespace WordDrop
             canvasGO.transform.SetParent(transform, false);
             _canvas = canvasGO.AddComponent<Canvas>();
             _canvas.renderMode   = RenderMode.ScreenSpaceOverlay;
-            _canvas.sortingOrder = 158; // above HUD (50), below StageClearModal (160)
+            _canvas.sortingOrder = 172; // above the level MAP (170) so the play modal drops OVER it (Candy-Crush).
+                                        // Doesn't coexist with StageClearModal (sequential), so being above it is fine.
 
             var scaler = canvasGO.AddComponent<CanvasScaler>();
             scaler.uiScaleMode         = CanvasScaler.ScaleMode.ScaleWithScreenSize;
@@ -426,6 +552,38 @@ namespace WordDrop
                 pdEntry.callback.AddListener((_) => GameAudio.Instance?.PlayMultiPopPress()); // press half
                 trigger.triggers.Add(pdEntry);
             }
+
+            // X / cancel button — top-right of the card, on the header. Only meaningful in the map-flow (returns
+            // to the bare map); shown/hidden per MapFlowEnabled in Show. 2026-07-13 Spencer.
+            _closeBtn = new GameObject("CloseBtn", typeof(RectTransform), typeof(Image), typeof(Button));
+            _closeBtn.transform.SetParent(_panel.transform, false);
+            var xrt = _closeBtn.GetComponent<RectTransform>();
+            xrt.anchorMin = xrt.anchorMax = new Vector2(1f, 1f);
+            xrt.pivot = new Vector2(0.5f, 0.5f);
+            xrt.sizeDelta = new Vector2(64f, 64f);
+            xrt.anchoredPosition = new Vector2(-40f, -34f);
+            var ximg = _closeBtn.GetComponent<Image>();
+            ximg.sprite = MenuUI.GetRoundedRectSprite(32); // radius = half size → a circle chip
+            ximg.type = Image.Type.Sliced;
+            ximg.color = new Color(0.28f, 0.18f, 0.26f, 1f); // dark chip on the pink header
+            var xlblGO = new GameObject("X", typeof(RectTransform), typeof(TextMeshProUGUI));
+            xlblGO.transform.SetParent(_closeBtn.transform, false);
+            var xlrt = xlblGO.GetComponent<RectTransform>();
+            xlrt.anchorMin = Vector2.zero; xlrt.anchorMax = Vector2.one; xlrt.offsetMin = Vector2.zero; xlrt.offsetMax = Vector2.zero;
+            var xtmp = xlblGO.GetComponent<TextMeshProUGUI>();
+            var xfont = GameFont.GetDisplayTMP(); if (xfont != null) xtmp.font = xfont;
+            xtmp.text = "✕"; xtmp.fontSize = 38; xtmp.alignment = TextAlignmentOptions.Center; xtmp.color = Color.white; xtmp.raycastTarget = false;
+            // Corner cancel button uses the SETTINGS button's push-down + release SFX: PlaySettingsPress on
+            // PointerDown, PlaySettingsRelease on release/click. 2026-07-13 Spencer.
+            var closeBtnComp = _closeBtn.GetComponent<Button>();
+            closeBtnComp.onClick.AddListener(() => GameAudio.Instance?.PlaySettingsRelease()); // release half
+            closeBtnComp.onClick.AddListener(OnCancel);
+            var xTrigger = _closeBtn.GetComponent<EventTrigger>();
+            if (xTrigger == null) xTrigger = _closeBtn.AddComponent<EventTrigger>();
+            var xPdEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+            xPdEntry.callback.AddListener((_) => GameAudio.Instance?.PlaySettingsPress()); // press half
+            xTrigger.triggers.Add(xPdEntry);
+            _closeBtn.SetActive(false); // toggled on per map-flow in Show
         }
 
         private static Text CreateLabel(Transform parent, string name,
@@ -533,7 +691,20 @@ namespace WordDrop
         /// says "feed treasure chests"); the in-game Target panel shows the coin + reads "REWARD".
         /// 2026-06-18 Spencer.</summary>
         public static GameObject BuildRewardCoinIcon(Transform parent, float size)
-            => BuildSpriteIcon(parent, size, "Tiles/Icon_ImageIcon_Coin", GOLD, 0);
+        {
+            // 2026-07-29: use the 3D crown coin. LoadIconSprite caches, so the probe is free, and
+            // it falls back to the original flat icon if the new art isn't present.
+            string path = LoadIconSprite("Tiles/coin3d_icon") != null
+                        ? "Tiles/coin3d_icon" : "Tiles/Icon_ImageIcon_Coin";
+            var go = BuildSpriteIcon(parent, size, path, GOLD, 0);
+            if (go != null)
+            {
+                var img2 = go.GetComponent<Image>();
+                MenuUI.AddIconDropShadow(img2, size);
+                UIConfig.RegisterIcon(img2, UIConfig.IconSlot.CoinReward);   // live-tunable
+            }
+            return go;
+        }
 
         // Some icon assets (Coin, Treasure) are imported as plain Textures, so Resources.Load<Sprite>
         // returns null and the icon used to fall back to a coloured blob. Build a Sprite from the

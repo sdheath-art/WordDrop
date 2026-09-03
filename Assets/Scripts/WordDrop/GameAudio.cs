@@ -45,6 +45,13 @@ namespace WordDrop
 
         // ── Clips ──────────────────────────────────────────────────────────────
         private AudioClip _tileDrop;
+        private AudioClip _titleDrop2;      // level-intro title pop (2026-07-30)
+        private AudioClip _levelLoadShimmer; // after PLAY, while the level loads in (2026-07-29)
+        private AudioClip _starRevealWhoosh; // stage-clear hero star drop (2026-07-29)
+        private AudioClip _iceMelt;          // ice tiles thawing (2026-07-30)
+        private AudioClip _playPop;          // level-intro PLAY button pop (2026-07-30)
+        private AudioClip _unlockWhoosh;    // unlock modal pop (2026-07-29)
+        private AudioClip _coinDisperse;    // level-map reward coins bursting from a node (2026-07-29)
         private AudioClip _tileDropAlt;
         private AudioClip[] _tileDropVariants;
         private AudioClip _tileSelect;
@@ -143,6 +150,8 @@ namespace WordDrop
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
         private AudioSource _line2Source;   // dedicated source for the HiddenWord hit chime (own pitch, no warp)
         private AudioSource _coinSource;    // dedicated source for coin-land tings (own pitch climb, no warp)
+        private AudioSource[] _coinSources; // round-robin pool so overlapping coin tings don't share/warp a pitch
+        private int _coinSourceRR;          // next pool index
         private AudioSource _coinExplodeSource; // dedicated source for the 0.232s chest-crack coin blip
         private AudioSource _chickenCluckSource; // dedicated source for the 1.5s rubber-chicken cluck snippet
         private AudioSource _musicSource;   // looping music layer (Survival BGM)
@@ -332,6 +341,15 @@ namespace WordDrop
             _line2Source.playOnAwake = false;
             _coinSource = gameObject.AddComponent<AudioSource>();
             _coinSource.playOnAwake = false;
+            // Pool of coin-ting sources: overlapping coin landings each play on their OWN source, so setting one
+            // source's pitch never warps a ting still ringing on another (the old single-source glitch). 2026-07-14.
+            _coinSources = new AudioSource[8];
+            for (int i = 0; i < _coinSources.Length; i++)
+            {
+                var cs = gameObject.AddComponent<AudioSource>();
+                cs.playOnAwake = false;
+                _coinSources[i] = cs;
+            }
             _coinExplodeSource = gameObject.AddComponent<AudioSource>();
             _coinExplodeSource.playOnAwake = false;
             _chickenCluckSource = gameObject.AddComponent<AudioSource>();
@@ -375,6 +393,9 @@ namespace WordDrop
             _pitchedSource.outputAudioMixerGroup = _sfxGroup;
             if (_line2Source != null) _line2Source.outputAudioMixerGroup = _sfxGroup;
             if (_coinSource != null) _coinSource.outputAudioMixerGroup = _sfxGroup;
+            if (_coinSources != null)
+                for (int i = 0; i < _coinSources.Length; i++)
+                    if (_coinSources[i] != null) _coinSources[i].outputAudioMixerGroup = _sfxGroup;
             if (_coinExplodeSource != null) _coinExplodeSource.outputAudioMixerGroup = _sfxGroup;
             if (_chickenCluckSource != null) _chickenCluckSource.outputAudioMixerGroup = _sfxGroup;
             _musicSource.outputAudioMixerGroup   = _musicGroup;
@@ -391,6 +412,21 @@ namespace WordDrop
 
             // Load all clips
             _tileDrop        = Resources.Load<AudioClip>("SFX/tile_drop");
+            // Lip-smack plop, first sound of "TOONPop_PLOP-Lip Smack" (Casual UI kit).
+            _titleDrop2      = Resources.Load<AudioClip>("Audio/title_pop");
+            // Shimmer at ~3.18s of "MAGShim_SHIMMER-Short Highlight Coin" (Casual UI kit).
+            _levelLoadShimmer = Resources.Load<AudioClip>("Audio/level_load_shimmer");
+            // Reveal whoosh at ~20.78s of "UIMvmt_WHOOSH POSITIVE-Reward Reveal" (Casual UI Designed).
+            _starRevealWhoosh = Resources.Load<AudioClip>("Audio/star_reveal_whoosh");
+            // Ascending glass pops at ~8.24s of "WATRImpt_MATERIAL LIQUID-Glass Surface Tonal
+            // Pop Ascending" (Casual UI kit).
+            _iceMelt         = Resources.Load<AudioClip>("Audio/ice_melt");
+            // Cartoon plop at ~2.725s of "TOONPop_PLOP-Mouth Basic" (Casual UI kit).
+            _playPop         = Resources.Load<AudioClip>("Audio/play_pop");
+            // Zap chime at ~7.14s of "WHSH_WHOOSH-Zap Chime Tiny" (Casual UI kit).
+            _unlockWhoosh    = Resources.Load<AudioClip>("Audio/unlock_whoosh");
+            // Treasure impact at ~12.2s of "OBJCoin_COIN-Impact Treasure" (Casual UI kit).
+            _coinDisperse    = Resources.Load<AudioClip>("Audio/coin_disperse");
             _tileDropAlt     = Resources.Load<AudioClip>("SFX/tile_drop_alt");
             _tileDropVariants = new[] {
                 Resources.Load<AudioClip>("Audio/tile_land_1"),
@@ -682,6 +718,75 @@ namespace WordDrop
             Play(clip != null ? clip : _tileDrop, 0.7f);
         }
 
+        /// <summary>tile_land_3 specifically — the level-map avatar landing on its next node. 2026-07-10 Spencer.</summary>
+        /// <summary>tile_land_5 — the level-intro TITLE toss landing and the PLAY button pop.
+        /// Both beats share the clip; <paramref name="pitch"/> separates them so two hits ~0.2s
+        /// apart don't read as one stuttered sound. 2026-07-29.</summary>
+        public void PlayIntroLand(float pitch = 1f)
+        {
+            AudioClip clip = (_tileDropVariants != null && _tileDropVariants.Length > 4)
+                             ? _tileDropVariants[4] : _tileDrop;
+            Play(clip != null ? clip : _tileDrop, 0.85f, pitch);
+        }
+
+        /// <summary>Lip-smack plop — the level-intro TITLE popping out. Falls back to tile_land_5
+        /// if the clip is missing. 2026-07-30.</summary>
+        public void PlayTitleDrop(float pitch = 1f)
+        {
+            if (_titleDrop2 != null) { Play(_titleDrop2, 0.9f, pitch); return; }
+            PlayIntroLand(pitch);
+        }
+
+        /// <summary>Copper coin scatter — reward coins bursting out of a level-map node.
+        /// Silent (rather than substituting something wrong) if the clip is missing. 2026-07-29.</summary>
+        public void PlayCoinDisperse(float pitch = 1f)
+        {
+            if (_coinDisperse != null) Play(_coinDisperse, 0.9f, pitch);
+        }
+
+        /// <summary>Zap-chime whoosh — the UNLOCK modal popping in. Falls back to the previous
+        /// sparkle whoosh if the clip is missing. 2026-07-29.</summary>
+        public void PlayUnlockWhoosh(float pitch = 1f)
+        {
+            if (_unlockWhoosh != null) { Play(_unlockWhoosh, 0.9f, pitch); return; }
+            PlaySparkleWhoosh();
+        }
+
+        /// <summary>Shimmer played a beat after PLAY, over the transition into the level.
+        /// Silent if the clip is missing rather than substituting something wrong. 2026-07-29.</summary>
+        public void PlayLevelLoadShimmer(float pitch = 1f)
+        {
+            if (_levelLoadShimmer != null) Play(_levelLoadShimmer, 0.9f, pitch);
+        }
+
+        /// <summary>Whoosh that swells as the stage-clear hero star falls and peaks on its
+        /// impact. Silent if the clip is missing. 2026-07-29.</summary>
+        public void PlayStarRevealWhoosh(float pitch = 1f)
+        {
+            if (_starRevealWhoosh != null) Play(_starRevealWhoosh, 0.9f, pitch);
+        }
+
+        /// <summary>Ascending glass pops — ice tiles thawing. The clip is a multi-pop RUN, so it
+        /// must be played ONCE per defrost batch, never per tile. Silent if missing. 2026-07-30.</summary>
+        public void PlayIceMelt(float pitch = 1f)
+        {
+            if (_iceMelt != null) Play(_iceMelt, 0.9f, pitch);
+        }
+
+        /// <summary>Cartoon plop — the level-intro PLAY button popping out. Silent if the clip
+        /// is missing (it replaced the old tile_land hit, so there's nothing to fall back to
+        /// without reintroducing the sound Spencer removed). 2026-07-30.</summary>
+        public void PlayPlayButtonPop(float pitch = 1f)
+        {
+            if (_playPop != null) Play(_playPop, 0.9f, pitch);
+        }
+
+        public void PlayMapNodeLand()
+        {
+            AudioClip clip = (_tileDropVariants != null && _tileDropVariants.Length > 2) ? _tileDropVariants[2] : _tileDrop;
+            Play(clip != null ? clip : _tileDrop, 0.85f);
+        }
+
         public void PlayTileSelect()
         {
             Play(PickRandom(_tileSelect, _tileSelectAlt), 0.5f);
@@ -709,9 +814,21 @@ namespace WordDrop
             Play(PickRandom(_wordScored, _wordScoredAlt), 0.55f, pitch);
         }
 
+        // Combo pitch-ramp for priming: within a single chain (turn resolution), each connected word that primes
+        // steps the pitch up a semitone, so a run of connected primes climbs a little scale. The ramp resets at the
+        // CHAIN boundary (start + end of a resolution — ResetPrimeRamp), so unrelated primes don't share the ladder.
+        // 2026-07-14 Spencer.
+        private int _primeStep = -1; // -1 = fresh; first prime of a chain plays at base pitch
+        public void ResetPrimeRamp() => _primeStep = -1;
         public void PlayTilePrimed()
         {
-            Play(_tilePrimed, 0.6f);
+            if (_tilePrimed == null) return;
+            _primeStep++; // each connected prime in this chain steps up
+            var src = _pitchedSource;
+            if (src == null) { Play(_tilePrimed, 0.6f); return; } // no pitched source → plain play
+            int step = Mathf.Clamp(_primeStep, 0, 8);
+            src.pitch = Mathf.Pow(2f, step / 12f); // +1 semitone per successive prime, capped ~an octave
+            src.PlayOneShot(_tilePrimed, _volume * 0.6f);
         }
 
         /// <summary>Fizzle sound when a primed word expires.</summary>
@@ -783,6 +900,13 @@ namespace WordDrop
             var clip = PickRandom(_chainReaction, _chainReactionAlt);
             Play(clip, 0.9f);
             return GetBoomOffset(clip);
+        }
+
+        /// <summary>Plays ONLY the main chain_reaction clip (never the _alt). 2026-07-16 Spencer.</summary>
+        public float PlayChainReactionMain()
+        {
+            Play(_chainReaction, 0.9f);
+            return GetBoomOffset(_chainReaction);
         }
 
         /// <summary>Plays meltdown SFX. Returns boom offset in seconds.</summary>
@@ -985,6 +1109,26 @@ namespace WordDrop
 
             _musicSource.clip = _chestMusicClip;
             _musicSource.loop = true; // loop the signature track for the whole chest level
+            _musicSource.Play();
+        }
+
+        /// <summary>Plays Skybound_Victory (looped) for the between-level MAP screen. Falls back silently if the
+        /// clip is missing. Level start swaps back to the gameplay track. 2026-07-13 Spencer.</summary>
+        public void PlayLevelMapMusic()
+        {
+            if (_musicSource == null || _victorySkyboundClip == null) return;
+
+            // Idempotent — already on the map track.
+            if (_musicSource.isPlaying && _musicSource.clip == _victorySkyboundClip) return;
+
+            if (_musicSequenceRoutine != null)
+            {
+                StopCoroutine(_musicSequenceRoutine);
+                _musicSequenceRoutine = null;
+            }
+
+            _musicSource.clip = _victorySkyboundClip;
+            _musicSource.loop = true;
             _musicSource.Play();
         }
 
@@ -1220,6 +1364,15 @@ namespace WordDrop
             Play(_personalBest, 0.9f);
         }
 
+        /// <summary>SFX/yay — celebratory "yay" cue after the level-complete star lands. Deliberately QUIETER than the
+        /// other SFX (per Spencer 2026-07-14) so it sits under them rather than over. Lazy-loaded.</summary>
+        private AudioClip _yay;
+        public void PlayYay()
+        {
+            if (_yay == null) _yay = Resources.Load<AudioClip>("SFX/yay");
+            Play(_yay, 0.45f); // lower volume than other SFX
+        }
+
         /// <summary>SFX/bing — objective-complete celebratory cue.</summary>
         public void PlayBing()
         {
@@ -1269,7 +1422,7 @@ namespace WordDrop
         private static float _coinBurstLastTime = -10f;
         private static float _coinThrottleTime = -10f;
         private const float  COIN_BURST_WINDOW = 0.6f;  // gap that resets the pitch ramp (between chests)
-        private const float  COIN_THROTTLE     = 0.05f; // min gap between AUDIBLE ticks — collapses the machine-gun
+        private const float  COIN_THROTTLE     = 0.018f; // min gap between AUDIBLE ticks — small (per-frame-ish) so coins aren't skipped ("holes"); the source pool handles overlap without warping
 
         /// <summary>Coin lands on the REWARD counter. Uses the audible line2 ting with two anti-machine-gun
         /// fixes: (1) per-hit pitch CLIMB → a rising "ka-ching" run; (2) THROTTLE — drop landings <50ms after
@@ -1291,7 +1444,14 @@ namespace WordDrop
             int step = Mathf.Clamp(_coinBurstStep, 0, 8);
             float pitch = Mathf.Pow(2f, step * 1f / 12f); // 1 semitone per hit — gentle rise
 
-            var src = _coinSource != null ? _coinSource : _pitchedSource;
+            // Round-robin the pool so an overlapping earlier ting keeps its own pitch (no mid-note warp glitch).
+            AudioSource src = null;
+            if (_coinSources != null && _coinSources.Length > 0)
+            {
+                src = _coinSources[_coinSourceRR];
+                _coinSourceRR = (_coinSourceRR + 1) % _coinSources.Length;
+            }
+            src = src ?? _coinSource ?? _pitchedSource;
             if (src == null) { Play(clip, 0.9f); return; }
             src.pitch = pitch;
             src.PlayOneShot(clip, _volume * 0.9f);

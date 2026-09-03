@@ -191,6 +191,18 @@ namespace WordDrop
         private int   _lastStage = 1;    // track for stage-up signal
         private float _tileRepairTimer;  // periodic blank tile repair
 
+        // ── One-time tutorial (2026-07-14 Spencer) ────────────────────────────────
+        // The tutorial (internal levels 1..TUTORIAL_LEVELS) plays ONCE ever. After it's been cleared, every new run
+        // starts at the first real Area level instead of re-marching the player through the scripted coaching.
+        private const string PREF_TUTORIAL_DONE = "wd_tutorial_done";
+        public static bool TutorialDone
+        {
+            get => PlayerPrefs.GetInt(PREF_TUTORIAL_DONE, 0) == 1;
+            set { PlayerPrefs.SetInt(PREF_TUTORIAL_DONE, value ? 1 : 0); PlayerPrefs.Save(); }
+        }
+        // The stage a fresh run starts on: level 1 the first time (tutorial), else the first real Area level.
+        private static int RunStartStage => TutorialDone ? (LevelMapPanel.TUTORIAL_LEVELS + 1) : 1;
+
         // ── Stage chip target state ───────────────────────────────────────────────
         private int _currentStageIndex = 1;        // stage number (1, 2, 3, …)
         private int _stageStartScore = 0;           // PlayerScore snapshot at stage start
@@ -319,6 +331,20 @@ namespace WordDrop
         // → use the ComputeStageMoves curve). 2026-06-25 Spencer.
         private int _stageMoveBudgetOverride = -1;
         public void SetStageMoveBudgetOverride(int moves) => _stageMoveBudgetOverride = moves < 1 ? -1 : moves;
+        // Authored non-rising levels (e.g. L7/L8) can TOP OUT when the move budget is spent without
+        // clearing the goal — re-adds a scoped move-limit fail (survival's global move-fail is off; only
+        // rising tops out). Set per-InstallLevel; false for every level that doesn't opt in. 2026-07-09 Spencer.
+        private bool _moveLimitTopOut = false;
+        public void SetMoveLimitTopOut(bool on) => _moveLimitTopOut = on;
+        // Edit-focused levels (e.g. L6) can opt edits/swaps INTO the move counter (normally only drops
+        // count — edits are free recovery). Set per-InstallLevel; false everywhere else. 2026-07-09 Spencer.
+        // DEBUG/playtest: when true, edits count as moves on EVERY level, overriding the per-level flag.
+        // Toggle from the FX Test Menu. Lets us feel-test "edits always cost a turn" across the whole run.
+        // 2026-07-09 Spencer.
+        public static bool EditsCountAsMovesGlobalOverride = false;
+        private bool _editsCountAsMoves = false;
+        public bool EditsCountAsMoves => _editsCountAsMoves || EditsCountAsMovesGlobalOverride;
+        public void SetEditsCountAsMoves(bool on) => _editsCountAsMoves = on;
         /// <summary>This level runs on a fixed move budget (authored/tutorial) instead of the rise/
         /// top-out clock → the MOVES HUD shows budget-remaining, not moves-to-top-out. 2026-06-25.</summary>
         public bool UsesStageMoveBudget => _stageMoveBudgetOverride > 0;
@@ -462,6 +488,20 @@ namespace WordDrop
             // comes from topout, not from running out of an invisible move
             // counter. _currentStageMovesUsed still increments above so the
             // stage-clear analytics record retains a moves_used signal.
+            //
+            // EXCEPTION (2026-07-09 Spencer): authored non-rising levels that opt in
+            // (MoveLimitTopOut, e.g. L7/L8) DO top out when the move budget is spent
+            // without meeting the goal — otherwise a rises-off level has no lose
+            // condition. CheckStageClear ran above, so a drop that BOTH hits the target
+            // and empties the budget counts as a CLEAR (clearedStageThisDrop), not a
+            // fail. Only drops reach here, so edits stay free (per design). The MOVES HUD
+            // already shows CurrentStageMovesRemaining for these levels (UsesStageMoveBudget).
+            if (_moveLimitTopOut && UsesStageMoveBudget
+                && !clearedStageThisDrop && CurrentStageMovesRemaining <= 0)
+            {
+                Debug.Log($"[MoveLimit] budget spent ({_currentStageMovesUsed}/{CurrentStageMoveBudget}), goal not met → top out.");
+                TriggerTopOut();
+            }
         }
 
         /// <summary>
@@ -577,6 +617,9 @@ namespace WordDrop
                 int overshoot = Mathf.Max(0, clearedScore - clearedTarget);
                 int coinsEarned = Mathf.Clamp(COIN_BASE + (overshoot / COIN_SCALAR), COIN_FLOOR, COIN_CAP_PER_STAGE);
                 CoinWallet.Add(coinsEarned);
+                // Hand the reward to the map so its coins FLY from the just-cleared node's star into the coins pill
+                // (Royal-Match cascade) when the map shows. 2026-07-14 Spencer.
+                LevelMapPanel.Instance?.SetPendingCoinReward(coinsEarned);
 
                 // Advance stage state FIRST — before any external callbacks — so that
                 // even if the event handler blows up, state machine is consistent.
@@ -696,7 +739,11 @@ namespace WordDrop
             _movesSinceLastRise     = 0;
             _turnsSinceLastTurnRise = 0;
             _riseTimerSeconds       = 0f;
-            ObjectiveManager.Instance?.InstallLevel(_currentStageIndex);
+            // Clean-slate the map + world-complete modal so a jump made mid-flow doesn't leave them stuck (which
+            // would block this and every later jump). 2026-07-13 Spencer.
+            LevelMapPanel.Instance?.HardReset();
+            WorldCompleteModal.Instance?.ForceHide();
+            ObjectiveManager.Instance?.InstallLevel(_currentStageIndex, viaDebugJump: true);
             Debug.Log($"[DebugJump] Jumped to stage {_currentStageIndex}");
         }
 
@@ -1280,8 +1327,8 @@ namespace WordDrop
             _postClearBoostDrops    = 0;
             _postClearBoostTime     = 0f;
 
-            // Reset stage chip-target state
-            _currentStageIndex      = 1;
+            // Reset stage chip-target state. Fresh runs start AT the first real Area once the tutorial's been done.
+            _currentStageIndex      = RunStartStage;
             // Clear any objective left over from the previous run / a debug stage-jump, so the level-1
             // objective re-installs fresh. The auto-installer (ObjectiveManager.Update) only fires when
             // Active == null, so without this the stale objective sticks while the level number shows 1.
@@ -1416,8 +1463,8 @@ namespace WordDrop
                 Instance._pendingEditDroughtRebate = false;
                 Instance._isOverlayPaused       = false;
 
-                // Reset stage chip-target state
-                Instance._currentStageIndex     = 1;
+                // Reset stage chip-target state (fresh run starts at the first real Area once the tutorial's done)
+                Instance._currentStageIndex     = RunStartStage;
                 Instance._stageStartScore       = 0;
                 Instance._currentStageMovesUsed = 0;
                 Instance._currentStageCleared   = false;
@@ -1763,6 +1810,23 @@ namespace WordDrop
                 yield break;
             }
 
+            // First rise on a rising-intro level (L9): row + new tiles settled, no top-out — fire the one-time
+            // spotlight pause. MUST fire after the full rise so the new bottom-row tiles have popped in (an
+            // early fire hid them behind the dim before their pop-scale finished). 2026-07-08 Spencer.
+            if (TutorialManager.RisingIntroPending)
+            {
+                TutorialManager.RisingIntroPending = false;
+                TutorialManager.Instance?.ShowRisingIntro();
+            }
+            else if (!TutorialManager.NearTopOutShown && TutorialManager.Instance != null
+                     && RulesEngine.Instance != null && RulesEngine.Instance.GetRisesUntilTopOut() <= 1)
+            {
+                // First time the board crests into the danger zone (highest tile within 1 row of the top) —
+                // one-shot near-top-out warning beat. 2026-07-08 Spencer.
+                TutorialManager.NearTopOutShown = true;
+                TutorialManager.Instance.ShowNearTopOutWarning();
+            }
+
             // ── Prime ONLY words a wild completes because of this rise ─────────────
             // 2026-06-08 Spencer (chosen behavior): if the rise slides a WILD into place
             // so it completes a word (X-I-wild → FIX), light it up now instead of making
@@ -1912,7 +1976,7 @@ namespace WordDrop
         // MVP P3 Path B: continue ladder + cap. Codex rule — max 2 save events
         // (ad or paid combined) per run, paid cost escalates 50→100, ad always free.
         private int _continuesInRun;
-        public const int MAX_CONTINUES_PER_RUN = 2;
+        public const int MAX_CONTINUES_PER_RUN = 3; // 2026-07-13 Spencer: 3 continues per run (map hearts show ♥ 3/3)
         public const int CONTINUE_BASE_COST = 50;
 
         /// <summary>Coin cost for the NEXT continue in this run. 50 → 100 then capped.
@@ -2030,7 +2094,9 @@ namespace WordDrop
             // HighScoreManager (already wired); stage best + total runs live in
             // our own PlayerPrefs. Award +50 coins if EITHER bested (once per run).
             int finalScore = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : 0;
-            int finalStage = _lastStageReached;
+            // "Level reached" for the PB / leaderboard is the RUN level — the one-time tutorial doesn't count. A
+            // game-over during the tutorial reports 0 (never a best). 2026-07-14 Spencer.
+            int finalStage = Mathf.Max(0, LevelMapPanel.RunLevel(_lastStageReached));
 
             int priorBestStage = PlayerPrefs.GetInt(PB_BEST_STAGE_KEY, 0);
             int priorTotalRuns = PlayerPrefs.GetInt(PB_TOTAL_RUNS_KEY, 0);

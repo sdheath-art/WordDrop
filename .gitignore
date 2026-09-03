@@ -68,3 +68,12 @@ WordDropiOS/
 mono_crash.*.json
 mono_crash.mem.*
 mono_crash.*.blob
+
+# ── Source art / staging that must NOT ship or be versioned (2026-09-03) ──
+# Anything inside Assets/Resources/ is compiled into the BUILD whether it is
+# referenced or not — a 569MB folder of unused WAVs was shipping in the app.
+# Source PSDs and unsorted libraries live in ~/Documents/WordDrop_Art/ instead.
+Assets/Resources/**/add/
+Assets/**/*.psd
+Assets/**/Preview_PSD_Only/
+Assets/Spase_Word/PSD/

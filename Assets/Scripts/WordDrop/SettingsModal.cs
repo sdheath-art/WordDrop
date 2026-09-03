@@ -106,7 +106,8 @@ namespace WordDrop
         /// <summary>Open the modal. Lazily builds on first call.</summary>
         public void Show()
         {
-            if (_canvasGO == null) BuildCanvas();
+            bool firstBuild = _canvasGO == null; // canvas + scaler get created THIS frame on the first open
+            if (firstBuild) BuildCanvas();
             _canvasGO.SetActive(true);
             _modalOpenTime = Time.unscaledTime;
 
@@ -139,8 +140,20 @@ namespace WordDrop
                 var rt = _panelGO.GetComponent<RectTransform>();
                 if (rt != null)
                 {
-                    rt.anchoredPosition = Vector2.zero; // ensure rest position before tween reads it
-                    UIAnimations.DropInWithBounce(rt, speedMult: MODAL_SPEED_MULT);
+                    if (firstBuild)
+                    {
+                        // FIRST open only: the canvas + CanvasScaler were just created this frame and haven't
+                        // resolved, so a drop tween started now silently no-ops (the "no animation the first time,
+                        // fine after reopening" bug). Park the panel off-screen and run the drop NEXT frame, once
+                        // the canvas layout has settled. 2026-07-10 Spencer.
+                        rt.anchoredPosition = new Vector2(0f, UIAnimations.DROP_OFFSCREEN_OFFSET);
+                        StartCoroutine(DropInNextFrame(rt));
+                    }
+                    else
+                    {
+                        rt.anchoredPosition = Vector2.zero; // rest position before the tween reads it
+                        UIAnimations.DropInWithBounce(rt, speedMult: MODAL_SPEED_MULT);
+                    }
                 }
             }
             // Candy-Crush-style "menu opened — UI collapses" animation:
@@ -153,6 +166,16 @@ namespace WordDrop
             BoosterHUDSlot.Instance?.AnimateGroupOut();
             HandManager.Instance?.AnimateHandTilesOut();
             GameAudio.Instance?.PlayUIGroupCollapse();
+        }
+
+        // Runs the drop-in one frame after the modal is first built, so the freshly-created canvas/scaler have
+        // settled and the animation actually plays (see the firstBuild note in Show). 2026-07-10 Spencer.
+        private System.Collections.IEnumerator DropInNextFrame(RectTransform rt)
+        {
+            yield return null;
+            if (rt == null) yield break;
+            rt.anchoredPosition = Vector2.zero; // rest position — DropInWithBounce re-parks then tweens down to it
+            UIAnimations.DropInWithBounce(rt, speedMult: MODAL_SPEED_MULT);
         }
 
         public void Hide()
