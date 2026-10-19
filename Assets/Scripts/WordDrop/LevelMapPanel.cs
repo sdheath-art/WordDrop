@@ -1409,17 +1409,22 @@ namespace WordDrop
                 lbl.fontStyle = FontStyles.Bold;
                 lbl.alignment = TextAlignmentOptions.Center;
                 // No fill behind it any more, so the fill-luminance rule does not apply.
-                // White with a dark outline reads on the purple discs AND the gold rims.
-                if (_hasMapArt)
+                // White reads on both the purple disc faces and the gold rims.
+                lbl.color = _hasMapArt ? Color.white : (lum > 0.5f ? HUD_INK : Color.white);
+                if (_hasMapArt) lbl.fontSize = 30f;
+                lbl.raycastTarget = false;
+                var uf = GameFont.GetUITMP(); if (uf != null) lbl.font = uf;
+
+                // ⚠️ OUTLINE *AFTER* THE FONT. 2026-10-19 — outlineWidth/outlineColor write to
+                // the TMP object's font MATERIAL, so setting them before a font is assigned
+                // throws ArgumentNullException ("source"). That exception aborted the map build
+                // part-way through, and the level map stopped opening at all. Guarded as well
+                // as reordered, since GetUITMP() can return null.
+                if (_hasMapArt && lbl.font != null)
                 {
-                    lbl.color = Color.white;
-                    lbl.fontSize = 30f;
                     lbl.outlineWidth = 0.22f;
                     lbl.outlineColor = new Color32(26, 18, 48, 255);
                 }
-                else lbl.color = lum > 0.5f ? HUD_INK : Color.white;
-                lbl.raycastTarget = false;
-                var uf = GameFont.GetUITMP(); if (uf != null) lbl.font = uf;
             }
 
             // The CURRENT level's node is a tap target: on a bare map (after cancelling the play modal) tapping it
