@@ -2044,38 +2044,43 @@ namespace WordDrop
             // selection. Bail early so the tap is exclusively the booster
             // target. BoosterHUDSlot's ResolveAim path handles the actual
             // booster resolution.
+            if (BoosterManager.Instance != null && BoosterManager.Instance.AimMode)
+            {
                 WDLog.Log($"[TapBlocked] ({col},{row}) refused: booster aim mode is active");
-            if (BoosterManager.Instance != null && BoosterManager.Instance.AimMode) return;
+                return;
+            }
 
             int rewritesLeft = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: NO EDIT CHARGES LEFT");
             if (rewritesLeft <= 0)
             {
+                WDLog.Log($"[TapBlocked] ({col},{row}) refused: NO EDIT CHARGES LEFT");
 //                 WDLog.Log("[HandManager] Rewrite: no rewrites remaining.");
                 return;
             }
 
             var cell = RulesEngine.Instance.GetCell(col, row);
+            if (cell == null)
+            {
                 WDLog.Log($"[TapBlocked] ({col},{row}) refused: empty cell — no data here");
-            if (cell == null) return;
+                return;
+            }
 
             // Gold and stone tiles cannot be rewritten
             Tile existingTile = _grid.GetTile(col, row);
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: gold bonus tile");
             if (existingTile != null && existingTile.IsGoldBonus)
             {
+                WDLog.Log($"[TapBlocked] ({col},{row}) refused: gold bonus tile");
 //                 WDLog.Log($"[HandManager] Rewrite: tile at ({col},{row}) is gold — cannot rewrite.");
                 return;
             }
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: stone");
             if (cell.IsStone)
             {
+                WDLog.Log($"[TapBlocked] ({col},{row}) refused: stone");
 //                 WDLog.Log($"[HandManager] Rewrite: tile at ({col},{row}) is stone — cannot rewrite.");
                 return;
             }
             // Frozen (ice) tiles are LOCKED — can't rewrite their letter until the ice thaws.
             // Else you'd trivially edit your way around the clear-the-ice challenge. 2026-06-15 Spencer.
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: ICE — frozen in DATA (a tile can be frozen without showing frost)");
             if (cell.IsFrozen)
                 return;
 
@@ -2083,18 +2088,16 @@ namespace WordDrop
             // free letter). Treasure chests / anchored rocks are IsAnchored (the chest's IsStone lives on the tile
             // visual, not the cell, so the cell.IsStone check above misses them); escort chickens are IsDropTarget.
             // 2026-07-10 Spencer.
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: anchored / drop-target");
             if (cell.IsAnchored || cell.IsDropTarget)
                 return;
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: vault tile");
             if (existingTile != null && existingTile.IsVault) // belt-and-suspenders: any tile drawn as a chest
                 return;
 
             var primed = RulesEngine.Instance.PrimedRegistry
                 .GetPrimedWordsContaining(new Vector2Int(col, row));
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: tile is in an ARMED word");
             if (primed != null && primed.Count > 0)
             {
+                WDLog.Log($"[TapBlocked] ({col},{row}) refused: tile is in an ARMED word");
 //                 WDLog.Log($"[HandManager] Rewrite: tile at ({col},{row}) is primed.");
                 return;
             }
