@@ -2052,9 +2052,9 @@ namespace WordDrop
 
             // The level is already won — see the note in SwipeWordInput. The board stays up
             // for a beat before the clear modal arrives; it must not be playable in that gap.
-            if (SurvivalManager.Instance != null && SurvivalManager.Instance.IsCurrentStageCleared)
+            if (SurvivalManager.AwaitingNextLevel)
             {
-                WDLog.Log($"[TapBlocked] ({col},{row}) refused: level already cleared");
+                WDLog.Log($"[TapBlocked] ({col},{row}) refused: level already won — waiting for the next one");
                 return;
             }
 

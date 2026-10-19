@@ -445,6 +445,24 @@ namespace WordDrop
         public int   IceTileCount         => Mathf.Max(1, _iceTileCount); // ICE objective: tiles to freeze
         /// <summary>True if the current stage's target has been hit.</summary>
         public bool IsCurrentStageCleared => _currentStageCleared;
+
+        /// <summary>TRUE from the moment a level's target is met until the NEXT level actually
+        /// starts. 2026-10-19 Spencer: "is there anyway to just lock input after you have
+        /// reached the goal score for the level?" — yes, and this is it.
+        ///
+        /// `_currentStageCleared` CANNOT be used for this: it is set true at the top of the
+        /// clear block and AdvanceToNextStage sets it false ~10 lines later, so by the time any
+        /// input path reads it, it is false again. That is why guarding on it did nothing.
+        ///
+        /// This latch is owned by the PLAYER'S view of the run, not the engine's: the engine
+        /// advances the stage instantly, but for the player the level is not over until the
+        /// next one is on screen. Everything in that gap — input, scoring, the HUD counter —
+        /// must behave as "level finished". Cleared by LevelRules.Apply when the next level
+        /// genuinely begins.</summary>
+        public static bool AwaitingNextLevel { get; private set; }
+
+        public static void MarkAwaitingNextLevel() => AwaitingNextLevel = true;
+        public static void ClearAwaitingNextLevel() => AwaitingNextLevel = false;
         /// <summary>Current stage number (1, 2, 3, … unbounded).</summary>
         public int CurrentStageIndex => _currentStageIndex;
 
@@ -739,6 +757,7 @@ namespace WordDrop
                 // Advance stage state FIRST — before any external callbacks — so that
                 // even if the event handler blows up, state machine is consistent.
                 _currentStageCleared = true;
+                AwaitingNextLevel    = true;   // locks input + pins the HUD until the next level starts
                 _stagesCleared++;
                 AdvanceToNextStage();
 
@@ -875,6 +894,7 @@ namespace WordDrop
             _currentStageIndex      = Mathf.Max(1, stage);
             _currentStageMovesUsed  = 0;
             _currentStageCleared    = false;
+            AwaitingNextLevel       = false;
             _movesSinceLastRise     = 0;
             _turnsSinceLastTurnRise = 0;
             _riseTimerSeconds       = 0f;

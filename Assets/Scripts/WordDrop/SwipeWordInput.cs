@@ -101,7 +101,7 @@ namespace WordDrop
             // to score more points". MEASURED: [Stage] CLEARED fires ~100 frames before the
             // clear modal appears, so there was a ~1.7s window where a beaten level was still
             // fully playable and still banking score. Nothing should land in that gap.
-            if (sm != null && sm.IsCurrentStageCleared) { Cancel(); return; }
+            if (SurvivalManager.AwaitingNextLevel) { Cancel(); return; }
 
             bool down = Input.GetMouseButtonDown(0);
             bool held = Input.GetMouseButton(0);

@@ -111,7 +111,7 @@ namespace WordDrop
             // also keep scoring after the target is crossed; that score belongs to the level
             // just cleared (SurvivalManager pins it there via _clearedThisResolution), and it
             // must never read as progress toward the next one.
-            if (sm.IsOverlayPaused || sm.IsCurrentStageCleared)
+            if (sm.IsOverlayPaused || SurvivalManager.AwaitingNextLevel)
                 return _shownAbsTarget.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
 
             // `shown` is the ROLLING total the count-up animation drives, so convert it to this

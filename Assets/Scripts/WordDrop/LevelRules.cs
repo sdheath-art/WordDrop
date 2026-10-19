@@ -122,6 +122,10 @@ namespace WordDrop
 
             int stage = Mathf.Max(1, LevelMapPanel.RunLevel(internalStage));
             var r = For(stage);
+
+            // The next level is now genuinely starting — release the lock that has been
+            // holding input and pinning the HUD since the previous level's target was met.
+            SurvivalManager.ClearAwaitingNextLevel();
             RulesEngine.MIN_WORD_LENGTH = Mathf.Max(3, r.MinWordLength);
             RulesEngine.BranchPriming   = r.BranchPriming;
             RulesEngine.FuseDisabled    = !r.FuseOn;      // field is inverted: Disabled == no decay
