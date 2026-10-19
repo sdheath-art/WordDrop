@@ -103,7 +103,29 @@ namespace WordDrop
         // clear share an identical landing/dismiss feel.
         private const float MODAL_SPEED_MULT = 1.5f;
 
-        /// <summary>Open the modal. Lazily builds on first call.</summary>
+        /// <summary>Build the whole modal AHEAD of the first press, then hide it.
+        ///
+        /// 2026-09-28 Spencer: "it gets stuck and frame drops only ever on the first time I push
+        /// the button." The July one-frame-defer fixed the *animation* no-op; this is the other
+        /// half — the COST of building it. The first press was paying for 33 GameObjects, a
+        /// Canvas + CanvasScaler (which forces a layout rebuild), TMP font atlas work, and three
+        /// procedurally generated sprites totalling ~360,000 pixels of per-pixel CPU work, all on
+        /// the frame the player tapped.
+        ///
+        /// Same shape as the first-row-rise hitch: the work was fine, it was just happening on
+        /// the one frame that had to stay smooth. Moved to a quiet moment after the board has
+        /// settled, where a hitch is invisible.</summary>
+        public static void Prewarm()
+        {
+            if (Instance == null) return;
+            if (Instance._canvasGO != null) return;      // already built
+            float t0 = Time.realtimeSinceStartup;
+            Instance.BuildCanvas();
+            Instance._canvasGO.SetActive(false);
+            WDLog.Log($"[Settings] prewarmed in {(Time.realtimeSinceStartup - t0) * 1000f:F1} ms");
+        }
+
+        /// <summary>Open the modal. Lazily builds on first call (Prewarm normally beat it to it).</summary>
         public void Show()
         {
             bool firstBuild = _canvasGO == null; // canvas + scaler get created THIS frame on the first open
@@ -265,6 +287,7 @@ namespace WordDrop
 
             var img = _panelGO.GetComponent<Image>();
             img.sprite = GetPanelSprite();
+            img.type   = Image.Type.Sliced;   // REQUIRED — GetPanelSprite returns a 9-slice
             img.color  = PANEL_BG;
 
             // Panel has a Button with no onClick — purely to absorb taps so
@@ -731,7 +754,7 @@ namespace WordDrop
         {
             // PlayerPrefs.Save flushes audio/haptics persistence immediately.
             PlayerPrefs.Save();
-            Debug.Log("[SettingsModal] Save progress tapped — preferences flushed.");
+            WDLog.Log("[SettingsModal] Save progress tapped — preferences flushed.");
             Hide();
         }
 
@@ -960,10 +983,16 @@ namespace WordDrop
 
         // ── Sprite factories ────────────────────────────────────────────────────
 
+        /// <summary>9-SLICED, not a full-size bitmap. This used to generate a 512x640 rounded
+        /// rect = 327,680 pixels of per-pixel coverage maths, which was the bulk of the first-open
+        /// hitch. A rounded rect only needs its corners at resolution: MenuUI's helper builds
+        /// radius*2+2 = 122x122 (14,884 px, 22x less) and stretches the middle. It is also cached
+        /// across every modal that asks for the same radius, so the second one is free.
+        /// The Image must be SpriteDrawMode/Type Sliced for this — see BuildPanel.</summary>
         private static Sprite GetPanelSprite()
         {
             if (_panelSprite == null)
-                _panelSprite = TileRenderer.CreateSolidRoundedRect(512, 640, 60, Color.white);
+                _panelSprite = MenuUI.GetRoundedRectSprite(60);
             return _panelSprite;
         }
 

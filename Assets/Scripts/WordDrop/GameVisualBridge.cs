@@ -56,14 +56,14 @@ namespace WordDrop
                 return;
             }
             Instance = this;
-//             Debug.Log("[GameVisualBridge] Awake");
+//             WDLog.Log("[GameVisualBridge] Awake");
         }
 
         private void Start()
         {
             SubscribeToRulesEngineEvents();
             SubscribeToMatchControllerEvents();
-//             Debug.Log("[GameVisualBridge] Subscribed to all events");
+//             WDLog.Log("[GameVisualBridge] Subscribed to all events");
         }
 
         private void OnDestroy()
@@ -78,7 +78,7 @@ namespace WordDrop
         {
             if (Input.GetKeyDown(KeyCode.T))
             {
-//                 Debug.Log($"[GameVisualBridge] STATE DUMP: " +
+//                 WDLog.Log($"[GameVisualBridge] STATE DUMP: " +
                           // $"_isPlayingBack={_isPlayingBack} | " +
                           // $"CurrentPlayer={MatchController.Instance?.CurrentPlayer} | " +
                           // $"TotalTurnsUsed={MatchController.Instance?.TotalTurnsUsed} | " +
@@ -123,7 +123,7 @@ namespace WordDrop
 
         private void HandleTurnEnd(TurnEndEvent evt)
         {
-//             Debug.Log($"[GameVisualBridge] TurnEnd: player={evt.PlayerIndex} " +
+//             WDLog.Log($"[GameVisualBridge] TurnEnd: player={evt.PlayerIndex} " +
                       // $"turn={evt.PlayerTurnNumber} global={evt.GlobalTurnIndex}");
 
             if (HUDManager.Instance != null && MatchController.Instance != null)
@@ -147,19 +147,19 @@ namespace WordDrop
 
         private void HandleHandRefilled(HandRefilledEvent evt)
         {
-//             Debug.Log($"[GameVisualBridge] HandRefilled: player={evt.PlayerIndex} " +
+//             WDLog.Log($"[GameVisualBridge] HandRefilled: player={evt.PlayerIndex} " +
                       // $"letters={new string(evt.Letters)}");
         }
 
         private void HandleMatchEnd(MatchEndEvent evt)
         {
-//             Debug.Log($"[GameVisualBridge] MatchEnd: winner={evt.WinnerPlayerIndex} " +
+//             WDLog.Log($"[GameVisualBridge] MatchEnd: winner={evt.WinnerPlayerIndex} " +
                       // $"P={evt.PlayerScore} AI={evt.AIScore}");
         }
 
         private void HandleSwapUsed(SwapUsedEvent evt)
         {
-//             Debug.Log($"[GameVisualBridge] SwapUsed: player={evt.PlayerIndex} " +
+//             WDLog.Log($"[GameVisualBridge] SwapUsed: player={evt.PlayerIndex} " +
                       // $"slot={evt.HandSlot} '{evt.OldLetter}'->'{evt.NewLetter}' " +
                       // $"swapsRemaining={evt.SwapsRemaining}");
 
@@ -195,7 +195,7 @@ namespace WordDrop
             }
             else
             {
-//                 Debug.Log("[GameVisualBridge] ForceReset() called but _isPlayingBack was already false — no-op.");
+//                 WDLog.Log("[GameVisualBridge] ForceReset() called but _isPlayingBack was already false — no-op.");
             }
         }
 
@@ -240,7 +240,7 @@ namespace WordDrop
                 if (DetonationRecorder.Instance != null)
                     DetonationRecorder.Instance.FinalizeChain();
 
-//                 Debug.Log($"[GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score={totalScore})");
+//                 WDLog.Log($"[GameVisualBridge] RunStepByStepResolutionSafe: invoking onComplete(score={totalScore})");
                 onComplete?.Invoke(totalScore);
                 onFinished?.Invoke();
             }
@@ -283,7 +283,7 @@ namespace WordDrop
 
             // ── Step 1: BeginDrop ────────────────────────────────────────────────────
 
-//             Debug.Log($"[GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col={col}, letter='{letter}', player={playerIndex})");
+//             WDLog.Log($"[GameVisualBridge] >>> BeginDrop: calling rules.BeginDrop(col={col}, letter='{letter}', player={playerIndex})");
 
             RulesEngine.StepResult beginResult = null;
             try
@@ -306,7 +306,7 @@ namespace WordDrop
             }
 
             int targetRow = beginResult.Row;
-//             Debug.Log($"[GameVisualBridge] <<< BeginDrop returned: Phase={beginResult.Phase} Row={targetRow}");
+//             WDLog.Log($"[GameVisualBridge] <<< BeginDrop returned: Phase={beginResult.Phase} Row={targetRow}");
 
             // If AI replaced the top tile in a full column, remove old tile visually
             if (beginResult.ReplacedTopTile)
@@ -391,7 +391,7 @@ namespace WordDrop
 
             // ── Step 2: Loop NextStep until Complete ─────────────────────────────────
 
-//             Debug.Log($"[GameVisualBridge] Starting NextStep loop for col={col} letter='{letter}' player={playerIndex}");
+//             WDLog.Log($"[GameVisualBridge] Starting NextStep loop for col={col} letter='{letter}' player={playerIndex}");
 
             bool resolving = true;
             int safetyStepCount = 0;
@@ -438,7 +438,7 @@ namespace WordDrop
                     break;
                 }
 
-//                 Debug.Log($"[GameVisualBridge] NextStep iteration={safetyStepCount} Phase={step.Phase}");
+//                 WDLog.Log($"[GameVisualBridge] NextStep iteration={safetyStepCount} Phase={step.Phase}");
 
                 // Detonation Replay: record every step
                 if (DetonationRecorder.Instance != null)
@@ -449,7 +449,7 @@ namespace WordDrop
                     // ── TileDropped ──────────────────────────────────────────────────
                     case RulesEngine.ResolutionPhase.TileDropped:
                     {
-//                         Debug.Log($"[GameVisualBridge] Phase=TileDropped (row={step.Row}) — tile placed in rules engine data.");
+//                         WDLog.Log($"[GameVisualBridge] Phase=TileDropped (row={step.Row}) — tile placed in rules engine data.");
                         // No null-safety needed here — no complex data to check
                         break;
                     }
@@ -460,7 +460,7 @@ namespace WordDrop
                     {
                         // Null-safe: treat null NewWords as empty list
                         int wordCount = (step.NewWords != null) ? step.NewWords.Count : 0;
-//                         Debug.Log($"[GameVisualBridge] Phase=WordsDetected: {wordCount} new word(s) found. " +
+//                         WDLog.Log($"[GameVisualBridge] Phase=WordsDetected: {wordCount} new word(s) found. " +
                                   // $"Words: [{(step.NewWords != null ? string.Join(", ", step.NewWords.ConvertAll(w => w.Word)) : "none")}]");
                         // No additional action needed — visual bridge just waits for the
                         // next step (WordsScored or Complete) to handle the words.
@@ -473,7 +473,7 @@ namespace WordDrop
                     {
                         // Null-safe: if ScoredWords is null, treat as empty
                         int scoredCount = (step.ScoredWords != null) ? step.ScoredWords.Count : 0;
-//                         Debug.Log($"[GameVisualBridge] Phase=WordsScored: {scoredCount} word(s) to animate.");
+//                         WDLog.Log($"[GameVisualBridge] Phase=WordsScored: {scoredCount} word(s) to animate.");
 
                         // Check if a detonation is coming — if so, skip the slow
                         // Balatro-style scoring and show a quick flash instead.
@@ -507,7 +507,7 @@ namespace WordDrop
                                         LastWordDisplay.Instance.ShowWord(sw.Word, sw.FinalScore, true);
                                 }
 
-//                                 Debug.Log($"[GameVisualBridge]   Scored word [{w}]: '{sw.Word}' " +
+//                                 WDLog.Log($"[GameVisualBridge]   Scored word [{w}]: '{sw.Word}' " +
                                           // $"baseScore={sw.BaseScore} finalScore={sw.FinalScore} " +
                                           // $"chainStep={sw.ChainStep} player={sw.PlayerIndex}");
 
@@ -579,7 +579,7 @@ namespace WordDrop
                                     if (scoredTilesForFX.Count > 0)
                                     {
                                         WordDropFX._pendingCascadeWords.Add(new List<Tile>(scoredTilesForFX));
-                                        Debug.Log($"[FX] _pendingCascadeWords += {sw.Word} ({scoredTilesForFX.Count} tiles, gated by detonationComing)");
+                                        WDLog.Log($"[FX] _pendingCascadeWords += {sw.Word} ({scoredTilesForFX.Count} tiles, gated by detonationComing)");
                                     }
                                 }
 
@@ -592,16 +592,32 @@ namespace WordDrop
                                 // PRIMED_GLOW color + playFlash:true so the pulse tween
                                 // starts immediately; tiles detonate in DoExplode a
                                 // few frames later regardless of fuse fields.
+                                // 2026-09-03: the glow colour was HARDCODED magenta here, so
+                                // words containing a HIGH-VALUE letter (V K J X Q Z) primed
+                                // magenta on this path no matter what the registry said.
+                                // Decide it from the tiles themselves — this runs before the
+                                // primed word is necessarily queryable, and the letters are
+                                // right there.
+                                bool goldWord = false;
+                                var goldDbg = new System.Text.StringBuilder();
+                                for (int fx = 0; fx < scoredTilesForFX.Count; fx++)
+                                {
+                                    var gt = scoredTilesForFX[fx];
+                                    if (gt != null && !gt.IsWild
+                                        && LetterData.GetPoints(gt.Letter) >= Tile.HIGH_VALUE_POINTS)
+                                    { goldWord = true; }
+                                    if (gt != null) goldDbg.Append($"{gt.Letter}={LetterData.GetPoints(gt.Letter)} ");
+                                }
                                 for (int fx = 0; fx < scoredTilesForFX.Count; fx++)
                                 {
                                     var glowTile = scoredTilesForFX[fx];
                                     if (glowTile != null)
                                         glowTile.SetPrimedGlow(
-                                            Tile.PRIMED_GLOW,
+                                            goldWord ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW,
                                             playFlash: true,
                                             heatLevel: 0,
                                             fuseRemaining: 999,
-                                            isGold: false,
+                                            isGold: goldWord,
                                             maxAge: 0f);
                                 }
 
@@ -667,7 +683,7 @@ namespace WordDrop
                         else
                         {
                             // Job 5: null or empty ScoredWords — log and continue without waiting
-//                             Debug.Log("[GameVisualBridge] Phase=WordsScored: ScoredWords is null or empty — skipping word animation (no words to show).");
+//                             WDLog.Log("[GameVisualBridge] Phase=WordsScored: ScoredWords is null or empty — skipping word animation (no words to show).");
                         }
                         break;
                     }
@@ -679,7 +695,7 @@ namespace WordDrop
                         // Detonation fires immediately — scoring display exit overlaps
                         // Null-safe: treat null Triggers as empty list
                         int triggerCount = (step.Triggers != null) ? step.Triggers.Count : 0;
-//                         Debug.Log($"[GameVisualBridge] Phase=TriggersFound: {triggerCount} trigger(s) found.");
+//                         WDLog.Log($"[GameVisualBridge] Phase=TriggersFound: {triggerCount} trigger(s) found.");
 
                         if (step.Triggers != null && step.Triggers.Count > 0)
                         {
@@ -691,7 +707,7 @@ namespace WordDrop
                                 var trig = step.Triggers[tr];
                                 if (trig.IsChainTrigger) { hasChainTriggers = true; continue; }
 
-//                                 Debug.Log($"[GameVisualBridge]   DirectTrigger [{tr}]: '{trig.TriggerWord}' triggers primed '{trig.TriggeredWord}'");
+//                                 WDLog.Log($"[GameVisualBridge]   DirectTrigger [{tr}]: '{trig.TriggerWord}' triggers primed '{trig.TriggeredWord}'");
 
                                 List<Tile> trigTiles = new List<Tile>();
                                 if (trig.TriggeredCells != null)
@@ -738,7 +754,7 @@ namespace WordDrop
                         else
                         {
                             // Job 5: null or empty triggers — skip animation entirely, no wait
-//                             Debug.Log("[GameVisualBridge] Phase=TriggersFound: no triggers (null or empty) — skipping flash animation.");
+//                             WDLog.Log("[GameVisualBridge] Phase=TriggersFound: no triggers (null or empty) — skipping flash animation.");
                         }
                         break;
                     }
@@ -767,7 +783,7 @@ namespace WordDrop
 
                         // Null-safe: treat null ExplodedCells as empty list
                         int explodeCount = (step.ExplodedCells != null) ? step.ExplodedCells.Count : 0;
-//                         Debug.Log($"[GameVisualBridge] Phase=Exploding: {explodeCount} cell(s) to remove.");
+//                         WDLog.Log($"[GameVisualBridge] Phase=Exploding: {explodeCount} cell(s) to remove.");
 
                         if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
                         {
@@ -864,7 +880,7 @@ namespace WordDrop
                                 // detonation reads as several small per-group pops and
                                 // never crosses the 8-tile threshold.
                                 yield return WordDropFX.MaybeBigPopAndHold(dyingTiles);
-                                Debug.Log($"[ChainFX] detonation FX — triggerWordGroups={(_triggerWordGroups?.Count ?? 0)} dyingTiles={dyingTiles.Count} chainDepth={step.ChainDepth} → " +
+                                WDLog.Log($"[ChainFX] detonation FX — triggerWordGroups={(_triggerWordGroups?.Count ?? 0)} dyingTiles={dyingTiles.Count} chainDepth={step.ChainDepth} → " +
                                           ((_triggerWordGroups != null && _triggerWordGroups.Count > 1) ? "STAGGERED crescendo path" : "SINGLE-BLAST path (no stagger)"));
                                 if (_triggerWordGroups != null && _triggerWordGroups.Count > 1)
                                 {
@@ -1011,12 +1027,12 @@ namespace WordDrop
                         {
                             // Job 5: null or empty ExplodedCells — skip animation
                             // but still call RemoveTiles with empty list (safe no-op in GridManager)
-//                             Debug.Log("[GameVisualBridge] Phase=Exploding: no cells to explode (null or empty) — skipping explosion animation.");
+//                             WDLog.Log("[GameVisualBridge] Phase=Exploding: no cells to explode (null or empty) — skipping explosion animation.");
                             try
                             {
                                 // Pass empty list to RemoveTiles — this is safe (GridManager checks for empty)
                                 grid.RemoveTiles(new List<UnityEngine.Vector2Int>());
-//                                 Debug.Log("[GameVisualBridge]   RemoveTiles called with empty list (no-op).");
+//                                 WDLog.Log("[GameVisualBridge]   RemoveTiles called with empty list (no-op).");
                             }
                             catch (System.Exception ex)
                             {
@@ -1030,16 +1046,16 @@ namespace WordDrop
                     // Job 5: ApplyGravity() is ALWAYS yielded, regardless of prior state.
                     case RulesEngine.ResolutionPhase.GravityApplied:
                     {
-//                         Debug.Log("[GameVisualBridge] Phase=GravityApplied: running visual gravity (always executes).");
+//                         WDLog.Log("[GameVisualBridge] Phase=GravityApplied: running visual gravity (always executes).");
 
                         // Job 5 guarantee: ApplyGravity is always awaited — never skipped
                         yield return StartCoroutine(grid.ApplyGravity());
-//                         Debug.Log("[GameVisualBridge]   Visual gravity complete.");
+//                         WDLog.Log("[GameVisualBridge]   Visual gravity complete.");
 
                         // No mid-chain RebuildFromRulesEngine — it destroys/recreates all tiles
                         // causing a visual glitch. Final rebuild happens in Complete phase.
 
-//                         Debug.Log($"[GameVisualBridge]   Waiting {GRAVITY_SETTLE_PAUSE:F2}s gravity settle pause.");
+//                         WDLog.Log($"[GameVisualBridge]   Waiting {GRAVITY_SETTLE_PAUSE:F2}s gravity settle pause.");
                         // Phase 9.10: zero settle pause after cascade-layer gravity so the
                         // next detonation fires the instant tiles land. Initial drop's
                         // gravity (hasExplodedThisDrop=false here) keeps the full settle
@@ -1059,7 +1075,7 @@ namespace WordDrop
                             ChainCounter.Instance.OnChainComplete();
 
                         int completedScore = step.TotalScore; // May be 0 — that's fine
-//                         Debug.Log($"[GameVisualBridge] Phase=Complete: TotalScore={completedScore}. Resolution finished cleanly.");
+//                         WDLog.Log($"[GameVisualBridge] Phase=Complete: TotalScore={completedScore}. Resolution finished cleanly.");
 
                         // Job 5 guarantee: FinalizeDrop is ALWAYS called in Complete phase,
                         // regardless of TotalScore value (including 0)
@@ -1070,7 +1086,7 @@ namespace WordDrop
                         try
                         {
                             rules.FinalizeDrop();
-//                             Debug.Log("[GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).");
+//                             WDLog.Log("[GameVisualBridge]   FinalizeDrop called successfully in Complete phase (score may be 0 — that's OK).");
                         }
                         catch (System.Exception ex)
                         {
@@ -1101,7 +1117,7 @@ namespace WordDrop
                             {
                                 HUDManager.Instance.SetPlayerScore(ScoreManager.Instance.PlayerScore);
                                 HUDManager.Instance.SetAIScore(ScoreManager.Instance.AIScore);
-//                                 Debug.Log($"[GameVisualBridge]   HUD scores synced: P1={ScoreManager.Instance.PlayerScore} AI={ScoreManager.Instance.AIScore}");
+//                                 WDLog.Log($"[GameVisualBridge]   HUD scores synced: P1={ScoreManager.Instance.PlayerScore} AI={ScoreManager.Instance.AIScore}");
                             }
                         }
                         catch (System.Exception ex)
@@ -1109,10 +1125,10 @@ namespace WordDrop
                             Debug.LogWarning($"[GameVisualBridge] HUD sync error: {ex.Message}");
                         }
 
-//                         Debug.Log($"[GameVisualBridge]   Waiting {POST_RESOLUTION_PAUSE:F2}s post-resolution pause.");
+//                         WDLog.Log($"[GameVisualBridge]   Waiting {POST_RESOLUTION_PAUSE:F2}s post-resolution pause.");
                         yield return WaitCache.Get(POST_RESOLUTION_PAUSE);
 
-//                         Debug.Log($"[GameVisualBridge]   Invoking onComplete(score={completedScore})");
+//                         WDLog.Log($"[GameVisualBridge]   Invoking onComplete(score={completedScore})");
                         onComplete?.Invoke(completedScore);
                         resolving = false;
                         loopExitedCleanly = true;
@@ -1147,7 +1163,7 @@ namespace WordDrop
             }
             else if (loopExitedCleanly)
             {
-//                 Debug.Log($"[GameVisualBridge] NextStep loop exited cleanly after {safetyStepCount} iteration(s).");
+//                 WDLog.Log($"[GameVisualBridge] NextStep loop exited cleanly after {safetyStepCount} iteration(s).");
             }
             else
             {
@@ -1317,7 +1333,7 @@ namespace WordDrop
         /// </summary>
         public IEnumerator ExecuteAITurnCoroutine()
         {
-//             Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.");
+//             WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: starting AI turn.");
 
             if (MatchController.Instance == null)
             {
@@ -1326,12 +1342,12 @@ namespace WordDrop
             }
             if (!MatchController.Instance.IsMatchActive)
             {
-//                 Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: match not active — skipping.");
+//                 WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: match not active — skipping.");
                 yield break;
             }
             if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI))
             {
-//                 Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: AI has no turns remaining — skipping.");
+//                 WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: AI has no turns remaining — skipping.");
                 yield break;
             }
 
@@ -1353,18 +1369,18 @@ namespace WordDrop
             }
             else if (safety > 0)
             {
-//                 Debug.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: waited {safety} frame(s) for " +
+//                 WDLog.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: waited {safety} frame(s) for " +
                           // $"previous playback to clear.");
             }
 
             // AI thinking delay
             float aiDelay = (AIAgent.Instance != null) ? AIAgent.Instance.Delay : 0.8f;
-//             Debug.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay {aiDelay:F2}s");
+//             WDLog.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: AI thinking delay {aiDelay:F2}s");
             yield return WaitCache.Get(aiDelay);
 
             if (!MatchController.Instance.IsMatchActive)
             {
-//                 Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: match ended during AI delay — aborting.");
+//                 WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: match ended during AI delay — aborting.");
                 yield break;
             }
 
@@ -1388,13 +1404,13 @@ namespace WordDrop
                 foundMove = false;
             }
 
-//             Debug.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — " +
+//             WDLog.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: AI evaluated move — " +
                       // $"foundMove={foundMove} bestCol={bestCol} bestSlot={bestSlot} bestLetter='{bestLetter}'");
 
             // Fallback if AIAgent not available or failed
             if (!foundMove)
             {
-//                 Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: AIAgent gave no move — using random fallback.");
+//                 WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: AIAgent gave no move — using random fallback.");
                 PlayerHand aiHand = MatchController.Instance.GetHand(MatchController.PLAYER_AI);
                 if (aiHand == null)
                 {
@@ -1411,7 +1427,7 @@ namespace WordDrop
 
                 if (availCols.Count == 0)
                 {
-//                     Debug.Log("[GameVisualBridge] AI: no columns available -- skipping.");
+//                     WDLog.Log("[GameVisualBridge] AI: no columns available -- skipping.");
                     yield break;
                 }
 
@@ -1430,11 +1446,11 @@ namespace WordDrop
 
             if (bestCol < 0 || bestLetter == '\0')
             {
-//                 Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: no valid move found after fallback — skipping AI turn.");
+//                 WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: no valid move found after fallback — skipping AI turn.");
                 yield break;
             }
 
-//             Debug.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: AI dropping '{bestLetter}' into col {bestCol} (slot={bestSlot})");
+//             WDLog.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: AI dropping '{bestLetter}' into col {bestCol} (slot={bestSlot})");
 
             // Execute the drop with step-by-step visual resolution
             _isPlayingBack = true;
@@ -1451,7 +1467,7 @@ namespace WordDrop
             {
                 if (MatchController.Instance != null)
                 {
-//                     Debug.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping " +
+//                     WDLog.Log($"[GameVisualBridge] ExecuteAITurnCoroutine: calling CompleteDropBookkeeping " +
                               // $"player={MatchController.PLAYER_AI} score={totalScore} slot={bestSlot}");
                     MatchController.Instance.CompleteDropBookkeeping(
                         MatchController.PLAYER_AI, totalScore, bestSlot);
@@ -1464,7 +1480,7 @@ namespace WordDrop
             finally
             {
                 _isPlayingBack = false;
-//                 Debug.Log("[GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false");
+//                 WDLog.Log("[GameVisualBridge] ExecuteAITurnCoroutine: AI turn complete. _isPlayingBack = false");
             }
         }
 

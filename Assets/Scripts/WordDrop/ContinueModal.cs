@@ -313,7 +313,7 @@ namespace WordDrop
         {
             // Placeholder — wire to IAP / coin store flow when that lands.
             GameAudio.Instance?.PlayUIClick();
-            Debug.Log("[ContinueModal] Buy coins tapped — TODO: open coin store / IAP flow");
+            WDLog.Log("[ContinueModal] Buy coins tapped — TODO: open coin store / IAP flow");
         }
 
         private void BuildCancelX(RectTransform panelRT)

@@ -129,7 +129,7 @@ namespace WordDrop
             }
             PlayerPrefs.DeleteKey(HIGHEST_UNLOCKED_KEY);
             PlayerPrefs.Save();
-            Debug.Log("[LevelProgressManager] All level progress reset.");
+            WDLog.Log("[LevelProgressManager] All level progress reset.");
         }
 
         // ── Key builders ────────────────────────────────────────────────────────

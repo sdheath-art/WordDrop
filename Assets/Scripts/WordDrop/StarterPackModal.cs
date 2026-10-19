@@ -219,7 +219,7 @@ namespace WordDrop
             //       else ShowError(result.Error);
             //   });
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log("[StarterPackModal] BUY clicked — IAP stubbed (dev build). Granting bundle locally.");
+            WDLog.Log("[StarterPackModal] BUY clicked — IAP stubbed (dev build). Granting bundle locally.");
             GrantBundle();
             PlayerPrefs.SetInt(KEY_PURCHASED, 1);
             PlayerPrefs.Save();

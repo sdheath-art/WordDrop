@@ -89,7 +89,7 @@ namespace WordDrop
                 GridManager.Instance?.RemoveTiles(collected);
                 GameAudio.Instance?.PlayScorePowerup();
                 _lastStatus = $"🎉 Collected {collected.Count} drop-target(s) at the bottom!";
-                Debug.Log($"[DropTest] Collected {collected.Count} at row 0.");
+                WDLog.Log($"[DropTest] Collected {collected.Count} at row 0.");
             }
         }
 
@@ -108,7 +108,7 @@ namespace WordDrop
                         var cell = rules.GetCell(c, r);
                         if (cell != null && cell.IsDropTarget) pos.Add($"({c},{r})");
                     }
-                Debug.Log($"[DropTest] census: {pos.Count} on board — {string.Join(" ", pos)}");
+                WDLog.Log($"[DropTest] census: {pos.Count} on board — {string.Join(" ", pos)}");
             }
             CollectBottomDropTargets();
         }
@@ -304,7 +304,7 @@ namespace WordDrop
                     _lastStatus = ok
                         ? $"Level {_forceLevelId} OK — target={data.target}, moves={data.moveBudget}, name='{data.displayName}'"
                         : $"Level {_forceLevelId} INVALID — {reason}";
-                    Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+                    WDLog.Log($"[LevelDebugMenu] {_lastStatus}");
                 }
             }
 
@@ -380,7 +380,7 @@ namespace WordDrop
             {
                 GameManager.Instance.TransitionTo(GameState.Playing);
                 _lastStatus = $"▶ Playing level {data.levelId} '{data.displayName}'";
-                Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+                WDLog.Log($"[LevelDebugMenu] {_lastStatus}");
             }
         }
 
@@ -389,14 +389,14 @@ namespace WordDrop
             // Phase 4+: LevelCompletedModal owns the post-complete flow. Debug
             // menu only logs the status line for visibility in the debug menu.
             _lastStatus = $"✓ COMPLETE — score={score}, {stars}★";
-            Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+            WDLog.Log($"[LevelDebugMenu] {_lastStatus}");
         }
 
         private void OnLevelFail(int score, int shortfall)
         {
             // Phase 4+: OutOfMovesModal owns the post-fail flow.
             _lastStatus = $"✗ FAIL — score={score}, shortfall={shortfall}";
-            Debug.Log($"[LevelDebugMenu] {_lastStatus}");
+            WDLog.Log($"[LevelDebugMenu] {_lastStatus}");
         }
 
         private static GUIStyle _richLabel;

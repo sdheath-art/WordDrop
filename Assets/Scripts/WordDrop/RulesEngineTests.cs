@@ -24,9 +24,9 @@ namespace WordDrop
             _totalFailed = 0;
             _failures.Clear();
 
-//             Debug.Log("═══════════════════════════════════════════════════════");
-//             Debug.Log("  RULES ENGINE TEST SUITE");
-//             Debug.Log("═══════════════════════════════════════════════════════");
+//             WDLog.Log("═══════════════════════════════════════════════════════");
+//             WDLog.Log("  RULES ENGINE TEST SUITE");
+//             WDLog.Log("═══════════════════════════════════════════════════════");
 
             TestWordDetectionStraightLines();
             TestWordDetectionNoRearranging();
@@ -35,10 +35,11 @@ namespace WordDrop
             TestPrimedWordIntegrity();
             TestPrimedWord_AdjacentNewPrime_GetsPlusOneFuseUpToCapTwo();
             TestSelfPlayGames(50);
+            TestSelfPlaySwapGames(30, 40);   // the CURRENT verb — see the note on that method
 
-//             Debug.Log("═══════════════════════════════════════════════════════");
-//             Debug.Log($"  RESULTS: {_totalPassed}/{_totalTests} passed, {_totalFailed} failed");
-//             Debug.Log("═══════════════════════════════════════════════════════");
+//             WDLog.Log("═══════════════════════════════════════════════════════");
+//             WDLog.Log($"  RESULTS: {_totalPassed}/{_totalTests} passed, {_totalFailed} failed");
+//             WDLog.Log("═══════════════════════════════════════════════════════");
 
             if (_failures.Count > 0)
             {
@@ -50,8 +51,13 @@ namespace WordDrop
             }
             else
             {
-//                 Debug.Log("  ALL TESTS PASSED!");
+//                 WDLog.Log("  ALL TESTS PASSED!");
             }
+
+            // Always print a one-line verdict. The suite used to be SILENT on success (every
+            // result log was commented out), so a clean run and a run that never happened
+            // looked identical. 2026-09-10.
+            Debug.Log($"[TEST] RULES ENGINE SUITE: {_totalPassed}/{_totalTests} passed, {_totalFailed} failed.");
         }
 
         // ─── Helpers ────────────────────────────────────────────
@@ -109,7 +115,7 @@ namespace WordDrop
 
         private static void TestWordDetectionStraightLines()
         {
-//             Debug.Log("\n--- Test: Word Detection Straight Lines ---");
+//             WDLog.Log("\n--- Test: Word Detection Straight Lines ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -151,7 +157,7 @@ namespace WordDrop
 
         private static void TestWordDetectionNoRearranging()
         {
-//             Debug.Log("\n--- Test: No Word Rearranging ---");
+//             WDLog.Log("\n--- Test: No Word Rearranging ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -197,7 +203,7 @@ namespace WordDrop
 
         private static void TestGravityConsistency()
         {
-//             Debug.Log("\n--- Test: Gravity Consistency ---");
+//             WDLog.Log("\n--- Test: Gravity Consistency ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -220,7 +226,7 @@ namespace WordDrop
 
         private static void TestNoDuplicateScoring()
         {
-//             Debug.Log("\n--- Test: No Duplicate Scoring ---");
+//             WDLog.Log("\n--- Test: No Duplicate Scoring ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -248,7 +254,7 @@ namespace WordDrop
 
         private static void TestPrimedWordIntegrity()
         {
-//             Debug.Log("\n--- Test: Primed Word Integrity ---");
+//             WDLog.Log("\n--- Test: Primed Word Integrity ---");
 
             RulesEngine engine = CreateFreshEngine();
 
@@ -374,7 +380,7 @@ namespace WordDrop
 
         private static void TestSelfPlayGames(int numGames)
         {
-//             Debug.Log($"\n--- Test: Self-Play ({numGames} games) ---");
+//             WDLog.Log($"\n--- Test: Self-Play ({numGames} games) ---");
 
             int totalMoves = 0;
             int gamesCompleted = 0;
@@ -577,7 +583,7 @@ namespace WordDrop
                 DestroyEngine(engine);
             }
 
-//             Debug.Log($"  Self-play: {gamesCompleted} games, {totalMoves} total moves");
+//             WDLog.Log($"  Self-play: {gamesCompleted} games, {totalMoves} total moves");
 
             // ── FUN METRICS SUMMARY ──
             if (gamesCompleted > 0)
@@ -591,16 +597,16 @@ namespace WordDrop
                 float avgFirstScore = (float)totalFirstScoreTurn / gamesCompleted;
                 float avgScorePerTurn = (float)(playerTotalScore[0] + playerTotalScore[1]) / totalMoves;
 
-//                 Debug.Log($"\n══ FUN METRICS ({gamesCompleted} games) ══");
-//                 Debug.Log($"  Avg score/turn:       {avgScorePerTurn:F1}");
-//                 Debug.Log($"  Zero-score turns:     {zeroScorePct:F0}%");
-//                 Debug.Log($"  Longest zero streak:  {longestZeroStreak}");
-//                 Debug.Log($"  Avg words/game:       {avgWordsPerGame:F1}");
-//                 Debug.Log($"  Avg primed/game:      {avgPrimedPerGame:F1}");
-//                 Debug.Log($"  Avg detonations/game: {avgDetonationsPerGame:F1}");
-//                 Debug.Log($"  Avg chains/game:      {avgChainsPerGame:F1}");
-//                 Debug.Log($"  Avg first score turn: {avgFirstScore:F1}");
-//                 Debug.Log($"  P0 wins: {playerWins[0]}  P1 wins: {playerWins[1]}  " +
+//                 WDLog.Log($"\n══ FUN METRICS ({gamesCompleted} games) ══");
+//                 WDLog.Log($"  Avg score/turn:       {avgScorePerTurn:F1}");
+//                 WDLog.Log($"  Zero-score turns:     {zeroScorePct:F0}%");
+//                 WDLog.Log($"  Longest zero streak:  {longestZeroStreak}");
+//                 WDLog.Log($"  Avg words/game:       {avgWordsPerGame:F1}");
+//                 WDLog.Log($"  Avg primed/game:      {avgPrimedPerGame:F1}");
+//                 WDLog.Log($"  Avg detonations/game: {avgDetonationsPerGame:F1}");
+//                 WDLog.Log($"  Avg chains/game:      {avgChainsPerGame:F1}");
+//                 WDLog.Log($"  Avg first score turn: {avgFirstScore:F1}");
+//                 WDLog.Log($"  P0 wins: {playerWins[0]}  P1 wins: {playerWins[1]}  " +
                           // $"Draws: {gamesCompleted - playerWins[0] - playerWins[1]}");
 
                 // Warnings
@@ -695,6 +701,242 @@ namespace WordDrop
                 sb.Append($"({cells[i].x},{cells[i].y})");
             }
             return sb.ToString();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // TEST 7: SWAP self-play — the verb the game actually ships
+        // ═══════════════════════════════════════════════════════════
+        // TestSelfPlayGames above drives the DROP verb (deal a hand, pick a column, drop a
+        // letter). The swap pivot (2026-09-02) replaced that with: tap two board tiles and
+        // they exchange letters. Nothing exercised the new verb at all, so a passing suite
+        // told you nothing about the game you now ship. This closes that gap.
+        //
+        // RULES LAYER ONLY. A swap's scoring/priming pipeline lives in HandManager (the
+        // dual-scoring-path debt — do NOT duplicate it here, it would rot out of sync).
+        // What this drives is exactly the three engine calls HandManager.TryBoardSwap makes
+        // once its guards pass (HandManager.cs ~2325):
+        //     cell1.Letter/cell2.Letter exchanged
+        //  -> engine.PurgeScoredKeysForCells(both)
+        //  -> engine.ScanSeedCellsPublic(both)
+        // and then checks the invariants that have ACTUALLY broken on this board before.
+        //
+        // Failures are counted and reported ONCE per category with the first example, rather
+        // than asserting per swap — 1,200 swaps asserting individually would bury the result.
+        private static void TestSelfPlaySwapGames(int numGames, int swapsPerGame)
+        {
+            int gamesRun = 0, totalSwaps = 0, totalWordsFormed = 0, ranDryCount = 0;
+
+            int violConserve = 0, violShape = 0, violFloat = 0;
+            string exConserve = "", exShape = "", exFloat = "";
+
+            for (int game = 0; game < numGames; game++)
+            {
+                RulesEngine engine = CreateFreshEngine();
+                TileBag bag = new TileBag();
+
+                // Seed a board using the drop API. This is board SETUP, not the verb under
+                // test — swapping needs tiles on the board before it can do anything.
+                for (int i = 0; i < 28; i++)
+                {
+                    int col = -1;
+                    for (int a = 0; a < 20; a++)
+                    {
+                        int t = Random.Range(0, GridManager.COLS);
+                        if (engine.IsColumnAvailable(t)) { col = t; break; }
+                    }
+                    if (col < 0) break;
+                    char letter = bag.DrawLetter();
+                    if (letter == '\0') letter = 'A';
+                    engine.ProcessDrop(col, letter, 0);
+                }
+                gamesRun++;
+
+                for (int s = 0; s < swapsPerGame; s++)
+                {
+                    List<Vector2Int> swappable = CollectSwappableCells(engine);
+                    if (swappable.Count < 2) { ranDryCount++; break; }
+
+                    int i1 = Random.Range(0, swappable.Count);
+                    int i2 = Random.Range(0, swappable.Count);
+                    if (i1 == i2) continue;
+
+                    Vector2Int p1 = swappable[i1];
+                    Vector2Int p2 = swappable[i2];
+                    var c1 = engine.GetCell(p1.x, p1.y);
+                    var c2 = engine.GetCell(p2.x, p2.y);
+                    if (c1 == null || c2 == null) continue;
+
+                    string before = LetterMultiset(engine);
+                    char l1 = c1.Letter, l2 = c2.Letter;
+
+                    // ── the swap itself, same as TryBoardSwap ──
+                    c1.Letter = l2;
+                    c2.Letter = l1;
+                    engine.PurgeScoredKeysForCells(new List<Vector2Int> { p1, p2 });
+                    var found = engine.ScanSeedCellsPublic(new List<Vector2Int> { p1, p2 });
+
+                    totalSwaps++;
+                    if (found != null) totalWordsFormed += found.Count;
+
+                    string swapDesc = $"({p1.x},{p1.y})'{l1}' <-> ({p2.x},{p2.y})'{l2}'";
+
+                    // INVARIANT 1 — a swap EXCHANGES letters. It must never create, destroy
+                    // or duplicate one. (A swap that writes into the wrong cell shows up here.)
+                    if (LetterMultiset(engine) != before)
+                    {
+                        violConserve++;
+                        if (exConserve.Length == 0) exConserve = swapDesc;
+                    }
+
+                    // INVARIANT 2 — every detected word is a STRAIGHT, UNBROKEN run whose
+                    // cells all hold tiles. "Primed word no longer a straight run" is one of
+                    // the faults BoardInvariants catches at runtime; catch it here first,
+                    // where it is cheap and reproducible.
+                    if (found != null)
+                    {
+                        for (int w = 0; w < found.Count; w++)
+                        {
+                            string why;
+                            if (!MatchShapeOk(engine, found[w], out why))
+                            {
+                                violShape++;
+                                if (exShape.Length == 0) exShape = $"{why} [{swapDesc}]";
+                            }
+                        }
+                    }
+
+                    // INVARIANT 3 — no floating tiles. A tile rests on the floor or on another
+                    // tile; only an anchored rock may hang. A swap moves no tile, so this must
+                    // hold before and after. (See the gravity rule in the tutorial-authoring note.)
+                    {
+                        string why;
+                        if (!NoFloatingTiles(engine, out why))
+                        {
+                            violFloat++;
+                            if (exFloat.Length == 0) exFloat = $"{why} [{swapDesc}]";
+                        }
+                    }
+                }
+
+                DestroyEngine(engine);
+            }
+
+            Assert(violConserve == 0, "Swap conserves letters",
+                   violConserve == 0 ? "" : $"{violConserve} violation(s) — first: {exConserve}");
+            Assert(violShape == 0, "Swap-formed words are straight unbroken runs",
+                   violShape == 0 ? "" : $"{violShape} violation(s) — first: {exShape}");
+            Assert(violFloat == 0, "No floating tiles after a swap",
+                   violFloat == 0 ? "" : $"{violFloat} violation(s) — first: {exFloat}");
+
+            Debug.Log($"[TEST] Swap self-play: {gamesRun} games, {totalSwaps} swaps, "
+                    + $"{totalWordsFormed} words formed"
+                    + (ranDryCount > 0 ? $", {ranDryCount} game(s) ran out of swappable tiles early" : "")
+                    + $" | violations: conserve={violConserve} shape={violShape} float={violFloat}");
+        }
+
+        /// <summary>Cells a player is allowed to pick for a swap. Mirrors the guards in
+        /// HandManager.CanSelectForSwap / TryBoardSwap so self-play only makes LEGAL moves —
+        /// gold lives on the Tile (no Tiles exist headless) so it cannot be checked here.</summary>
+        private static List<Vector2Int> CollectSwappableCells(RulesEngine engine)
+        {
+            var result = new List<Vector2Int>();
+            var reg = engine.PrimedRegistry;
+            for (int col = 0; col < GridManager.COLS; col++)
+                for (int row = 0; row < GridManager.ROWS; row++)
+                {
+                    var c = engine.GetCell(col, row);
+                    if (c == null) continue;
+                    if (c.IsStone || c.IsFrozen || c.IsAnchored || c.IsDropTarget) continue;
+                    if (c.IsWild || c.IsSwapRefill || c.IsEditRefill || c.IsWildRefill) continue;
+                    if (reg != null)
+                    {
+                        var primed = reg.GetPrimedWordsContaining(new Vector2Int(col, row));
+                        if (primed != null && primed.Count > 0) continue;
+                    }
+                    result.Add(new Vector2Int(col, row));
+                }
+            return result;
+        }
+
+        /// <summary>Every letter on the board, sorted — an order-independent fingerprint.</summary>
+        private static string LetterMultiset(RulesEngine engine)
+        {
+            var chars = new List<char>();
+            for (int col = 0; col < GridManager.COLS; col++)
+                for (int row = 0; row < GridManager.ROWS; row++)
+                {
+                    var c = engine.GetCell(col, row);
+                    if (c != null) chars.Add(c.Letter);
+                }
+            chars.Sort();
+            return new string(chars.ToArray());
+        }
+
+        /// <summary>A word match must be collinear, contiguous, and sit on non-empty cells.
+        /// Letters are deliberately NOT compared against Word — a wild resolves to a letter
+        /// the cell does not hold (see RulesWordMatch.WildLetterIndices).</summary>
+        private static bool MatchShapeOk(RulesEngine engine, RulesWordMatch m, out string why)
+        {
+            why = "";
+            if (m == null || m.Cells == null || m.Cells.Count == 0) { why = "null/empty match"; return false; }
+            if (string.IsNullOrEmpty(m.Word) || m.Word.Length != m.Cells.Count)
+            {
+                why = $"'{m.Word}' has {m.Cells.Count} cell(s)";
+                return false;
+            }
+
+            var cells = new List<Vector2Int>(m.Cells);
+            bool sameRow = true, sameCol = true;
+            for (int i = 1; i < cells.Count; i++)
+            {
+                if (cells[i].y != cells[0].y) sameRow = false;
+                if (cells[i].x != cells[0].x) sameCol = false;
+            }
+            if (!sameRow && !sameCol)
+            {
+                why = $"'{m.Word}' is neither a row nor a column: {CellsToString(m.Cells)}";
+                return false;
+            }
+
+            if (sameRow) cells.Sort((a, b) => a.x.CompareTo(b.x));
+            else         cells.Sort((a, b) => a.y.CompareTo(b.y));
+
+            for (int i = 1; i < cells.Count; i++)
+            {
+                int step = sameRow ? cells[i].x - cells[i - 1].x : cells[i].y - cells[i - 1].y;
+                if (step != 1)
+                {
+                    why = $"'{m.Word}' has a gap: {CellsToString(cells)}";
+                    return false;
+                }
+            }
+
+            for (int i = 0; i < cells.Count; i++)
+                if (engine.GetCell(cells[i].x, cells[i].y) == null)
+                {
+                    why = $"'{m.Word}' includes empty cell ({cells[i].x},{cells[i].y})";
+                    return false;
+                }
+
+            return true;
+        }
+
+        /// <summary>No tile hangs in mid-air. Anchored rocks are the one legal exception.</summary>
+        private static bool NoFloatingTiles(RulesEngine engine, out string why)
+        {
+            why = "";
+            for (int col = 0; col < GridManager.COLS; col++)
+                for (int row = 1; row < GridManager.ROWS; row++)
+                {
+                    var c = engine.GetCell(col, row);
+                    if (c == null || c.IsAnchored) continue;
+                    if (engine.GetCell(col, row - 1) == null)
+                    {
+                        why = $"'{c.Letter}' floats at ({col},{row}) with nothing beneath it";
+                        return false;
+                    }
+                }
+            return true;
         }
     }
 }

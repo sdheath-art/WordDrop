@@ -313,8 +313,25 @@ namespace WordDrop
                     why:"L4 DIP — Ice Ki: 3 ice, generous board. 'Clear blockers by wording through them.'"),
 
                 // L5 — Vault (reward). First treasure treat = a VALLEY after the first cluster. Generous moves.
-                Entry(LevelMode.Vault, DifficultyProfile.B_Normal, vChests:5, vMoves:8,
-                    why:"L5 VALLEY/REWARD — first Vault triage-loot: 5 chests / 8 moves. Treat + coin faucet, no fail."),
+                // ── L11 = ENDLESS SANDBOX (2026-09-03 Spencer, swap-pivot testing) ──────
+                // Deliberately has NO objective: an unreachable word goal so it never
+                // completes, no move budget, rises ON. The run ends only by topping out.
+                // This is the level for FEELING the armed-web loop — swap, arm words, build
+                // a web, tap to detonate — without an objective steering play.
+                // The Vault level that used to sit here is preserved in the note below and
+                // can be restored in one line:
+                //   Entry(LevelMode.Vault, DifficultyProfile.B_Normal, vChests:5, vMoves:8,
+                //       why:"L5 VALLEY/REWARD — first Vault triage-loot: 5 chests / 8 moves.")
+                Entry(LevelMode.LongWord, DifficultyProfile.B_Normal,
+                    longMin:2, longGoal:999999,
+                    // 2026-09-08: fuseOff was INHERITING the drop game's default (false), so
+                    // armed words expired on a turn timer — the exact opposite of the locked
+                    // swap-pivot rule "words stay armed until you detonate them, no un-arming".
+                    // Every authored level sets fuseOff:true; the endless sandbox never did.
+                    fuseOff:true, riseCadence:2,   // a rise every 2 moves, not every move
+                    risesOff:false, moveBudget:0, moveLimitTopOut:false,
+                    goalText:"ENDLESS — play until the board tops out",
+                    why:"L11 ENDLESS SANDBOX — no objective, no move cap, rises on. For feeling the armed-web loop."),
 
                 // L6 — HeroWord Shō. Make them USE the escort, drop 3, Normal. Gentle climb after the treat.
                 Entry(LevelMode.HeroWord, DifficultyProfile.B_Normal, hero:3,
@@ -371,7 +388,7 @@ namespace WordDrop
             int vChests = 5, int vMoves = 8, string hidden = null, string[] fixedBoard = null,
             bool risesOff = false, int moveBudget = 0, bool moveLimitTopOut = false, bool editsCountAsMoves = true, bool primeDecayIntro = false, bool gated = false, bool countConnecting = false,
             float assistFreq = -1f, int boardFillRows = 0, float boardDensity = 0f,
-            bool guaranteeFirstWord = false, bool fuseOff = false, bool splashOff = false, int seedNearWords = 0, bool swapExplosionsOnly = false, int rewriteCharges = 0, bool risingIntro = false, bool stonesOff = false, bool seedCrossing = false, int hintCrossCol = -1, string hintCrossLetters = null, int[] hintCrossCols = null, int[] hintEditCols = null, int[] hintEditRows = null, string hintEditLetters = null, string goalText = null, string rigHand = null)
+            bool guaranteeFirstWord = false, bool fuseOff = false, int riseCadence = 0, bool splashOff = false, int seedNearWords = 0, bool swapExplosionsOnly = false, int rewriteCharges = 0, bool risingIntro = false, bool stonesOff = false, bool seedCrossing = false, int hintCrossCol = -1, string hintCrossLetters = null, int[] hintCrossCols = null, int[] hintEditCols = null, int[] hintEditRows = null, string hintEditLetters = null, string goalText = null, string rigHand = null)
         {
             var d = Dials(profile);
             return new LevelEntry
@@ -388,7 +405,11 @@ namespace WordDrop
                 LengthSeed  = d.length,
                 DetonSeed   = d.deton,
                 AssistFreq  = assistFreq >= 0f ? assistFreq : d.freq,  // override for tutorial "max help" levels
-                RiseCadence = d.rise,
+                // riseCadence > 0 overrides the profile. B_Normal ships rise:1 (every move),
+                // tuned for the DROP game in June because it 'felt way too easy' — that value
+                // wins over everything downstream, which is why the flat-2 cadence never took
+                // effect in the endless level. 2026-09-09 Spencer.
+                RiseCadence = riseCadence > 0 ? riseCadence : d.rise,
                 FixedBoard  = fixedBoard,
                 RisesOff    = risesOff,
                 MoveBudget  = moveBudget,

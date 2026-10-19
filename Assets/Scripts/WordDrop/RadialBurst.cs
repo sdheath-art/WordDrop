@@ -47,12 +47,19 @@ namespace WordDrop
 
         private void LoadSprite()
         {
-            Texture2D tex = Resources.Load<Texture2D>("Particles/radial_burst");
+            // 2026-09-09 Spencer: radial_burst.png never existed, so this ALWAYS fell through
+            // to flashfree2 — a hand-drawn flame silhouette — or worse, soft_circle, which is
+            // literally a fuzzy blob. That was a real cause of explosions reading "fuzzy and
+            // unclear": the burst had no rays and no centre, so it read as a glow rather than
+            // an impact. vfx_rays_2 is already in Resources/Particles (547x548, hot core plus
+            // radiating spokes) and picks up the fixed import settings automatically.
+            // radial_burst is still checked FIRST, so dropping a bespoke asset in overrides this.
+            Texture2D tex = Resources.Load<Texture2D>("Particles/radial_burst")
+                         ?? Resources.Load<Texture2D>("Particles/vfx_rays_2");
             if (tex == null)
             {
-                Debug.LogWarning("[RadialBurst] Particles/radial_burst.png not found — " +
-                                 "falling back to flashfree2. Burst will use generic flash sprite " +
-                                 "until the real asset is dropped in.");
+                Debug.LogWarning("[RadialBurst] neither radial_burst nor vfx_rays_2 found — "
+                               + "falling back to a generic flash sprite.");
                 tex = Resources.Load<Texture2D>("Particles/flashfree2")
                    ?? Resources.Load<Texture2D>("Particles/soft_circle");
             }

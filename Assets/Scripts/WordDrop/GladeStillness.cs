@@ -32,7 +32,7 @@ namespace WordDrop
             if (sm != null)
             {
                 sm.GrantGladeStillnessRises(rises);
-                Debug.Log($"[GladeStillness L{Level}] Skipping next {rises} rises");
+                WDLog.Log($"[GladeStillness L{Level}] Skipping next {rises} rises");
             }
             else
             {

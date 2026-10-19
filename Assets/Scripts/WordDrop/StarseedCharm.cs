@@ -66,7 +66,7 @@ namespace WordDrop
                 TryWildify(col + 1, row);
             }
 
-            Debug.Log($"[StarseedCharm L{Level}] Wildified {wildifiedCount} tile(s) centered at ({col},{row})");
+            WDLog.Log($"[StarseedCharm L{Level}] Wildified {wildifiedCount} tile(s) centered at ({col},{row})");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
         }

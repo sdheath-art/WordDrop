@@ -210,7 +210,7 @@ namespace WordDrop
                 return;
             }
             Instance = this;
-//             Debug.Log("[MatchController] Awake");
+//             WDLog.Log("[MatchController] Awake");
         }
 
         private void OnDestroy()
@@ -259,7 +259,7 @@ namespace WordDrop
             // legacy combo too so Daily-in-Classic still works if anything
             // still fires it (e.g. debug menus).
 
-//             Debug.Log("[MatchController] StartMatch()");
+//             WDLog.Log("[MatchController] StartMatch()");
 
             // Reset state
             _currentTurn   = 0;
@@ -283,7 +283,7 @@ namespace WordDrop
             if (isDaily)
             {
                 _bag = new TileBag(DailyDropManager.GetDailySeed());
-//                 Debug.Log($"[MatchController] Daily Drop mode — seeded bag (seed={DailyDropManager.GetDailySeed()})");
+//                 WDLog.Log($"[MatchController] Daily Drop mode — seeded bag (seed={DailyDropManager.GetDailySeed()})");
             }
             else
             {
@@ -416,12 +416,12 @@ namespace WordDrop
                     if (HasValidFirstMove(_hands[PLAYER_HUMAN], RulesEngine.Instance))
                     {
                         // if (reroll > 0)
-//                             Debug.Log($"[MatchController] First-word guarantee: found valid move after {reroll} reroll(s)");
+//                             WDLog.Log($"[MatchController] First-word guarantee: found valid move after {reroll} reroll(s)");
                         break;
                     }
                     // Re-roll the hand
                     _hands[PLAYER_HUMAN].FillAll(_bag);
-//                     Debug.Log($"[MatchController] First-word guarantee: rerolled hand → {_hands[PLAYER_HUMAN].HandString()}");
+//                     WDLog.Log($"[MatchController] First-word guarantee: rerolled hand → {_hands[PLAYER_HUMAN].HandString()}");
                 }
                 // Emit updated hand
                 EmitHandRefilled(PLAYER_HUMAN);
@@ -449,7 +449,7 @@ namespace WordDrop
                     {
                         matched = true;
                         if (reroll > 0)
-                            Debug.Log($"[MatchController] Level arrow-col guarantee: found valid drop after {reroll} reroll(s)");
+                            WDLog.Log($"[MatchController] Level arrow-col guarantee: found valid drop after {reroll} reroll(s)");
                         break;
                     }
                     _hands[PLAYER_HUMAN].FillAll(_bag);
@@ -510,7 +510,7 @@ namespace WordDrop
                         Tile tile = GridManager.Instance.GetTile(cell.x, cell.y);
                         if (tile != null)
                         {
-                            tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true);
+                            tile.SetPrimedGlow(RulesEngine.PrimedGlowForCell(new Vector2Int(tile.Col, tile.Row)), playFlash: true);
                             GameParticles.Instance?.PlayPrimed(tile.transform.position);
                         }
                     }
@@ -616,7 +616,7 @@ namespace WordDrop
 
             string aiHandStr = _hands[PLAYER_AI] != null ? _hands[PLAYER_AI].HandString() : "(none)";
             string modeStr = isDaily ? "DAILY DROP" : BlitzManager.IsBlitzMode ? "BLITZ" : "CLASSIC";
-//             Debug.Log($"[MatchController] Match started [{modeStr}]. " +
+//             WDLog.Log($"[MatchController] Match started [{modeStr}]. " +
                       // $"Human hand: {_hands[PLAYER_HUMAN].HandString()} " +
                       // $"AI hand: {aiHandStr} " +
                       // $"Bag: {_bag.Count} tiles  Swaps: {INITIAL_SWAPS} each  Rewrites: {INITIAL_REWRITES} each " +
@@ -663,13 +663,13 @@ namespace WordDrop
 
             if (!RulesEngine.Instance.IsColumnAvailable(col))
             {
-//                 Debug.Log($"[MatchController] DropLetter: col {col} is full.");
+//                 WDLog.Log($"[MatchController] DropLetter: col {col} is full.");
                 return null;
             }
 
             _isProcessing = true;
 
-//             Debug.Log($"[MatchController] DropLetter: player={player} col={col} letter='{letter}' " +
+//             WDLog.Log($"[MatchController] DropLetter: player={player} col={col} letter='{letter}' " +
                       // $"turn={_currentTurn} playerTurns[{player}]={_playerTurns[player]}");
 
             // 1. Call RulesEngine.ProcessDrop
@@ -697,7 +697,7 @@ namespace WordDrop
                 // GameVisualBridge.PlayWordScored() is the sole word-presentation path.
                 // Showing them here would cause duplicate popups.
 
-//                 Debug.Log($"[MatchController] Player {player} scored {result.TotalScore} pts " +
+//                 WDLog.Log($"[MatchController] Player {player} scored {result.TotalScore} pts " +
                           // $"({result.ScoredWords.Count} word(s), {result.ChainSteps} chain step(s))");
             }
 
@@ -747,7 +747,7 @@ namespace WordDrop
             };
             OnTurnEnd?.Invoke(turnEndEvt);
 
-//             Debug.Log($"[MatchController] TurnEnd: player={player} " +
+//             WDLog.Log($"[MatchController] TurnEnd: player={player} " +
                       // $"playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
                       // $"globalTurn={_currentTurn}");
 
@@ -817,14 +817,14 @@ namespace WordDrop
                 string breakdown = (baseScore >= 0)
                     ? $"(base={baseScore}, chain={chainBonus}, det={detonationBonus})"
                     : "";
-                Debug.Log($"[Score] P{playerIndex} +{totalScore} {breakdown}");
+                WDLog.Log($"[Score] P{playerIndex} +{totalScore} {breakdown}");
             }
 
             // Last Word multiplier: 3x scoring during final desperation turns
             if (_isLastWord && totalScore > 0)
             {
                 totalScore *= LAST_WORD_MULTIPLIER;
-//                 Debug.Log($"[MatchController] LAST WORD 3x applied! Score: {totalScore / LAST_WORD_MULTIPLIER} → {totalScore}");
+//                 WDLog.Log($"[MatchController] LAST WORD 3x applied! Score: {totalScore / LAST_WORD_MULTIPLIER} → {totalScore}");
             }
 
             // 1. Apply score — MatchController is the SOLE ScoreManager writer
@@ -838,7 +838,7 @@ namespace WordDrop
                 if (finalPush > 0)
                 {
                     arcBonus += finalPush;
-//                     Debug.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
+//                     WDLog.Log($"[MatchArc] Final Push: +{finalPush} (turns left={turnsLeft})");
                     bool isHuman = (playerIndex == PLAYER_HUMAN);
                     if (BonusPopup.Instance != null)
                         BonusPopup.Instance.ShowFinalPush(finalPush, Vector3.up * 2f, isHuman);
@@ -852,7 +852,7 @@ namespace WordDrop
                 if (comeback > 0)
                 {
                     arcBonus += comeback;
-//                     Debug.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
+//                     WDLog.Log($"[MatchArc] Comeback: +{comeback} (trailing by {opponentScore - myScore})");
                     if (BonusPopup.Instance != null)
                         BonusPopup.Instance.ShowComeback(comeback, Vector3.up * 2.5f, isHumanPlayer);
                 }
@@ -874,7 +874,7 @@ namespace WordDrop
                 // Sudden death: any score ends the match immediately (but not during Last Word)
                 if (_isSuddenDeath && !_isLastWord)
                 {
-//                     Debug.Log($"[MatchController] SUDDEN DEATH — P{playerIndex} scored {totalScore}! Match over.");
+//                     WDLog.Log($"[MatchController] SUDDEN DEATH — P{playerIndex} scored {totalScore}! Match over.");
                     EndMatch("sudden_death");
                     return;
                 }
@@ -996,7 +996,7 @@ namespace WordDrop
                 if (!isRewrite || SurvivalManager.Instance.EditsCountAsMoves)
                 {
                     if (isRewrite)
-                        Debug.Log($"[EditMove] edit ticked the move counter (globalOverride={SurvivalManager.EditsCountAsMovesGlobalOverride}, perLevel-or-override={SurvivalManager.Instance.EditsCountAsMoves}).");
+                        WDLog.Log($"[EditMove] edit ticked the move counter (globalOverride={SurvivalManager.EditsCountAsMovesGlobalOverride}, perLevel-or-override={SurvivalManager.Instance.EditsCountAsMoves}).");
                     SurvivalManager.Instance.NotifyDropCommitted();
                 }
             }
@@ -1011,7 +1011,7 @@ namespace WordDrop
                 BonusMode.Instance.NotifyDropCompleted(formedWord: totalScore > 0);
             }
 
-//             Debug.Log($"[MatchController] CompleteDropBookkeeping: player={playerIndex} " +
+//             WDLog.Log($"[MatchController] CompleteDropBookkeeping: player={playerIndex} " +
                       // $"score={totalScore} playerTurns=[{_playerTurns[0]},{_playerTurns[1]}] " +
                       // $"globalTurn={_currentTurn}");
 
@@ -1052,7 +1052,7 @@ namespace WordDrop
 
             if (_swapsRemaining[player] <= 0)
             {
-//                 Debug.Log($"[MatchController] UseSwap: player {player} has no swaps remaining.");
+//                 WDLog.Log($"[MatchController] UseSwap: player {player} has no swaps remaining.");
                 return false;
             }
 
@@ -1070,7 +1070,7 @@ namespace WordDrop
 
             _swapsRemaining[player]--;
 
-//             Debug.Log($"[MatchController] UseSwap: player={player} slot={handSlot} " +
+//             WDLog.Log($"[MatchController] UseSwap: player={player} slot={handSlot} " +
                       // $"'{oldLetter}' → '{newLetter}' " +
                       // $"swapsRemaining={_swapsRemaining[player]}");
 
@@ -1104,7 +1104,7 @@ namespace WordDrop
             if (_swapsRemaining[PLAYER_HUMAN] < INITIAL_SWAPS + 2) // cap at initial + 2 bonus
             {
                 _swapsRemaining[PLAYER_HUMAN]++;
-//                 Debug.Log($"[MatchController] Refunded swap. Remaining: {_swapsRemaining[PLAYER_HUMAN]}");
+//                 WDLog.Log($"[MatchController] Refunded swap. Remaining: {_swapsRemaining[PLAYER_HUMAN]}");
                 if (HUDManager.Instance != null)
                     HUDManager.Instance.ShowSwapCount(_swapsRemaining[PLAYER_HUMAN]);
             }
@@ -1221,7 +1221,7 @@ namespace WordDrop
             // (which only kills transform tweens), leaking gold color onto recycled
             // tiles at different positions.
 
-            Debug.Log($"[MatchController] Applied Level {lc.CurrentLevel.levelId} startingBoard ({board.Length} tiles).");
+            WDLog.Log($"[MatchController] Applied Level {lc.CurrentLevel.levelId} startingBoard ({board.Length} tiles).");
         }
 
         /// <summary>
@@ -1261,7 +1261,7 @@ namespace WordDrop
             if (primed > 0)
                 rules.RefreshAllPrimedWordTiles(rules.GlobalTurn);
 
-            Debug.Log($"[MatchController] Auto-primed {primed} word(s) on starting board.");
+            WDLog.Log($"[MatchController] Auto-primed {primed} word(s) on starting board.");
         }
 
         /// <summary>Reroll the human hand until it can make a valid word on the CURRENT board (reuses
@@ -1391,7 +1391,7 @@ namespace WordDrop
             if (HUDManager.Instance != null)
                 HUDManager.Instance.PulseRewriteCounter();
 
-            Debug.Log($"[ZeroFloorRefund] Primed '{evt.Word}' at 0 edits → +1 edit refunded");
+            WDLog.Log($"[ZeroFloorRefund] Primed '{evt.Word}' at 0 edits → +1 edit refunded");
         }
 
         /// <summary>
@@ -1463,7 +1463,7 @@ namespace WordDrop
             if (HUDManager.Instance != null && after > before)
                 HUDManager.Instance.PulseRewriteCounter();
 
-            Debug.Log($"[Phase11d] EDIT FREE — word='{sw.Word}' len={sw.Word.Length} " +
+            WDLog.Log($"[Phase11d] EDIT FREE — word='{sw.Word}' len={sw.Word.Length} " +
                       $"rewrites {before}→{after}{(after == before ? " (capped)" : "")}");
         }
 
@@ -1479,7 +1479,7 @@ namespace WordDrop
             {
                 _survivalWordsMeter = 0;
                 RefundRewriteCharge(PLAYER_HUMAN);
-//                 Debug.Log("[MatchController] Survival rewrite meter: 2 words → +1 rewrite");
+//                 WDLog.Log("[MatchController] Survival rewrite meter: 2 words → +1 rewrite");
                 if (BonusPopup.Instance != null)
                     BonusPopup.Instance.Show("EDIT +1", new Color(0.0f, 0.85f, 0.9f, 1f), Vector3.up * 3f, 1.1f);
             }
@@ -1500,7 +1500,7 @@ namespace WordDrop
             if (_rewritesRemaining[playerIndex] > 0)
             {
                 _rewritesRemaining[playerIndex]--;
-//                 Debug.Log($"[MatchController] Used rewrite charge for P{playerIndex}. Remaining: {_rewritesRemaining[playerIndex]}");
+//                 WDLog.Log($"[MatchController] Used rewrite charge for P{playerIndex}. Remaining: {_rewritesRemaining[playerIndex]}");
                 if (HUDManager.Instance != null)
                     HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[playerIndex]);
 
@@ -1521,7 +1521,7 @@ namespace WordDrop
             if (_rewritesRemaining[playerIndex] < cap)
             {
                 _rewritesRemaining[playerIndex]++;
-//                 Debug.Log($"[MatchController] Refunded rewrite for P{playerIndex}. " +
+//                 WDLog.Log($"[MatchController] Refunded rewrite for P{playerIndex}. " +
                           // $"Remaining: {_rewritesRemaining[playerIndex]}");
 
                 if (playerIndex == _currentPlayer && HUDManager.Instance != null)
@@ -1595,7 +1595,7 @@ namespace WordDrop
         /// </summary>
         private void OnSurvivalStageFailed(int stage)
         {
-            Debug.Log($"[MatchController] Stage {stage} failed — ending run.");
+            WDLog.Log($"[MatchController] Stage {stage} failed — ending run.");
 
             // Fire run_end analytics via SurvivalManager (stage_fail event
             // already fired from inside NotifyDropCommitted). Call StopSurvival
@@ -1653,7 +1653,7 @@ namespace WordDrop
 
             if (!UnlimitedRewrites && _rewritesRemaining[player] <= 0)
             {
-//                 Debug.Log("[MatchController] UseRewrite: no rewrites remaining.");
+//                 WDLog.Log("[MatchController] UseRewrite: no rewrites remaining.");
                 return false;
             }
 
@@ -1667,7 +1667,7 @@ namespace WordDrop
             var cell = RulesEngine.Instance.GetCell(targetCol, targetRow);
             if (cell == null)
             {
-//                 Debug.Log($"[MatchController] UseRewrite: no tile at ({targetCol},{targetRow}).");
+//                 WDLog.Log($"[MatchController] UseRewrite: no tile at ({targetCol},{targetRow}).");
                 return false;
             }
 
@@ -1676,7 +1676,7 @@ namespace WordDrop
                 .GetPrimedWordsContaining(new Vector2Int(targetCol, targetRow));
             if (primedAtCell != null && primedAtCell.Count > 0)
             {
-//                 Debug.Log($"[MatchController] UseRewrite: tile at ({targetCol},{targetRow}) is primed.");
+//                 WDLog.Log($"[MatchController] UseRewrite: tile at ({targetCol},{targetRow}) is primed.");
                 return false;
             }
 
@@ -1693,7 +1693,7 @@ namespace WordDrop
             if (!isWild && handLetter == oldBoardLetter
                 && !(RulesEngine.Instance != null && RulesEngine.Instance.CellHasUnscoredWord(targetCol, targetRow)))
             {
-//                 Debug.Log($"[MatchController] UseRewrite: same letter '{handLetter}' — no-op.");
+//                 WDLog.Log($"[MatchController] UseRewrite: same letter '{handLetter}' — no-op.");
                 return false;
             }
 
@@ -1709,7 +1709,7 @@ namespace WordDrop
             else
                 _hands[player].SetSlot(handSlot, '\0');
 
-//             Debug.Log($"[MatchController] UseRewrite: player={player} slot={handSlot} " +
+//             WDLog.Log($"[MatchController] UseRewrite: player={player} slot={handSlot} " +
                       // $"'{handLetter}' replaces '{oldBoardLetter}' at ({targetCol},{targetRow}) " +
                       // $"rewritesRemaining={_rewritesRemaining[player]}");
 
@@ -1753,7 +1753,7 @@ namespace WordDrop
         public void ForceGameOver()
         {
             if (_isGameOver) return;
-//             Debug.Log("[MatchController] ForceGameOver called.");
+//             WDLog.Log("[MatchController] ForceGameOver called.");
             EndMatch("board_full");
         }
 
@@ -1766,7 +1766,7 @@ namespace WordDrop
             if (_isLastWord || _isGameOver) return;
             _isLastWord = true;
             _lastWordTurnsRemaining = 2; // both players get one turn
-//             Debug.Log("[MatchController] LAST WORD! Both players get one final turn at 3x scoring.");
+//             WDLog.Log("[MatchController] LAST WORD! Both players get one final turn at 3x scoring.");
 
             // Disable rising rows so the board doesn't overflow during last word
             RisingRowManager.Enabled = false;
@@ -1783,10 +1783,10 @@ namespace WordDrop
         {
             if (!_isLastWord) return;
             _lastWordTurnsRemaining--;
-//             Debug.Log($"[MatchController] Last Word turn consumed. Remaining: {_lastWordTurnsRemaining}");
+//             WDLog.Log($"[MatchController] Last Word turn consumed. Remaining: {_lastWordTurnsRemaining}");
             if (_lastWordTurnsRemaining <= 0)
             {
-//                 Debug.Log("[MatchController] Last Word complete — ending match.");
+//                 WDLog.Log("[MatchController] Last Word complete — ending match.");
                 EndMatch("last_word");
             }
         }
@@ -1804,7 +1804,7 @@ namespace WordDrop
                 return;
             }
             _currentPlayer = (_currentPlayer + 1) % NUM_PLAYERS;
-//             Debug.Log($"[MatchController] Switched to player {_currentPlayer}");
+//             WDLog.Log($"[MatchController] Switched to player {_currentPlayer}");
         }
 
         private bool CheckMatchEnd()
@@ -1814,7 +1814,7 @@ namespace WordDrop
             {
                 if (BlitzManager.Instance != null && BlitzManager.Instance.IsTimeUp)
                 {
-//                     Debug.Log("[MatchController] Blitz time expired — ending match.");
+//                     WDLog.Log("[MatchController] Blitz time expired — ending match.");
                     EndMatch("blitz_time_up");
                     return true;
                 }
@@ -1832,7 +1832,7 @@ namespace WordDrop
                     }
                     if (!anyOpen)
                     {
-//                         Debug.Log("[MatchController] Blitz board full — ending match.");
+//                         WDLog.Log("[MatchController] Blitz board full — ending match.");
                         EndMatch("board_full");
                         return true;
                     }
@@ -1878,7 +1878,7 @@ namespace WordDrop
                     }
                     if (!anyOpen)
                     {
-//                         Debug.Log("[MatchController] Survival board full — ending match.");
+//                         WDLog.Log("[MatchController] Survival board full — ending match.");
                         EndMatch("board_full");
                         return true;
                     }
@@ -1891,7 +1891,7 @@ namespace WordDrop
             {
                 if (_playerTurns[PLAYER_HUMAN] >= EffectiveMaxTurns)
                 {
-//                     Debug.Log($"[MatchController] Daily Drop — all {EffectiveMaxTurns} turns used. Match ending.");
+//                     WDLog.Log($"[MatchController] Daily Drop — all {EffectiveMaxTurns} turns used. Match ending.");
                     EndMatch("turn_limit");
                     return true;
                 }
@@ -1906,7 +1906,7 @@ namespace WordDrop
                     }
                     if (!anyOpen)
                     {
-//                         Debug.Log("[MatchController] Daily Drop board full — ending match.");
+//                         WDLog.Log("[MatchController] Daily Drop board full — ending match.");
                         EndMatch("board_full");
                         return true;
                     }
@@ -1926,11 +1926,11 @@ namespace WordDrop
                 {
                     // Tie → sudden death: next score wins
                     _isSuddenDeath = true;
-//                     Debug.Log($"[MatchController] Tied {playerScore}-{aiScore} — entering SUDDEN DEATH!");
+//                     WDLog.Log($"[MatchController] Tied {playerScore}-{aiScore} — entering SUDDEN DEATH!");
                     return false; // don't end, keep playing
                 }
 
-//                 Debug.Log($"[MatchController] All {maxTotal} turns used — match ending.");
+//                 WDLog.Log($"[MatchController] All {maxTotal} turns used — match ending.");
                 EndMatch("turn_limit");
                 return true;
             }
@@ -1945,7 +1945,7 @@ namespace WordDrop
                 }
                 if (!anyOpen)
                 {
-//                     Debug.Log("[MatchController] Classic board full — ending match.");
+//                     WDLog.Log("[MatchController] Classic board full — ending match.");
                     EndMatch("board_full");
                     return true;
                 }
@@ -1960,12 +1960,12 @@ namespace WordDrop
 
             if (p0Done && _currentPlayer == PLAYER_HUMAN)
             {
-//                 Debug.Log("[MatchController] Human done, switching to AI for remaining turns.");
+//                 WDLog.Log("[MatchController] Human done, switching to AI for remaining turns.");
                 _currentPlayer = PLAYER_AI;
             }
             else if (p1Done && _currentPlayer == PLAYER_AI)
             {
-//                 Debug.Log("[MatchController] AI done, switching to Human for remaining turns.");
+//                 WDLog.Log("[MatchController] AI done, switching to Human for remaining turns.");
                 _currentPlayer = PLAYER_HUMAN;
             }
 
@@ -1997,7 +1997,7 @@ namespace WordDrop
             string winnerStr = winner == PLAYER_HUMAN ? "Player" :
                                winner == PLAYER_AI    ? "AI"     : "Tie";
 
-//             Debug.Log($"[MatchController] Match ended! Cause={cause} " +
+//             WDLog.Log($"[MatchController] Match ended! Cause={cause} " +
                       // $"Player={playerScore} AI={aiScore} Winner={winnerStr} " +
                       // $"Turns=[{_playerTurns[0]},{_playerTurns[1]}]");
 

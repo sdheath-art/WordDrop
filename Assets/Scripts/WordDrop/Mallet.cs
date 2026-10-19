@@ -40,7 +40,7 @@ namespace WordDrop
             StripObjectiveTiles(toRemove); // never smash a level objective
             if (toRemove.Count == 0)
             {
-                Debug.Log($"[Mallet] Tap at ({col},{row}) is an objective tile — fizzled");
+                WDLog.Log($"[Mallet] Tap at ({col},{row}) is an objective tile — fizzled");
                 GameAudio.Instance?.PlayUIClick();
                 onComplete?.Invoke();
                 return;
@@ -51,7 +51,7 @@ namespace WordDrop
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);
 
-            Debug.Log($"[Mallet] Smashed tile at ({col},{row})");
+            WDLog.Log($"[Mallet] Smashed tile at ({col},{row})");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
         }

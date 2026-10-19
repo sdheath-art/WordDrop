@@ -31,6 +31,29 @@ namespace WordDrop
         // Visual constants
         // ---------------------------------------------------------------------------
 
+        // ═══════════════════════════════════════════════════════════════════════════
+        //  TILE PALETTE — ONE MEANING PER HUE (2026-09-08 Spencer)
+        //
+        //  The rule: HUE = WHAT IS HAPPENING, not what the tile is.
+        //  Before this there were 24 tile colours and hues meant several things at once —
+        //  orange was "fuse expiring" AND "escort target" AND "swap refill" AND "gold
+        //  border"; cyan was "selected" AND "edit refill" AND "wild". That is why the
+        //  board read as arbitrary. Most of those belonged to DROP-game mechanics that
+        //  the swap pivot removed, so this is mostly deletion, not reassignment.
+        //
+        //    tan      resting tile
+        //    gold     high-value letter (V K J X Q Z) — at rest AND armed (hotter)
+        //    magenta  ARMED
+        //    green    SCORING right now
+        //    cyan     SELECTED for a swap
+        //    red      TOP-OUT DANGER  (and nothing else — see PRIMED_DANGER_GLOW below)
+        //    grey     blocker: stone
+        //    pale blue blocker: ice
+        //
+        //  Anything below marked LEGACY-DROP belongs to a removed mechanic. It is kept
+        //  only because call sites still compile against it; those tiles no longer spawn.
+        // ═══════════════════════════════════════════════════════════════════════════
+
         private static readonly Color TILE_FILL_COLOR    = new Color(0.973f, 0.961f, 0.937f, 1f);     // warm cream #F8F5EF
         // 2026-06-24 Spencer: per-letter value-accent tinting was REMOVED (it read as confusing — color the
         // player has to decode). Tiles use a single uniform resting colour again. The _baseTint /
@@ -41,9 +64,47 @@ namespace WordDrop
         private static readonly Color TILE_BORDER_GOLD   = new Color(1.000f, 0.720f, 0.180f, 1f);  // bright rich gold-orange #FFB82E
 
         // Kept as compile stub for any callers that reference it
-        public static readonly Color TILE_BORDER_WILD = new Color(0.20f, 0.90f, 1.00f, 1f);
+        // PALETTE 2026-09-08: was CYAN, which collided with "selected for swap". A wild's
+        // letter is already purple (WILD_LETTER_COLOR), so the border matches it — wild
+        // now reads as one idea instead of borrowing the selection hue.
+        public static readonly Color TILE_BORDER_WILD = new Color(0.75f, 0.40f, 1.00f, 1f);
 
-        public static readonly Color PRIMED_GLOW       = new Color(1.8f, 0.5f, 1.3f, 1f);  // HDR magenta — bloom catches this
+        // 2026-09-09 Spencer: hue 323 -> 335 to match the ROSE armed tile. The scored flash
+        // fires in this colour and then settles onto the tile, so a mismatch between the two
+        // reads as a hue shift at the moment a word arms — "really hot magenta to the new
+        // pink". Same saturation (72%) and magnitude, hue only. This also drives the fly-up
+        // and detonation colours, so they follow the tile automatically.
+        public static readonly Color PRIMED_GLOW       = new Color(1.8f, 0.50f, 1.04f, 1f);  // HDR rose — bloom catches this
+
+        // ── ARMED GLOW (2026-09-08, Spencer) ────────────────────────────────────────
+        // The armed pulse used to push the face into HDR (cap 1.55) AND run an additive
+        // bloom overlay. Against the LIGHTENED tile set that reads as blown out — the
+        // magenta loses its form. PRIMED_BLOOM=false keeps the pulse (tint + scale
+        // breathe) but caps the face at LDR and mutes the overlay, so nothing glows
+        // until the word actually detonates. The explosion FX are a separate path and
+        // are untouched. Flip back to true to restore the old look.
+        public const  bool  PRIMED_BLOOM   = false;
+
+        // ── ARMED TILES ARE STILL (2026-09-08, Spencer) ──────────────────────────────
+        // "we are just leaving words primed now so no escalation or speed and timing
+        // should even be in the game for this version."
+        // The heartbeat, the scale breathe, the jitter and the heat-tier sprite swaps all
+        // existed to communicate a FUSE — how many turns until this word expires. Words no
+        // longer expire (LevelTable L11 fuseOff:true), so all of it was animating a rule
+        // that is gone, and twelve linked tiles each ran their own clock.
+        // An armed tile now simply IS magenta (or gold). Flip true to restore the pulse.
+        public const  bool  PRIMED_ANIMATION = false;
+
+        // 2026-09-09 Spencer: dark ink on the armed tile was the weakest text on the board —
+        // near-black on a mid-tone face, while every other tile is near-black on a pale one.
+        // White also makes ARMED read as a different STATE, not just a different colour.
+        // Remembers the outgoing colour and restores it, rather than assuming ink: twelve
+        // places set the letter colour (wild purple, stone, frozen...), so writing a
+        // hardcoded value back would stomp them.
+        public const  bool  ARMED_LETTER_WHITE = true;
+        private Color _preArmedLetterColor;
+        private bool  _letterWhitened;
+        public const  float PRIMED_LDR_CAP = 1.0f;   // 1.0 = no bloom at all; 1.28 sits just under the bloom line
 
         /// <summary>Override for ResetVisuals's "restore default sortingOrder"
         /// step. When > 0, ResetVisuals will set the tile's sortingOrder to
@@ -54,7 +115,759 @@ namespace WordDrop
         public static int AimModeTileOrder = 0;
         private int _spotlightOrder = -1; // tutorial per-tile spotlight: >=0 raises THIS tile above the dim scrim
         public static bool SpotlightActive = false; // true while a tutorial spotlight/scrim is up (guards FX re-bumps)
-        public static readonly Color PRIMED_GOLD_GLOW  = new Color(2.0f, 1.5f, 0.3f, 1f);  // HDR gold — bloom catches this
+        // 2026-09-09 Spencer: "when i explode it its turning orange. just make it gold."
+        // The old (2.0, 1.5, 0.3) has a ratio of 1 : 0.75 : 0.15, and once brought into
+        // displayable range that reads ORANGE. The gold TILE is 235:181:76 = 1 : 0.77 : 0.32 —
+        // roughly double the blue. Matched to the tile so the detonation, the fly-up and the
+        // flash all read as the same gold the player has been looking at. Same fix as the rose
+        // glow: a glow whose hue does not match its tile shows up as a colour shift.
+        /// <summary>Resting tint for a GOLD-armed tile — THE ORIGINAL VALUE, recovered.
+        ///
+        /// This is what the code computed before PRIMED_ANIMATION was turned off: the branch
+        /// below did Lerp(white, PRIMED_GOLD_GLOW, 0.58) then scaled into LDR, giving
+        /// (1.00, 0.831, 0.501). Disabling the armed pulse took that whole branch out of play
+        /// and the method returned plain WHITE instead — which is when the bright gold Spencer
+        /// remembers vanished. It was never deliberately changed; it was collateral.
+        ///
+        /// Earlier on 2026-09-10 I derived (1.00, 0.77, 0.32) from the scored FLASH instead.
+        /// That is the flash's peak multiply, which is a momentary hit with bloom behind it —
+        /// not the colour a tile settles at. Blue 0.32 vs 0.50 is the whole difference between
+        /// a dark amber and a bright saturated gold.</summary>
+        /// <summary>Read-only state for BoardInvariants — these let the game check itself
+        /// instead of relying on someone spotting a fault on screen. 2026-09-10 Spencer.</summary>
+        public bool HasPrimedGlow    => _hasPrimedGlow;
+        public bool LetterIsWhitened => _letterWhitened;
+        public int  SortingOrderNow  => _spriteRenderer != null ? _spriteRenderer.sortingOrder : 0;
+        /// <summary>THE answer to "is this tile gold-primed", for every path that needs it.
+        ///
+        /// Three sources could disagree: what the caller passed, this tile's own letter, and
+        /// what the registry says about the cell. The scored-flash path asked only the first
+        /// two, so a gold word could still put ROSE art on a tile — and gold tinted over rose
+        /// art is the peach Spencer kept seeing. Gold wins if ANY source says gold.
+        /// 2026-09-10 Spencer.</summary>
+        public bool ResolveGoldPrimed(bool callerSaysGold)
+        {
+            // STICKY. Once this tile is known to be gold-primed it stays gold until it stops
+            // being primed at all. Some paths paint a tile BEFORE its word reaches the registry,
+            // and at that instant every source honestly answers "not gold": the caller does not
+            // know yet, the letter itself may be ordinary (the E and T of JET), and the registry
+            // has no word. So the tile went rose, then flipped gold a moment later when the
+            // registry caught up — the rose-during-the-flash Spencer kept seeing.
+            // Gold wins means gold does not un-win. 2026-09-10 Spencer.
+            if (_isGoldPrimed && _hasPrimedGlow) return true;
+            if (callerSaysGold || IsGoldLetter) return true;
+            var c = RulesEngine.PrimedGlowForCell(new Vector2Int(Col, Row));
+            return ColorsClose(c, PRIMED_GOLD_GLOW);
+        }
+
+        public bool IsGoldPrimedState    => _isGoldPrimed;
+        /// <summary>Which armed art is on this tile right now — for diagnostics that need to
+        /// name what they are looking at, not just say "wrong". 2026-09-10 Spencer.</summary>
+        public string ArmedArtName
+        {
+            get
+            {
+                var sp = _spriteRenderer != null ? _spriteRenderer.sprite : null;
+                if (sp == null) return "none";
+                if (sp == s_spritePrimedGold) return "GOLD-primed";
+                if (sp == s_spriteScored)     return "SCORED-green";
+                if (sp == s_spriteGoldThick)  return "ROSE-armed";
+                if (sp == s_spriteGold)       return "ROSE-primed";
+                if (sp == s_spriteHighValue)  return "gold-resting";
+                if (sp == s_spriteNormal)     return "plain";
+                return sp.name;
+            }
+        }
+
+        public bool ShowingGoldPrimedArt => _spriteRenderer != null && s_spritePrimedGold != null
+                                            && _spriteRenderer.sprite == s_spritePrimedGold;
+
+        public static bool GOLD_FLICKER_DIAG = false;   // temp: trace gold→rose→gold repaints
+
+        // ── WARM RESTING TILE (2026-09-10) ─────────────────────────────────────────
+        // MEASURED: the resting face is #E2E5CB — hue 67 deg, saturation 33%. 67 deg is
+        // yellow-GREEN, which is why Spencer read it as "too tanned"; the code above already
+        // calls it "the tan resting face". Every warm game piece in his five reference games
+        // sits at hue 46-48 with far more saturation (Toon Blast cube 48/81, Royal Match gold
+        // 47/47). This rotates the resting tile texture to ~46 deg and lifts saturation.
+        //
+        // Done as a PER-PIXEL HUE ROTATION on the texture at cache-build, NOT as an
+        // sr.color tint. A multiply tint was tried on the rose tiles and reverted because it
+        // FLATTENS THE BEVEL (it scales every channel down, crushing the highlight). Rotating
+        // hue while leaving V alone keeps the bevel and the gloss exactly intact.
+        //
+        // It also avoids touching the dozen sites that set _spriteRenderer.color = white for
+        // the normal face — the art itself changes, so every path picks it up for free.
+        // Costs one blit + readback + per-pixel pass ONCE at cache build.
+        // ⚠️ DEFAULT OFF — THE PREMISE WAS WRONG. Corrected 2026-09-10 by measuring the actual
+        // tile FACE instead of a quantized region average:
+        //     real tile face  #F4E0B8  hue 40, sat 73, L 88   <- already a warm golden cream
+        //     what I "measured" #E2E5CB hue 67, sat 33         <- faces BLENDED with the dark
+        //                                                        gaps and shadows between them
+        // Royal Match gold is hue 47 — so the resting tile was ALREADY in range and needed
+        // nothing. Turning this on shifted it to hue 20 (SALMON) and cost 10 points of
+        // brightness. Exactly the trap in [[feedback-measure-the-source-not-the-pixels]]:
+        // measure the ASSET, not composited screen pixels.
+        // Spencer did say he "liked the look better of the gold tiles" with it on — so if he
+        // wants the peach back it is one flag, but it is a taste choice, NOT a correction.
+        // ── BAKED CONTACT EDGE / AO (2026-09-10) ───────────────────────────────────
+        // Spencer: "notice the ambient occlusion between the tiles in toon blast. they create
+        // real separation between the blocks." He is right, and it is the fix for the oldest
+        // complaint in this pass — a settled row reads as ONE SLAB of cream rather than nine
+        // movable pieces, which fights the swap verb.
+        //
+        // MEASURED on toonblast.png: their separation is three things stacked — a thin dark gap
+        // showing the board, each cube shading DOWN toward its own perimeter, and a top-lit
+        // gradient so the dark bottom of one cube meets the bright top of the next.
+        //
+        // The existing TILE_DROP_SHADOW was disabled 2026-09-03 ("just muddies the seams") —
+        // correctly, because it is a SOFT OFFSET DROP shadow, which smears on an overlapping
+        // board. What is wanted is a TIGHT CONTACT EDGE inside the tile's own silhouette.
+        //
+        // Method: box-blur the alpha channel to get an "inside-ness" mask, then darken where
+        // that mask is below 1 — i.e. a soft dark rim hugging the edge. Baked into the texture
+        // once at cache build, so it costs ZERO extra renderers (unlike the 99-renderer cell
+        // liner that had to be switched off for frame drops).
+        // 2026-09-10: started at 0.34 / 0.055 / 1.7 — Spencer: "looks better but it should
+        // probably be even more". Pushed up, and the reference agrees: TB's seams measure ~55%
+        // darker than the cube face, so 0.34 was well under.
+        // ── LETTERPRESS / DEBOSSED LETTERS (2026-09-10) ────────────────────────────
+        // Spencer, off the Scrabble GO tile: "a light coloured inner shadow or drop shadow
+        // underneath the black letters that makes it look almost like it's grooved into the
+        // tile." That is a LETTERPRESS (deboss), and the physics is why it works: a groove lit
+        // from above has its TOP inner wall in shadow and its BOTTOM wall catching light. The
+        // glyph is already dark, so the cue is that lit lower lip — i.e. a LIGHT underlay,
+        // offset DOWNWARD.
+        //
+        // NOTE the June note further down: TMP underlay was disabled 2026-06-03 as a *dark*
+        // drop shadow. Re-enabling it with those old values gives a drop shadow, NOT this.
+        // The colour is the whole point — light, not dark.
+        //
+        // Could NOT be confirmed on the reference: at ~80px per tile in a compressed
+        // screenshot, pixels 3px below a letter edge average L=83.2 vs 84.4 above, which is
+        // noise. Spencer called it "very faint"; it is below what that image can resolve.
+        // So these numbers are a sensible starting point, not measured truth — tune by eye.
+        /// <summary>Letter colour. 2026-09-11: was #252733, a blue-grey. The Monopoly dice dots
+        /// measure #0A0A0A — near-black and fully neutral. One constant so every state uses it;
+        /// it was previously repeated as a literal at ~8 call sites.</summary>
+        /// <summary>Letter ink = THE BOARD'S OWN HUE, dark and saturated — not neutral black.
+        /// 2026-09-15, from the reference board Spencer sent.
+        ///
+        /// MEASURED off that reference, and it is the whole trick: its letter ink is hue **220.3**
+        /// and its board is hue **220.5** — the SAME hue. The letters are literally the board
+        /// colour at a lower value. Its entire screen is two hues (~220 blue, ~35 orange) with
+        /// everything else a value/saturation variation of one of them.
+        ///
+        /// Ours was `#0A0A0A` — neutral black, **saturation 0, no hue at all** — which made the
+        /// ink the one element on the board belonging to NEITHER family. Now hue 200 (our teal
+        /// board), sat 0.70, value 0.26 = `#133242`. Same principle as ROCK_WORLD_TINT, applied
+        /// to type instead of blockers.
+        ///
+        /// If the board is ever pushed toward a true navy, move this with it — `#162A54`
+        /// (hue 220) is the reference's exact ink. The two must stay on the same hue.</summary>
+        public static Color LETTER_INK = new Color(0.0078f, 0.1490f, 0.3451f, 1f);   // #022658 — 2026-09-21 Spencer
+
+        public static bool  LETTER_EMBOSS          = true;
+        public static float LETTER_EMBOSS_ALPHA    = 0.55f;   // strength of the lit lip
+        public static float LETTER_EMBOSS_OFFSET   = -0.35f;  // NEGATIVE = below the glyph
+        public static float LETTER_EMBOSS_SOFTNESS = 0.08f;
+        public static Color LETTER_EMBOSS_COLOR    = new Color(1f, 0.98f, 0.90f, 1f); // warm near-white
+
+        // ── HIGH-VALUE TILE RECOLOUR (2026-09-10) ──────────────────────────────────
+        // MEASURED, and this is the whole problem: white_glossy@2x is hue 43 / HSV sat 0.233
+        // and highvalue_tile@2x is hue 42 / HSV sat 0.667 — the SAME HUE. The only thing that
+        // ever marked a high-value letter was SATURATION. So when the resting tile was pushed
+        // to Scrabble GO's gold (sat 0.61) the two collided and J/Q/X/Z stopped reading as
+        // special — Spencer: "good but you changed all the tiles lol".
+        // Fix: move high-value to a genuinely HOTTER hue, so "warmer = worth more" still reads
+        // at a glance even though both are now gold-family.
+        // 2026-09-10 — the gold Spencer approved came from taking white_glossy (HSV sat 0.233)
+        // and MULTIPLYING saturation x2.62 with a +10 deg hue shift. A multiply keeps the art's
+        // RELATIVE structure: highlights stay pale, shadows go rich, and it reads as GOLD.
+        // Forcing the high-value art to an ABSOLUTE hue instead made every pixel the same hue —
+        // zero variation — which is exactly what "flat yellow" looks like. Spencer: "its reading
+        // as yellow not as gold... you had it exactly right before when you coloured all the
+        // tiles gold. i just need that gold with the cream tiles."
+        // So: build the GOLD face from the SAME source and the SAME transform, and leave the
+        // resting face untouched.
+        public static float GOLD_HUE_SHIFT = 10f;
+        public static float GOLD_SAT_MUL   = 2.62f;
+
+        /// <summary>Use the Cube World `gold_block` render as the gold-resting face instead of
+        /// the hue-shifted white tile. 2026-09-11, Spencer: "change over our current gold tiles
+        /// to gold_block". Set false to go back to the GOLD_HUE_SHIFT / GOLD_SAT_MUL recolour —
+        /// those knobs are untouched and still live, so this is a straight A/B.
+        /// NOTE this is the GOLD-RESTING face (high-value letters, `s_spriteHighValue`), NOT
+        /// `s_spriteGolden` (the gold BONUS cell) and NOT `s_spriteGold` (which, despite the
+        /// name, is the PRIMED face used by every primed tile — see the trap note below).</summary>
+        // 2026-09-11: TRIED AND REVERTED. Spencer: "lets just make it easy and go back to the
+        // old golden tiles". The art/size problems were all solved (see the session log) but the
+        // cube's 26%-tall TOP FACE band sits where a letter tile has a ~5% bevel, so the letter
+        // reads as badly centred inside the visible gold face. That is a GEOMETRY mismatch, not
+        // something a colour or size tweak fixes. Flip to true to look at it again — everything
+        // it needs is still in place (gold_block_flat@2x, the knob below, the fallback chain).
+        public static bool  GOLD_BLOCK_FACE    = false;
+
+        /// <summary>Gamma lift on the gold_block art (v^(1/g)), NOT a multiply — a multiply clips
+        /// the highlights and flattens the facets. 1.0 = the pack's native colour, which is what
+        /// Spencer chose for the rocks. MEASURED 2026-09-11: raw gold_block is L 153 vs
+        /// white_glossy 212 and golden_tile2 183, so **1.54 matches golden_tile2's brightness**
+        /// if it reads too dark on the board.</summary>
+        public static float GOLD_BLOCK_LIGHTEN = 1.0f;
+
+        public static bool  HIVAL_RECOLOR = true;
+        // 2026-09-10: the Scrabble GO gold goes HERE, on the high-value tile only — not on the
+        // resting face. MEASURED: Scrabble tile #F8DC58 = hue 50, HSV sat 0.645.
+        // highvalue_tile@2x is already hue 42 / HSV sat 0.667, so this is a small nudge:
+        // +8 deg of hue and saturation essentially unchanged.
+        public static float HIVAL_HUE     = 50f;    // Scrabble GO gold
+        public static float HIVAL_SAT_MUL = 0.97f;  // 0.667 -> ~0.645
+
+        /// <summary>Master switch for `AoFace`/`ContactEdgeCopy` on every letter face.
+        /// Turned off then straight back ON 2026-09-15 at Spencer's request.
+        ///
+        /// 🔑 NOTE THE STATE THIS LEFT BEHIND, AND IT IS BETTER THAN BEFORE: the AO that my
+        /// palette transfer had BAKED into the front-on PNGs was stripped during the off pass and
+        /// has deliberately NOT been put back. So AO is now applied exactly ONCE, at runtime,
+        /// instead of baked-in AO *plus* this pass — which is what the front-on art briefly had.
+        /// Do not re-bake AO into the PNGs; this switch is the only place it belongs.</summary>
+        public static bool  TILE_AO          = false;  // OFF 2026-09-21 — ContactEdgeCopy paints a
+        // dark rim round the silhouette. On Spencer's hand-painted peach tile that renders as a
+        // RUSTY BROWN ring ("the colours are wrong") and muddies the edge ("not clean sprites").
+        // His art already carries its own edge shading, so this is double-shading authored work.
+        // 2026-09-11: 0.52 left the sides almost white. The reason is that the blurred alpha only
+        // reaches occl ~0.5 at the edge (not 1), so the sides were landing at 1 - 0.5*0.52 = 0.74
+        // — just 26% darker than the face, which is nothing on a WHITE tile. TILE_AO_FLOOR never
+        // even engaged there; it only bit at the bottom edge where the 2.2x boost applies.
+        // STRENGTH is the lever for "how dark", FLOOR only caps the extreme.
+        public static float TILE_AO_STRENGTH = 0.72f;   // eased 2026-09-11 — the rim was eating into the face
+        // 0.080 reached ~32% in from EVERY edge, so on a 249px tile the "rim" was covering most
+        // of the face and dimming it. 0.060 keeps it a rim. 2026-09-11.
+        public static float TILE_AO_WIDTH    = 0.060f;
+        public static float TILE_AO_BOTTOM   = 2.2f;    // extra darkening on the BOTTOM edge (top-lit)
+        // Shadow COLOUR, per [[reference-icon-stroke-shadow-recipe]]: a shadow is made of the
+        // occluded SURFACE, not of the object casting it — so it is not a neutral darkening.
+        // The recipe there is hue -18 deg toward violet, saturation x1.05, value down. Shifting
+        // hue and LIFTING saturation is what stops a shadow reading muddy-grey.
+        // TILE_AO_TINTED=false reverts to the plain neutral multiply.
+        // 2026-09-11: OFF to match the dice. Its shadow planes measure sat 0.01-0.03 — neutral
+        // grey, no violet. The tinted-shadow recipe is right for a COLOURED surface; a white
+        // die shades to grey.
+        public static bool  TILE_AO_TINTED   = false;
+        public static float TILE_AO_HUE_ROT  = -18f;   // degrees, toward violet
+        public static float TILE_AO_SAT_MUL  = 1.05f;  // shadows are slightly MORE saturated
+
+        /// <summary>Darkest the AO rim may go, as a fraction of the face value. MEASURED on the
+        /// Monopoly dice: its deepest shadow plane is 0.58x the lit face — it never approaches
+        /// black. Without this floor the rim clamps to 0 and reads as a drawn outline.</summary>
+        // 0.58 = the dice's deepest plane, but that is a whole FACE lit at an angle; a tile RIM
+        // reads lighter than a face plane at the same value, so it needs to go further.
+        // Spencer 2026-09-11: "the shading on the white tiles needs to be a bit darker".
+        public static float TILE_AO_FLOOR    = 0.44f;
+
+        // ── BAKED SPECULAR GLINT (2026-09-10) ──────────────────────────────────────
+        // Spencer: "its not there yet. im guessing its probably cause the tiles are missing
+        // any kind of a highlight glint." Correct — and it is a side effect of the cream:
+        // the gloss IS baked into white_glossy@2x, but a baked gloss reads as a PALER, LESS
+        // SATURATED patch on a more saturated face. Dropping the face saturation to ~0.06 made
+        // the face as pale as the highlight, so the glint collapsed into it.
+        // The old separate gloss layer (GlossEnabled, below) is left OFF on purpose — it is one
+        // SpriteRenderer per tile, the same 99-renderer cost that got the cell liner disabled.
+        // Baked into the texture instead: zero extra draws.
+        // 2026-09-11: TMP was applying FontStyles.Bold ON TOP of the tile font. That made sense
+        // when the font was AvenirNext SDF (a REGULAR weight that needed the boost) — but with an
+        // already-bold face like Fredoka-Bold it is SYNTHETIC DOUBLE-BOLD: strokes fatten, the
+        // counters in G/B/O close up, and it reads "blobby" (Spencer's word). Off by default now
+        // that the tile font is a bold cut. Set true if you switch back to a regular-weight font.
+        public static bool  TILE_FONT_FAUX_BOLD = false;
+
+        // 2026-09-11: OFF. Replaced by the BAKED SPECULAR below, which is computed from the real
+        // mesh normals in Blender instead of being a gaussian blob guessed from the silhouette.
+        // Two highlight systems would fight; this one was always in the wrong place.
+        public static bool  TILE_GLINT          = false;
+        public static float TILE_GLINT_STRENGTH = 0.30f;  // 0 = off; how far toward white
+        public static float TILE_GLINT_Y        = 0.74f;  // 0 bottom .. 1 top
+        public static float TILE_GLINT_SPREAD   = 0.22f;  // vertical softness
+        public static float TILE_GLINT_WIDTH    = 0.40f;  // horizontal softness (streak width)
+
+        // ── BAKED SPECULAR HIGHLIGHT (2026-09-11) ──────────────────────────────────
+        // Spencer: "should you maybe try in blender adding a rimlight on the model to see if you
+        // can get the correct look on the geometry?" — correct, and it is why the 2D attempts
+        // kept landing wrong. A highlight guessed from a SILHOUETTE cannot know which way the
+        // surface points; this is rendered from the actual mesh normals.
+        //
+        // WHAT FAILED FIRST, so nobody repeats it:
+        //  • 2D gaussian blob on the face  — no relationship to the geometry, reads as a smudge.
+        //  • Fresnel RIM pass in Blender   — peaks where the surface grazes the CAMERA. With this
+        //    near-front-on camera that is the top CAP and the outer silhouette, NEVER the
+        //    cap/face divide. Measured: cap 0.66, divide 0.10. Wrong by construction.
+        //  • BLINN-PHONG SPECULAR          — ✅ peaks where the normal bisects light and view, so
+        //    with the light above and slightly forward it lands exactly on the divide and follows
+        //    the corner curvature for free. `PASS=spec` in cutebox.py (SHIN 40, SPZ 1.0).
+        //
+        // Baked to Tiles/tile_spec@2x.png, aligned to the tile art's silhouette. Composited in
+        // the same texture pass as the AO, so ZERO extra renderers/draws.
+        // Applied to ALL face states. NOTE the history: when this map was a SHARP specular band
+        // it had to be restricted to white_glossy-derived faces, because the arts have different
+        // cap heights (white_glossy 13%, highvalue 18%, vowel 18%, greeny 23%, primed different
+        // again) and a hard edge landed visibly wrong — Spencer: "the glint looks odd on the
+        // primed tiles". Now that it is a SOFT DIFFUSE gradient there is no edge to misplace, so
+        // the restriction is unnecessary and costs the primed tiles their lighting.
+        // ⚠️ If this ever goes back to a sharp highlight, restore the restriction.
+        public static bool  TILE_SPEC          = true;
+        /// <summary>Highlight opacity. 2026-09-11: 1.0 -> 0.78 at Spencer's request. Thickness is
+        /// NOT set here — it is the Blender shininess (SHIN) the map was rendered at; currently 75
+        /// (was 40). Re-render via cutebox.py PASS=spec to change it.</summary>
+        // 2026-09-11: the map is now a DIFFUSE top-light, not a sharp specular band — see the
+        // note above. Lower strength because it covers most of the face rather than a thin line.
+        // 2026-09-11: cut 0.22 -> 0.07. MEASURED: the ndl map is FLAT at 0.616 across the lower
+        // 60% of the face, so over most of the tile this was a CONSTANT multiplier — uniform
+        // dimming with no gradient to show for it. The gradient is TILE_FACE_GRAD's job now; this
+        // is left only for the variation near the curved edges.
+        /// <summary>OFF 2026-09-15 — Spencer: "please remove the highlight glint as well for now
+        /// / on the tiles". This is the BAKED specular band (via `tile_spec@2x` in
+        /// ContactEdgeCopy(applySpec:true)) and was the last glint still live: TILE_GLINT and
+        /// GlossEnabled were already false. Restore with 0.07f. It was tuned on the TILTED art,
+        /// so re-measure rather than trusting 0.07 if it ever comes back on front-on tiles.</summary>
+        public static float TILE_SPEC_STRENGTH = 0f;
+        /// <summary>Nudge the band UP the tile, as a fraction of tile WIDTH. Spencer picked 16px
+        /// on the 249px-wide art = 0.064. NOTE this is a straight VERTICAL shift — moving the
+        /// light's elevation slides the band ALONG the surface and reshapes it, and offsetting
+        /// along the divide's normal pushes it SIDEWAYS on the tile's sides. Neither is "up".</summary>
+        // No nudge needed now: a diffuse gradient covers the face, so there is no band to place.
+        public static float TILE_SPEC_UP       = 0.0f;
+
+        // ── FACE FALLOFF (2026-09-11) ──────────────────────────────────────────────
+        // Spencer: "something about the top of our tiles looks weird". MEASURED, and the cause is
+        // geometric: WordDrop's tile front face is FLAT, so one normal covers the whole face and
+        // diffuse lighting can only give it ONE value. The profile down a tile was a dark cap and
+        // then L=140.3 for the entire rest — literally no gradient. The ndl map confirms it:
+        // it varies over the top 40% (the curved edge) then sits flat at 0.616 all the way down.
+        //
+        // Toon Blast's cubes are slightly DOMED, so their front normal varies and you get a smooth
+        // falloff. Measured on their cube: peak at t=0.33 from the top of the face, falling to
+        // ~0.62 of peak by t=0.83. cutebox.py has BULGE for this but the header records
+        // "BULGE=0 no bulge, no taper (decided)" — so this fakes the same read in post instead of
+        // changing locked geometry.
+        public static bool  TILE_FACE_GRAD          = true;
+        public static float TILE_FACE_GRAD_STRENGTH = 0.11f;  // eased back so the lower face stays bright
+        public static float TILE_FACE_GRAD_PEAK     = 0.33f;  // t from the TOP of the sprite
+
+        // ── TOP-FACE (CAP) DARKENING (2026-09-11) ──────────────────────────────────
+        // Spencer: "the shading is a lot darker than the face in the toon blast".
+        // MEASURED on his Toon Blast cube:  cap L=139.6, upper face L=189.3 -> ratio 0.74.
+        // WordDrop was at 0.82, i.e. the cap was too LIGHT relative to the face. 0.90 here takes
+        // 0.82 -> ~0.74 to match. Only the cap is touched; the face keeps its own brightness.
+        // ── ROCK / STONE TILE (2026-09-11) ─────────────────────────────────────────
+        // Stone used to be a grey TINT on the letter tile (STONE_TINT) — same art, different
+        // colour, so it never read as a different KIND of object. Now a real sprite: Bitgem
+        // Cube World `block_stone1_1`, rendered through the tile camera + key light (elev 52 /
+        // az 42) so it is lit identically, keeping the PACK'S OWN materials and colours
+        // (Spencer picked the native render over a re-ramped one — the hard facets read as
+        // crafted rather than rendered). Baked to Tiles/rock_tile@2x.png at 249x295.
+        // MEASURED mean luminance 39 vs the cream tile's 88 — clearly separated at a glance.
+        public static bool  ROCK_SPRITE     = true;
+        /// <summary>Run the rock through the same contact-AO pass as the letter tiles so it sits
+        /// on the board rather than floating. OFF = the raw baked art, untouched.</summary>
+        /// <summary>OFF 2026-09-15 — Spencer: "remove the ao on all the renders of the tiles that
+        /// are not ordinary tiles as well such as the wooden blanks, metal and rocks". The AO rim
+        /// made the blockers read as recessed and grubby beside the clean letter faces.
+        ///
+        /// NOTE this is now DELIBERATELY ASYMMETRIC with `TILE_AO`, which stays TRUE for the
+        /// letter tiles. Blockers keep only the shading baked into their own Blender render (real
+        /// form, from the mesh) and get no contact-edge pass on top. `ROCK_AO_BOOST` is left as
+        /// tuned so restoring is a single bool.</summary>
+        public static bool  ROCK_USE_AO     = false;
+        /// <summary>Lighten the rock. A GAMMA lift (v^(1/g)), not a multiply — a multiply would
+        /// push the highlights into the ceiling and flatten the facets, which is the trap
+        /// TILE_VAL_MUL fell into (it clipped 62% of the letter tile to white). Gamma leaves 0 at
+        /// 0 and 1 at 1 and lifts everything between, so the facet structure survives.
+        /// Scale: 1.0 -> L 39 (raw) · 1.45 -> L 52 · 2.0 -> L 62 · 2.6 -> L 68 · 3.5 -> L 74.
+        /// The cream letter tile is L 88. Matching it exactly would wash the rock out and it would
+        /// stop reading as an obstacle, so 2.0 keeps a clear gap while sitting in the same family.
+        /// NOTE the rock already goes through the SAME ContactEdgeCopy pass as every letter tile
+        /// (cap darkening, face gradient, contact AO) and is lit by the same key — brightness was
+        /// the only thing left that made it look like a different kind of asset.</summary>
+        /// <summary>FALLBACK ONLY — ROCK_VARIANT_LIGHTEN drives each variant. Was 1.35, which
+        /// was compensating for the fbx_tile.py Metallic=1 bug; with that fixed the re-baked art
+        /// lands at target on its own, so this is 1.0 and keeping 1.35 would double-correct.</summary>
+        public static float ROCK_LIGHTEN    = 1.0f;  // mild — the atlas textures carry their own value now
+
+        /// <summary>SURFACE CONTRAST — expands the value range around the rock's own mean, so the
+        /// facets and the crack actually read at tile size.
+        ///
+        /// 2026-09-11: measured on screen the rock was #879687, L 57, **saturation 6.7%** — the
+        /// gamma lift raised the value but flattened the sage out of it, leaving a plain mid-grey
+        /// block with no visible surface. Spencer: does it "read like a stone block"? It did not.
+        /// BRIGHTNESS IS THE WRONG LEVER: what makes something read as a MATERIAL is surface
+        /// contrast, not lightness. 1.0 = off.</summary>
+        /// <summary>1.25 -> 1.15: the re-baked art carries ~10% more contrast on its own
+        /// (measured sd 30-39 before the rig fixes, 32-43 after), so the knob gives that back.</summary>
+        public static float ROCK_CONTRAST   = 1.15f;
+        /// <summary>Saturation restore. The lift desaturates; this puts the stone's own colour
+        /// back so it reads as rock rather than as grey card.</summary>
+        /// <summary>1.0 = the pack's own colour. ⚠️ HISTORY: this was 1.6 then 0.40, and
+        /// ROCK_HUE_ROT was -100, ALL of it compensating for a BUG — the FBX import was not
+        /// linking the pack's shared colour ATLAS, so blocks rendered in Blender's fallback
+        /// material (the coal came out MAGENTA). With the atlas wired in fbx_tile.py the real
+        /// colours are correct and no compensation is needed. Don't reintroduce it.</summary>
+        public static float ROCK_SAT        = 1.0f;
+
+        /// <summary>Rotate the rock's hue toward warm stone. MEASURED: the Cube World block is
+        /// sage GREEN (hue 132) and boosting its saturation made that worse — Spencer: "a bit of
+        /// a green tinge instead of rock coloured". -95 deg lands it near 37, a warm grey-brown.
+        /// A ROTATION, not an absolute hue set: setting one hue for every pixel flattens the art
+        /// (that is what turned the gold tile into flat yellow).</summary>
+        public static float ROCK_HUE_ROT    = 0f;
+
+        /// <summary>WORLD TINT — pulls every blocker's hue toward one anchor so the set reads as
+        /// ONE universe. 2026-09-11, Spencer: "is there anyway we can tie everything together to
+        /// make it look like its from the same universe?".
+        ///
+        /// MEASURED, and this is why it exists: VALUE was already unified (every variant lands
+        /// L 110-119 via ROCK_VARIANT_LIGHTEN) but HUE was scattered across 167 degrees —
+        /// wood 33-40, stone 107-118, steel 196-200. Three families ~90 apart on the wheel is
+        /// what makes purchased art look imported. Hue, not brightness, was the tell.
+        ///
+        /// 0 = the pack's native colours (what Spencer originally chose for the rocks).
+        /// 1 = every blocker collapsed onto the anchor, which DESTROYS material identity —
+        /// steel stops looking like steel. 0.45 was picked off a side-by-side sheet: steel
+        /// leaves blue and joins the family while stone/wood/steel stay tellable apart.
+        ///
+        /// Anchor 42 deg is the game's own warm axis — `white_glossy@2x` measures hue 35 and the
+        /// board frame is gold. Blockers converge toward the letters rather than away.</summary>
+        public static float ROCK_WORLD_TINT   = 0.50f;
+
+        /// <summary>How hard a FAR-from-anchor hue is desaturated on its way in. This is the knob
+        /// that keeps steel neutral instead of green — at 0 the tint degenerates back into a hue
+        /// rotation and the green transit returns. 0.85 leaves a trace of the original.</summary>
+        public static float ROCK_WORLD_DESAT  = 0.85f;
+        public static float ROCK_WORLD_HUE    = 42f;     // none — see ROCK_SAT's note
+
+        /// <summary>Extra contact-AO for rocks. They read flatter than the letter tiles because
+        /// the same AO settings land on a darker, lower-contrast surface — Spencer: "the shading
+        /// and ao doesn't really match the board". Multiplies TILE_AO_STRENGTH for rocks only.</summary>
+        public static float ROCK_AO_BOOST   = 1.45f;
+        /// <summary>Rock VARIANTS. A board of identical rocks reads as tiled wallpaper, so each
+        /// cell picks one deterministically from its own coordinates — same cell always gets the
+        /// same rock (no flicker on refresh), but neighbours differ. 2026-09-11.</summary>
+        private static Sprite[] s_rockVariants;
+        private static readonly string[] ROCK_VARIANT_FILES =
+        {
+            "Tiles/rock_tile@2x",      // block_stone1_1      — one fissure
+            "Tiles/rock_tile_b@2x",    // block_stone_large4  — properly fractured
+            "Tiles/rock_tile_c@2x",    // block_stone1_8      — recessed square
+            "Tiles/rock_tile_d@2x",    // block_stone_large2  — concentric
+            "Tiles/rock_tile_e@2x",    // block_stone_large5  — segmented
+            // REMOVED 2026-09-11 — coal_ore_block_2. Its dark inclusions read as muddy blobs at
+            // tile size, not ore. The PNG is still in Resources if it is ever wanted back.
+            // "Tiles/rock_tile_f@2x",
+            "Tiles/rock_tile_g@2x",    // tavern_floor_block  — WOOD planks (ROTX 90)
+            "Tiles/rock_tile_h@2x",    // wood_deco_top_1     — WOOD board (ROTX 90)
+            // Added 2026-09-11 on Spencer's ask ("add the metal_cube designs to the rocks for
+            // now"). Riveted metal crates — they only read as metal since the Metallic=0 fix;
+            // before it they rendered as near-black slabs. Baked WITH that fix + the Standard
+            // view transform, unlike the stone set above, which predates both.
+            "Tiles/rock_tile_i@2x",    // metal_cube_1        — riveted panel
+            "Tiles/rock_tile_j@2x",    // metal_cube_2        — recessed hatch
+            "Tiles/rock_tile_k@2x",    // metal_cube_3        — studded plate
+            // 2026-09-11 Spencer: "i want all the steel blocks not just the one you added".
+            // metal_cube_4 was missed because the candidate scan capped each family at 3.
+            "Tiles/rock_tile_l@2x",    // metal_cube_4        — riveted, 4th of the family
+            "Tiles/rock_tile_m@2x",    // metal_block         — plain plate (ROTX 90, gloss to face)
+            "Tiles/rock_tile_n@2x",    // metal_bar_block     — stacked bars (ROTX 90)
+            // 2026-09-15 — the two wooden forms Spencer asked for.
+            "Tiles/rock_tile_o@2x",    // wood_cube_1         — plain wooden cube
+            "Tiles/rock_tile_p@2x",    // wooden_box_2        — crate, diagonal brace (ROTX -90)
+        };
+
+        /// <summary>PER-VARIANT gamma lift, parallel to ROCK_VARIANT_FILES — MUST stay the same
+        /// length and order. 2026-09-11: one global ROCK_LIGHTEN could not work, because the
+        /// pack's own materials differ by 2x (re-baked stone lands at raw L 114-120, the metal
+        /// cubes at 45-50). Raising a single global enough to rescue the metal blew out the
+        /// stone. Each value solves 255*(raw/255)^(1/g) = 112, so every variant arrives at the
+        /// same brightness and the board reads as ONE set.
+        ///
+        /// To add a variant: measure its raw mean L over alpha>200 and add the matching gamma.
+        /// A value of 1.0 means the art already sits at target and must NOT be touched — a
+        /// multiply-style "lighten" on art that is already correct is what clipped the tiles
+        /// before (the TILE_VAL_MUL trap).</summary>
+        private static readonly float[] ROCK_VARIANT_LIGHTEN =
+        {
+            // RE-MEASURED 2026-09-15 for the FRONT-ON (TILT 0) bakes. The previous values were
+            // measured on the tilted renders and do NOT transfer — removing the tilt removes the
+            // lit top face, so every variant's mean luminance moved.
+            1.15f,   // rock_tile@2x    raw L  99
+            1.12f,   // rock_tile_b@2x  raw L 102
+            1.14f,   // rock_tile_c@2x  raw L 100
+            1.19f,   // rock_tile_d@2x  raw L  96
+            1.15f,   // rock_tile_e@2x  raw L  99
+            1.21f,   // rock_tile_g@2x  raw L  94   tavern planks
+            1.54f,   // rock_tile_h@2x  raw L  72   wood board
+            2.29f,   // rock_tile_i@2x  raw L  39   metal
+            2.19f,   // rock_tile_j@2x  raw L  42   metal
+            2.30f,   // rock_tile_k@2x  raw L  38   metal
+            2.32f,   // rock_tile_l@2x  raw L  38   metal
+            0.66f,   // rock_tile_m@2x  raw L 149   metal_block — DARKENED
+            0.89f,   // rock_tile_n@2x  raw L 123   metal_bar_block — DARKENED
+            // 1.00 = THE PACK'S OWN COLOUR, untouched. 2026-09-15, Spencer: "i want them
+            // coloured the way they are in the pack". The equalising values (1.20 / 1.84) lifted
+            // these to the common L 112 target but washed the saturation out of the crate —
+            // matching the SET and keeping the MATERIAL are mutually exclusive here.
+            1.00f,   // rock_tile_o@2x  raw L  95   wood_cube_1  — pack colour
+            1.00f,   // rock_tile_p@2x  raw L  56   wooden_box_2 — pack colour
+        };
+
+        /// <summary>OFF 2026-09-15 — the tile art is now FRONT-ON (cutebox TILT 0) and has no
+        /// top face. Darkening the top of a flat face just puts a band back on it, which is the
+        /// "dusty tops" problem all over again. TILE_CAP_TINTED and its hue/sat knobs are kept
+        /// but inert while this is false; both come back together if the tilted art returns.</summary>
+        public static bool  TILE_CAP_DARKEN_ON  = false;
+        // 0.90 -> 0.85: with gamma down to 1.15 the cap starts lighter (0.846^1.15 = 0.826 vs
+        // 0.757 before), so it needs a touch more here to still land on Toon Blast's 0.74 ratio.
+        public static float TILE_CAP_DARKEN     = 0.80f;   // cap holds its separation now gamma is linear
+        /// <summary>Where the cap darkening fades out, as t from the TOP of the sprite.
+        /// MEASURED: the art's cap/face boundary sits at t=0.177 and bows by only 2px across the
+        /// whole tile (TOPD=0.05 in cutebox.py — a real but almost invisible dome).
+        /// The darkening is keyed to POSITION, not VALUE: a value-threshold mask traced that 2px
+        /// bow as a contour and turned it into a visible arc — Spencer: "what is that semicircle
+        /// above the line between the face of the tile and the darkened top?"</summary>
+        /// <summary>Make the cap a COLOURED shadow instead of a neutral darkening.
+        /// 2026-09-15, Spencer: "the tops of the white tiles look more like they are dusty than
+        /// it being shadows".
+        ///
+        /// MEASURED — and the art is NOT at fault. `white_glossy@2x` authors its cap correctly,
+        /// as a genuine shadow: cap zone sat **38.8%** / hue 26 against the face's 25.0% / hue 39.
+        /// The runtime then flattens it. `TILE_SAT_MUL = 0.08` ("effectively white") takes the
+        /// cap to ~3% saturation, and `TILE_CAP_DARKEN`'s neutral `c.rgb *= k` only scales VALUE
+        /// — so what survives is a pale NEUTRAL GREY band over white. Neutral grey on white reads
+        /// as a film of DUST sitting on the surface, not as light being blocked.
+        ///
+        /// A shadow keeps colour commitment: it darkens AND shifts hue toward the ambient while
+        /// holding saturation. That is the same principle `TILE_AO_TINTED` already applies to the
+        /// contact AO ("a shadowed version of the surface rather than a grey wash over it") — the
+        /// cap simply never got it. Matches reference_icon_stroke_shadow_recipe (hue toward
+        /// violet, saturation UP) and reference_stylized_render_settings ("saturated shadows").
+        ///
+        /// Set TILE_CAP_TINTED=false for the old neutral multiply.</summary>
+        public static bool  TILE_CAP_TINTED     = true;
+        /// <summary>-18 is the documented shadow recipe (reference_icon_stroke_shadow_recipe:
+        /// hue toward violet, saturation up). 2026-09-15: I first set -60 and it turned the caps
+        /// PINK in game — the cap sits near hue 44, so -60 lands on ~344 = magenta. Verified
+        /// against a mock that now reproduces the in-game pink, so these numbers are trustworthy.
+        /// -18 keeps the cap in the tile's own WARM family; **+156 instead** shifts it to the
+        /// board's teal (the ambient) for a cool shadow — also correct, different look.</summary>
+        public static float TILE_CAP_HUE_SHIFT  = -18f;
+        public static float TILE_CAP_SAT_ADD    = 0.12f;   // absolute, added at full cap strength
+
+        public static float TILE_CAP_FADE_START = 0.13f;   // full strength above this
+        public static float TILE_CAP_FADE_END   = 0.25f;   // nothing below this
+
+        /// <summary>Which Resources texture is the resting tile face. Swap tiles by changing
+        /// THIS ONE STRING. Candidates present: "Tiles/white_tile@2x", "Tiles/peach_tile@2x",
+        /// "Tiles/white_glossy@2x" (the original Blender render). 2026-09-21.</summary>
+        public static string RESTING_FACE_ASSET = "Tiles/white_tile_2@2x";
+
+        /// <summary>Hand-painted GOLD face (the high-value letter tile — `s_spriteHighValue`,
+        /// labelled "gold-resting" at line 175). Empty string falls back to the old
+        /// GOLD_HUE_SHIFT / GOLD_SAT_MUL recolour of the white tile. 2026-09-21.
+        /// NOTE the gold BONUS cell (`golden_tile2@2x`) and the gold PRIMED face
+        /// (`primed_gold_tile@2x`) are SEPARATE sprites and are not affected by this.</summary>
+        public static string GOLD_FACE_ASSET = "Tiles/gold_tile2@2x";
+
+        /// <summary>The PRIMED / armed face — the tile a word turns into once it is armed.
+        /// "Tiles/primed_tile@2x" is the original magenta. 2026-09-21 trying green_primed@2x.
+        /// NOTE the gold-primed variant (`primed_gold_tile@2x`) is a SEPARATE sprite, chosen
+        /// per-tile by `_isGoldPrimed`, and is not affected by this.</summary>
+        public static string PRIMED_FACE_ASSET = "Tiles/green_primed@2x";
+
+        /// <summary>When the primed face is AUTHORED art, make its glow/pulse a NEUTRAL luminance
+        /// lift instead of the magenta PRIMED_GLOW tint. Set false to restore the old behaviour
+        /// (correct only when the primed sprite is itself magenta). 2026-09-21.</summary>
+        public static bool PRIMED_TINT_NEUTRAL = true;
+
+        /// <summary>The GOLD-primed face — a gold word that is armed. 2026-09-21 Spencer: "when
+        /// the gold tiles prime a word gold cant it just do a sprite swap to the golden tiles
+        /// like how priming regular tiles swaps to the green tiles". Pointed at the authored gold
+        /// art so it is a straight SWAP, not the old render under an amber tint.
+        /// Empty string falls back to "Tiles/primed_gold_tile@2x".</summary>
+        public static string GOLD_PRIMED_FACE_ASSET = "Tiles/gold_tile2@2x";
+
+        /// <summary>Neutralise the gold-primed tint too, so the authored gold art LIGHTS UP
+        /// rather than being multiplied by PRIMED_GOLD_GLOW (2.0, 1.54, 0.64) — which on gold
+        /// art pushes it orange.</summary>
+        public static bool GOLD_PRIMED_TINT_NEUTRAL = true;
+
+        /// <summary>PAYOUT TIER COLOURS for armed clusters. A cluster worth >= PRIMED_TIER_CUTS[i]
+        /// wears PRIMED_TIER_ASSETS[i+1]. 2026-09-21 Spencer: show that a big web is worth more.
+        ///
+        /// Cuts are LOGARITHMIC, not linear — measured payouts are long-tailed (36/46/58/94/184/
+        /// 1036 in one session, median 76). Linear cuts would leave the top tier almost unused.
+        /// 100 is the first total a SINGLE word cannot reach, so the change means "you connected
+        /// something" rather than just "big number". 400 is ~p85. Empty asset = no tier face.</summary>
+        /// <summary>When a cluster crosses into a higher tier, EVERY tile in it glows — not just
+        /// the word that was played. 2026-09-21 Spencer: "I want the whole cluster to glow when it
+        /// changes". The tier belongs to the cluster, so the feedback should be cluster-wide.
+        /// Uses the ADDITIVE bloom overlay, not sr.color, so it cannot fight the primed pulse or
+        /// re-tint authored art — pure added light.</summary>
+        public static bool  TIER_UP_FLASH       = false;   // 2026-09-21: Spencer asked to revert — set true to bring the cluster-wide glow back
+        public static float TIER_UP_FLASH_DUR   = 0.42f;
+        public static float TIER_UP_FLASH_PEAK  = 0.85f;   // overlay alpha at the peak
+
+        public static int[]    PRIMED_TIER_CUTS   = { 100, 400 };
+        public static string[] PRIMED_TIER_ASSETS = { "", "Tiles/primed_tier1@2x", "Tiles/primed_tier2@2x" };
+        private static Sprite[] s_spritePrimedTier;
+        private int _primedTier;
+
+        public static int TierForPayout(int payout)
+        {
+            int t = 0;
+            if (PRIMED_TIER_CUTS != null)
+                for (int i = 0; i < PRIMED_TIER_CUTS.Length; i++)
+                    if (payout >= PRIMED_TIER_CUTS[i]) t = i + 1;
+            return t;
+        }
+
+        /// <summary>Tell this tile which payout tier its cluster is in. Repaints if armed.</summary>
+        public void SetPrimedTier(int tier)
+        {
+            // 🚨 DO NOT early-out when the tier is unchanged. 2026-09-21: it did, and that made
+            // the tier face UNRECOVERABLE — once any other writer repainted the armed face, the
+            // tier was already correct so this returned before repainting and the tile stayed
+            // green. Spencer hit it by extending a cluster during a row rise. The cheap guard is
+            // the sprite comparison below, which no-ops when the face is already right.
+            int prev = _primedTier;
+            bool seenBefore = _tierSeen;
+            _primedTier = tier;
+            _tierSeen = true;
+            if (_hasPrimedGlow && _spriteRenderer != null && !_isShowingScoredSprite)
+            {
+                var f = ArmedFace();
+                if (f != null && _spriteRenderer.sprite != f) _spriteRenderer.sprite = f;
+                // Only on an UPGRADE, and only if this tile was already sitting at a tier —
+                // otherwise a tile arming for the first time would double up with its own
+                // scored flash.
+                if (TIER_UP_FLASH && seenBefore && tier > prev && isActiveAndEnabled)
+                {
+                    if (_tierFlashCo != null) StopCoroutine(_tierFlashCo);
+                    _tierFlashCo = StartCoroutine(TierUpFlashRoutine());
+                }
+            }
+        }
+
+        private bool _tierSeen;
+        private Coroutine _tierFlashCo;
+
+        /// <summary>Additive glow swell. Deliberately NOT sr.color: that property already has
+        /// several writers (primed pulse, danger pulse, scored flash) and adding another caused
+        /// exactly the kind of fight that produced today's face bugs. The overlay is its own
+        /// renderer, so it layers instead of competing.</summary>
+        private System.Collections.IEnumerator TierUpFlashRoutine()
+        {
+            float t = 0f;
+            Color glow = Color.white;   // neutral: adds light, never recolours the authored art
+            while (t < TIER_UP_FLASH_DUR)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / TIER_UP_FLASH_DUR);
+                float env = (k < 0.25f) ? (k / 0.25f) : (1f - (k - 0.25f) / 0.75f);
+                SetBloomGlow(glow, TIER_UP_FLASH_PEAK * env, forceDesktop: true);
+                yield return null;
+            }
+            ClearBloomGlow();
+            _tierFlashCo = null;
+        }
+
+        /// <summary>🔑 THE ONE PLACE that decides which ARMED face this tile wears.
+        /// Three bugs came from ~50 scattered writers to _spriteRenderer.sprite, some consulting
+        /// _isGoldPrimed and some not. Precedence lives here: GOLD beats tier, tier beats plain.</summary>
+        private Sprite ArmedFace()
+        {
+            if (_isGoldPrimed && s_spritePrimedGold != null) return s_spritePrimedGold;
+            if (s_spritePrimedTier != null && _primedTier > 0
+                && _primedTier < s_spritePrimedTier.Length
+                && s_spritePrimedTier[_primedTier] != null)
+                return s_spritePrimedTier[_primedTier];
+            return s_spriteGold ?? s_spriteNormal;
+        }
+
+        /// <summary>TEMP 2026-09-21 — logs every armed-face swap so the gold-word-flashes-green
+        /// path can be identified rather than guessed at. Strip before build.</summary>
+        public static bool ARMED_FACE_DIAG = false;  // diagnostic, off
+
+
+        public static bool  WARM_TILES     = false;   // OFF 2026-09-21 — the resting face is now
+        // Spencer's HAND-PAINTED peach_tile, and WarmedCopy recolours it: TILE_HUE_SHIFT rotates
+        // the hue and TILE_SAT_MUL 0.48 halves the saturation (his 38.6% -> 18.5%), which is why
+        // it rendered as pale cream instead of peach. Authored art must reach the screen as drawn.
+        // Turn back on ONLY if the face returns to a neutral render that needs tinting.
+        // 2026-09-10: retargeted at the SCRABBLE GO tile Spencer sent. MEASURED there
+        // #F8DC58 = hue 50, HLS sat 92, L 85. WordDrop's face is #F4E0B8 = hue 40, HLS sat 73,
+        // L 88. So: +10 deg of hue and a big saturation lift, brightness ~unchanged.
+        // NOTE the multiplier is in HSV (what Color.RGBToHSV returns), NOT the HLS numbers
+        // above — that mismatch is why the earlier -21/x1.45 guess missed. In HSV the face is
+        // 0.246 and the target 0.645, so the multiplier is 2.62.
+        // 2026-09-10: retargeted at the cream Spencer picked (Screenshot 6.59.52 PM).
+        // MEASURED reference #F6F3E4 = hue 50, HSV sat 0.073, V 0.965, L 95.
+        // white_glossy@2x is    #F0E0B8 = hue 43, HSV sat 0.233, V 0.941, L 88.
+        // So: +10 deg of hue, and saturation pulled DOWN to ~0.30x — a paler, warmer cream.
+        // Same hue as the gold face (they share a family); only the saturation differs.
+        /// <summary>10 -> 2. The source face is hue 40.3 and the reference is 41.4, so a small
+        /// nudge lands on it; +10 pushed us to 50 (more yellow). 2026-09-15.</summary>
+        public static float TILE_HUE_SHIFT = 2f;
+        // 0.30 hit the reference swatch EXACTLY (HSV 0.233 -> 0.070) and still read "too white"
+        // in game — a big flat swatch and a small bevelled tile do not look the same at the same
+        // value, because the gloss highlight and the dark AO rim push the midtone toward white.
+        // Matching the number is not matching the look. Halfway back: HSV 0.233 -> ~0.135.
+        // 2026-09-11: retargeted at the MONOPOLY GO DICE Spencer picked. MEASURED off it:
+        //   lit face        #FDFDFD  L 99  sat 0.00   <- pure WHITE, no hue at all
+        //   mid shadow      #C0C3BE  L 76  sat 0.03
+        //   deep shadow     #8E908F  L 57  sat 0.01
+        //   dots            #0A0A0A  L  4  sat 0.00
+        // So the die is fully NEUTRAL. Face saturation pulled right down to match.
+        /// <summary>0.08 -> 0.48. 2026-09-15: MEASURED off the reference board Spencer sent —
+        /// its tile face is `#FCF3DF`, hue 41.4, **saturation 11.5%**. Ours was being knocked from
+        /// the art's 24.1% down to ~1.9% ("effectively white"), which rendered grey rather than
+        /// cream. 11.5 / 24.1 = 0.48. Only affects the RESTING face (WarmedCopy has one call
+        /// site); gold uses GOLD_SAT_MUL and is untouched.</summary>
+        public static float TILE_SAT_MUL   = 0.48f;
+        /// <summary>Brightness lift on the face. The source art tops out at V 0.941; the dice
+        /// face is 0.99, so a small lift is needed to actually reach white.</summary>
+        // 2026-09-11: was 1.05 and it was CLIPPING — MEASURED, 62.3% of the tile's opaque pixels
+        // sat above V 0.952 and so crushed to pure white. That flattened the top cap against the
+        // face and killed the 3D read (Spencer: "the top end isn't really visible with the depth
+        // cause it's so light"). Brightness lift is the wrong tool on art that is already near
+        // white. 1.0 = no lift, nothing clipped.
+        public static float TILE_VAL_MUL   = 1.0f;
+
+        /// <summary>Shading CONTRAST on the face, as a power curve on V (v^gamma). >1 deepens the
+        /// shaded areas while leaving white at white, so it adds depth without clipping — which a
+        /// multiply cannot do. MEASURED source art: top cap V 0.846 vs face V 0.952, a gap of
+        /// only 0.106. At gamma 1.6 that becomes 0.757 vs 0.925 — a gap of 0.168, so the cap
+        /// actually reads as a separate plane. 1.0 = off.</summary>
+        // 2026-09-11: 1.6 -> 1.15. Gamma darkens EVERYTHING, and it was set high purely to get
+        // the cap to separate from the face. TILE_CAP_DARKEN now does that job precisely, so the
+        // blunt instrument can relax and the FACE comes back up — which is what should draw the
+        // eye, since it carries the letter.
+        public static float TILE_SHADE_GAMMA = 1.0f;    // linear — face sits at the source art's own brightness
+
+        public static Color ARMED_GOLD_REST = new Color(1.00f, 0.831f, 0.501f, 1f);
+
+        /// <summary>Resting tint for a ROSE-armed tile — the gold treatment carried over, but
+        /// SOFTENED. The literal transfer is PRIMED_GLOW scaled into LDR = (1.00, 0.278, 0.578),
+        /// and rose's green channel is half gold's, so that lands on rgb(252,35,104) over the
+        /// sprite — a deep crimson, DARKER than the tan-rose it already was. Spencer's complaint
+        /// was that primed rose already reads dark, so the full multiply makes it worse.
+        /// TRIED AND REVERTED (2026-09-10): pulled 55% from white, i.e. (1.00, 0.603, 0.768).
+        /// Came out hot pink with the bevel washed out. WHY, so nobody retries it: a multiply
+        /// scales the sprite's light AND dark pixels by the same factor, so the gap between them
+        /// shrinks in whichever channels are pulled down — and the rose bevel lives in green and
+        /// blue, exactly where rose's glow is lowest (0.50). Saturation climbs while relief
+        /// flattens. Gold survives the same treatment only because its green stays high (1.54).
+        /// White leaves the authored sprite alone, which is what matches Spencer's render.</summary>
+        public static Color ARMED_ROSE_REST = Color.white;   // REVERTED 2026-09-10 — see below
+
+        public static readonly Color PRIMED_GOLD_GLOW  = new Color(2.0f, 1.54f, 0.64f, 1f);  // HDR gold — matches the gold tile
         // Final-turn warning: primed word has 1 drop left. Shifts to HDR red-orange
         // so the player gets a clear "USE THIS OR LOSE IT" signal on their last chance.
         // 2026-06-03 Spencer: pulled back from (2.2, 0.6, 0.15). At 1.6 the pulse
@@ -86,6 +899,26 @@ namespace WordDrop
         /// Forced non-uniformly because several paths swap the sprite after Initialise
         /// and a square sprite would silently kill the overlap.</summary>
         public  const float TILE_TARGET_ASPECT = 0.833f;
+
+        /// <summary>Scales the letter's downward face-nudge. 0 = dead centre (front-on art),
+        /// 1 = the old tilted-art offset. 2026-09-15: front-on tiles have no cap, so 0.</summary>
+        public static float LETTER_FACE_NUDGE_MUL = 0f;
+
+        /// <summary>TRUE once the tile art is rendered FRONT-ON (cutebox/fbx_tile TILT 0), so the
+        /// sprite is the same height as its cell and there is NO exposed top cap. Anything that
+        /// compensated for the old ~20% overhang must read this instead of TILE_TARGET_ASPECT —
+        /// see ClusterOutline, where the outline used to rise over any tile with nothing above it
+        /// to enclose its cap, which now reads as a snaking/battlement edge. 2026-09-15.</summary>
+        public static bool TILE_ART_FRONT_ON = true;
+
+        /// <summary>Tile width/height of the art ACTUALLY in use, in TILE_TARGET_ASPECT's units.
+        /// Front-on it defers to GridManager.TILE_ASPECT (1.0418 = 249/239) so the grid and every
+        /// overlay share ONE number; otherwise the legacy tilted 0.833. 2026-09-15: was a
+        /// placeholder 1f, which was ~4% out and would have made overlays slightly too tall.</summary>
+        public static float ArtAspect => TILE_ART_FRONT_ON ? GridManager.TILE_ASPECT : TILE_TARGET_ASPECT;
+        /// <summary>2026-09-03: cascading tiles land with the DROP squish (chunkier)
+        /// rather than the quieter gravity one. False restores the old feel.</summary>
+        public  const bool  GRAVITY_USES_LANDING_SQUISH = true;
         public  const bool  TILE_DROP_SHADOW   = false; // 2026-09-03: per-tile drop shadow off for the stacked/overlap board
         private const float TILE_DISPLAY_RATIO = 1.0f;   // 2026-09-03: was 154/172 — tiles now butt up edge-to-edge (Toon Blast style), no gap // 2026-06-24 Spencer: a hair more spacing (numerator 158→154 → gap 14→18 PSD; board margin scales off the same). Numerator MUST match the hardcoded 154/172 in GridManager (halfGapPad + tileRadiusWorld) and HUDManager baseScale; denom = GridManager.PSD_CELL_PITCH.
         /// <summary>Tile display size as a fraction of the cell pitch — so other systems (e.g. the
@@ -161,7 +994,29 @@ namespace WordDrop
         // then breathes between that peak and a dimmer cyan so it stays lit. Red is
         // pulled way down for saturation; green/blue pushed well past the 1.30 bloom
         // threshold so the peak genuinely blooms. Tune here.
-        private static readonly Color EDIT_GLINT_HIGH = new Color(0.24f, 1.06f, 1.26f, 1f); // peak — saturated cyan, blue just UNDER 1.30 bloom (minimal glow)
+        // 2026-09-09 Spencer: "the glow is blowing out all definition on the tile."
+        // This is a MULTIPLY on the face, and g/b above 1.0 push those channels past white
+        // across most of an already-light cyan tile — everything clips to the same value and
+        // the shading disappears. Pulled to ~1.0 so the face keeps its form and the cyan
+        // comes from the hue, not from over-driving the channels.
+        // ── SELECTION = A RIM, NOT A WASH (2026-09-09 Spencer) ──────────────────────
+        // The glow was blowing out the tile: a >1.0 face multiply clipped the shading flat,
+        // and a full-strength additive overlay on top compressed what was left. A rim solves
+        // it structurally — the tile keeps its own colour, shading and letter, and nothing
+        // can wash out because nothing is painted over the face.
+        // NOT a solid cyan FACE: cyan is already the frozen tile, and a solid face colour
+        // reads as a tile TYPE rather than a momentary state.
+        // Set false to go back to the glow.
+        public const  bool  EDIT_SELECT_RIM = true;
+        /// <summary>Face tint while a board swap is ANIMATING. Every channel stays at or below
+        /// 1.0, so this MULTIPLIES against the tile sprite and keeps the bevel and contour — the
+        /// exact detail the old HDR glow (EDIT_GLINT_HIGH + bloom) was washing out. Solid cyan,
+        /// not a glow. 2026-09-10 Spencer.</summary>
+        public static readonly Color EDIT_SWAP_FACE = new Color(0.42f, 0.88f, 1.00f, 1f);
+
+        public static readonly Color EDIT_RIM_CYAN = new Color(0.24f, 0.92f, 1.00f, 1f);
+
+        private static readonly Color EDIT_GLINT_HIGH = new Color(0.30f, 1.00f, 1.10f, 1f); // peak — cyan without clipping the face
         private static readonly Color EDIT_GLINT_LOW  = new Color(0.42f, 0.98f, 1.18f, 1f); // breathing trough — still cyan-lit
         private const float EDIT_ACCESS_DUR = 0.13f; // fast snap-to-peak on click
         // 2026-07-09 Spencer: the sr.color glint above is CLAMPED on mobile (linear) so it
@@ -171,7 +1026,11 @@ namespace WordDrop
         // desktop too so it's unmistakable wherever it's viewed. Well above the 1.30 threshold.
         private static readonly Color EDIT_GLOW_HDR = new Color(0.28f, 1.18f, 1.42f, 1f); // peak bloom — brought down again; sits right around the 1.30 bloom threshold for a soft glow, full-off trough carries the pulse
         private const float EDIT_GLOW_ALPHA_LOW  = 0.0f;  // trough — glow fades fully OFF so it blinks on↔off (not just dims)
-        private const float EDIT_GLOW_ALPHA_HIGH = 1.0f;  // peak — full glow
+        // The bigger culprit: an ADDITIVE overlay at full strength adds a constant amount of
+        // light everywhere, which compresses the difference between the tile's lit and shaded
+        // areas — that is definition loss by definition. Halved so it reads as a glow sitting
+        // ON the tile rather than replacing it. 2026-09-09 Spencer.
+        private const float EDIT_GLOW_ALPHA_HIGH = 0.52f; // peak — glow, not a wash
         private const float EDIT_GLOW_DUR        = 0.6f;  // half-cycle of the glow blink (own timing so it's livelier than the face breath)
         private Tween _editGlowPulse;
         private float _editGlowAlpha;
@@ -230,7 +1089,7 @@ namespace WordDrop
                 var sr = s_boardShadowSRs[i];
                 if (sr != null) { sr.sprite = s_dropShadowSprite; n++; }
             }
-            Debug.Log($"[BoardShadow] FLIP → active={(s_useBoardShadowB ? "B=" + BoardShadowTexB : "A=" + BoardShadowTexA)} (updated {n} tiles)");
+            WDLog.Log($"[BoardShadow] FLIP → active={(s_useBoardShadowB ? "B=" + BoardShadowTexB : "A=" + BoardShadowTexA)} (updated {n} tiles)");
         }
 
         /// <summary>2026-06-05 Spencer: live board-shadow darkness — driven by the
@@ -360,6 +1219,8 @@ namespace WordDrop
             if (_spriteRenderer != null) _defaultMaterial = _spriteRenderer.sharedMaterial;
             SetupAudio();
             UpdateLetterDisplay(letter);
+            if (LetterData.GetPoints(letter) >= HIGH_VALUE_POINTS)
+                WDLog.Log($"[GoldSpawn] Initialise '{letter}' at ({col},{row}) -> sprite={(_spriteRenderer!=null&&_spriteRenderer.sprite!=null?_spriteRenderer.sprite.name:"null")} (want highValue) cacheBuilt={s_spriteCacheBuilt} hv={(s_spriteHighValue!=null?s_spriteHighValue.name:"NULL")}");
             _poolInitialized = true;
         }
 
@@ -390,7 +1251,7 @@ namespace WordDrop
 
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
+                _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null) ? s_spriteAI : RestingFaceFor(letter);
                 _baseTint = BaseTintForLetter(letter);   // per-letter value accent
                 _spriteRenderer.color = _baseTint;
                 _spriteRenderer.enabled = true;
@@ -417,6 +1278,17 @@ namespace WordDrop
             SetSortingOrder(BaseSortingOrder);
 
             UpdateLetterDisplay(letter);
+
+            // 2026-09-10 Spencer: SET THE RESTING FACE. Reinitialise is the POOL REUSE path —
+            // how the board actually populates — and it never assigned a sprite at all, so a
+            // recycled tile kept whatever face its previous letter had. A gold letter therefore
+            // arrived tan and stayed tan until some later board sync ran RefreshRestingFace,
+            // which corrected the WHOLE board at once: "no gold tiles, then they all turn gold
+            // the moment I make a word." Initialise did this on its own; the recycled path is
+            // the one the game actually runs. Same class of bug as the sorting order note above.
+            if (_spriteRenderer != null && !IsWild && !IsStone && !IsFrozen)
+                _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null)
+                                       ? s_spriteAI : RestingFaceFor(letter);
             if (_letterTMP != null) { _letterTMP.gameObject.SetActive(true); _letterTMP.enabled = true; }
             if (_pointTMP != null) { _pointTMP.gameObject.SetActive(true); _pointTMP.enabled = true; }
         }
@@ -437,6 +1309,7 @@ namespace WordDrop
             ClearBloomGlow(); // 2026-06-24: defensive — a non-primed bloom glow (cascade green flash) must NOT leak onto a reused tile
             if (_hasFake3D) ClearFake3D();
             if (_isHighlighted) Highlight(false);
+            _primedTier = 0; _tierSeen = false;   // pooled reuse: no stale tier, no spurious flash
             if (_isGoldBonus) SetGoldBonus(false);
             if (_isVault) SetVaultVisual(false);      // restores chest → normal sprite + cell-fit
             else if (_isDropTargetVisual) { SetDropTargetVisual(false); _isStone = false; } // clear escort-object look
@@ -465,9 +1338,12 @@ namespace WordDrop
             _isShowingScoredSprite = false;
             _wasInScoredWord = false;
             _hasDetonationColor = false; // combo escalation: recycled tile must not carry a stale blast tint
+            _staticPrimedApplied = false; // recycled tile must repaint, not trust a previous life's paint
+            _letterWhitened = false;      // ditto for the armed letter colour
+            if (_selectRimSR != null) _selectRimSR.enabled = false;
             // Reset localPosition in case MeltdownShakeCoroutine was interrupted
             // mid-shake and never restored its baseLocalPos at line 1190.
-            Debug.Log($"[Tile] ResetForPool localPos: {transform.localPosition} → Vector3.zero");
+            WDLog.Log($"[Tile] ResetForPool localPos: {transform.localPosition} → Vector3.zero");
             transform.localPosition = Vector3.zero;
             if (_dissolveMatInstance != null)
             {
@@ -484,7 +1360,7 @@ namespace WordDrop
             // Reset TMP colors — dissolve fades these to alpha 0
             if (_letterTMP != null)
             {
-                _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                _letterTMP.color = LETTER_INK;
                 _letterTMP.gameObject.SetActive(true);
                 _letterTMP.enabled = true;
             }
@@ -501,8 +1377,45 @@ namespace WordDrop
             gameObject.SetActive(false);
         }
 
+        /// <summary>Tracks whether BuildVisuals has already run on this instance, so it can
+        /// never stack a second set of child objects. 2026-10-19.</summary>
+        private bool _visualsBuilt;
+
         private void BuildVisuals(float cellSize)
         {
+            // ── NEVER BUILD TWICE ────────────────────────────────────────────────────
+            // 2026-10-19 Spencer: "sometimes when i enter the game the board populates in a
+            // weird glitchy way" — a tile rendered with SEVERAL letters composited on top of
+            // each other. Cause: this method creates five child objects (TileLetter,
+            // TilePoints, TileShadow, TileGloss, TileInnerShadow) with bare `new GameObject`
+            // and no guard. Tiles are POOLED, and while the pool path checks _poolInitialized
+            // before calling Initialise, Initialise itself is public and unguarded — so a
+            // second Initialise on a live tile ran BuildVisuals again and stacked a whole new
+            // set of children over the old ones. The old TextMeshPro kept rendering its old
+            // glyph underneath the new one.
+            //
+            // Destroying the stale children rather than early-returning, because a rebuild may
+            // legitimately be needed at a different cellSize.
+            if (_visualsBuilt)
+            {
+                for (int i = transform.childCount - 1; i >= 0; i--)
+                {
+                    var ch = transform.GetChild(i);
+                    switch (ch.name)
+                    {
+                        case "TileLetter":
+                        case "TilePoints":
+                        case "TileShadow":
+                        case "TileGloss":
+                        case "TileInnerShadow":
+                            Destroy(ch.gameObject);
+                            break;
+                    }
+                }
+                _letterTMP = null; _glossGO = null; _innerShadowGO = null;
+                WDLog.Log($"[Tile] BuildVisuals re-run on '{Letter}' at ({Col},{Row}) — stale visuals cleared");
+            }
+            _visualsBuilt = true;
             int texSize = Mathf.Clamp(Mathf.RoundToInt(cellSize * 200f), 64, 512);
             int radius  = texSize / 6;   // chunkier rounded corners
             int border  = Mathf.Max(3, texSize / 12);  // thicker edge for tactile depth
@@ -510,7 +1423,7 @@ namespace WordDrop
             _currentBorderColor = TILE_BORDER_NORMAL;
 
             _spriteRenderer              = gameObject.AddComponent<SpriteRenderer>();
-            _spriteRenderer.sprite       = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
+            _spriteRenderer.sprite       = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : RestingFaceFor(Letter);
             _spriteRenderer.sortingOrder = BaseSortingOrder;
 
             // Skip lit material for now — debug: does the tile render without it?
@@ -532,7 +1445,7 @@ namespace WordDrop
             {
                 s_loggedTileMetrics = true;
                 var sp = _spriteRenderer.sprite;
-                Debug.Log($"[TileMetrics] cell={cellSize:F4} ratio={TILE_DISPLAY_RATIO:F3} " +
+                WDLog.Log($"[TileMetrics] cell={cellSize:F4} ratio={TILE_DISPLAY_RATIO:F3} " +
                           $"spriteBounds={(sp!=null?sp.bounds.size.x:0):F4}x{(sp!=null?sp.bounds.size.y:0):F4} " +
                           $"scale={scale:F4} -> onScreen {(sp!=null?sp.bounds.size.x*scale:0):F4}x{(sp!=null?sp.bounds.size.y*scale:0):F4} " +
                           $"(want width==cell, height==1.2*cell)  spriteName={(sp!=null?sp.name:"NULL")}");
@@ -552,7 +1465,12 @@ namespace WordDrop
             // localPosition is in the tile's LOCAL space, which is scaled by `scale`,
             // so the world offset (overshoot/2 * cellSize) divides back out to
             // (1/aspect - 1)/2 * nativeSize.
-            float faceNudge = ((1f / TILE_TARGET_ASPECT) - 1f) * 0.5f * nativeSize;
+            // FRONT-ON TILES: nudge OFF. 2026-09-15 — the tile art is now rendered at TILT 0
+            // (cutebox.py), so there is no top cap pushing the visible face down and the glyph
+            // belongs dead centre. This nudge existed ONLY to compensate for the 20-degree tilt:
+            // it shifts the letter DOWN by 10% of the tile width. Set LETTER_FACE_NUDGE_MUL = 1
+            // to restore it if the tilted art ever comes back.
+            float faceNudge = ((1f / TILE_TARGET_ASPECT) - 1f) * 0.5f * nativeSize * LETTER_FACE_NUDGE_MUL;
             letterGO.transform.localPosition = new Vector3(0f, -faceNudge, -0.1f); // 2026-06-04 Spencer: nudge to re-center Avenir
 
             _letterTMP = letterGO.AddComponent<TextMeshPro>();
@@ -561,8 +1479,8 @@ namespace WordDrop
             if (tileFont != null) _letterTMP.font = tileFont;
             _letterTMP.text           = "";
             _letterTMP.fontSize       = 6.84f; // 2026-06-05 Spencer: −10% (was 7.6)
-            _letterTMP.fontStyle      = FontStyles.Bold;
-            _letterTMP.color          = new Color(0.145f, 0.153f, 0.200f, 1f); // #252733
+            _letterTMP.fontStyle      = TILE_FONT_FAUX_BOLD ? FontStyles.Bold : FontStyles.Normal;
+            _letterTMP.color          = LETTER_INK; // #252733
             _letterTMP.alignment      = TextAlignmentOptions.Midline; // Midline (not Center) so a single capital sits visually centered, not high
             _letterTMP.sortingOrder   = BaseSortingOrder + 2; // above the gloss sheen (+1) so the letter stays crisp
             _letterTMP.rectTransform.sizeDelta = new Vector2(2f, 2f);
@@ -573,9 +1491,24 @@ namespace WordDrop
             // no underlay drop-shadow, no face dilate. Re-enable the block below
             // (UNDERLAY_ON + offsets/softness + _FaceDilate 0.27) to restore them.
             var letterMat = _letterTMP.fontMaterial; // auto-instances from the shared SDF material
-            letterMat.DisableKeyword("UNDERLAY_ON");
+            if (LETTER_EMBOSS)
+            {
+                // LIGHT underlay pushed DOWN = the lit lower lip of a groove. See the
+                // LETTER_EMBOSS block at the top of this file for why it is light, not dark.
+                Color u = LETTER_EMBOSS_COLOR; u.a = Mathf.Clamp01(LETTER_EMBOSS_ALPHA);
+                letterMat.EnableKeyword("UNDERLAY_ON");
+                letterMat.SetColor("_UnderlayColor",    u);
+                letterMat.SetFloat("_UnderlayOffsetX",  0f);
+                letterMat.SetFloat("_UnderlayOffsetY",  LETTER_EMBOSS_OFFSET);
+                letterMat.SetFloat("_UnderlayDilate",   0.05f);
+                letterMat.SetFloat("_UnderlaySoftness", LETTER_EMBOSS_SOFTNESS);
+            }
+            else
+            {
+                letterMat.DisableKeyword("UNDERLAY_ON");
+            }
             letterMat.SetFloat("_FaceDilate", 0.05f); // very slight bolden (no shadow); old was 0.27
-            _letterTMP.UpdateMeshPadding();
+            _letterTMP.UpdateMeshPadding();          // MUST follow — makes room for the underlay
 
             letterGO.transform.localScale = new Vector3(invScale, invScale, 1f);
 
@@ -765,12 +1698,12 @@ namespace WordDrop
                     _letterTMP.text = sentinel ? "" : letter.ToString().ToUpper();
                     // 2026-06-03 Spencer: black letter (same as normal tiles) — the pink
                     // WILD_LETTER_COLOR was unreadable on the magenta primed tile.
-                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                    _letterTMP.color = LETTER_INK;
                 }
                 else
                 {
                     _letterTMP.text = sentinel ? "" : letter.ToString().ToUpper();
-                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                    _letterTMP.color = LETTER_INK;
                 }
                 // Force visibility — Fake3D or stone may have disabled these
                 if (!_isStone)
@@ -827,7 +1760,7 @@ namespace WordDrop
                         // White base + (optional) crystal overlay. The rainbow aura is
                         // independent (UpdateWildHalo below). IridescentTileTint gates
                         // just the crystal tint on the face.
-                        _spriteRenderer.sprite = s_spriteNormal;
+                        _spriteRenderer.sprite = RestingFaceFor(Letter);
                         _spriteRenderer.color  = Color.white;
                         UpdateIridescent(IridescentTileTint);
                     }
@@ -846,7 +1779,7 @@ namespace WordDrop
                     else if (_isGoldBonus)
                         _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
                     else
-                        _spriteRenderer.sprite = s_spriteNormal;
+                        _spriteRenderer.sprite = RestingFaceFor(Letter);
                 }
             }
             // 2026-06-03 Spencer: NO rainbow aura on the board wild — the rays+glow
@@ -997,6 +1930,18 @@ namespace WordDrop
             Letter = letter;
             UpdateLetterDisplay(letter);
             RefreshBaseTint(); // letter changed (rewrite/swap) → recompute the value tint
+            // 2026-09-03: the resting FACE is per-letter now (vowel/high-value/normal), so a
+            // swap that changes the letter must repaint it — but only when the tile is in its
+            // plain resting state, or this would stomp primed/scored/gold/ice.
+            // NOTE: deliberately NOT gated on _editSelected. A board SWAP sets the letter
+            // while the tile is still selected (teal glow), and that glow is a HALO which
+            // does not touch the sprite — gating on it meant a swapped tile kept its OLD
+            // face, so a high-value letter swapped in stayed tan (and gold letters swapped
+            // out stayed gold). 2026-09-03 Spencer.
+            if (LETTER_CATEGORY_TINTS && _spriteRenderer != null
+                && !_hasPrimedGlow && !_isShowingScoredSprite && !_isGoldBonus
+                && !IsWild && !IsStone && !IsFrozen)
+                _spriteRenderer.sprite = RestingFaceFor(letter);
             if (!_isShowingScoredSprite && !_hasPrimedGlow && !_isGoldBonus && !_isStone
                 && !_isFrozen && !_isWild && !_isSwapRefill && !_isEditRefill && !_isWildRefill)
                 ApplyRestingColor(); // repaint only if the tile is in its plain resting state
@@ -1134,10 +2079,21 @@ namespace WordDrop
             transform.position = target;
             IsAnimating        = false;
             _gravityCoroutine  = null;
+            // Re-assert the row band on landing. Cheap, and it makes a wrong order
+            // self-healing rather than something that can persist. 2026-09-10 Spencer.
+            ReassertSortingOrder();
 
-            // Organic lands get a soft squish; mechanical lands hard-stop (machine feel)
+            // Organic lands get a squish; mechanical lands hard-stop (machine feel).
+            // 2026-09-03 swap-pivot: cascading tiles now use the DROP landing squish —
+            // the chunkier one a dropped letter used to play — because with the drop
+            // mechanic gone, gravity IS how every tile arrives. Sound is off: one dropped
+            // letter could play it, a whole cascade landing would be a cacophony (the
+            // prime flash + primed SFX carry the "it landed and armed" moment instead).
             if (!mechanical)
-                PlayGravitySquish();
+            {
+                if (GRAVITY_USES_LANDING_SQUISH) PlayLandingSquish(playSound: false);
+                else                             PlayGravitySquish();
+            }
         }
 
         // ---------------------------------------------------------------------------
@@ -1275,17 +2231,17 @@ namespace WordDrop
             {
                 if (_goldPulseCoroutine != null) { StopCoroutine(_goldPulseCoroutine); _goldPulseCoroutine = null; }
                 // Restore normal sprite + default color/letter tints
-                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.sprite = RestingFaceFor(Letter);
                 ApplyRestingColor();
                 if (_letterTMP != null)
-                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                    _letterTMP.color = LETTER_INK;
                 if (_pointTMP != null)
                     _pointTMP.color = new Color(0.4f, 0.4f, 0.45f, 0.85f);
             }
         }
 
         // ── Swap refill visual — orange tint ──────────────────────────────────
-        private static readonly Color SWAP_REFILL_TINT = new Color(1f, 0.7f, 0.2f, 1f);
+        private static readonly Color SWAP_REFILL_TINT = new Color(1f, 0.7f, 0.2f, 1f);  // LEGACY-DROP: swap-refill tile — no longer spawns
         public bool IsSwapRefill => _isSwapRefill;
 
         public void SetSwapRefillVisual(bool active)
@@ -1305,7 +2261,7 @@ namespace WordDrop
         }
 
         // ── Edit refill visual — cyan tint ────────────────────────────────────
-        private static readonly Color EDIT_REFILL_TINT = new Color(0.2f, 0.9f, 0.95f, 1f);
+        private static readonly Color EDIT_REFILL_TINT = new Color(0.2f, 0.9f, 0.95f, 1f);  // LEGACY-DROP: edit-refill tile — no longer spawns
         // ── Scored "word made" tint (2026-06-10 Spencer): green the CURRENT tile instead of
         // swapping to a separate green sprite, so the scored flash keeps the live tile's shape
         // (same approach as the edit/swap refill tints). Multiplies the light tile → kelly green.
@@ -1332,7 +2288,7 @@ namespace WordDrop
         }
 
         // ── Wild refill visual — purple/rainbow tint ──────────────────────────
-        private static readonly Color WILD_REFILL_TINT = new Color(0.75f, 0.4f, 1f, 1f);
+        private static readonly Color WILD_REFILL_TINT = new Color(0.75f, 0.4f, 1f, 1f);  // LEGACY-DROP: wild-refill tile — no longer spawns
         public bool IsWildRefill => _isWildRefill;
 
         public void SetWildRefillVisual(bool active)
@@ -1372,6 +2328,60 @@ namespace WordDrop
         public bool IsAnchored => _isAnchored;
         public void SetAnchored(bool active) => _isAnchored = active;
 
+        /// <summary>Build the 13 blocker sprites. **WARMED AT LOAD — do not let this run during
+        /// play.** 2026-09-15, Spencer: "during the first row up of every game the animation
+        /// doesnt happen and there is a frame drop... its only the first time".
+        ///
+        /// MEASURED from debug_log.txt: the whole build landed on ONE frame (474), the exact frame
+        /// of `[SFX] PlayRisingRow` and the first `'#'` tile — because it was lazy, behind
+        /// `if (s_rockVariants == null)` inside SetStoneVisual, and the first stone arrives with
+        /// the first rising row. Each of the 13 variants runs FOUR full-texture passes
+        /// (LiftCopy / WorldTintCopy / SurfaceCopy / ContactEdgeCopy), every one a RenderTexture
+        /// blit plus GetPixels+SetPixels with per-pixel HSV — ~3.1M pixel ops and 52 GPU
+        /// round-trips in a single frame. The row-rise tween was starved, so the animation
+        /// appeared not to happen at all.
+        ///
+        /// Idempotent: returns immediately once built.</summary>
+        public static void BuildRockVariants()
+        {
+            if (s_rockVariants != null) return;
+                        var list = new System.Collections.Generic.List<Sprite>();
+                        for (int vi = 0; vi < ROCK_VARIANT_FILES.Length; vi++)
+                        {
+                        var path = ROCK_VARIANT_FILES[vi];
+                        var rockTex = Resources.Load<Texture2D>(path);
+                        if (rockTex != null)
+                        {
+                            // per-variant first, global ROCK_LIGHTEN only as the fallback
+                            float lift = (vi < ROCK_VARIANT_LIGHTEN.Length) ? ROCK_VARIANT_LIGHTEN[vi] : ROCK_LIGHTEN;
+                            // BOTH DIRECTIONS. LiftCopy is v^(1/g): g>1 brightens, g<1 DARKENS.
+                            // The old `> 1.001f` test silently skipped every value below 1, so a
+                            // variant brighter than target could not be brought down — metal_block
+                            // arrives at raw L 146 against a 112 target. 2026-09-11.
+                            if (Mathf.Abs(lift - 1f) > 0.001f) { var l = LiftCopy(rockTex, lift); if (l != null) rockTex = l; }
+                            if (ROCK_WORLD_TINT > 0.001f)
+                            { var t = WorldTintCopy(rockTex, ROCK_WORLD_HUE, ROCK_WORLD_TINT, ROCK_WORLD_DESAT); if (t != null) rockTex = t; }
+                            if (ROCK_CONTRAST > 1.001f || ROCK_SAT > 1.001f)
+                            { var k = SurfaceCopy(rockTex, ROCK_CONTRAST, ROCK_SAT); if (k != null) rockTex = k; }
+                            if (ROCK_USE_AO)
+                            {
+                                float savedAO = TILE_AO_STRENGTH;
+                                TILE_AO_STRENGTH = Mathf.Clamp01(savedAO * ROCK_AO_BOOST);
+                                var t = ContactEdgeCopy(rockTex, false);
+                                TILE_AO_STRENGTH = savedAO;
+                                if (t != null) rockTex = t;
+                            }
+                            float refB = (s_spriteNormal != null && s_spriteNormal.bounds.size.x > 0.0001f)
+                                ? s_spriteNormal.bounds.size.x : 1f;
+                            list.Add(Sprite.Create(rockTex,
+                                new Rect(0, 0, rockTex.width, rockTex.height),
+                                new Vector2(0.5f, 0.5f), rockTex.width / refB));
+                        }
+                        }
+                        s_rockVariants = list.ToArray();
+                        WDLog.Log($"[Rock] {s_rockVariants.Length} variant(s) built (ao={ROCK_USE_AO})");
+        }
+
         public void SetStoneVisual(bool active)
         {
             if (active && _isVault) { SetVaultVisual(true); return; } // vaults render as the chest, never grey
@@ -1380,7 +2390,20 @@ namespace WordDrop
             if (_spriteRenderer == null) return;
             if (active)
             {
-                _spriteRenderer.color = STONE_TINT;
+                if (ROCK_SPRITE)
+                {
+                    BuildRockVariants();   // no-op once built; warmed at load, see below
+                    if (s_rockVariants != null && s_rockVariants.Length > 0)
+                    {
+                        // deterministic per cell — same rock every time for a given cell
+                        int hash = (Col * 73856093) ^ (Row * 19349663);
+                        int idx = (hash & 0x7fffffff) % s_rockVariants.Length;
+                        _spriteRenderer.sprite = s_rockVariants[idx];
+                        _spriteRenderer.color  = Color.white;   // the art carries its own colour
+                    }
+                    else _spriteRenderer.color = STONE_TINT;    // fallback: the old grey tint
+                }
+                else _spriteRenderer.color = STONE_TINT;
                 // Hide letter entirely — the dark tint is enough to identify stones
                 if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
                 if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
@@ -1398,7 +2421,7 @@ namespace WordDrop
                 if (_letterTMP != null)
                 {
                     _letterTMP.gameObject.SetActive(true);
-                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                    _letterTMP.color = LETTER_INK;
                 }
                 if (_pointTMP != null)
                 {
@@ -1412,7 +2435,7 @@ namespace WordDrop
         // collectible tint (placeholder; drop a sprite at Resources/Tiles/Icon_DropTarget to upgrade
         // it like the vault chest and I'll wire it). Keeps stone DATA behavior (non-matchable,
         // survives detonation) but reads as the prize you're escorting down. 2026-06-15 Spencer.
-        private static readonly Color DROP_TARGET_TINT = new Color(1f, 0.48f, 0f, 1f); // bright saturated orange (Spencer 2026-06-15)
+        private static readonly Color DROP_TARGET_TINT = new Color(1f, 0.48f, 0f, 1f);  // LEGACY-DROP: escort target — no longer spawns // bright saturated orange (Spencer 2026-06-15)
         private bool _isDropTargetVisual;
         public bool  IsDropTargetVisual => _isDropTargetVisual;
         // PLACEHOLDER: the escort drop-target renders the chicken sprite instead of an orange tile.
@@ -1469,7 +2492,7 @@ namespace WordDrop
         /// <summary>Telegraph the chest's tier by its required word-length key: regular (0) = normal
         /// chest, mid = silver, high (≥5) = gold (the jackpot). Set before SetVaultVisual. 2026-06-12.</summary>
         public void SetVaultRequirement(int requiredLen) => _vaultRequiredLen = requiredLen;
-        private static readonly Color VAULT_MID_TINT = new Color(0.80f, 0.86f, 0.95f, 1f); // cool silver
+        private static readonly Color VAULT_MID_TINT = new Color(0.80f, 0.86f, 0.95f, 1f);  // LEGACY-DROP: vault chest — no longer spawns // cool silver
         private Color VaultTint => _vaultRequiredLen <= 0 ? Color.white
                                  : _vaultRequiredLen >= 5 ? GOLD_HIGH        // high tier = gold jackpot
                                  : VAULT_MID_TINT;                            // mid tier = silver
@@ -1810,7 +2833,7 @@ namespace WordDrop
                 if (_letterTMP != null)
                 {
                     _letterTMP.gameObject.SetActive(true);
-                    _letterTMP.color = new Color(0.145f, 0.153f, 0.200f, 1f);
+                    _letterTMP.color = LETTER_INK;
                 }
                 if (_pointTMP != null)
                 {
@@ -1952,7 +2975,42 @@ namespace WordDrop
 
         public void SetPrimedGlow(Color color, bool playFlash = false, int heatLevel = 0, int fuseRemaining = -1, bool isGold = false, float maxAge = 30f)
         {
+            // ── DERIVE GOLD FROM THE COLOUR (2026-09-09 Spencer) ────────────────────────
+            // "when a gold word is primed its still flashing magenta and then back to gold."
+            // Fourteen call sites reach this method and most pass a gold GLOW COLOUR while
+            // omitting the isGold flag, so the tint went gold while the FACE stayed magenta —
+            // then a later path that did pass the flag corrected it. That correction is the
+            // flash. The colour already carries the answer, so stop asking callers to repeat
+            // it: any of them can now be sloppy without producing a visible wrong state.
+            if (!isGold && ColorsClose(color, PRIMED_GOLD_GLOW)) isGold = true;
+            if (ARMED_LETTER_WHITE && _letterTMP != null && !_letterWhitened && !_isWild)
+            {
+                _preArmedLetterColor = _letterTMP.color;
+                _letterTMP.color     = Color.white;
+                _letterWhitened      = true;
+            }
+            _staticPrimedApplied = false;   // force one repaint — colour/gold state may have changed
             bool wasAlreadyPrimed = _hasPrimedGlow;
+            // Remember whether THIS tile was armed gold, so the pulse can pick the right
+            // primed face instead of every primed tile sharing one.
+            // 2026-09-10 Spencer, REVERSING this morning's per-letter face: a word that CONTAINS
+            // a gold letter reads gold in full — "the gold word should take priority in colour".
+            // KIN with a gold K and magenta I/N read as a mistake rather than as one word. The
+            // resting (unprimed) face stays per-letter, which is what makes a lone gold tile
+            // stand out on the board in the first place.
+            if (GOLD_FLICKER_DIAG)   // 2026-09-21: was gated on IsGoldLetter, so the OTHER tiles in a gold word never logged — and those are the ones going green
+                WDLog.Log($"[GoldFlicker] t={Time.unscaledTime:F2} ({Col},{Row}) '{Letter}' pts={LetterData.GetPoints(Letter)} isGold={isGold} colour={(ColorsClose(color, PRIMED_GOLD_GLOW) ? "GOLD" : "ROSE")} resolved={_isGoldPrimed} reg={RulesEngine.PrimedWordRegisteredForCell(new Vector2Int(Col, Row))} ← {new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name}");
+            _isGoldPrimed = ResolveGoldPrimed(isGold || ColorsClose(color, PRIMED_GOLD_GLOW));
+            // APPLY THE FACE NOW, in the same call that sets the colour. The sprite swap used to
+            // be deferred to the pulse loop, so for a frame or more a GOLD colour sat on top of
+            // the ROSE armed art — and gold tint over rose art is that peach/orange Spencer kept
+            // seeing. Colour and face are one decision; they must land together. 2026-09-10.
+            if (_spriteRenderer != null && !IsWild && !IsStone && !IsFrozen)
+            {
+                BuildSpriteCache();
+                Sprite want = ArmedFace();   // single chokepoint
+                if (want != null && _spriteRenderer.sprite != want) _spriteRenderer.sprite = want;
+            }
             int oldFuse = _fuseRemaining;
             _pendingDiffusePop = false; // re-primed → cancel any pending diffuse-pop revert
             _hasPrimedGlow   = true;
@@ -1974,10 +3032,22 @@ namespace WordDrop
             // both final frames. Gold primed words stay gold (their color is
             // part of the reward identity).
             Color glowColor;
-            if (fuseRemaining >= 0 && fuseRemaining <= 1 && !isGold)
+            // PALETTE: red is reserved for TOP-OUT DANGER. The expiring-fuse red is a
+            // drop-game signal — in armed-web nothing expires, so it must never fire or
+            // red would mean two different things. 2026-09-08.
+            if (!RulesEngine.ArmedWebMode && fuseRemaining >= 0 && fuseRemaining <= 1 && !isGold)
                 glowColor = PRIMED_DANGER_GLOW;
             else
                 glowColor = isGold ? PRIMED_GOLD_GLOW : PRIMED_GLOW;
+
+            // AUTHORED PRIMED ART: light it up, do not RECOLOUR it. 2026-09-21, Spencer:
+            // "the colour of the tiles actually shifts a dark green instead of looking like the
+            // tile lights up". Sprite colour MULTIPLIES the texture, and PRIMED_GLOW is an HDR
+            // magenta (1.8, 0.50, 1.04) authored for the magenta face — its 0.50 green channel
+            // HALVES a green tile and its red/blue lift leaves the magenta fringe. Swapping in a
+            // neutral tint of the same overall strength turns the pulse into pure LUMINANCE, so
+            // any authored colour brightens instead of shifting hue.
+            glowColor = NeutralisePrimedTint(glowColor, isGold);
             // Combo escalation: if this tile has already been handed its per-word detonation
             // hue (mid-blast), DON'T let a re-glow stomp it back to magenta before it pops.
             if (!_hasDetonationColor)
@@ -2004,8 +3074,14 @@ namespace WordDrop
             // the hold expires. ALSO skip while the tile is still showing its scored-green (the edit/
             // rewrite path) — PrimedPulseLoop swaps to the magenta sprite after the fade-in, once the
             // color already matches, so the swap blends instead of popping. 2026-06-23 Spencer.
+            // 🚨 THE gold->green->gold FLASH. 2026-09-21. This assigned s_spriteGold (the rose/
+            // green armed face) UNCONDITIONALLY, one line after the gold face had been correctly
+            // applied — so a gold word painted gold, was stomped green here, then corrected back
+            // by the pulse loop a frame later. Every other writer had been taught to ask
+            // _isGoldPrimed; this one was missed because s_spriteGold and s_spriteGoldThick are
+            // THE SAME OBJECT (both = loadedPrimed), so it logged under the other name.
             if (_spriteRenderer != null && s_spriteGold != null && Time.time >= _scoredFlashUntil && !_isShowingScoredSprite)
-                _spriteRenderer.sprite = s_spriteGold;
+                _spriteRenderer.sprite = ArmedFace();   // single chokepoint
 
             // Start subtle primed idle animation
             if (_primedPulseCoroutine == null)
@@ -2177,8 +3253,9 @@ namespace WordDrop
                     // = a muddy dark tile (seen when a primed word scores/explodes via a booster). Force the
                     // LIGHT normal sprite during the hold so the green reads bright, exactly like a non-primed
                     // scored tile. The block just below restores the magenta sprite once the hold expires.
-                    if (s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
-                        _spriteRenderer.sprite = s_spriteNormal;
+                    if (!WordDropFX.SCORED_FLASH_USES_PRIMED_COLOR
+                        && s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
+                        _spriteRenderer.sprite = RestingFaceFor(Letter);
                     // NOTE: don't touch the bloom overlay here — during this hold the
                     // scored green-flash tween (WordDropFX.PlayWordScored) owns it. We
                     // resume driving the magenta overlay once the hold expires below.
@@ -2193,13 +3270,40 @@ namespace WordDrop
                 bool pastMagentaFadeIn = Time.time >= _scoredFlashUntil + PRIMED_MAGENTA_FADE_IN;
                 if (pastMagentaFadeIn)
                 {
-                    if (s_spriteGold != null && _spriteRenderer.sprite != s_spriteGold)
-                        _spriteRenderer.sprite = s_spriteGold;
+                    Sprite primedFace = ArmedFace();   // single chokepoint
+                    // Hold rather than paint a guess — see GoldAnswerPending.
+                    if (primedFace != null && _spriteRenderer.sprite != primedFace && !GoldAnswerPending)
+                        _spriteRenderer.sprite = primedFace;
                 }
                 else
                 {
-                    if (s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
-                        _spriteRenderer.sprite = s_spriteNormal;
+                    if (!WordDropFX.SCORED_FLASH_USES_PRIMED_COLOR
+                        && s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
+                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                }
+
+                // ── NOTHING IS MOVING (2026-09-08) ──────────────────────────────────
+                // With PRIMED_ANIMATION off everything below recomputes an IDENTICAL colour
+                // and scale every frame — once per armed tile, so a twelve-tile web does it
+                // twelve times a frame to reach the same answer. Worse, it re-writes
+                // sr.color, which FIGHTS GridManager's top-out danger pulse: both drive the
+                // same property and the last writer in the frame wins, so armed tiles could
+                // never flash red. Paint once, then stand down until something changes.
+                if (!PRIMED_ANIMATION && pastMagentaFadeIn)
+                {
+                    // Danger owns sr.color while it is running — do not touch it.
+                    if (_inDanger) { yield return null; continue; }
+                    // ...and the gold state must match too. This cached "already painted" on
+                    // COLOUR alone, so a tile that primed before its word was registered got the
+                    // ROSE face, then _isGoldPrimed flipped to true when the registry caught up —
+                    // and this early-out skipped the repaint forever. The colour said gold, the
+                    // art stayed rose, and gold tint over rose art is the peach. 2026-09-10.
+                    if (_staticPrimedApplied && _staticPrimedGold == _isGoldPrimed
+                        && _spriteRenderer.color == _staticPrimedColor)
+                    {
+                        yield return null;
+                        continue;
+                    }
                 }
 
                 // Use global Time.time as the pulse clock so all primed tiles
@@ -2214,10 +3318,14 @@ namespace WordDrop
                 //   fuse=2 → +2 (urgent)
                 //   fuse=3 → +1 (brisk)
                 //   fuse>=4 → +0 (calm)
-                int dropsUrgency = GetDropsUrgency();
-                int effectiveHeat = (_fuseRemaining >= 0)
-                    ? dropsUrgency
-                    : Mathf.Clamp(_heatLevel, 0, 4);
+                int effectiveHeat = 0;
+                if (PRIMED_ANIMATION)
+                {
+                    int dropsUrgency = GetDropsUrgency();
+                    effectiveHeat = (_fuseRemaining >= 0)
+                        ? dropsUrgency
+                        : Mathf.Clamp(_heatLevel, 0, 4);
+                }
 
                 // Heat 0: calm (1.2s), 1: brisk (0.8s), 2: fast (0.5s), 3: urgent (0.3s), 4: critical (0.18s)
                 // Slowed ~20% per Spencer (was 1.2/0.8/0.5/0.3/0.18). Same urgency curve, just less frenetic.
@@ -2233,7 +3341,7 @@ namespace WordDrop
                 else
                     pulse = Mathf.Cos(((cycle - 0.3f) / 0.7f) * Mathf.PI * 0.5f); // slow fall
 
-                pulse = Mathf.Clamp01(pulse);
+                pulse = PRIMED_ANIMATION ? Mathf.Clamp01(pulse) : 0f;
 
                 // Face tint — ramps with effective heat (turn heat + time urgency)
                 float baseTint = 0.12f + effectiveHeat * 0.06f; // 12% → 36%
@@ -2248,17 +3356,22 @@ namespace WordDrop
                 // Raw peak reached ~1.53 red on PRIMED_GLOW (1.8/0.5/1.3) → hard
                 // bloom. Scale the colour down (preserving hue) if any channel
                 // crosses 1.35 so it sits just over the 1.30 bloom line.
-                Color pc = Color.Lerp(Color.white, _primedGlowColor, tintAmount);
+                // Use the ONE definition so the loop and the scored-flash settle cannot drift
+                // apart — a mismatch shows as a visible step at the hand-off.
+                Color pc = PRIMED_ANIMATION
+                    ? Color.Lerp(Color.white, _primedGlowColor, tintAmount)
+                    : ArmedRestColor(_primedGlowColor);
                 float pmax = Mathf.Max(pc.r, Mathf.Max(pc.g, pc.b));
                 // 2026-06-04 Spencer: the new glossy pink primed sprite is darker than
                 // the old flat one, so the multiply rarely crossed the 1.30 bloom line —
                 // the pulse stopped reading as a GLOW. Raise the cap so it blooms again.
-                float primedCap = Mathf.Max(WordDropFX.PrimedGlowCap, 1.55f);
+                float primedCap = PRIMED_BLOOM ? Mathf.Max(WordDropFX.PrimedGlowCap, 1.55f)
+                                                : PRIMED_LDR_CAP;
                 if (pmax > primedCap) { float k = primedCap / pmax; pc.r *= k; pc.g *= k; pc.b *= k; }
                 // Ease the magenta IN from white over the first PRIMED_MAGENTA_FADE_IN seconds after the
                 // scored-flash hold expires (smooth green→white→magenta, no snap). After the window —
                 // or when there was no recent scored flash — fadeIn is 1 and this is a no-op. 2026-06-23.
-                if (!pastMagentaFadeIn)
+                if (!pastMagentaFadeIn && !WordDropFX.SCORED_FLASH_USES_PRIMED_COLOR)
                 {
                     float fadeIn = Mathf.Clamp01((Time.time - _scoredFlashUntil) / PRIMED_MAGENTA_FADE_IN);
                     pc = Color.Lerp(Color.white, pc, fadeIn);
@@ -2269,12 +3382,12 @@ namespace WordDrop
                 if (_hasDetonationColor)
                     pc = DetonationFaceColor;
                 _spriteRenderer.color = pc;
+                if (!PRIMED_ANIMATION) { _staticPrimedApplied = true; _staticPrimedColor = pc; _staticPrimedGold = _isGoldPrimed; }
 
                 // TEMP diagnostic (2026-07-27): confirm the pulse is actually painting the detonation tint.
                 if (_hasDetonationColor && !_detoProbeLogged)
                 {
                     _detoProbeLogged = true;
-                    Debug.Log($"[ComboRamp/pulse] {Letter} PAINTING glow=({_primedGlowColor.r:F2},{_primedGlowColor.g:F2},{_primedGlowColor.b:F2}) → pc=({pc.r:F2},{pc.g:F2},{pc.b:F2}) tint={tintAmount:F2} sprite={( _spriteRenderer.sprite!=null?_spriteRenderer.sprite.name:"null")}");
                 }
 
                 // MOBILE bloom: pc above gets clamped to 1.0 on iOS/Metal (sr.color
@@ -2283,14 +3396,14 @@ namespace WordDrop
                 // soft pulsing alpha so it glows on device. No-ops on desktop (the pc
                 // path already blooms there). Floor near calm, brighter with heat.
                 SetBloomGlow(_primedGlowColor,
-                    Mathf.Clamp01(0.26f + pulse * 0.18f + effectiveHeat * 0.03f));
+                    PRIMED_BLOOM ? Mathf.Clamp01(0.26f + pulse * 0.18f + effectiveHeat * 0.03f) : 0f);
 
                 // Scale: visible breathe at all levels, punchier at high heat
-                float scalePulse = 0.035f + effectiveHeat * 0.015f; // 3.5% → 9.5% scale change
+                float scalePulse = PRIMED_ANIMATION ? 0.035f + effectiveHeat * 0.015f : 0f;
                 float scaleMult = 1f + scalePulse * pulse;
 
                 // Tiny jitter at high urgency — nervous energy
-                if (effectiveHeat >= 3 && pulse < 0.2f)
+                if (PRIMED_ANIMATION && effectiveHeat >= 3 && pulse < 0.2f)
                 {
                     float jx = Random.Range(-0.005f, 0.005f);
                     float jy = Random.Range(-0.005f, 0.005f);
@@ -2301,7 +3414,12 @@ namespace WordDrop
                     transform.localScale = new Vector3(baseScale * scaleMult, baseScale * scaleMult, 1f);
 
                 // Shimmer particles — more frequent at higher urgency
-                float shimmerInterval = 1.2f - effectiveHeat * 0.20f; // heat 0: 1.2s, heat 4: 0.4s
+                // 2026-09-08 Spencer: "its barely even noticible as it is". Measured first —
+                // the shimmer is POOLED (one shared ParticleSystem, EmitAt, no allocation), so
+                // there was no performance case for cutting it. It goes because it earns nothing
+                // on screen, and its rate was another fuse-driven escalation. Part of the same
+                // "armed tiles are still" decision, so it rides the same flag.
+                float shimmerInterval = PRIMED_ANIMATION ? 1.2f - effectiveHeat * 0.20f : float.MaxValue;
                 shimmerTimer += Time.deltaTime;
                 if (shimmerTimer >= shimmerInterval)
                 {
@@ -2319,9 +3437,15 @@ namespace WordDrop
             if (_spriteRenderer != null)
             {
                 _spriteRenderer.color = Color.white;
-                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.sprite = RestingFaceFor(Letter);
+            }
+            if (_letterWhitened && _letterTMP != null)
+            {
+                _letterTMP.color = _preArmedLetterColor;
+                _letterWhitened  = false;
             }
             ClearBloomGlow();
+            _staticPrimedApplied = false;
             _primedPulseCoroutine = null;
         }
 
@@ -2344,9 +3468,32 @@ namespace WordDrop
         {
             if (_spriteRenderer == null) return;
 
+            if (!PRIMED_ANIMATION)
+            {
+                // ONE armed face. This method used to overwrite the sprite every frame
+                // without consulting _isGoldPrimed, which is why gold-armed words kept
+                // reverting to the magenta face no matter where we set it. 2026-09-08.
+                Sprite armed = ArmedFace();   // single chokepoint
+                if (armed != null && _spriteRenderer.sprite != armed) _spriteRenderer.sprite = armed;
+                return;
+            }
+
             int effectiveHeat = (_fuseRemaining >= 0)
                 ? GetDropsUrgency()
                 : Mathf.Clamp(_heatLevel, 0, 4);
+            // 🚨 GOLD BEATS HEAT-0. 2026-09-21: this switch overwrote the sprite EVERY FRAME with
+            // s_spriteGoldThick (the rose/green armed face) without consulting _isGoldPrimed — the
+            // identical fault the !PRIMED_ANIMATION branch above was fixed for on 2026-09-08, but
+            // only that branch got the fix. With PRIMED_ANIMATION on, a gold word painted GOLD,
+            // then this repainted it green a frame later, then gold again: Spencer's
+            // "gold to green to gold". Heat 1+ still wins — that is the fuse warning, which must
+            // be able to override the reward colour.
+            if (_isGoldPrimed && s_spritePrimedGold != null && effectiveHeat == 0)
+            {
+                if (_spriteRenderer.sprite != s_spritePrimedGold)
+                    _spriteRenderer.sprite = s_spritePrimedGold;
+                return;
+            }
             switch (effectiveHeat)
             {
                 case 0:  _spriteRenderer.sprite = s_spriteGoldThick; break;
@@ -2410,6 +3557,40 @@ namespace WordDrop
             _bloomGlowSR.enabled = true;
         }
 
+        // ── TOP-OUT DANGER (2026-09-03) ──────────────────────────────────────────────
+        // The additive bloom overlay could not carry this: it ADDS light to an already
+        // bright cream tile, so red barely shifted it. Danger has to change the FACE.
+        // Tile owns this so it can restore whatever colour it had when the danger passes.
+        private bool  _isGoldPrimed;   // armed with a high-value letter
+        private bool  _staticPrimedApplied;   // static armed face is painted and current
+        private bool  _staticPrimedGold;      // gold state the cached paint was made for
+        private Color _staticPrimedColor;     // what we painted, so we can tell if anything moved it
+        private bool  _inDanger;
+        private Color _preDangerColor;
+        private static readonly Color DANGER_FACE = new Color(1.0f, 0.28f, 0.22f, 1f);
+
+        /// <summary>Pulse this tile red for top-out danger. t = 0..1 blend; 0 clears and
+        /// restores the colour the tile had before the danger started.</summary>
+        public void SetDangerPulse(float t)
+        {
+            if (_spriteRenderer == null) return;
+            if (t <= 0.001f)
+            {
+                if (_inDanger)
+                {
+                    _inDanger = false;
+                    _spriteRenderer.color = _preDangerColor;
+                }
+                return;
+            }
+            if (!_inDanger)
+            {
+                _inDanger = true;
+                _preDangerColor = _spriteRenderer.color;   // remember whatever state it was in
+            }
+            _spriteRenderer.color = Color.Lerp(_preDangerColor, DANGER_FACE, Mathf.Clamp01(t));
+        }
+
         /// <summary>Hide the bloom-glow overlay (mobile). Safe to call on desktop.</summary>
         public void ClearBloomGlow()
         {
@@ -2417,6 +3598,102 @@ namespace WordDrop
         }
 
         /// <summary>Set sorting order on tile sprite + text layers.</summary>
+        /// <summary>A lifted order that KEEPS the per-row band.
+        ///
+        /// The spotlight and aim-mode lifts used to assign every tile one flat order so the
+        /// whole board cleared the dim scrim. That erased the row bands, and inside a stack
+        /// the draw order then fell back to arbitrary — which is why a spotlighted tile could
+        /// render behind the tile below it. Lifting by a base and KEEPING Row*STRIDE clears
+        /// the scrim and preserves who occludes whom. Row maxes at 10, so a band is 30 wide.
+        /// 2026-09-10 Spencer.</summary>
+        /// <summary>Put this tile back at its authored rest scale.
+        ///
+        /// The rise pops new tiles with an OutElastic scale bounce lasting 0.85s while input
+        /// resumes after 0.18s — so a following rise or gravity step can DOKill that tween
+        /// part-way and leave the tile stranded at whatever scale the bounce had reached. A
+        /// tile stranded small does not meet its neighbours, which is the purple gap between
+        /// letters after a multi-row rise. 2026-09-10 Spencer.</summary>
+        /// <summary>Is THIS tile's letter a high-value (gold) one?
+        ///
+        /// Gold is a property of the LETTER, not of the word it happens to be in. The word-level
+        /// decision is correct for the GLOW COLOUR — deciding that per tile made gold words
+        /// flicker between magenta and gold — but it was also driving the FACE, so every letter
+        /// in a word containing one gold tile rendered gold. That is why a 2-point A came out
+        /// gold. Colour is a word decision; the face is a letter decision. 2026-09-10 Spencer.</summary>
+        public bool IsGoldLetter => LetterData.GetPoints(Letter) >= HIGH_VALUE_POINTS;
+
+        public void SnapRestScale()
+        {
+            if (_restScaleSet && !_externalScaleControl) transform.localScale = _restScale;
+        }
+
+        public int LiftedOrder(int lift) => lift + Mathf.Max(Row, 0) * ROW_ORDER_STRIDE;
+
+        /// <summary>THE one place that resolves what order this tile should have right now:
+        /// per-tile spotlight, else the aim/spotlight lift, else its row band. Anything that
+        /// changes a tile's row or finishes moving it should call this rather than deciding
+        /// for itself. 2026-09-10 Spencer.</summary>
+        /// <summary>Raise this tile above the board for an effect, for a bounded time.
+        ///
+        /// The lift used to be undone by a tween callback, so any killed tween stranded the tile
+        /// above everything and its shaded top cap drew over the row above it. A DEADLINE cannot
+        /// be stranded: once it passes, the next ReassertSortingOrder puts the tile back whether
+        /// or not any callback ever ran. 2026-09-10 Spencer.</summary>
+        public void LiftForFx(float seconds)
+        {
+            float dur = Mathf.Max(0.05f, seconds);
+            _fxOrderUntil = Time.unscaledTime + dur;
+            SetSortingOrder(FX_TILE_ORDER);
+            // Restore ITSELF. The deadline alone was not enough: it is only consulted when
+            // something calls ReassertSortingOrder, and a tile nobody touches again just stayed
+            // at 60 — the invariant checker caught exactly that. DOVirtual.DelayedCall is not
+            // attached to this transform, so tile.transform.DOKill() cannot cancel it the way it
+            // cancelled the punch tween's OnComplete. 2026-09-10 Spencer.
+            DG.Tweening.DOVirtual.DelayedCall(dur + 0.02f, () =>
+            {
+                if (this == null) return;
+                _fxOrderUntil = 0f;
+                ReassertSortingOrder();
+            }, ignoreTimeScale: true);
+        }
+
+        private float _fxOrderUntil;
+
+        /// <summary>Put the CORRECT armed art on, now. Same idea as ReassertSortingOrder: the
+        /// face is derived from current state rather than trusted to whoever set it last.
+        ///
+        /// The face used to be applied in the same call that computed _isGoldPrimed — fine, but
+        /// if that call happened BEFORE the word reached the registry the answer was "rose", and
+        /// nothing came back to correct it. The invariant checker caught whole words sitting in
+        /// ROSE art with every gold flag set. Called from the board sync, so it converges.
+        /// 2026-09-10 Spencer.</summary>
+        public void RefreshArmedFace()
+        {
+            if (!_hasPrimedGlow || _spriteRenderer == null) return;
+            if (IsWild || IsStone || IsFrozen) return;
+            if (_isShowingScoredSprite) return;          // the detonation owns the face
+            BuildSpriteCache();
+            bool gold = ResolveGoldPrimed(false);        // sticky + letter + registry
+            _isGoldPrimed = gold;
+            Sprite want = ArmedFace();   // single chokepoint
+            if (want != null && _spriteRenderer.sprite != want)
+            {
+                _spriteRenderer.sprite = want;
+                _staticPrimedApplied = false;            // force the pulse loop to repaint colour too
+            }
+        }
+
+        public void ReassertSortingOrder()
+        {
+            if (_fxOrderUntil > 0f)
+            {
+                if (Time.unscaledTime < _fxOrderUntil) { SetSortingOrder(FX_TILE_ORDER); return; }
+                _fxOrderUntil = 0f;   // expired — fall through and restore the row band
+            }
+            SetSortingOrder(_spotlightOrder >= 0 ? LiftedOrder(_spotlightOrder)
+                          : (AimModeTileOrder > 0 ? LiftedOrder(AimModeTileOrder) : BaseSortingOrder));
+        }
+
         public void SetSortingOrder(int order)
         {
             // While a tutorial spotlight is DIMMING this tile, block external FX bumps (WordDropFX charge/detonation
@@ -2507,7 +3784,17 @@ namespace WordDrop
                 else if (_isWildRefill)
                     _spriteRenderer.color = WILD_REFILL_TINT;
                 else if (!_isGoldBonus)
+                {
                     _spriteRenderer.color = Color.white;
+                    // 2026-09-04: ALSO restore the per-letter resting FACE. ResetVisuals is
+                    // the "back to normal" path (deselecting a swap calls it), and it only
+                    // reset the COLOUR — so a high-value tile that had been given the gold
+                    // face came back on the plain tan sprite and looked like it had lost
+                    // its gold.
+                    if (LETTER_CATEGORY_TINTS && !_hasPrimedGlow && !_isShowingScoredSprite
+                        && !IsWild && !IsStone && !IsFrozen)
+                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                }
             }
             // 2026-06-01: respect aim-mode sortingOrder boost. When a booster
             // is in aim mode, BoosterHUDSlot bumps every tile above the
@@ -2515,7 +3802,7 @@ namespace WordDrop
             // ResetVisuals (called from various cleanup paths) hard-coded the
             // default 5, the tile would drop BELOW the scrim mid-aim and
             // disappear. AimModeTileOrder is set by BoosterHUDSlot.
-            SetSortingOrder(_spotlightOrder >= 0 ? _spotlightOrder : (AimModeTileOrder > 0 ? AimModeTileOrder : BaseSortingOrder));
+            ReassertSortingOrder();
             Color border = _hasPrimedGlow ? _primedGlowColor : TILE_BORDER_NORMAL;
             ApplyBorderColor(border);
         }
@@ -2524,8 +3811,13 @@ namespace WordDrop
         /// Persists through repaints, unlike a bare SetSortingOrder. 2026-07-08 Spencer.</summary>
         public void SetSpotlight(int order)
         {
+            // `order` is a LIFT BASE, not a final order. Assigning it verbatim gave every
+            // spotlighted tile the SAME sorting order, so stacked tiles sorted arbitrarily —
+            // the top-row tiles drawing behind each other during the top-out warning. Third
+            // code path with this same bug; the other two were the tutorial board bump and
+            // booster aim mode. 2026-09-10 Spencer.
             _spotlightOrder = order;
-            SetSortingOrder(order >= 0 ? order : (AimModeTileOrder > 0 ? AimModeTileOrder : 5));
+            ReassertSortingOrder();
         }
 
         private System.Collections.IEnumerator FlashBorderCoroutine(Color color)
@@ -2623,6 +3915,21 @@ namespace WordDrop
 
         public void ClearPrimedGlow()
         {
+            // Gold-primed is STICKY while primed (see ResolveGoldPrimed) — so it has to be
+            // released here, or a recycled tile carries a previous word's gold into its next
+            // life. Nothing cleared this flag at all before. 2026-09-10 Spencer.
+            _isGoldPrimed = false;
+
+            // PUT THE LETTER BACK. ARMED_LETTER_WHITE whitens the glyph when a tile arms; the
+            // only place that restored it lived in SetDetonationColor, which never runs when a
+            // word simply falls out of being primed. So an unprimed tile kept a white letter on
+            // a tan face. 2026-09-10 Spencer.
+            if (_letterWhitened && _letterTMP != null)
+            {
+                _letterTMP.color = _preArmedLetterColor;
+                _letterWhitened  = false;
+            }
+
             // Capture the primed look BEFORE we reset it — a pending diffuse pop keeps showing it.
             // (ResetVisuals runs just before this and whitens the colour, so use the primed glow's
             // settle-colour for fidelity rather than the live value.) The primed sprite is unchanged.
@@ -2712,7 +4019,7 @@ namespace WordDrop
             // Tint the live tile to the scored green (keeps test_tile's shape). 2026-06-10.
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.sprite = RestingFaceFor(Letter);
                 _spriteRenderer.color  = SCORED_TINT;
             }
         }
@@ -2727,7 +4034,7 @@ namespace WordDrop
             // 2026-06-03 Spencer: diagnosing "2x tile stuck green after leaving the
             // preview path". Logs the tile's state + which sprite it restores to.
             if (_isGoldBonus || _isShowingScoredSprite)
-                Debug.Log($"[PreviewClear] ({Col},{Row}) scored={_isShowingScoredSprite} gold={_isGoldBonus} primed={_hasPrimedGlow} wild={_isWild} → restoring {(_isShowingScoredSprite ? "SCORED(green)" : _hasPrimedGlow ? "PRIMED" : _isGoldBonus ? "GOLD" : _isWild ? "WILD" : "NORMAL")}");
+                WDLog.Log($"[PreviewClear] ({Col},{Row}) scored={_isShowingScoredSprite} gold={_isGoldBonus} primed={_hasPrimedGlow} wild={_isWild} → restoring {(_isShowingScoredSprite ? "SCORED(green)" : _hasPrimedGlow ? "PRIMED" : _isGoldBonus ? "GOLD" : _isWild ? "WILD" : "NORMAL")}");
 
             // Swap back to appropriate sprite (canonical priority: scored > primed > gold > wild > normal)
             if (_spriteRenderer != null)
@@ -2736,7 +4043,7 @@ namespace WordDrop
                 {
                     // scored = green tint on the live tile (not a sprite swap). Keep the tint;
                     // do NOT fall through to the color=white reset below. 2026-06-10.
-                    _spriteRenderer.sprite = s_spriteNormal;
+                    _spriteRenderer.sprite = RestingFaceFor(Letter);
                     _spriteRenderer.color  = SCORED_TINT;
                 }
                 else
@@ -2748,7 +4055,7 @@ namespace WordDrop
                     else if (_isWild)
                         _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
                     else
-                        _spriteRenderer.sprite = s_spriteNormal;
+                        _spriteRenderer.sprite = RestingFaceFor(Letter);
                     _spriteRenderer.color = Color.white;
                 }
             }
@@ -2767,7 +4074,7 @@ namespace WordDrop
         {
             if (_hasPrimedGlow)
             {
-//                 Debug.Log($"[Tile] ({Col},{Row}) '{Letter}' already has primed glow — keeping.");
+//                 WDLog.Log($"[Tile] ({Col},{Row}) '{Letter}' already has primed glow — keeping.");
                 return;
             }
             SetPrimedGlow(color);
@@ -2957,7 +4264,7 @@ namespace WordDrop
             {
                 // Green the LIVE tile via tint (keeps test_tile's shape) instead of swapping
                 // to the separate green sprite. 2026-06-10 Spencer.
-                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.sprite = RestingFaceFor(Letter);
                 _spriteRenderer.color  = SCORED_TINT;
             }
             else
@@ -2968,9 +4275,50 @@ namespace WordDrop
                 else if (_isGoldBonus)
                     _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
                 else
-                    _spriteRenderer.sprite = s_spriteNormal;
+                    _spriteRenderer.sprite = RestingFaceFor(Letter);
                 _spriteRenderer.color = Color.white;
             }
+        }
+
+        /// <summary>THE single "put this tile back how it should look" routine — sprite AND tint,
+        /// by state priority: scored &gt; primed &gt; gold &gt; normal.
+        ///
+        /// 2026-09-11. Written because selecting a GOLD tile and deselecting it turned it WHITE
+        /// (Spencer). Two causes, both from assuming "resting == white":
+        ///   • SetEditSelected(true) in rim mode set sr.color = white, despite its own comment
+        ///     saying "Rim only. Face, shading and letter are left completely alone." A gold tile
+        ///     carries its gold as a TINT, so that wiped it on SELECT.
+        ///   • SetEditSelected(false) restored a hard-coded white instead of the tile's state.
+        /// SetRewriteTargetSprite(false) already had the correct priority logic; it just was not
+        /// shared. Anything that ends a temporary visual must call THIS, never assume white.</summary>
+        private void RestoreRestingFaceAndTint()
+        {
+            if (_spriteRenderer == null) return;
+            if (_isShowingScoredSprite)
+            {
+                _spriteRenderer.sprite = RestingFaceFor(Letter);   // scored = green TINT, not a swap
+                _spriteRenderer.color  = SCORED_TINT;
+                return;
+            }
+            if (_hasPrimedGlow)
+            {
+                // Gold-primed and rose-primed use different sprites AND different rest colours.
+                // _isGoldPrimed is the sticky resolved flag (see ResolveGoldPrimed).
+                bool goldPrimed = _isGoldPrimed;
+                _spriteRenderer.sprite = (goldPrimed && s_spritePrimedGold != null)
+                    ? s_spritePrimedGold : (s_spriteGold ?? s_spriteNormal);
+                _spriteRenderer.color  = NeutralisePrimedTint(goldPrimed ? ARMED_GOLD_REST : ARMED_ROSE_REST, goldPrimed);
+                return;
+            }
+            if (_isGoldBonus)
+            {
+                _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                _spriteRenderer.color  = GOLD_HIGH;                // gold is a TINT here — do not white it
+                return;
+            }
+            if (_isStone)   { _spriteRenderer.color = STONE_TINT; return; }
+            _spriteRenderer.sprite = RestingFaceFor(Letter);
+            _spriteRenderer.color  = _baseTint;
         }
 
         /// <summary>Reset the sticky scored-word flag (called when tile is recycled).</summary>
@@ -2990,19 +4338,7 @@ namespace WordDrop
             }
             else
             {
-                // Restore based on current tile state.
-                // Priority: scored > primed > gold > normal
-                if (_isShowingScoredSprite)
-                {
-                    _spriteRenderer.sprite = s_spriteNormal;       // scored = green tint, not sprite swap
-                    _spriteRenderer.color  = SCORED_TINT;
-                }
-                else if (_hasPrimedGlow)
-                    _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
-                else if (_isGoldBonus)
-                    _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
-                else
-                    _spriteRenderer.sprite = s_spriteNormal;
+                RestoreRestingFaceAndTint();   // single owner — see RestoreRestingFaceAndTint
             }
         }
 
@@ -3035,7 +4371,16 @@ namespace WordDrop
                 // itself (glow-only, like the hint) — NO cyan sprite swap, NO halo.
                 // Snap quickly to the peak saturated/glowing cyan ("accessing" feel),
                 // THEN breathe between that peak and a dimmer cyan so it stays lit.
-                if (_spriteRenderer != null)
+                if (EDIT_SELECT_RIM)
+                {
+                    // Rim only. Face, shading and letter are left completely alone.
+                    // 2026-09-11: do NOT reset the tint here. The comment above says the face is
+                    // left alone, and a gold/scored tile carries its state AS a tint — whiting it
+                    // was what turned gold tiles white on select.
+                    if (_spriteRenderer != null) _spriteRenderer.DOKill();
+                    ShowSelectRim(true);
+                }
+                else if (_spriteRenderer != null)
                 {
                     _spriteRenderer.DOKill();
                     _spriteRenderer.color = Color.white;
@@ -3056,6 +4401,7 @@ namespace WordDrop
                 // it's visible in the editor / on desktop too. Virtual tween (not bound
                 // to sr), so the sr.DOKill above won't touch it — kill it explicitly on
                 // deselect. 2026-07-09 Spencer.
+                if (EDIT_SELECT_RIM) return;   // rim carries it — no overlay to blow out
                 _editGlowPulse?.Kill();
                 _editGlowAlpha = EDIT_GLOW_ALPHA_LOW;
                 SetBloomGlow(EDIT_GLOW_HDR, _editGlowAlpha, forceDesktop: true);
@@ -3082,11 +4428,12 @@ namespace WordDrop
                 if (wasSelected && _spriteRenderer != null)
                 {
                     _spriteRenderer.DOKill();
-                    _spriteRenderer.color = Color.white;
+                    RestoreRestingFaceAndTint();   // NOT white — see RestoreRestingFaceAndTint
                 }
                 // Kill the pulsing bloom overlay and hide it. Always (even if we thought
                 // we were already deselected) so an interrupted toggle can't strand a lit
                 // glow. 2026-07-09 Spencer.
+                if (EDIT_SELECT_RIM && wasSelected) ShowSelectRim(false);
                 _editGlowPulse?.Kill();
                 _editGlowPulse = null;
                 ClearBloomGlow();
@@ -3146,6 +4493,12 @@ namespace WordDrop
         public void FadeEditGlowOut(float dur = 0.1f)
         {
             _editSelected = false;
+            // The rim is NOT part of the glow fade — it is a separate overlay, so it has to be
+            // switched off explicitly here. This is the path a committed SWAP takes (the swap
+            // never calls SetEditSelected(false)), which is why outlines were staying on both
+            // exchanged tiles. Clearing it here rather than relying on the board sync, because
+            // not every swap branch reaches a sync. 2026-09-09 Spencer.
+            ShowSelectRim(false);
             _editGlowPulse?.Kill(); _editGlowPulse = null;
             bool primed = _hasPrimedGlow;
             if (_spriteRenderer != null && !primed)
@@ -3172,6 +4525,18 @@ namespace WordDrop
         public void HoldEditGlow()
         {
             _editGlowPulse?.Kill(); _editGlowPulse = null;
+            if (EDIT_SELECT_RIM)
+            {
+                // Rim mode: hold the outline through the exchange instead of washing the face.
+                // Note this does NOT set _editSelected — the swap is committing, not selecting —
+                // so FadeEditGlowOut below is what ends it. 2026-09-09.
+                // 2026-09-10 Spencer: face tint tried and REMOVED — he did not like the cyan
+                // wash during an exchange. The rim alone marks the two tiles. Set the colour to
+                // EDIT_SWAP_FACE here to bring it back.
+                if (_spriteRenderer != null) { _spriteRenderer.DOKill(); _spriteRenderer.color = Color.white; }
+                ShowSelectRim(true);
+                return;
+            }
             if (_spriteRenderer != null)
             {
                 _spriteRenderer.DOKill();
@@ -3212,7 +4577,7 @@ namespace WordDrop
             if (!_isVault && !_isStone && !_isGoldBonus && !_isWild
                 && !_isSwapRefill && !_isEditRefill && !_isWildRefill && !_isShowingScoredSprite && !_hasPrimedGlow)
             {
-                _spriteRenderer.sprite = s_spriteNormal;
+                _spriteRenderer.sprite = RestingFaceFor(Letter);
                 _spriteRenderer.color  = Color.white;
             }
         }
@@ -3353,6 +4718,191 @@ namespace WordDrop
             s_loggedTileMetrics = false;
         }
 
+        // ── LETTER-CATEGORY RESTING FACES (2026-09-03 Spencer) ───────────────────────
+        // THREE resting categories, not 26. Per-LETTER value tinting was removed on
+        // 2026-06-24 because it was "colour the player has to decode"; three categories
+        // are learnable at a glance and carry real information now the game is
+        // score-based: vowels are what you scan for, high-value letters are opportunity.
+        // Transient STATE colours (primed magenta / scored green / selected cyan) still
+        // override the resting face — this only changes what a tile looks like at rest.
+        /// <summary>Gold (high-value) letters cannot be picked up for a swap. 2026-09-21 Spencer.
+        /// They read as a reward to spend, not a piece to shuffle — and allowing selection also
+        /// exposed a bug where cancelling the selection restored the plain face.</summary>
+        public static bool GOLD_LETTERS_LOCKED = true;
+
+        /// <summary>True when this tile is showing the high-value GOLD resting face.
+        /// Mirrors the RestingFaceForRaw rule so the two cannot drift apart.</summary>
+        public bool IsHighValueLetter =>
+            LETTER_CATEGORY_TINTS && s_spriteHighValue != null
+            && LetterData.GetPoints(Letter) >= HIGH_VALUE_POINTS
+            && !_isStone && !_isGoldBonus && !_isVault;
+
+        public static bool LETTER_CATEGORY_TINTS = true;
+        public static bool VOWEL_TINT            = false;  // OFF — blue vowels read confusing
+        // 2026-09-03: was 4 — but this game's values are NOT Scrabble's. At 4+ the set is
+        // C F M U W G P Y B V K J X Q Z = 15 of 26 letters, so most of the board went gold
+        // and nearly every word primed gold. At 7+ it is V K J X Q Z — genuinely rare, so
+        // gold reads as an opportunity instead of as noise.
+        public static int  HIGH_VALUE_POINTS     = 7;   // >= this many points reads as "high value"
+
+        private static Sprite s_spritePrimedGold; // ARMED + high-value: the hot gold face
+        private static Sprite s_spriteVowel;      // blue
+        private static Sprite s_spriteHighValue;  // gold
+
+        private static bool IsVowelLetter(char c)
+        {
+            char u = char.ToUpper(c);
+            return u=='A' || u=='E' || u=='I' || u=='O' || u=='U';
+        }
+
+        /// <summary>The tile's RESTING face for its letter: vowel / high-value / normal.</summary>
+        /// <summary>Re-derive the resting face from the CURRENT letter. Safe to call any time —
+        /// it is a no-op unless the tile is in its plain resting state, so it can never stomp a
+        /// primed, scored, gold-bonus, wild, stone or frozen face.
+        ///
+        /// Exists because SetLetter only repaints the face while the tile is already resting. A
+        /// letter that arrives while any of those flags is up (mid-cascade, mid-flash) never gets
+        /// its face corrected when the flag clears, which is how a high-value letter ends up
+        /// sitting on the board as a plain tan tile. 2026-09-08 Spencer.</summary>
+        public void RefreshRestingFace()
+        {
+            if (!LETTER_CATEGORY_TINTS || _spriteRenderer == null) return;
+            BuildSpriteCache();   // no-op once built; guarantees s_spriteHighValue exists
+            if (_hasPrimedGlow || _isShowingScoredSprite || _isGoldBonus
+                || IsWild || IsStone || IsFrozen) return;
+            if (OwnerIndex == 1 && s_spriteAI != null) return;
+            Sprite want = RestingFaceFor(Letter);
+            if (want != null && _spriteRenderer.sprite != want)
+            {
+                WDLog.Log($"[GoldSpawn] RefreshRestingFace CHANGED ({Col},{Row}) '{Letter}': {_spriteRenderer.sprite?.name} -> {want.name}");
+                _spriteRenderer.sprite = want;
+            }
+        }
+
+        /// <summary>The colour an ARMED tile settles at. Single definition so the scored
+        /// flash can fade exactly onto it — any mismatch shows up as a visible step at the
+        /// hand-off. Mirrors the pulse loop's maths with pulse = 0. 2026-09-08.</summary>
+        /// <summary>Strip the hue out of a primed tint, keeping its strength — so an AUTHORED
+        /// primed face LIGHTS UP instead of being recoloured. Sprite colour MULTIPLIES the
+        /// texture, so PRIMED_GLOW's magenta (1.8, 0.50, 1.04) halves the green channel of a
+        /// green tile and leaves a magenta fringe. Gold is exempt: its colour IS the reward cue.
+        ///
+        /// Call this from EVERY path that tints an armed tile. 2026-09-21 — the first fix only
+        /// covered the steady glow, so the CASCADE scored-flash (WordDropFX) still went dark
+        /// green: Spencer, "it is still glowing dark green ... during the scored flash".</summary>
+        public static Color NeutralisePrimedTint(Color c, bool isGold)
+        {
+            if (isGold)
+            {
+                // Gold used to be exempt because its colour WAS the reward cue. With authored
+                // gold-primed art the sprite carries that cue, so the tint must go neutral too
+                // or PRIMED_GOLD_GLOW multiplies the gold art toward orange. 2026-09-21.
+                if (!GOLD_PRIMED_TINT_NEUTRAL || string.IsNullOrEmpty(GOLD_PRIMED_FACE_ASSET)) return c;
+            }
+            else if (!PRIMED_TINT_NEUTRAL || string.IsNullOrEmpty(PRIMED_FACE_ASSET)) return c;
+            float lum = Mathf.Max(c.r, Mathf.Max(c.g, c.b));
+            return new Color(lum, lum, lum, c.a);
+        }
+
+        public static Color ArmedRestColor(Color hdrGlow)
+        {
+            // 2026-09-09 Spencer: "its not really matching the colours of your preview."
+            // The armed SPRITE (primed_tile@2x) already carries the authored colour, and this
+            // tint was multiplying a magenta over it — rose sprite x magenta tint = a hotter,
+            // more saturated pink than the art. The tint dates from when the sprite was too
+            // weak to read as primed on its own. With the static armed face it is redundant,
+            // so leave the sprite alone and the game matches the render exactly.
+            if (!PRIMED_ANIMATION)
+                // 2026-09-10 Spencer: the scored flash on a gold tile mid-cascade is the colour
+                // he wants gold-armed tiles to REST at. That flash sets sr.color to
+                // PRIMED_GOLD_GLOW (2.0, 1.54, 0.64) over this same sprite; at rest the colour
+                // was plain white, so the sprite showed untinted. Same multiply, scaled into
+                // LDR so it survives the Color32 clamp on device.
+                // NOT reproduced: the flash also fires an additive bloom overlay. That is the
+                // armed glow he had removed until detonation, so this matches the hue and
+                // richness but not the glow.
+            {
+                if (ColorsClose(hdrGlow, PRIMED_GOLD_GLOW)) return ARMED_GOLD_REST;
+                return ARMED_ROSE_REST;   // same treatment for the rose tiles
+            }
+            Color pc = Color.Lerp(Color.white, hdrGlow, 0.58f);
+            float m  = Mathf.Max(pc.r, Mathf.Max(pc.g, pc.b));
+            if (m > PRIMED_LDR_CAP) { float k = PRIMED_LDR_CAP / m; pc.r *= k; pc.g *= k; pc.b *= k; }
+            pc.a = 1f;
+            return pc;
+        }
+
+        /// <summary>Put the ARMED face on right now, before the word has formally primed, so the
+        /// scored flash can light straight up in magenta/gold instead of passing through the tan
+        /// resting face. 2026-09-08 Spencer.</summary>
+        /// <summary>TRUE while we cannot yet know whether this tile's word is gold — the word
+        /// has not reached the primed registry and the tile's own letter is not high-value.
+        ///
+        /// 🚨 Painting during this window is what made a gold word flash GREEN then snap to gold
+        /// (Spencer 2026-09-21, "on a regular swap when i prime a gold word it is turning green
+        /// and then gold"). For JAR the J answers gold from its own letter, but A and R answer
+        /// GREEN — they have no way to know about the J until the word is registered. Holding the
+        /// current face for those few frames removes the flash; the registry answers immediately
+        /// after and the correct armed face goes on once.</summary>
+        private bool GoldAnswerPending =>
+            !_isGoldPrimed && !IsGoldLetter
+            && !RulesEngine.PrimedWordRegisteredForCell(new Vector2Int(Col, Row));
+
+        public void ApplyArmedFaceNow(bool isGold)
+        {
+            if (_spriteRenderer == null) return;
+            BuildSpriteCache();
+            // The WORD decides, so every tile in it wears the same face. See SetPrimedGlow.
+            _isGoldPrimed = ResolveGoldPrimed(isGold);
+            // Do not paint a guess — see GoldAnswerPending.
+            if (!isGold && GoldAnswerPending)
+            {
+                if (ARMED_FACE_DIAG) WDLog.Log($"[ArmedFace] '{Letter}' ({Col},{Row}) HOLD — gold answer pending");
+                return;
+            }
+            Sprite armed = ArmedFace();   // single chokepoint
+            if (ARMED_FACE_DIAG)
+                WDLog.Log($"[ArmedFace] '{Letter}' ({Col},{Row}) pts={LetterData.GetPoints(Letter)} " +
+                          $"isGold(arg)={isGold} _isGoldPrimed={_isGoldPrimed} " +
+                          $"registered={RulesEngine.PrimedWordRegisteredForCell(new Vector2Int(Col, Row))} " +
+                          $"-> {(armed == s_spritePrimedGold ? "GOLD" : armed == s_spriteGoldThick ? "GREEN(primed)" : "other")}");
+            if (armed != null) _spriteRenderer.sprite = armed;
+        }
+
+        /// <summary>Choose this tile's resting face, GUARANTEEING the sprite cache exists first.
+        ///
+        /// The chooser below is static, so it cannot build the cache (BuildSpriteCache is an
+        /// instance method — it sizes textures from the tile's own _cellSize). Any of the ~20
+        /// call sites that ran before some other tile happened to build it got the plain face
+        /// back for a gold letter, silently. That is why J/V/X started tan and only turned gold
+        /// later, when a board sync ran RefreshRestingFace and corrected them.
+        ///
+        /// Making the instance overload the thing every site calls means the cache is built on
+        /// demand at all of them, instead of each one having to remember. 2026-09-10 Spencer.</summary>
+        private Sprite RestingFaceFor(char letter)
+        {
+            BuildSpriteCache();   // no-op once built
+            return RestingFaceForRaw(letter);
+        }
+
+        private static Sprite RestingFaceForRaw(char letter)
+        {
+            // NOTE: cannot build the sprite cache from here — BuildSpriteCache() is an
+            // INSTANCE method (it sizes the textures from the tile's own _cellSize). So this
+            // can still answer from an unbuilt cache and silently return the plain face.
+            // RefreshRestingFace() below covers that: it builds the cache first and runs on
+            // every board sync. 2026-09-08 Spencer.
+            if (!LETTER_CATEGORY_TINTS) return s_spriteNormal;
+            // 2026-09-03 Spencer: VOWEL tinting is OFF — blue vowels read as confusing
+            // (too close to the ice tile, and vowels are common enough that half the
+            // board turned blue). High-value gold stays: it is rare, so it reads as an
+            // opportunity rather than as noise. Flip VOWEL_TINT back on to retry.
+            if (VOWEL_TINT && IsVowelLetter(letter) && s_spriteVowel != null) return s_spriteVowel;
+            if (LetterData.GetPoints(letter) >= HIGH_VALUE_POINTS && s_spriteHighValue != null)
+                return s_spriteHighValue;
+            return s_spriteNormal;
+        }
+
         private static Sprite s_spriteNormal;
         private static Sprite s_spriteThick;
         private static Sprite s_spriteGold;
@@ -3373,6 +4923,470 @@ namespace WordDrop
         // Wild tile sprite — shown when this tile is a wild on the board (wild2@2x, blank)
         private static Sprite s_spriteWild;
 
+        /// <summary>Return a hue-rotated, saturation-lifted copy of a texture, luminance
+        /// untouched. Goes via a RenderTexture blit because Resources textures are not
+        /// readable — same pattern TileSpriteAtlas already uses. 2026-09-10.</summary>
+        private static Texture2D WarmedCopy(Texture2D src) => HueShiftCopy(src, TILE_HUE_SHIFT, TILE_SAT_MUL);
+
+        /// <summary>Hue-ROTATE and saturation-MULTIPLY a face texture, leaving V alone. The
+        /// multiply is the point — it preserves the art's relative saturation structure, which
+        /// is what makes a recolour read as a material rather than a flat fill.</summary>
+        /// <summary>Pull a pixel toward the world palette WITHOUT transiting the colour wheel.
+        ///
+        /// 🚨 WHY NOT JUST ROTATE THE HUE: the first version did, and Spencer immediately caught
+        /// it — "the steel containers are looking green". It is arithmetic, not taste. Steel sits
+        /// at hue 196 and the anchor is 42, so the SHORT path between them runs straight through
+        /// GREEN at 120. At strength 0.45 the steel landed on ~127 — greener than the stone it
+        /// was supposed to match. Any partial rotation from blue toward warm MUST pass through
+        /// green. Rotating hue is simply the wrong tool for a near-neutral material.
+        ///
+        /// INSTEAD: build the pixel's target — same VALUE, hue AT the anchor, and saturation cut
+        /// in proportion to how far round the wheel it had to come (`dist`) — then LERP the
+        /// ORIGINAL toward that target in RGB. A blue lerping to a warm grey passes through
+        /// GREY, never through green. Distant hues (steel) arrive desaturated and read as
+        /// neutral metal with a warm cast; hues already near the anchor (wood) keep their colour,
+        /// because their `dist` is small. Strength stays a smooth 0..1 dial.</summary>
+        private static Texture2D WorldTintCopy(Texture2D src, float anchorDeg, float strength, float desat)
+        {
+            if (src == null || strength <= 0.001f) return src;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+
+            float anchor = Mathf.Repeat(anchorDeg, 360f) / 360f;
+            float k = Mathf.Clamp01(strength);
+            var px = tex.GetPixels();
+            for (int i = 0; i < px.Length; i++)
+            {
+                Color c = px[i];
+                if (c.a <= 0.004f) continue;
+                float h, sv, v;
+                Color.RGBToHSV(c, out h, out sv, out v);
+                if (sv <= 0.02f) continue;                      // true greys need no help
+                float d    = Mathf.Repeat(anchor - h + 0.5f, 1f) - 0.5f;
+                float dist = Mathf.Clamp01(Mathf.Abs(d) * 2f);   // 0 at the anchor, 1 opposite
+                Color tgt  = Color.HSVToRGB(anchor, Mathf.Clamp01(sv * (1f - dist * desat)), v);
+                px[i] = new Color(Mathf.Lerp(c.r, tgt.r, k),
+                                  Mathf.Lerp(c.g, tgt.g, k),
+                                  Mathf.Lerp(c.b, tgt.b, k), c.a);
+            }
+            tex.SetPixels(px);
+            tex.Apply(false);
+            return tex;
+        }
+
+        private static Texture2D HueShiftCopy(Texture2D src, float shiftDeg, float satMul)
+        {
+            if (src == null) return null;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+
+            var px = tex.GetPixels();
+            float shift = shiftDeg / 360f;
+            for (int i = 0; i < px.Length; i++)
+            {
+                Color c = px[i];
+                if (c.a <= 0.004f) continue;
+                float h, sv, v;
+                Color.RGBToHSV(c, out h, out sv, out v);
+                if (sv <= 0.02f) continue;                 // leave true greys alone
+                h = Mathf.Repeat(h + shift, 1f);
+                sv = Mathf.Clamp01(sv * satMul);
+                // Contrast curve FIRST (deepens shading, white stays white), then any lift.
+                float vv2 = Mathf.Pow(Mathf.Clamp01(v), Mathf.Max(0.05f, TILE_SHADE_GAMMA));
+                Color o = Color.HSVToRGB(h, sv, Mathf.Clamp01(vv2 * TILE_VAL_MUL));
+                o.a = c.a;
+                px[i] = o;
+            }
+            tex.SetPixels(px);
+            tex.Apply(false);
+            tex.filterMode = src.filterMode;
+            tex.wrapMode   = TextureWrapMode.Clamp;
+            WDLog.Log($"[HueShift] face hue {shiftDeg:+0;-0} deg, sat x{satMul:0.00}");
+            return tex;
+        }
+
+        /// <summary>Expand value contrast around the texture's own mean and restore saturation.
+        /// Contrast around the MEAN (not around 0.5) so it works whatever the lift left behind.</summary>
+        private static Texture2D SurfaceCopy(Texture2D src, float contrast, float satMul)
+        {
+            if (src == null) return null;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active; RenderTexture.active = rt;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
+            RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rt);
+
+            var px = tex.GetPixels();
+            double sum = 0; int n = 0;
+            for (int i = 0; i < px.Length; i++)
+                if (px[i].a > 0.004f) { sum += Mathf.Max(px[i].r, Mathf.Max(px[i].g, px[i].b)); n++; }
+            float mean = n > 0 ? (float)(sum / n) : 0.5f;
+
+            for (int i = 0; i < px.Length; i++)
+            {
+                Color c = px[i];
+                if (c.a <= 0.004f) continue;
+                float h, sv, v;
+                Color.RGBToHSV(c, out h, out sv, out v);
+                v  = Mathf.Clamp01(mean + (v - mean) * contrast);
+                sv = Mathf.Clamp01(sv * satMul);
+                h  = Mathf.Repeat(h + ROCK_HUE_ROT / 360f, 1f);   // sage -> warm stone
+                Color o = Color.HSVToRGB(h, sv, v);
+                o.a = c.a; px[i] = o;
+            }
+            tex.SetPixels(px); tex.Apply(false);
+            tex.filterMode = src.filterMode; tex.wrapMode = TextureWrapMode.Clamp;
+            WDLog.Log($"[Rock] surface pass — mean V {mean:0.00}, contrast x{contrast:0.00}, sat x{satMul:0.00}");
+            return tex;
+        }
+
+        /// <summary>Gamma-lift a texture's value, leaving hue and saturation alone. v^(1/g):
+        /// 0 stays 0, 1 stays 1, everything between rises — so nothing clips. 2026-09-11.</summary>
+        private static Texture2D LiftCopy(Texture2D src, float gamma)
+        {
+            if (src == null || gamma <= 1.001f) return src;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active; RenderTexture.active = rt;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
+            RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rt);
+            var px = tex.GetPixels();
+            float inv = 1f / gamma;
+            for (int i = 0; i < px.Length; i++)
+            {
+                Color c = px[i];
+                if (c.a <= 0.004f) continue;
+                float h, sv, v;
+                Color.RGBToHSV(c, out h, out sv, out v);
+                Color o = Color.HSVToRGB(h, sv, Mathf.Pow(Mathf.Clamp01(v), inv));
+                o.a = c.a; px[i] = o;
+            }
+            tex.SetPixels(px); tex.Apply(false);
+            tex.filterMode = src.filterMode; tex.wrapMode = TextureWrapMode.Clamp;
+            return tex;
+        }
+
+        /// <summary>Bake a soft dark contact rim just inside the sprite's silhouette, so adjacent
+        /// tiles separate instead of fusing into one slab. Blurs the ALPHA channel to get an
+        /// inside-ness mask, then multiplies the colour down where that mask drops below 1.
+        /// The bottom edge is darkened harder (TILE_AO_BOTTOM) because the board is lit from
+        /// above — that is what puts a value STEP at every horizontal seam. 2026-09-10.</summary>
+        /// <summary>Bake the contact edge into any tile FACE texture. Every face state needs it —
+        /// if only the resting tile had AO, the separation would POP OFF the instant a word armed
+        /// and the tile swapped to the primed/gold art. 2026-09-10 Spencer spotted this.</summary>
+        private static Texture2D AoFace(Texture2D t, bool applySpec = false)
+        {
+            if (!TILE_AO || t == null) return t;
+            var ao = ContactEdgeCopy(t, applySpec);
+            return ao != null ? ao : t;
+        }
+
+        /// <summary>Set a face texture to an ABSOLUTE hue (not a shift), scaling saturation and
+        /// leaving V alone so the bevel survives. Absolute because a relative shift depends on
+        /// the source art — which is exactly how the earlier warm-tile guess went wrong.</summary>
+        private static Texture2D HiValFace(Texture2D src)
+        {
+            if (!HIVAL_RECOLOR || src == null) return src;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+
+            float th = Mathf.Repeat(HIVAL_HUE, 360f) / 360f;
+            var px = tex.GetPixels();
+            for (int i = 0; i < px.Length; i++)
+            {
+                Color c = px[i];
+                if (c.a <= 0.004f) continue;
+                float h, sv, v;
+                Color.RGBToHSV(c, out h, out sv, out v);
+                if (sv <= 0.02f) continue;                  // leave true greys
+                Color o = Color.HSVToRGB(th, Mathf.Clamp01(sv * HIVAL_SAT_MUL), v);
+                o.a = c.a;
+                px[i] = o;
+            }
+            tex.SetPixels(px); tex.Apply(false);
+            tex.filterMode = src.filterMode; tex.wrapMode = TextureWrapMode.Clamp;
+            WDLog.Log($"[HiVal] high-value face -> hue {HIVAL_HUE:0} sat x{HIVAL_SAT_MUL:0.00}");
+            return tex;
+        }
+
+        private static Texture2D s_specMap;
+
+        /// <summary>Resources textures are not CPU-readable; go via a RenderTexture blit.</summary>
+        private static Texture2D ReadableCopy(Texture2D src)
+        {
+            if (src == null) return null;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active; RenderTexture.active = rt;
+            var t = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            t.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0); t.Apply(false);
+            RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rt);
+            return t;
+        }
+
+        private static bool s_aoLogged;
+
+        private static Texture2D ContactEdgeCopy(Texture2D src, bool applySpec = false)
+        {
+            if (src == null) return null;
+            RenderTexture rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(src, rt);
+            RenderTexture prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var tex = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0);
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+
+            int w = tex.width, h = tex.height;
+            var px = tex.GetPixels();
+
+            // alpha -> float, then two separable box blurs (cheap approximation of a gaussian)
+            int r = Mathf.Max(1, Mathf.RoundToInt(w * Mathf.Clamp01(TILE_AO_WIDTH)));
+            var a = new float[w * h];
+            for (int i = 0; i < px.Length; i++) a[i] = px[i].a;
+            var tmp = new float[w * h];
+            BoxBlurH(a, tmp, w, h, r);
+            BoxBlurV(tmp, a, w, h, r);
+
+            float strength = Mathf.Clamp01(TILE_AO_STRENGTH);
+            for (int y = 0; y < h; y++)
+            {
+                // 0 at the bottom of the sprite, 1 at the top
+                float up = h > 1 ? (float)y / (h - 1) : 1f;
+                float bottomBoost = Mathf.Lerp(Mathf.Max(1f, TILE_AO_BOTTOM), 1f, up);
+                for (int x = 0; x < w; x++)
+                {
+                    int i = y * w + x;
+                    Color c = px[i];
+                    if (c.a <= 0.004f) continue;
+                    float occl = Mathf.Clamp01(1f - a[i]);          // 0 inside, ->1 at the edge
+                    if (occl <= 0.001f) continue;
+                    float k = Mathf.Clamp(1f - occl * strength * bottomBoost, Mathf.Clamp01(TILE_AO_FLOOR), 1f);
+                    if (TILE_AO_TINTED)
+                    {
+                        // Darken by VALUE, and rotate hue / lift saturation in proportion to how
+                        // occluded the pixel is, so the rim is a shadowed version of the surface
+                        // rather than a grey wash over it.
+                        float hh, ss, vv;
+                        Color.RGBToHSV(c, out hh, out ss, out vv);
+                        float t = occl;                               // 0 at the face, 1 at the rim
+                        hh = Mathf.Repeat(hh + (TILE_AO_HUE_ROT / 360f) * t, 1f);
+                        ss = Mathf.Clamp01(ss * Mathf.Lerp(1f, TILE_AO_SAT_MUL, t));
+                        Color o = Color.HSVToRGB(hh, ss, vv * k);
+                        o.a = c.a;
+                        px[i] = o;
+                    }
+                    else
+                    {
+                        c.r *= k; c.g *= k; c.b *= k;                // alpha untouched
+                        px[i] = c;
+                    }
+                }
+            }
+
+            // ── top-face (cap) darkening — identify the cap from the UNMODIFIED value ──
+            if (TILE_CAP_DARKEN_ON && TILE_CAP_DARKEN < 0.999f)
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    float tTop = 1f - (h > 1 ? (float)y / (h - 1) : 0f);
+                    // Purely VERTICAL ramp — nothing keyed to value, so no contour to trace.
+                    float zw = 1f - Mathf.SmoothStep(0f, 1f,
+                                   Mathf.InverseLerp(TILE_CAP_FADE_START, TILE_CAP_FADE_END, tTop));
+                    if (zw <= 0.001f) continue;
+                    float k = Mathf.Lerp(1f, TILE_CAP_DARKEN, zw);
+                    if (k >= 0.999f) continue;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        Color c = px[i];
+                        if (c.a <= 0.004f) continue;
+                        if (TILE_CAP_TINTED)
+                        {
+                            // darken by VALUE, and commit to a hue — see TILE_CAP_TINTED
+                            // 🚨 SCALE BY zw, NOT (1-k). `k` only ranges 1.0 -> TILE_CAP_DARKEN
+                            // (0.80), so `1-k` maxes out at 0.20 — the tint was being applied at
+                            // a FIFTH of the configured strength and was invisible. Spencer:
+                            // "nothing has changed". `zw` is the cap COVERAGE ramp: 0 at the fade
+                            // edge, a true 1.0 at the top. 2026-09-15.
+                            float amt = zw;
+                            float hh, ss, vv;
+                            Color.RGBToHSV(c, out hh, out ss, out vv);
+                            hh = Mathf.Repeat(hh + (TILE_CAP_HUE_SHIFT / 360f) * amt, 1f);
+                            ss = Mathf.Clamp01(ss + TILE_CAP_SAT_ADD * amt);
+                            Color o = Color.HSVToRGB(hh, ss, vv * k);
+                            px[i] = new Color(o.r, o.g, o.b, c.a);
+                        }
+                        else
+                        {
+                            c.r *= k; c.g *= k; c.b *= k;
+                            px[i] = c;
+                        }
+                    }
+                }
+            }
+
+            // ── face falloff: the vertical gradient a flat face cannot produce on its own ──
+            if (TILE_FACE_GRAD && TILE_FACE_GRAD_STRENGTH > 0.001f)
+            {
+                float peak = Mathf.Clamp01(TILE_FACE_GRAD_PEAK);
+                for (int y = 0; y < h; y++)
+                {
+                    float tTop = 1f - (h > 1 ? (float)y / (h - 1) : 0f);   // 0 at sprite top
+                    // Rise gently to the peak, then fall away below it — Toon Blast's shape.
+                    float g = (tTop <= peak)
+                        ? Mathf.Lerp(0.97f, 1f, peak > 0.0001f ? tTop / peak : 1f)   // barely dip above the peak
+                        : Mathf.Lerp(1f, 1f - TILE_FACE_GRAD_STRENGTH,
+                                     Mathf.Clamp01((tTop - peak) / Mathf.Max(0.0001f, 1f - peak)));
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        Color c = px[i];
+                        if (c.a <= 0.004f) continue;
+                        c.r *= g; c.g *= g; c.b *= g;   // multiply: hue and saturation preserved
+                        px[i] = c;
+                    }
+                }
+            }
+
+            // ── baked specular from Blender, nudged up, added AFTER the AO ──
+            if (applySpec && TILE_SPEC && TILE_SPEC_STRENGTH > 0.001f)
+            {
+                if (s_specMap == null) s_specMap = Resources.Load<Texture2D>("Tiles/tile_spec@2x");
+                if (s_specMap != null)
+                {
+                    Texture2D sm = ReadableCopy(s_specMap);
+                    if (sm != null)
+                    {
+                        var sp = sm.GetPixels();
+                        int sw = sm.width, sh = sm.height;
+                        int upPx = Mathf.RoundToInt(w * TILE_SPEC_UP);
+                        for (int y = 0; y < h; y++)
+                        {
+                            // Unity Texture2D row 0 is the BOTTOM. dst[y] = src[y - up] pulls
+                            // content from LOWER in the source and places it HIGHER, i.e. moves
+                            // the band UP the tile. (y + up) moves it DOWN — that was the bug.
+                            int sy = Mathf.Clamp(Mathf.RoundToInt((y - upPx) * (sh / (float)h)), 0, sh - 1);
+                            for (int x = 0; x < w; x++)
+                            {
+                                int i = y * w + x;
+                                Color c = px[i];
+                                if (c.a <= 0.004f) continue;
+                                int sx = Mathf.Clamp(Mathf.RoundToInt(x * (sw / (float)w)), 0, sw - 1);
+                                float v = sp[sy * sw + sx].r;
+                                if (v <= 0.002f) continue;
+                                // MULTIPLY DOWN where unlit, rather than adding white where lit.
+                                // 2026-09-11: screening toward white across the whole face
+                                // DESATURATED the gold badly ("the gold has now changed its hue
+                                // considerably") — adding white always kills chroma, and it only
+                                // got away with it before because the band was 14px. A uniform
+                                // RGB multiply preserves hue AND saturation exactly; the gradient
+                                // comes from darkening the unlit part instead.
+                                float lit = Mathf.Clamp01(v);
+                                float km  = Mathf.Lerp(1f - TILE_SPEC_STRENGTH, 1f, lit);
+                                c.r *= km; c.g *= km; c.b *= km;
+                                px[i] = c;
+                            }
+                        }
+                        Destroy(sm);
+                    }
+                }
+            }
+
+            // ── legacy centre-blob glint (TILE_GLINT, now off by default) ──
+            if (TILE_GLINT && TILE_GLINT_STRENGTH > 0.001f)
+            {
+                float sy = Mathf.Max(0.01f, TILE_GLINT_SPREAD);
+                float sx = Mathf.Max(0.01f, TILE_GLINT_WIDTH);
+                for (int y = 0; y < h; y++)
+                {
+                    float ny = h > 1 ? (float)y / (h - 1) : 0.5f;
+                    float dy = (ny - TILE_GLINT_Y) / sy;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        Color c = px[i];
+                        if (c.a <= 0.004f) continue;
+                        float nx = w > 1 ? (float)x / (w - 1) : 0.5f;
+                        float dx = (nx - 0.5f) / sx;
+                        float g = Mathf.Exp(-(dy * dy + dx * dx));
+                        g *= a[i];                                  // stay inside the silhouette
+                        if (g < 0.002f) continue;
+                        float amt = Mathf.Clamp01(g * TILE_GLINT_STRENGTH);
+                        c.r += (1f - c.r) * amt;                    // screen toward white
+                        c.g += (1f - c.g) * amt;
+                        c.b += (1f - c.b) * amt;
+                        px[i] = c;
+                    }
+                }
+            }
+
+            tex.SetPixels(px);
+            tex.Apply(false);
+            tex.filterMode = src.filterMode;
+            tex.wrapMode   = TextureWrapMode.Clamp;
+            if (!s_aoLogged)
+            {
+                s_aoLogged = true;
+                WDLog.Log($"[TileAO] contact edge baked on every face — strength {TILE_AO_STRENGTH:0.00}, width {TILE_AO_WIDTH:0.000} ({r}px), bottom x{TILE_AO_BOTTOM:0.0}, tinted={TILE_AO_TINTED} (hue {TILE_AO_HUE_ROT:+0}, sat x{TILE_AO_SAT_MUL:0.00})");
+            }
+            return tex;
+        }
+
+        private static void BoxBlurH(float[] src, float[] dst, int w, int h, int r)
+        {
+            for (int y = 0; y < h; y++)
+            {
+                int row = y * w;
+                float sum = 0f; int n = 0;
+                for (int x = -r; x <= r; x++) { int xi = Mathf.Clamp(x, 0, w - 1); sum += src[row + xi]; n++; }
+                for (int x = 0; x < w; x++)
+                {
+                    dst[row + x] = sum / n;
+                    int add = Mathf.Clamp(x + r + 1, 0, w - 1);
+                    int rem = Mathf.Clamp(x - r,     0, w - 1);
+                    sum += src[row + add] - src[row + rem];
+                }
+            }
+        }
+
+        private static void BoxBlurV(float[] src, float[] dst, int w, int h, int r)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                float sum = 0f; int n = 0;
+                for (int y = -r; y <= r; y++) { int yi = Mathf.Clamp(y, 0, h - 1); sum += src[yi * w + x]; n++; }
+                for (int y = 0; y < h; y++)
+                {
+                    dst[y * w + x] = sum / n;
+                    int add = Mathf.Clamp(y + r + 1, 0, h - 1);
+                    int rem = Mathf.Clamp(y - r,     0, h - 1);
+                    sum += src[add * w + x] - src[rem * w + x];
+                }
+            }
+        }
+
         private void BuildSpriteCache()
         {
             if (s_spriteCacheBuilt) return; // already built by another tile
@@ -3386,7 +5400,16 @@ namespace WordDrop
             Sprite whiteRef = Resources.Load<Sprite>("Tiles/white5@2x");
             float refBounds = (whiteRef != null && whiteRef.bounds.size.x > 0.0001f) ? whiteRef.bounds.size.x : 1f;
             Sprite loadedNormal = whiteRef;
-            Texture2D glossyTex = Resources.Load<Texture2D>("Tiles/white_glossy@2x");
+            // RESTING FACE — change RESTING_FACE_ASSET to swap it; no other edit needed.
+            // 2026-09-21: Spencer is iterating on hand-painted tiles, so the asset name is a
+            // constant rather than a literal buried here. Falls back to the old render.
+            Texture2D glossyTex = Resources.Load<Texture2D>(RESTING_FACE_ASSET)
+                               ?? Resources.Load<Texture2D>("Tiles/white_glossy@2x");
+            // TEMP DIAG 2026-09-21 — Spencer: "it didnt load". Report what Unity ACTUALLY
+            // handed back, so a stale import can be told apart from a code path that ignores it.
+            WDLog.Log($"[TileFace] {RESTING_FACE_ASSET} -> {(glossyTex != null ? glossyTex.width + "x" + glossyTex.height : "NULL")}  " +
+                      $"white5 refBounds={refBounds:F4}  WARM_TILES={WARM_TILES} TILE_AO={TILE_AO} " +
+                      $"SAT_MUL={TILE_SAT_MUL} HUE_SHIFT={TILE_HUE_SHIFT}");
             if (glossyTex != null && refBounds > 0.0001f)
             {
                 // 2026-09-03: the tile art is now TIGHT-CROPPED and TALLER than wide
@@ -3395,6 +5418,17 @@ namespace WordDrop
                 // off WIDTH so sprite width == one cell; the extra height becomes the
                 // vertical overlap that hides the tile-top behind the tile above.
                 float ppu = glossyTex.width / refBounds;
+                if (WARM_TILES)
+                {
+                    Texture2D warmed = WarmedCopy(glossyTex);
+                    if (warmed != null) glossyTex = warmed;
+                }
+                if (TILE_AO)
+                {
+                    // spec ON: this IS the cutebox geometry the spec map was rendered from
+                    Texture2D ao = ContactEdgeCopy(glossyTex, true);
+                    if (ao != null) glossyTex = ao;
+                }
                 loadedNormal = Sprite.Create(glossyTex,
                     new Rect(0f, 0f, glossyTex.width, glossyTex.height),
                     new Vector2(0.5f, 0.5f), ppu);
@@ -3407,7 +5441,24 @@ namespace WordDrop
             // 2026-06-04 Spencer: new glossy primed (pink) tile — same content-rect/PPU
             // drop-in treatment as the white tile (1024px, 80% fill). Replaces loadedPrimed
             // so all primed/heat states below pick it up.
-            Texture2D primedTex = Resources.Load<Texture2D>("Tiles/primed_tile@2x");
+            // PRIMED (armed) face. PRIMED_FACE_ASSET lets it be swapped by name — 2026-09-21
+            // Spencer is trying green_primed@2x in place of the magenta.
+            Texture2D primedTex = AoFace(Resources.Load<Texture2D>(PRIMED_FACE_ASSET)
+                                      ?? Resources.Load<Texture2D>("Tiles/primed_tile@2x"), true);
+            WDLog.Log($"[PrimedFace] {PRIMED_FACE_ASSET} -> {(primedTex != null ? primedTex.width + "x" + primedTex.height : "NULL")}");
+            if (PRIMED_TIER_ASSETS != null)
+            {
+                s_spritePrimedTier = new Sprite[PRIMED_TIER_ASSETS.Length];
+                for (int ti = 1; ti < PRIMED_TIER_ASSETS.Length; ti++)
+                {
+                    if (string.IsNullOrEmpty(PRIMED_TIER_ASSETS[ti])) continue;
+                    var tt = AoFace(Resources.Load<Texture2D>(PRIMED_TIER_ASSETS[ti]), true);
+                    if (tt == null) { WDLog.Log($"[PrimedTier] {ti}: {PRIMED_TIER_ASSETS[ti]} MISSING"); continue; }
+                    float tref = (loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f) ? loadedNormal.bounds.size.x : 1f;
+                    s_spritePrimedTier[ti] = Sprite.Create(tt, new Rect(0,0,tt.width,tt.height), new Vector2(0.5f,0.5f), tt.width / tref);
+                    WDLog.Log($"[PrimedTier] {ti}: {PRIMED_TIER_ASSETS[ti]} -> {tt.width}x{tt.height}");
+                }
+            }
             if (primedTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
             {
                 // 2026-09-03: the primed tile art is now TIGHT-CROPPED and TALLER than
@@ -3421,13 +5472,82 @@ namespace WordDrop
                     new Rect(0f, 0f, primedTex.width, primedTex.height),
                     new Vector2(0.5f, 0.5f), pppu);
             }
+            // Category faces — same tight-cropped 249x299 art as the normal tile.
+            {
+                Texture2D vTex = AoFace(Resources.Load<Texture2D>("Tiles/vowel_tile@2x"), true);
+                // GOLD face built from the SAME art as the resting tile, hue-shifted and
+                // saturation-multiplied — see GOLD_HUE_SHIFT. Falls back to the authored
+                // highvalue art if the recolour is switched off.
+                Texture2D hTex = null;
+                // AUTHORED GOLD FACE takes priority — Spencer's hand-painted gold_tile@2x
+                // (2026-09-21). Same pattern as RESTING_FACE_ASSET: swap the string, nothing else.
+                if (!string.IsNullOrEmpty(GOLD_FACE_ASSET))
+                {
+                    hTex = Resources.Load<Texture2D>(GOLD_FACE_ASSET);
+                    WDLog.Log($"[GoldFace] {GOLD_FACE_ASSET} -> {(hTex != null ? hTex.width + "x" + hTex.height : "NULL")}");
+                }
+                if (hTex == null && GOLD_BLOCK_FACE)
+                {
+                    // gold_block_flat@2x, NOT gold_block@2x. MEASURED 2026-09-11: the raw cube
+                    // render has NO flat plateau — L falls continuously 176 (30% up) -> 117
+                    // (bottom), and its BRIGHTEST point is darker than white_glossy's DARKEST
+                    // plateau value (216). In the cell that read as a dull olive blob floating
+                    // inside its own cell: Spencer, "they arent the right size or colour". The
+                    // sprite was always the correct size — only the bright REGION was small.
+                    // The _flat bake reimposes white_glossy's per-row luminance envelope on the
+                    // cube, keeping its hue, facets and gloss streaks. Rebuild it by re-running
+                    // the envelope-match step, not by hand-tuning a lighten.
+                    Texture2D gbTex = Resources.Load<Texture2D>("Tiles/gold_block_flat@2x")
+                                   ?? Resources.Load<Texture2D>("Tiles/gold_block@2x");
+                    if (gbTex != null)
+                    {
+                        if (GOLD_BLOCK_LIGHTEN > 1.001f)
+                        {
+                            var lifted = LiftCopy(gbTex, GOLD_BLOCK_LIGHTEN);
+                            if (lifted != null) gbTex = lifted;
+                        }
+                        hTex = AoFace(gbTex, true);
+                    }
+                    WDLog.Log($"[GoldBlock] tex={(gbTex != null ? gbTex.name + " " + gbTex.width + "x" + gbTex.height : "NULL")} lighten={GOLD_BLOCK_LIGHTEN}");
+                }
+                if (hTex == null)
+                    hTex = HIVAL_RECOLOR
+                        ? AoFace(HueShiftCopy(Resources.Load<Texture2D>("Tiles/white_glossy@2x"), GOLD_HUE_SHIFT, GOLD_SAT_MUL), true)
+                        : AoFace(Resources.Load<Texture2D>("Tiles/highvalue_tile@2x"));
+                float refB = (loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+                    ? loadedNormal.bounds.size.x : 1f;
+                if (vTex != null)
+                    s_spriteVowel = Sprite.Create(vTex, new Rect(0,0,vTex.width,vTex.height),
+                        new Vector2(0.5f,0.5f), vTex.width / refB);
+                if (hTex != null)
+                    s_spriteHighValue = Sprite.Create(hTex, new Rect(0,0,hTex.width,hTex.height),
+                        new Vector2(0.5f,0.5f), hTex.width / refB);
+                WDLog.Log($"[LetterTint] vowel={(s_spriteVowel!=null)} highValue={(s_spriteHighValue!=null)}");
+            }
+
+            // Gold PRIMED face — full texture at the white tile's bounds, like the rest.
+            Sprite loadedGoldPrimed = null;
+            {
+                Texture2D gpTex = AoFace(
+                    (string.IsNullOrEmpty(GOLD_PRIMED_FACE_ASSET)
+                        ? null : Resources.Load<Texture2D>(GOLD_PRIMED_FACE_ASSET))
+                    ?? Resources.Load<Texture2D>("Tiles/primed_gold_tile@2x"), true);
+                WDLog.Log($"[GoldPrimedFace] {GOLD_PRIMED_FACE_ASSET} -> {(gpTex != null ? gpTex.width + "x" + gpTex.height : "NULL")}");
+                float refB2 = (loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
+                    ? loadedNormal.bounds.size.x : 1f;
+                if (gpTex != null)
+                    loadedGoldPrimed = Sprite.Create(gpTex, new Rect(0,0,gpTex.width,gpTex.height),
+                        new Vector2(0.5f,0.5f), gpTex.width / refB2);
+                WDLog.Log($"[GoldPrimed] sprite loaded = {loadedGoldPrimed != null}");
+            }
+
             Sprite loadedAI     = Resources.Load<Sprite>("Tiles/ai_tile");
 
             Sprite loadedScored = Resources.Load<Sprite>("Tiles/green_tile2@2x");
             // 2026-06-04 Spencer: new glossy green tile (greeny). It's trimmed to the
             // tile (100% fill), so use the FULL rect at a PPU that matches the white
             // tile's bounds — true drop-in, same size as the rest.
-            Texture2D greenyTex = Resources.Load<Texture2D>("Tiles/greeny@2x");
+            Texture2D greenyTex = AoFace(Resources.Load<Texture2D>("Tiles/greeny@2x"), true);
             if (greenyTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
             {
                 float gppu = greenyTex.width / loadedNormal.bounds.size.x;
@@ -3437,7 +5557,7 @@ namespace WordDrop
             Sprite loadedCyan   = Resources.Load<Sprite>("Tiles/cyan_tile@2x");
             Sprite loadedGolden = Resources.Load<Sprite>("Tiles/golden_tile2@2x");
             Sprite loadedWild   = Resources.Load<Sprite>("Tiles/wild2@2x");
-            Debug.Log($"[CyanDebug] cyan_tile@2x loaded? {loadedCyan != null} (name: {(loadedCyan != null ? loadedCyan.name : "NULL")})");
+            WDLog.Log($"[CyanDebug] cyan_tile@2x loaded? {loadedCyan != null} (name: {(loadedCyan != null ? loadedCyan.name : "NULL")})");
 
             if (loadedNormal != null)
             {
@@ -3451,14 +5571,20 @@ namespace WordDrop
                 s_spriteWild      = loadedWild ?? loadedNormal;
 
                 // Primed states all use the primed sprite (code handles flash/pulse)
+                // NAMING TRAP: s_spriteGold is NOT "the gold sprite" — it is the PRIMED
+                // face, used by EVERY primed tile. Pointing it at gold art (2026-09-03)
+                // made every primed tile gold-arted, so magenta words rendered as gold
+                // art under a magenta tint = PINK. It stays the magenta primed face.
                 s_spriteGold      = loadedPrimed ?? loadedNormal;
                 s_spriteGoldThick = loadedPrimed ?? loadedNormal;
+                // The genuinely gold PRIMED face lives separately and is chosen per-tile.
+                s_spritePrimedGold = loadedGoldPrimed ?? loadedPrimed ?? loadedNormal;
                 s_spriteHeat1     = loadedPrimed ?? loadedNormal;
                 s_spriteHeat2     = loadedPrimed ?? loadedNormal;
                 s_spriteHeat3     = loadedPrimed ?? loadedNormal;
                 s_spriteWhiteThick= loadedNormal;
 
-//                 Debug.Log("[Tile] Loaded hand-drawn tile sprites from Resources/Tiles.");
+//                 WDLog.Log("[Tile] Loaded hand-drawn tile sprites from Resources/Tiles.");
             }
             else
             {
@@ -3475,10 +5601,129 @@ namespace WordDrop
                 s_spriteCyan      = s_spriteNormal;
                 s_spriteGolden    = s_spriteNormal;
                 s_spriteWild      = s_spriteNormal;
-//                 Debug.Log("[Tile] Fallback: procedural sprite cache built.");
+//                 WDLog.Log("[Tile] Fallback: procedural sprite cache built.");
             }
 
             s_spriteCacheBuilt = true;
+
+            // WARM THE BLOCKER SPRITES HERE, while the board is still loading. Left lazy, this
+            // whole build landed on the frame of the FIRST rising row — the frame that also
+            // starts the row-rise tween — and starved it. It must come AFTER s_spriteNormal is
+            // assigned: the sprites are scaled by s_spriteNormal.bounds.size.x. 2026-09-15.
+            BuildRockVariants();
+        }
+
+        private GameObject      _selectRimGO;
+        private SpriteRenderer  _selectRimSR;
+        private static Sprite   s_selectRimSprite;      // face only (a tile sits above)
+        private static Sprite   s_selectRimTallSprite;  // face + exposed top cap
+
+        /// <summary>Cyan selection RIM. A separate overlay drawn slightly larger than the
+        /// tile, so the face, its shading and the letter are untouched — nothing is painted
+        /// over the tile, so nothing can wash out.
+        /// Built here rather than through ApplyBorderColor because that method does not tint
+        /// a border: it picks from a fixed set of sprite VARIANTS, and an unknown colour
+        /// falls through to the plain sprite with no visible change. 2026-09-09.</summary>
+        private void ShowSelectRim(bool on)
+        {
+            if (!on)
+            {
+                if (_selectRimSR != null) _selectRimSR.enabled = false;
+                return;
+            }
+            if (_selectRimGO == null)
+            {
+                {
+                    // TWO variants, same rule the cluster outline uses (2026-09-10 Spencer):
+                    //  - SQUARE for a tile with something on top of it. Its dark top cap is
+                    //    hidden behind that tile, so wrapping it would put the rim on a buried
+                    //    surface.
+                    //  - TALL for a tile at the top of its stack, where the cap IS visible and
+                    //    the rim should go round it.
+                    // Same corner radius and stroke in PIXELS for both, so they read as one
+                    // shape — only the height differs.
+                    int w = Mathf.Clamp(Mathf.RoundToInt(_cellSize * 200f), 64, 512);
+                    // FRONT-ON: there is no cap, so the "face" sprite takes the tile's real
+                    // aspect and the tall variant is never chosen. 2026-09-15.
+                    int h  = Mathf.RoundToInt(w / TILE_TARGET_ASPECT);   // legacy: face + cap
+                    int hf = TILE_ART_FRONT_ON ? Mathf.RoundToInt(w / ArtAspect) : w;
+                    int r = w / 6, stroke = Mathf.Max(5, w / 16);
+                    if (s_selectRimSprite == null)
+                        s_selectRimSprite = TileRenderer.CreateRoundedRect(
+                            w, hf, r, new Color(0f, 0f, 0f, 0f), Color.white, stroke);
+                    if (s_selectRimTallSprite == null)
+                        s_selectRimTallSprite = TileRenderer.CreateRoundedRect(
+                            w, h, r, new Color(0f, 0f, 0f, 0f), Color.white, stroke);
+                }
+                _selectRimGO = new GameObject("SelectRim");
+                _selectRimGO.transform.SetParent(transform, false);
+                _selectRimGO.transform.localPosition = new Vector3(0f, 0f, -0.06f);
+                _selectRimSR = _selectRimGO.AddComponent<SpriteRenderer>();
+                _selectRimSR.sprite = s_selectRimSprite;
+                _selectRimGO.tag = "Untagged";
+            }
+            _selectRimSR.color = EDIT_RIM_CYAN;
+            _selectRimSR.sortingOrder = BaseSortingOrder + 2;   // over the face, under the letter
+            // Size from the TILE's own sprite bounds, not from cell size — the rim is a
+            // CHILD, so matching bounds in local space makes it track the tile exactly once
+            // the parent's scale is inherited, whatever that scale happens to be.
+            var ts = (_spriteRenderer != null && _spriteRenderer.sprite != null)
+                ? _spriteRenderer.sprite.bounds.size : Vector3.one;
+            // Is this tile's dark top cap actually VISIBLE? Only if nothing sits on it — the
+            // same one-lookup rule the cluster outline uses. 2026-09-10 Spencer.
+            var gm = GridManager.Instance;
+            // Front-on art has no exposed cap to fence, so it always uses the face variant.
+            bool capExposed = !TILE_ART_FRONT_ON && (gm == null || gm.GetTile(Col, Row + 1) == null);
+            _selectRimSR.sprite = capExposed && s_selectRimTallSprite != null
+                                ? s_selectRimTallSprite : s_selectRimSprite;
+
+            var rs = _selectRimSR.sprite != null ? _selectRimSR.sprite.bounds.size : Vector3.one;
+            // Width-matched either way. The tall variant is centred on the WHOLE sprite (the
+            // cap is part of what it fences); the square one is dropped by half the overhang so
+            // it sits on the face.
+            float k = rs.x > 0.0001f ? (ts.x * 1.04f) / rs.x : 1f;
+            _selectRimGO.transform.localScale = new Vector3(k, k, 1f);
+            // The drop existed to move the square rim off the cap and onto the face. Front-on
+            // the rim already matches the sprite, so it stays centred.
+            float rimY = (capExposed || TILE_ART_FRONT_ON) ? 0f : -(ts.y - ts.x) * 0.5f;
+            _selectRimGO.transform.localPosition = new Vector3(0f, rimY, -0.06f);
+            _selectRimSR.enabled = true;
+        }
+
+        /// <summary>Force the rim to agree with _editSelected. Called from the board sync,
+        /// which visits every tile after every board change.
+        /// Needed because the rim is a CHILD of a POOLED tile: three paths end a selection
+        /// (deselect, swap-commit, explosion) and any one of them missing the cleanup leaves
+        /// a lit rim that comes back on whatever tile reuses the object — which is how
+        /// outlines appeared on tiles Spencer never selected. Enforcing the invariant in one
+        /// place beats trusting every exit path. 2026-09-09.</summary>
+        public void SyncSelectRim()
+        {
+            if (_selectRimSR == null) return;
+            bool want = _editSelected && EDIT_SELECT_RIM;
+            // Re-run the builder while selected: a rise or a gravity step can put a tile on top
+            // of (or clear one off) the selected tile, which changes which rim variant is right.
+            // 2026-09-10 Spencer.
+            if (want) { ShowSelectRim(true); return; }
+            if (_selectRimSR.enabled != want) _selectRimSR.enabled = want;
+        }
+
+        /// <summary>The "no special border" face for THIS tile — category-aware.
+        ///
+        /// 🚨 ROOT CAUSE of "select a gold tile, deselect it, it turns white" (reported
+        /// 2026-09-10, still live 2026-09-21). ApplyBorderColor used a bare
+        /// `thick ? s_spriteThick : s_spriteNormal`, which is the PLAIN face regardless of
+        /// letter category — so Highlight(false) -> ApplyBorderColor(TILE_BORDER_NORMAL)
+        /// repainted a high-value GOLD letter white. RestoreRestingFaceAndTint had already put
+        /// the gold face back; ApplyBorderColor ran after it and won. Two writers, one property.
+        ///
+        /// The thick variant only applies when there is no category face to protect — with the
+        /// hand-drawn sprite set s_spriteThick IS s_spriteNormal anyway (see BuildSpriteCache).</summary>
+        private Sprite PlainFaceForBorder(bool thick)
+        {
+            Sprite face = RestingFaceFor(Letter);
+            if (face == s_spriteNormal && thick && s_spriteThick != null) return s_spriteThick;
+            return face;
         }
 
         private void ApplyBorderColor(Color borderColor)
@@ -3491,24 +5736,33 @@ namespace WordDrop
             // primed sprite family — missing PRIMED_DANGER_GLOW here was the
             // root cause of the white flash on fuse→1 / fuse→0 transitions.
             if (ColorsClose(borderColor, TILE_BORDER_NORMAL))
-                _spriteRenderer.sprite = thick ? s_spriteThick : s_spriteNormal;
+                _spriteRenderer.sprite = PlainFaceForBorder(thick);   // was s_spriteNormal — ate the gold face
             else if (ColorsClose(borderColor, TILE_BORDER_GOLD)
                   || ColorsClose(borderColor, PRIMED_GLOW)
                   || ColorsClose(borderColor, PRIMED_DANGER_GLOW)
                   || ColorsClose(borderColor, PRIMED_GOLD_GLOW))
-                _spriteRenderer.sprite = thick ? s_spriteGoldThick : s_spriteGold;
+                _spriteRenderer.sprite = (_isGoldPrimed && _hasPrimedGlow && s_spritePrimedGold != null)
+                    ? s_spritePrimedGold
+                    : (thick ? s_spriteGoldThick : s_spriteGold);
             else if (ColorsClose(borderColor, Color.white))
                 _spriteRenderer.sprite = s_spriteWhiteThick;
             else if (_hasPrimedGlow)
             {
                 // Any other color while primed — keep the primed sprite family,
                 // don't fall through to normal sprite (which causes the white flash).
-                _spriteRenderer.sprite = thick ? s_spriteGoldThick : s_spriteGold;
+                // 🚨 ASK THE FLAG, NOT THE COLOUR. 2026-09-21: the branches above identify the
+                // armed face by ColorsClose(borderColor, PRIMED_GOLD_GLOW). Once the tint is
+                // NEUTRALISED for authored art that test can never match, so a GOLD word fell
+                // through to here and got the rose/green primed face — Spencer: "JAR did not
+                // light up gold, it lit up green". _isGoldPrimed is the resolved, sticky answer.
+                _spriteRenderer.sprite = (_isGoldPrimed && s_spritePrimedGold != null)
+                    ? s_spritePrimedGold
+                    : (thick ? s_spriteGoldThick : s_spriteGold);
             }
             else
             {
                 // Unknown color (player green / AI orange flash) — use SpriteRenderer tint instead of regenerating
-                _spriteRenderer.sprite = thick ? s_spriteThick : s_spriteNormal;
+                _spriteRenderer.sprite = PlainFaceForBorder(thick);   // category-aware, see above
                 // Border color is faked via sprite tint — good enough for a brief flash
             }
         }

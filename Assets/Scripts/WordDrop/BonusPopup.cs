@@ -96,8 +96,22 @@ namespace WordDrop
         }
 
         /// <summary>Show a word score popup — accumulated and merged.</summary>
+        // ── SCORE POPUPS OFF (2026-09-08 Spencer) ───────────────────────────────────
+        // "we dont even display the score at this point so if its firing anything it
+        // shouldn't be." Correct — the endless level's HUD shows an OBJECTIVE (a fake
+        // LongWord goal of 999999) and a move count. There is no score readout anywhere,
+        // so every popup was announcing a number the player can never see.
+        //
+        // Gated HERE rather than at the ten separate call sites, so there is one switch
+        // and no chance of a stray path still firing. The swap-pivot direction IS
+        // score-based endless, so when the score display is built this comes back on —
+        // and at that point it is worth deciding whether the number belongs at the moment
+        // a word is FORMED (where it fires now) or when it DETONATES (where the payoff is).
+        public static bool WORD_SCORE_POPUPS = false;
+
         public void ShowWordScore(string word, int points, Vector3 worldPos, bool isPlayer = true)
         {
+            if (!WORD_SCORE_POPUPS) return;
             AccumulateScore(points, worldPos, isPlayer);
         }
 

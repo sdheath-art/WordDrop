@@ -69,7 +69,7 @@ namespace WordDrop
 
             if (Armed || IsActive) return;
             Armed = true;
-            Debug.Log("[BonusMode] ARMED — next drop enters bonus.");
+            WDLog.Log("[BonusMode] ARMED — next drop enters bonus.");
             OnBonusArmed?.Invoke();
         }
 
@@ -85,7 +85,7 @@ namespace WordDrop
             DropsRemaining  = DURATION_DROPS;
             WordCount       = 0;
             TotalBanked     = 0;
-            Debug.Log($"[BonusMode] ENTER — {DropsRemaining} drops queued.");
+            WDLog.Log($"[BonusMode] ENTER — {DropsRemaining} drops queued.");
             OnBonusEnter?.Invoke();
         }
 
@@ -99,7 +99,7 @@ namespace WordDrop
             if (!IsActive) return 1;
             WordCount++;
             TotalBanked += finalScore;
-            Debug.Log($"[BonusMode] word #{WordCount} +{finalScore} (banked={TotalBanked})");
+            WDLog.Log($"[BonusMode] word #{WordCount} +{finalScore} (banked={TotalBanked})");
             OnBonusWordScored?.Invoke(WordCount);
             return WordCount;
         }
@@ -128,7 +128,7 @@ namespace WordDrop
             int banked      = TotalBanked;
             IsActive        = false;
             DropsRemaining  = 0;
-            Debug.Log($"[BonusMode] EXIT ({reason}) — banked={banked} words={WordCount}");
+            WDLog.Log($"[BonusMode] EXIT ({reason}) — banked={banked} words={WordCount}");
             OnBonusExit?.Invoke(banked, reason);
         }
 

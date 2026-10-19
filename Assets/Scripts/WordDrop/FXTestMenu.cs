@@ -99,6 +99,94 @@ namespace WordDrop
             if (t != null && sr != null) sr.color = orig;
         }
 
+        /// <summary>Flash a real word on the board in a specific state. Gold is forced by
+        /// arming the tiles with the gold face first, which is exactly what a gold word does on
+        /// its own. 2026-09-10 Spencer.</summary>
+        /// <summary>Fire the flash on a REAL primed cluster from the board.
+        ///
+        /// The synthetic variants below are NOT faithful: they pre-arm the tiles before calling,
+        /// so the flash starts from the armed face instead of a tan one, and PlayWordScored's
+        /// willArm check answers FALSE for four unrelated tiles — which changes both the settle
+        /// colour and whether the armed face is applied at all. That is why they never matched
+        /// the game. This one uses an actual primed word, so every one of those answers is the
+        /// real one. 2026-09-10 Spencer.</summary>
+        private void TestFlashRealCluster(int chainStep)
+        {
+            var rules = RulesEngine.Instance; var g = GridManager.Instance;
+            if (rules == null || g == null || WordDropFX.Instance == null) return;
+            var clusters = rules.GetPrimedClusters();
+            if (clusters.Count == 0)
+            {
+                Debug.LogWarning("[FXTest] No primed cluster on the board — make a word first, then press this.");
+                return;
+            }
+            var tiles = new System.Collections.Generic.List<Tile>();
+            foreach (var c in clusters[0].cells)
+            {
+                var t = g.GetTile(c.x, c.y);
+                if (t != null) tiles.Add(t);
+            }
+            if (tiles.Count > 0)
+                WordDropFX.Instance.PlayWordScored(tiles, Tile.PRIMED_GLOW, chainStep);
+        }
+
+        private void TestFlashVariant(bool gold, int chainStep)
+        {
+            // Fire on REAL gold-letter tiles (V K J X Q Z) when testing gold, so what lights up
+            // is genuinely a gold tile rather than an ordinary one wearing the gold face.
+            // 2026-09-10 Spencer. Falls back to any tiles if the board has none.
+            var tiles = gold ? FirstGoldTiles(4) : FirstLiveTiles(4);
+            if (gold && tiles.Count == 0)
+            {
+                Debug.LogWarning("[FXTest] No gold-letter tiles (V K J X Q Z) on the board — using ordinary tiles.");
+                tiles = FirstLiveTiles(4);
+            }
+            if (tiles.Count == 0 || WordDropFX.Instance == null) return;
+            foreach (var t in tiles)
+            {
+                if (t == null) continue;
+                t.ApplyArmedFaceNow(gold);
+                t.SetPrimedGlow(gold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW, gold);
+            }
+            // forceGold so the button tests the GOLD path even when the board has no gold
+            // letters to hand — otherwise Flash 2 was silently identical to Flash 1.
+            WordDropFX.Instance.PlayWordScored(tiles, gold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW, chainStep, forceGold: gold);
+        }
+
+        /// <summary>A word that SCORES but never arms: flashes, then settles to a plain white
+        /// tile instead of the primed colour. My best guess at the "doesn't look great" one.</summary>
+        private void TestFlashNoArm()
+        {
+            var tiles = FirstLiveTiles(4);
+            if (tiles.Count == 0 || WordDropFX.Instance == null) return;
+            foreach (var t in tiles) if (t != null) t.ClearPrimedGlow();
+            WordDropFX.Instance.PlayWordScored(tiles, Tile.PRIMED_GLOW, 0);
+        }
+
+        /// <summary>The OTHER presentation entirely — the flat green "scored sprite" the
+        /// detonation path pre-tints word tiles with, no flash and no chime. Drop-game era.</summary>
+        private void TestFlashPreGreen()
+        {
+            foreach (var t in FirstLiveTiles(4))
+                if (t != null && !t.IsShowingScoredSprite) t.SetScoredSprite(true);
+        }
+
+        /// <summary>Every tile on the board whose LETTER is high-value, i.e. an actual gold
+        /// tile. 2026-09-10 Spencer.</summary>
+        private System.Collections.Generic.List<Tile> FirstGoldTiles(int n)
+        {
+            var outList = new System.Collections.Generic.List<Tile>();
+            var g = GridManager.Instance;
+            if (g == null) return outList;
+            for (int r = 0; r < RulesEngine.ROWS && outList.Count < n; r++)
+                for (int c = 0; c < RulesEngine.COLS && outList.Count < n; c++)
+                {
+                    var t = g.GetTile(c, r);
+                    if (t != null && t.IsGoldLetter) outList.Add(t);
+                }
+            return outList;
+        }
+
         private void TestScoredFlash()
         {
             var tiles = FirstLiveTiles(4);
@@ -202,6 +290,39 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            // ── SCORED FLASH VARIANTS (2026-09-10 Spencer) ─────────────────────────────
+            // Five CALLERS all funnel into the same PlayWordScored, so buttons per caller
+            // would look identical. What actually differs is the STATE of the word when it
+            // arrives — whether it arms, whether it is gold, and how deep in the chain it is.
+            // These are those states, so the one he means can be identified rather than guessed.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 0 — REAL primed cluster \u2713", _btnStyle))
+                TestFlashRealCluster(0);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 0b — REAL cluster, chain 3", _btnStyle))
+                TestFlashRealCluster(3);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 1 — arms, ROSE", _btnStyle))
+                TestFlashVariant(gold: false, chainStep: 0);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 2 — arms, GOLD", _btnStyle))
+                TestFlashVariant(gold: true, chainStep: 0);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 3 — arms, GOLD, chain 3", _btnStyle))
+                TestFlashVariant(gold: true, chainStep: 3);
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 4 — scores, does NOT arm", _btnStyle))
+                TestFlashNoArm();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Flash 5 — detonation pre-green", _btnStyle))
+                TestFlashPreGreen();
+            innerY += BTN_H + GAP;
+
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Board Shake (tier 2)", _btnStyle))
                 WordDropFX.Instance?.PlayBoardShake(1, 5);
             innerY += BTN_H + GAP;
@@ -212,6 +333,10 @@ namespace WordDrop
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "★ LEVEL COMPLETED — Test celebration", _btnStyle))
                 FireStageClearShow();
+            innerY += BTN_H + GAP;
+
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "✓ Checkmark badge — pop it", _btnStyle))
+                HUDManager.Instance?.DebugFlashObjectiveCheck();
             innerY += BTN_H + GAP;
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Show", _btnStyle))
@@ -240,7 +365,7 @@ namespace WordDrop
             {
                 PlayerPrefs.DeleteKey("wild_unlock_taught");
                 PlayerPrefs.Save();
-                Debug.Log("[FXTest] wild_unlock_taught cleared — next wild earned in gameplay will re-trigger the unlock tutorial.");
+                WDLog.Log("[FXTest] wild_unlock_taught cleared — next wild earned in gameplay will re-trigger the unlock tutorial.");
             }
             innerY += BTN_H + GAP;
 
@@ -253,7 +378,7 @@ namespace WordDrop
                 TutorialManager.ResetTutorial();            // clears tutorial_complete + hint_rewrite/hint_swap
                 PlayerPrefs.DeleteKey("wild_unlock_taught"); // wild-unlock tutorial re-arms
                 PlayerPrefs.Save();
-                Debug.Log("[FXTest] tutorial fully reset — next run starts at level 1 and every onboarding beat re-fires.");
+                WDLog.Log("[FXTest] tutorial fully reset — next run starts at level 1 and every onboarding beat re-fires.");
             }
             innerY += BTN_H + GAP;
 
@@ -546,7 +671,7 @@ namespace WordDrop
                 }
             }
 
-            Debug.Log($"[FXTest] Refilled {refilled} booster(s) to {targetCount} charges each");
+            WDLog.Log($"[FXTest] Refilled {refilled} booster(s) to {targetCount} charges each");
         }
 
         private void FireFlipbookGlow()
@@ -801,7 +926,7 @@ namespace WordDrop
                 Debug.LogWarning($"[FXTest] Cascade word — best {(vertical ? "column" : "row")} has only {tiles.Count} active tiles (need {MIN_TILES}+); drop a few more on the board.");
                 return;
             }
-            Debug.Log($"[FXTest] Cascade word — using {tiles.Count} tiles in best {(vertical ? "column" : "row")}");
+            WDLog.Log($"[FXTest] Cascade word — using {tiles.Count} tiles in best {(vertical ? "column" : "row")}");
 
             StartCoroutine(CascadeWordBigBurstCoroutine(tiles, tiles.Count));
         }
@@ -830,7 +955,7 @@ namespace WordDrop
             WordDropFX.FX_SparkleParticles = true;
             WordDropFX.FX_FlipbookGlow    = true;
             WordDropFX.FX_BoardShake      = true;
-            Debug.Log("[FXTest] Cascade word test — forcing standard detonation FX ON");
+            WDLog.Log("[FXTest] Cascade word test — forcing standard detonation FX ON");
 
             // Cache positions + scales so we can restore tiles after PlayExplosion
             // hides them (otherwise the board permanently loses these tiles).
@@ -1196,7 +1321,7 @@ namespace WordDrop
             // That makes the tier-3 burst deterministic AND lets you verify it's
             // honoring LastTriggerCell — if the glow lands here, not the middle, it works.
             WordDropFX.LastTriggerCell = new Vector2Int(tiles[0].Col, tiles[0].Row);
-            Debug.Log($"[FXTest] LastTriggerCell pinned to ({tiles[0].Col},{tiles[0].Row}) for this test detonation");
+            WDLog.Log($"[FXTest] LastTriggerCell pinned to ({tiles[0].Col},{tiles[0].Row}) for this test detonation");
 
             // big_pop + anticipation hold (self-gates: original explosion
             // chainStep < 2 with 8+ tiles fires; cascade/meltdown buttons pass
@@ -1228,7 +1353,7 @@ namespace WordDrop
             float cell = GridManager.Instance.CellSize;
             float span = cell * 3f; // ~3-tile-wide burst
 
-            Debug.Log($"[FXTest] Tier-3 BURST ONLY @ ({cCol},{cRow}) world={center} span={span:F2} scale={WordDropFX.Tier3BurstScale:F2}");
+            WDLog.Log($"[FXTest] Tier-3 BURST ONLY @ ({cCol},{cRow}) world={center} span={span:F2} scale={WordDropFX.Tier3BurstScale:F2}");
             WordDropFX.Instance.PlayTier3Burst(center, span);
         }
 
@@ -1311,7 +1436,7 @@ namespace WordDrop
                 WordDropFX.FX_MeltdownTilePunch = true;
                 WordDropFX.FX_PrimedGlowOrb     = true;
                 WordDropFX.FX_MeltdownWindupShake = true;
-                Debug.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay + FX_MeltdownTilePunch + FX_PrimedGlowOrb + FX_MeltdownWindupShake ON for the duration of this test fire");
+                WDLog.Log("[FXTest] Forced FX_MeltdownPrefab + FX_TileHeatOverlay + FX_MeltdownTilePunch + FX_PrimedGlowOrb + FX_MeltdownWindupShake ON for the duration of this test fire");
             }
 
             // Cache positions AND scales so we can re-place tiles after

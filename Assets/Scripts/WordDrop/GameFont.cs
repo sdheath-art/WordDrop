@@ -23,11 +23,52 @@ namespace WordDrop
         // ── TMP ─────────────────────────────────────────────────────────────────
 
         /// <summary>Tile font: Clarity SDF — trying it on board + hand-card letters (2026-06-03, was Baloo2 SDF). Fallbacks Baloo2 → AvenirNext.</summary>
+        // ── FONT CHOICE (2026-09-11) ───────────────────────────────────────────────
+        // The tile face was AvenirNext SDF — a system UI typeface. Every reference game
+        // (Royal Match, Toon Blast, Candy Crush, Scrabble GO) uses a CHUNKY DISPLAY face with a
+        // heavy dark outline, and [[feedback-mockup-pro-look-levers]] ranks that **lever #1**.
+        //
+        // NOTE the fallback chain below never ran — AvenirNext was loaded FIRST, so the system
+        // font was the deliberate choice, not a fallback. The comment claiming "Clarity SDF"
+        // disagreed with the code.
+        //
+        // WHY LilitaOne AND NOT LuckiestGuy: the SDF assets in Resources fall into two atlas
+        // generations. ~580KB (AvenirNext, Montserrat-Black, Fredoka-Bold, **LilitaOne**) are
+        // healthy. ~8.6MB (Cartoon, **LuckiestGuy**, WendyOne, Futura) were generated with a
+        // huge padding/spread ratio — the comment on GetUITMP records that Cartoon SDF
+        // "bloats/melts/overlaps glyphs at UI sizes" and is only usable very large. LuckiestGuy
+        // is in that same bad class and also logs resolvable=False. Don't reach for it without
+        // regenerating the atlas (Window > TextMeshPro > Font Asset Creator, pointSize ~90,
+        // padding ~9).
+        //
+        // Set TILE_FONT back to "AvenirNext SDF" to revert.
+        // 2026-09-11: tried LilitaOne first — WRONG TOOL. It is a CONDENSED HEADLINE face,
+        // built to cram words into a banner. On a single letter in a square tile that reads
+        // tall, narrow, and leaves dead space at the sides. Spencer: "im not a big fan".
+        //
+        // The real lesson: the chunky display font belongs on the HUD NUMBERS, not the play
+        // pieces. Royal Match's tiles are icons (no letters at all); Scrabble GO's tile letters
+        // are a plain heavy SANS. The display face is on the "8" and the "13", never the board.
+        //
+        // Tile letters want WIDE + HEAVY + friendly so they fill the square. Fredoka Bold:
+        // rounded letterforms that echo the rounded tiles, warm, fills the cell properly.
+        // Alternatives, both already SDF'd and in the healthy ~580KB atlas class:
+        //   "Montserrat-Black SDF" — heaviest/widest, max legibility, less playful
+        //   "AvenirNext SDF"       — the original; clean but neutral
+        // 2026-09-11 status: Qilka Bold was tried and REJECTED by Spencer. Back to Montserrat
+        // ExtraBold, which is the last font he did not object to. Rejected so far:
+        //   LilitaOne (too condensed) · Fredoka-Bold (too blobby) · Riffic (over the top) ·
+        //   QilkaBold (rejected). Untried and still on the shortlist: Nunito Black, Capitol
+        //   (Thrill, licensed), Fredoka SemiBold, FatFrank Heavy — all one menu click away
+        //   via WordDrop > Fonts.
+        public static string TILE_FONT = "NunitoBlack SDF";
+
         public static TMP_FontAsset GetTMP()
         {
             if (!_loadedTileTMP)
             {
-                _tileTMP = Resources.Load<TMP_FontAsset>("AvenirNext SDF");
+                _tileTMP = Resources.Load<TMP_FontAsset>(TILE_FONT);
+                if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("AvenirNext SDF");
                 if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("ClearSans-Bold SDF"); // fallback
                 if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("Geometos SDF"); // fallback
                 if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("Clarity SDF"); // fallback
@@ -35,7 +76,7 @@ namespace WordDrop
                 if (_tileTMP == null) _tileTMP = Resources.Load<TMP_FontAsset>("AvenirNext SDF"); // fallback
                 _loadedTileTMP = true;
                 bool gotLuckiest = Resources.Load<TMP_FontAsset>("LuckiestGuy SDF") != null;
-                Debug.Log($"[GameFont] Tile font loaded: '{(_tileTMP != null ? _tileTMP.name : "NULL")}' | LuckiestGuy SDF resolvable={gotLuckiest}");
+                WDLog.Log($"[GameFont] Tile font requested='{TILE_FONT}' loaded='{(_tileTMP != null ? _tileTMP.name : "NULL")}' | LuckiestGuy resolvable={gotLuckiest}");
             }
             return _tileTMP;
         }
@@ -70,7 +111,7 @@ namespace WordDrop
                 if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_uiTMP == null) _uiTMP = GetTMP();
                 _loadedUITMP = true;
-//                 Debug.Log($"[GameFont] UI font loaded: {(_uiTMP != null ? _uiTMP.name : "NULL")}");
+//                 WDLog.Log($"[GameFont] UI font loaded: {(_uiTMP != null ? _uiTMP.name : "NULL")}");
             }
             return _uiTMP;
         }
@@ -84,7 +125,7 @@ namespace WordDrop
                 if (_displayTMP == null) _displayTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_displayTMP == null) _displayTMP = GetUITMP();
                 _loadedDisplayTMP = true;
-//                 Debug.Log($"[GameFont] Display font loaded: {(_displayTMP != null ? _displayTMP.name : "NULL")}");
+//                 WDLog.Log($"[GameFont] Display font loaded: {(_displayTMP != null ? _displayTMP.name : "NULL")}");
             }
             return _displayTMP;
         }

@@ -56,7 +56,7 @@ namespace WordDrop
                 return;
             }
             Instance = this;
-//             Debug.Log("[GameManager] Awake — state: Menu");
+//             WDLog.Log("[GameManager] Awake — state: Menu");
         }
 
         private float _gameOverCheckTimer = 0f;
@@ -106,7 +106,7 @@ namespace WordDrop
             if (MatchController.Instance != null)
             {
                 MatchController.Instance.OnMatchEnd += OnMatchEnded;
-//                 Debug.Log("[GameManager] Subscribed to MatchController.OnMatchEnd");
+//                 WDLog.Log("[GameManager] Subscribed to MatchController.OnMatchEnd");
             }
             else
             {
@@ -131,7 +131,7 @@ namespace WordDrop
         {
             if (CurrentState == GameState.GameOver) return;
 
-//             Debug.Log($"[GameManager] OnMatchEnded received: winner={evt.WinnerPlayerIndex} " +
+//             WDLog.Log($"[GameManager] OnMatchEnded received: winner={evt.WinnerPlayerIndex} " +
                       // $"P={evt.PlayerScore} AI={evt.AIScore} turns={evt.TotalTurnsEach} each");
 
             // Level mode owns its own end-of-match flow via LevelController events
@@ -147,7 +147,7 @@ namespace WordDrop
             // Allow re-entering Playing to restart the match
             if (CurrentState == newState && newState != GameState.Playing)
             {
-//                 Debug.Log($"[GameManager] Already in {newState} — ignoring.");
+//                 WDLog.Log($"[GameManager] Already in {newState} — ignoring.");
                 return;
             }
 
@@ -155,7 +155,7 @@ namespace WordDrop
             if (ScreenTransition.Instance != null && ScreenTransition.Instance.IsTransitioning)
                 return;
 
-//             Debug.Log($"[GameManager] {CurrentState} → {newState}");
+//             WDLog.Log($"[GameManager] {CurrentState} → {newState}");
 
             // Use slide transition for Menu↔Playing
             bool useSlide = ScreenTransition.Instance != null
@@ -206,7 +206,7 @@ namespace WordDrop
             {
                 // ── Menu ──────────────────────────────────────────────────────────
                 case GameState.Menu:
-//                     Debug.Log("[GameManager] Entered Menu");
+//                     WDLog.Log("[GameManager] Entered Menu");
                     AnalyticsManager.ScreenView("main_menu");
                     // Menu appear SFX removed — whoosh from ScreenTransition is enough
 
@@ -236,7 +236,7 @@ namespace WordDrop
 
                 // ── Playing ───────────────────────────────────────────────────────
                 case GameState.Playing:
-//                     Debug.Log("[GameManager] Entered Playing");
+//                     WDLog.Log("[GameManager] Entered Playing");
                     AnalyticsManager.ScreenView("playing");
 
                     // Reset detonation recorder and last word display for new match
@@ -249,7 +249,7 @@ namespace WordDrop
                     if (MatchController.Instance != null)
                     {
                         MatchController.Instance.StartMatch();
-//                         Debug.Log("[GameManager] MatchController.StartMatch() called");
+//                         WDLog.Log("[GameManager] MatchController.StartMatch() called");
                     }
                     else if (MatchManager.Instance != null)
                     {
@@ -265,7 +265,7 @@ namespace WordDrop
                     // Check for first-time tutorial
                     if (TutorialManager.ShouldRunTutorial() && TutorialManager.Instance != null)
                     {
-//                         Debug.Log("[GameManager] First game — starting tutorial.");
+//                         WDLog.Log("[GameManager] First game — starting tutorial.");
                         TutorialManager.Instance.BeginTutorial();
                         break; // Tutorial manages hand/input itself
                     }
@@ -295,7 +295,7 @@ namespace WordDrop
 
                 // ── Game Over ─────────────────────────────────────────────────────
                 case GameState.GameOver:
-//                     Debug.Log("[GameManager] Entered GameOver");
+//                     WDLog.Log("[GameManager] Entered GameOver");
 
                     // Stop blitz timer
                     if (BlitzManager.Instance != null)
@@ -337,7 +337,7 @@ namespace WordDrop
         {
             if (CurrentState != GameState.GameOver)
             {
-//                 Debug.Log("[GameManager] RequestRestartGame ignored — not in GameOver state.");
+//                 WDLog.Log("[GameManager] RequestRestartGame ignored — not in GameOver state.");
                 return;
             }
 
@@ -355,11 +355,11 @@ namespace WordDrop
         {
             if (CurrentState != GameState.Playing)
             {
-//                 Debug.Log("[GameManager] RequestReset ignored — not in Playing state.");
+//                 WDLog.Log("[GameManager] RequestReset ignored — not in Playing state.");
                 return;
             }
 
-//             Debug.Log("[GameManager] RequestReset — resetting match in-place.");
+//             WDLog.Log("[GameManager] RequestReset — resetting match in-place.");
 
             // Reset via MatchController (full board + score + hand clear)
             if (MatchController.Instance != null)
@@ -398,7 +398,7 @@ namespace WordDrop
             AnalyticsManager.ButtonTap("reset");
             AnalyticsManager.EngagementEvent("mid_game_reset");
 
-//             Debug.Log("[GameManager] RequestReset complete.");
+//             WDLog.Log("[GameManager] RequestReset complete.");
         }
     }
 }

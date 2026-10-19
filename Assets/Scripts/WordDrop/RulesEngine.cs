@@ -57,6 +57,20 @@ namespace WordDrop
         /// </summary>
         public static bool JunkSplashEnabled = true;
 
+        /// <summary>OFF for the armed-web game (2026-09-10 Spencer).
+        ///
+        /// The big-moment SPLASH: when a detonation was large enough (chain depth >= 2, or a
+        /// primed word of 6+, or 2+ primed clusters) it cleared the entire ROW or COLUMN of the
+        /// word that went off — and any primed word caught in that sweep detonated too, as
+        /// "chain continuation". It was built for the drop game, where cascades were meant to
+        /// propagate on their own.
+        ///
+        /// In the swap game the player pulls every trigger: a cluster you never chose, on the
+        /// far side of the board, must not go off because something else was big. Spencer asked
+        /// for this originally and called it "just not sensible in this game" once the core verb
+        /// changed. Flip to true to restore the row/column sweep and its collateral scoring.</summary>
+        public static bool BigMomentSplashEnabled = false;
+
         // True while the CURRENT resolution was initiated by a SWAP/EDIT (BeginSwapResolution); a DROP
         // (FullTurnSequence) sets it false. Lets swap-tutorial objectives count ONLY swap-caused explosions.
         // 2026-07-07 Spencer.
@@ -69,7 +83,18 @@ namespace WordDrop
         /// </summary>
         public static bool PostGravityFertilityEnabled = true;
 
-        private const int MIN_WORD_LENGTH   = 3;
+        // 2026-09-09 Spencer: 3 -> 4, as an experiment. With 99 cells, unlimited swaps and 735
+        // three-letter words, a valid word was ALWAYS available — the board never posed a
+        // question, and turning the letter assist off changed nothing because scarcity was
+        // never the constraint. There are MORE four-letter words (2,098) than three-letter
+        // ones, so this does not shrink the vocabulary; it tightens the GEOMETRY, because
+        // four tiles in a row is far harder to arrange than three.
+        // Set back to 3 to revert.
+        /// <summary>Shortest word the board will DETECT. Was a const 3; made settable
+        /// 2026-10-19 so a level can demand 4+ letters. That single change makes the same board
+        /// read completely differently — all the three-letter filler stops counting and the
+        /// player has to actually look. One of the cheapest level modifiers available.</summary>
+        public static int MIN_WORD_LENGTH = 3;
         private const int MAX_WORD_LENGTH   = 7;
 
         /// <summary>
@@ -95,7 +120,27 @@ namespace WordDrop
         // Tutorial levels disable the fuse so primed words never fizzle on a learner (the fuse is its
         // own mechanic, taught later). Set per-level in ObjectiveManager.InstallLevel. 2026-06-25 Spencer.
         public static bool FuseDisabled = false;
-        public static bool StonesDisabled = false; // per-level: suppress rising-row stone/rock tiles (L9 intro — rocks introduced later). 2026-07-08 Spencer.
+        public static bool StonesDisabled = false;
+
+        /// <summary>Points awarded for THAWING one ice tile. 2026-10-19 Spencer.
+        ///
+        /// Ice used to pay nothing — it was pure friction, which is why "what is ice even for"
+        /// was a fair question in a score-only game. With a bounty it does two jobs at once:
+        /// it is still an obstacle (a frozen tile cannot be swapped, so it shrinks the board you
+        /// can work with) AND it is treasure sitting in your way. That turns it from something
+        /// you resent into something you aim at.
+        ///
+        /// ~2x a good word (measured: a good swapped word pays about 46), so detouring through
+        /// ice is worth real moves. The LEVEL is then designed purely by what fraction of its
+        /// score target is locked inside blockers — no objective text, no completion check.</summary>
+        public static int ICE_BOUNTY = 100; // per-level: suppress rising-row stone/rock tiles (L9 intro — rocks introduced later). 2026-07-08 Spencer.
+
+        /// <summary>MASTER rock switch — 2026-09-22 Spencer: "remove all the rock blockers for
+        /// now" while the board art is being reworked. Separate from StonesDisabled because that
+        /// one is PER-LEVEL and gets rewritten from the level table on every level start
+        /// (ObjectiveManager, e.StonesOff) — setting it here would last until the next level and
+        /// then silently come back. This one nothing else writes. Set false to restore rocks.</summary>
+        public static bool ROCKS_OFF = true;
 
         private static int GetFuseLength(int wordLength)
         {
@@ -119,7 +164,14 @@ namespace WordDrop
         //   Full double:  MULTIPLIER=1.0, BONUS=0  (maximum detonation reward)
         //   Hybrid:       MULTIPLIER=0.5, BONUS=2  (scaled + flat floor)
         public const float DETONATION_SCORE_MULTIPLIER = 1.5f; // 1.5x primed word's score on detonation
-        public const int   BREAKER_BONUS               = 10;  // flat floor — short primed words still feel explosive
+        // 2026-09-09 Spencer: 10 -> 2. "there are so many words in our dictionary that you can
+        // basically always find a word" — and the flat bonuses meant it barely mattered WHICH
+        // one. A flat +10 (plus +10 heat) dominates a 3-letter word's ~6 points, compressing a
+        // 6-letter word from 8.4x a 3-letter down to 3.8x. So short-word spam was nearly as
+        // efficient as playing well. Cutting the floor makes word QUALITY the thing that pays,
+        // without making words hard to FIND — raising MIN_WORD_LENGTH to 4 did that and was
+        // "extremely hard mode". Never stuck, but rewarded for doing better.
+        public const int   BREAKER_BONUS               = 2;
 
         // Chain-Depth Scaling: TRIANGULAR curve — each depth feels dramatically bigger.
         // Uses triangular formula: multiplier = 1 + (depth² + depth) / 2
@@ -127,13 +179,202 @@ namespace WordDrop
         // Detonation sites evaluate at (_stepChainDepth + 1) so the OPENING boom is 2x,
         // not a flat 1x — fixes the "first detonation feels identical to a safe word" gap.
         public const float CHAIN_DEPTH_SCALE_PER_DEPTH = 0.5f; // unused — kept for compat, see TriangularChainMultiplier
+        /// <summary>2026-09-03 ARMED-WEB MODE. Words that form stay PRIMED on the board
+        /// instead of auto-detonating: crossing an armed word LINKS it into the web
+        /// (adds to the connected group) but does NOT fire it, the fuse never expires,
+        /// and the player TAPS a primed word to detonate it plus everything connected —
+        /// through the same staggered chain payoff the auto-fuse used.
+        /// Flip false to get the old auto-fuse game back in the same build.</summary>
+        public static bool ArmedWebMode = true;
+
+        // ── BRANCH PRIMING (2026-09-09 Spencer) ─────────────────────────────────────
+        // "the first word you prime can be from anywhere, but to make a bigger combo you
+        // need to branch out from that word."
+        // The first word is free — it plants your flag. After that, a word can only arm if
+        // it TOUCHES the existing web (shares a cell or sits orthogonally adjacent), so the
+        // seed word becomes a real commitment and the board's geography starts to matter.
+        // Cascade-formed words are exempt and become new branch points — playing well buys
+        // back freedom, which is a better reward than points.
+        // Gate lives in PrimedWordRegistry.AddPrimedWord: ONE chokepoint, so all five
+        // priming call sites are covered without five copies of the rule.
+        // 2026-09-09 Spencer: OFF. The rule and the cluster display are two solutions to the
+        // SAME problem — nobody could tell that connecting words was worth anything. The rule
+        // solved it by FORCING the behaviour; the outline + payout badge solves it by SHOWING
+        // the reward. If showing works you do not want the rule, because a restriction you do
+        // not need is just friction. Left in place, flag-gated, in case the display alone
+        // proves too weak an incentive.
+        public static bool BranchPriming = false;
+
+        /// <summary>True while a resolution cascade is running — gravity-formed words are
+        /// exempt from the branch rule.</summary>
+        public bool InCascade => _stepChainDepth > 0;
+
+        /// <summary>Drop any primed word whose letters no longer sit where it thinks they do.
+        ///
+        /// A primed word is a word ON THE BOARD. Gravity can pull its letters apart — columns
+        /// fall different distances — and nothing re-checked that afterwards, so a word could
+        /// stay armed (and detonatable, and counted in a cluster payout) when it no longer
+        /// existed. Spencer flagged it: stray letters that fall out of a word should fall out
+        /// of being primed too. 2026-09-09.</summary>
+        /// <summary>Every primed word, for BoardInvariants' self-checks. 2026-09-10 Spencer.</summary>
+        public System.Collections.Generic.List<PrimedWordRegistry.PrimedWord> DebugAllPrimedWords()
+            => _primedRegistry != null ? _primedRegistry.GetAllPrimedWords()
+                                       : new System.Collections.Generic.List<PrimedWordRegistry.PrimedWord>();
+
+        public int ValidatePrimedWords()
+        {
+            if (_primedRegistry == null) return 0;
+            var all = _primedRegistry.GetAllPrimedWords();
+            int dropped = 0;
+            for (int i = 0; i < all.Count; i++)
+            {
+                var pw = all[i];
+                if (pw.Cells == null || string.IsNullOrEmpty(pw.Word)) continue;
+                bool ok = pw.Cells.Count == pw.Word.Length;
+                for (int c = 0; ok && c < pw.Cells.Count; c++)
+                {
+                    var cell = pw.Cells[c];
+                    if (!InBounds(cell.x, cell.y)) { ok = false; break; }
+                    var data = _board[cell.x, cell.y];
+                    // A wild resolves to a real letter, so compare against the CELL, and treat a
+                    // missing tile as a broken word rather than assuming it is still there.
+                    if (data == null || char.ToUpperInvariant(data.Letter) != char.ToUpperInvariant(pw.Word[c]))
+                        ok = false;
+                }
+                // STILL A STRAIGHT, UNBROKEN RUN? The letter check above passes even when the
+                // word has been torn apart, because UpdateCellPositions faithfully drags each
+                // cell along with its tile — so a word whose letters scattered across the board
+                // kept every letter in the right ORDER and stayed primed. That is what left
+                // fragments like the "AN" and "GI" of a broken BAG outlined, badged and still
+                // detonating. A word is only a word while its letters are adjacent, in a line.
+                // 2026-09-10 Spencer.
+                if (ok && pw.Cells.Count > 1)
+                {
+                    // ONE CONSTANT STEP of at most 1 in each axis, repeated. This covers
+                    // horizontal, vertical AND diagonal in a single test.
+                    //
+                    // 2026-10-19: this used to require sameCol || sameRow, which silently
+                    // unprimed every DIAGONAL word the moment anything validated — and a rise
+                    // validates. Swipe-to-claim allows all 8 directions, so a diagonal claim
+                    // armed, glowed, then vanished on the next rise. The auto-scanner only ever
+                    // produced straight runs, so the old test was correct until swipes existed.
+                    int sx = pw.Cells[1].x - pw.Cells[0].x;
+                    int sy = pw.Cells[1].y - pw.Cells[0].y;
+                    if (Mathf.Abs(sx) > 1 || Mathf.Abs(sy) > 1 || (sx == 0 && sy == 0))
+                        ok = false;
+                    else
+                        for (int c = 1; ok && c < pw.Cells.Count; c++)
+                            if (pw.Cells[c].x - pw.Cells[c - 1].x != sx
+                             || pw.Cells[c].y - pw.Cells[c - 1].y != sy) ok = false;
+                }
+
+                if (!ok)
+                {
+                    WDLog.Log($"[PrimeValidate] '{pw.Word}' no longer a straight unbroken run — unprimed");
+                    var deadCells = pw.Cells != null ? new List<Vector2Int>(pw.Cells) : null;
+                    _primedRegistry.RemovePrimedWord(pw.Id);
+                    dropped++;
+
+                    // TELL THE TILES. Dropping the word from the registry killed its outline and
+                    // its payout, but the tiles kept wearing the primed rose — letters that had
+                    // fallen out of a word still looked armed. Skip any cell another primed word
+                    // still covers: a tile can belong to two crossing words, and only one of them
+                    // died. 2026-09-10 Spencer.
+                    if (deadCells != null && GridManager.Instance != null)
+                    {
+                        for (int d = 0; d < deadCells.Count; d++)
+                        {
+                            var dc = deadCells[d];
+                            var still = _primedRegistry.GetPrimedWordsContaining(dc);
+                            if (still != null && still.Count > 0) continue;
+                            var t = GridManager.Instance.GetTile(dc.x, dc.y);
+                            if (t != null) t.ClearPrimedGlow();
+                        }
+                    }
+                }
+            }
+            return dropped;
+        }
+
+        /// <summary>What a group of connected primed words would pay if tapped RIGHT NOW.
+        /// Mirrors the DoExplode maths — same multiplier, same flat bonus, same triangular
+        /// chain scaling — so the number on the board is the number the player receives.
+        /// If these ever drift the display becomes a lie, which is worse than no display.
+        /// 2026-09-09 Spencer.</summary>
+        public int PreviewGroupPayout(System.Collections.Generic.List<PrimedWordRegistry.PrimedWord> group)
+        {
+            if (group == null || group.Count == 0) return 0;
+            int total = 0;
+            for (int i = 0; i < group.Count; i++)
+            {
+                var pw = group[i];
+                int survived  = Mathf.Max(0, _globalTurn - pw.PrimedOnTurn);
+                int heatBonus = Mathf.Min(survived * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
+                int raw = Mathf.RoundToInt(pw.Score * RunBuffs.DetonationMultiplier(DETONATION_SCORE_MULTIPLIER))
+                        + RunBuffs.BreakerBonus(BREAKER_BONUS) + heatBonus;
+                float chainMult = TriangularChainMultiplier(i + 1);
+                float goldMult  = pw.IsGold ? RunBuffs.GoldMultiplier(2f) : 1f;
+                total += Mathf.RoundToInt(raw * chainMult * goldMult);
+            }
+            return total;
+        }
+
+        /// <summary>Every connected cluster of primed words on the board, each with the cells
+        /// it covers and what it is currently worth. Drives the on-board outline + badge.</summary>
+        public System.Collections.Generic.List<(System.Collections.Generic.List<Vector2Int> cells, int payout, int wordCount)> GetPrimedClusters()
+        {
+            var outList = new System.Collections.Generic.List<(System.Collections.Generic.List<Vector2Int>, int, int)>();
+            if (_primedRegistry == null) return outList;
+            var all = _primedRegistry.GetAllPrimedWords();
+            var seen = new System.Collections.Generic.HashSet<int>();
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (seen.Contains(all[i].Id)) continue;
+                var seeds = new System.Collections.Generic.HashSet<int> { all[i].Id };
+                var group = _primedRegistry.FindConnectedGroup(seeds, null);
+                if (group == null || group.Count == 0) group = new System.Collections.Generic.List<PrimedWordRegistry.PrimedWord> { all[i] };
+                var cells = new System.Collections.Generic.List<Vector2Int>();
+                for (int g = 0; g < group.Count; g++)
+                {
+                    seen.Add(group[g].Id);
+                    var gc = group[g].Cells;
+                    if (gc == null) continue;
+                    for (int c = 0; c < gc.Count; c++) if (!cells.Contains(gc[c])) cells.Add(gc[c]);
+                }
+                if (cells.Count > 0) outList.Add((cells, PreviewGroupPayout(group), group.Count));
+            }
+            return outList;
+        }
+
+        /// <summary>Will a word on these cells actually ARM? Asks the SAME rule the priming
+        /// gate uses, so the visuals can never disagree with the rules. Needed because the
+        /// scored flash runs BEFORE priming and used to assume scored implies armed — true
+        /// before branch priming, false now. 2026-09-09 Spencer.</summary>
+        public bool WillPrime(System.Collections.Generic.List<Vector2Int> cells)
+        {
+            if (!BranchPriming) return true;
+            if (_primedRegistry == null || _primedRegistry.Count == 0) return true;  // seed word
+            if (InCascade) return true;                                              // cascades exempt
+            return _primedRegistry.TouchesExistingWeb(cells);
+        }
+
+        /// <summary>Chance a rising row gets a HIGH-VALUE letter deliberately seeded into
+        /// it. Without this the best-of-N row picker filters them out entirely — see the
+        /// note in FillBottomRow. 0 = off.</summary>
+        public static float HIGH_VALUE_ROW_CHANCE = 0.35f;
+        private static readonly char[] HIGH_VALUE_LETTERS = { 'V', 'K', 'J', 'X', 'Q', 'Z' };
+
         public const int   CHAIN_DEPTH_SCALE_CAP       = 3;   // max chain depth for triangular scaling (tried 8 on 2026-04-18 + cluster boost in DoExplode — combined effect made every move a board-clearing mega-combo. Reverted to 3.)
 
         // Heat Fuse: primed words gain +N detonation bonus per survived turn, capped.
         // 2 pts/turn capped at 10 → 5 turns to max, matches Survival word-length fuse cap.
         // Patience pays — rewards defending primed words across turns.
         public const int   HEAT_FUSE_PER_TURN          = 2;
-        public const int   HEAT_FUSE_MAX_BONUS         = 10;
+        // Zeroed with the same reasoning. This rewarded HOLDING a word as its fuse burned
+        // down — but the fuse is off in the swap game, so survivedTurns just climbs and every
+        // word collects the full +10. A flat bonus for everyone is not a reward, it is noise
+        // that flattens the difference between a good word and a bad one. 2026-09-09.
+        public const int   HEAT_FUSE_MAX_BONUS         = 0;
 
         // Overlap Fuse Extension: existing primed words get +1 fuse when a new prime overlaps them
         public const int   OVERLAP_FUSE_EXTENSION      = 1;
@@ -148,19 +389,31 @@ namespace WordDrop
         /// </summary>
         public static float TriangularChainMultiplier(int chainDepth)
         {
-            int d = Mathf.Min(Mathf.Max(chainDepth, 0), CHAIN_DEPTH_SCALE_CAP);
+            // DEEP CHAIN buff extends how far the triangular multiplier keeps climbing.
+            int d = Mathf.Min(Mathf.Max(chainDepth, 0), RunBuffs.ChainDepthCap(CHAIN_DEPTH_SCALE_CAP));
             return 1f + (d * d + d) / 2f;
         }
 
-        // TWO directions only — matches how humans read:
-        // Horizontal: left to right
-        // Vertical: top to bottom (high row to low row)
-        // With 51k words, 4 directions creates too many false matches.
-        // Players place words in reading order. ORE = O then R then E left-to-right.
+        // FOUR directions — both ways along each axis. 2026-10-19 Spencer: "it should be
+        // counting words backwards too."
+        //
+        // This was TWO for a long time, on the reasoning that "4 directions creates too many
+        // false matches". MEASURED before changing it: that worry came from scanning the WHOLE
+        // board, where backwards does roughly double the accidental words (21 -> 42). But the
+        // game never scans the whole board per move — it scans the SEED CELLS a swap touched,
+        // and bottom-row words are pre-registered by RegisterWordsAtRow so they never auto-prime.
+        // Measured at the seed cells, the real cost is 1.06 -> 2.08 words per swap: ONE extra
+        // word, and a word the player genuinely made. Before this, swapping to build a word
+        // backwards paid nothing at all.
+        //
+        // The scanners were already written for this — see the dedupe below, whose comment
+        // predates the change: "prevents same word being found in both directions".
         private static readonly int[][] _directions = new int[][]
         {
-            new int[] { 1,  0 },   // horizontal: left → right
-            new int[] { 0, -1 },   // vertical: top → bottom (row 5 down to row 0)
+            new int[] {  1,  0 },  // horizontal: left → right
+            new int[] {  0, -1 },  // vertical:   top → bottom
+            new int[] { -1,  0 },  // horizontal: right → left   (backwards)
+            new int[] {  0,  1 },  // vertical:   bottom → top   (backwards)
         };
 
         // ── Singleton ─────────────────────────────────────────────────────────────
@@ -213,7 +466,7 @@ namespace WordDrop
             if (!InBounds(col, row)) return;
             if (isBonus && _board[col, row] != null && _board[col, row].IsWild)
             {
-//                 Debug.Log($"[RulesEngine] SetBonusCell refused: ({col},{row}) is a wild tile — no gold on wilds.");
+//                 WDLog.Log($"[RulesEngine] SetBonusCell refused: ({col},{row}) is a wild tile — no gold on wilds.");
                 return;
             }
             _bonusCells[col, row] = isBonus;
@@ -268,7 +521,7 @@ namespace WordDrop
                     Mathf.Abs(p.x - pos.x) <= 2 && Mathf.Abs(p.y - pos.y) <= 2);
             }
 
-//             Debug.Log($"[RulesEngine] Initial Board Blessing: placed {positions.Count} bonus cell(s)");
+//             WDLog.Log($"[RulesEngine] Initial Board Blessing: placed {positions.Count} bonus cell(s)");
             return positions;
         }
 
@@ -286,7 +539,7 @@ namespace WordDrop
             // 40% chance to place a gold tile on a rising row (was 100% with 1-2 tiles)
             if (SurvivalRng.Value > 0.40f)
             {
-//                 Debug.Log("[RulesEngine] Board Blessing: no bonus cell this rising row (60% skip chance).");
+//                 WDLog.Log("[RulesEngine] Board Blessing: no bonus cell this rising row (60% skip chance).");
                 return bonusCols;
             }
 
@@ -313,7 +566,7 @@ namespace WordDrop
                 bonusCols.Add(col);
             }
 
-//             Debug.Log($"[RulesEngine] Board Blessing: placed {bonusCols.Count} bonus cell(s) on bottom row at col(s): {string.Join(",", bonusCols)}");
+//             WDLog.Log($"[RulesEngine] Board Blessing: placed {bonusCols.Count} bonus cell(s) on bottom row at col(s): {string.Join(",", bonusCols)}");
             return bonusCols;
         }
 
@@ -323,6 +576,58 @@ namespace WordDrop
         /// Consumes the gold status on used tiles (one-time use).
         /// </summary>
         /// <summary>Check if any tile in the word is gold. Does NOT consume.</summary>
+        /// <summary>Glow colour for a primed tile at this cell — GOLD if the primed word
+        /// covering it contains a high-value letter, else magenta. One chokepoint so the
+        /// several hardcoded PRIMED_GLOW call sites can stop guessing. 2026-09-03.</summary>
+        /// <summary>Has the primed word containing this cell reached the registry yet?
+        /// While FALSE the gold/not-gold answer for the cell is a GUESS from its own letter —
+        /// which is what made a gold word paint green for a frame and then flip. 2026-09-21.</summary>
+        public static bool PrimedWordRegisteredForCell(Vector2Int cell)
+        {
+            var inst = Instance;
+            if (inst == null || inst._primedRegistry == null) return false;
+            var words = inst._primedRegistry.GetPrimedWordsContaining(cell);
+            return words != null && words.Count > 0;
+        }
+
+        public static Color PrimedGlowForCell(Vector2Int cell)
+        {
+            var inst = Instance;
+            if (inst != null && inst._primedRegistry != null)
+            {
+                var words = inst._primedRegistry.GetPrimedWordsContaining(cell);
+                if (words != null)
+                    for (int i = 0; i < words.Count; i++)
+                        if (words[i].IsGold || words[i].HasHighValueLetter)
+                            return Tile.PRIMED_GOLD_GLOW;
+            }
+            // Not in the registry yet (visuals can run before the word is registered):
+            // fall back to the tile's own letter.
+            var t = GridManager.Instance != null ? GridManager.Instance.GetTile(cell.x, cell.y) : null;
+            if (t != null && !t.IsWild && LetterData.GetPoints(t.Letter) >= Tile.HIGH_VALUE_POINTS)
+                return Tile.PRIMED_GOLD_GLOW;
+            return Tile.PRIMED_GLOW;
+        }
+
+        /// <summary>Does this word contain a HIGH-VALUE letter (4+ points)? Drives the
+        /// GOLD primed colour + gold fly-up. Visual only — no score multiplier.</summary>
+        public bool HasHighValueLetter(RulesWordMatch match)
+        {
+            if (match.Cells == null) return false;
+            var dbg = new System.Text.StringBuilder();
+            bool hit = false;
+            for (int i = 0; i < match.Cells.Count; i++)
+            {
+                var cell = GetCell(match.Cells[i].x, match.Cells[i].y);
+                if (cell == null) { dbg.Append("[null]"); continue; }
+                if (cell.IsWild)  { dbg.Append("[wild]"); continue; }
+                int pts = LetterData.GetPoints(cell.Letter);
+                dbg.Append($"{cell.Letter}={pts} ");
+                if (pts >= Tile.HIGH_VALUE_POINTS) hit = true;
+            }
+            return hit;
+        }
+
         public bool HasGoldTile(RulesWordMatch match)
         {
             if (match.Cells == null || GridManager.Instance == null) return false;
@@ -354,7 +659,7 @@ namespace WordDrop
                     hitGold = true;
                     tile.SetGoldBonus(false); // consumed!
                     _bonusCells[match.Cells[i].x, match.Cells[i].y] = false; // clear position too
-//                     Debug.Log($"[RulesEngine] Gold tile consumed at ({match.Cells[i].x},{match.Cells[i].y})!");
+//                     WDLog.Log($"[RulesEngine] Gold tile consumed at ({match.Cells[i].x},{match.Cells[i].y})!");
                 }
             }
             return hitGold ? 2 : 1;
@@ -382,7 +687,7 @@ namespace WordDrop
             int echoCount = 0;
             if (counters.TryGetValue(startLetter, out echoCount) && echoCount > 0)
             {
-//                 Debug.Log($"[RulesEngine] Word Echo: '{word}' starts with '{startLetter}' — echo #{echoCount} → +{echoCount} bonus");
+//                 WDLog.Log($"[RulesEngine] Word Echo: '{word}' starts with '{startLetter}' — echo #{echoCount} → +{echoCount} bonus");
             }
 
             // Increment for next time
@@ -437,6 +742,26 @@ namespace WordDrop
 
         private HashSet<string> _scoredWordKeys = new HashSet<string>();
 
+        /// <summary>Keys that are in _scoredWordKeys ONLY because they arrived pre-formed in a
+        /// risen bottom row, not because anybody scored them.
+        ///
+        /// 2026-10-19 — RegisterWordsAtRow(0) marks every word in a new bottom row as "scored"
+        /// so it will not AUTO-prime. That is right for the scanner and wrong for a player: a
+        /// deliberate swipe of a word you spotted is exactly what the feature is for, and those
+        /// words were being refused as "already claimed". Worse, RebuildScoredKeysAfterRise
+        /// remaps the keys upward, so the block followed the word up the board forever — the
+        /// word was unclaimable for the rest of the run. (Spencer: HOT on the bottom row.)
+        /// Tracked separately so a swipe can allow them while genuinely-scored words stay
+        /// blocked.</summary>
+        private HashSet<string> _riseSeededKeys = new HashSet<string>();
+
+        /// <summary>True when this key is blocked ONLY by the rise-seeding rule above, so a
+        /// deliberate player claim should be allowed through.</summary>
+        public bool IsRiseSeededKey(string key) => _riseSeededKeys.Contains(key);
+
+        /// <summary>Consume the rise-seeding exemption once a player actually claims it.</summary>
+        public void ClearRiseSeededKey(string key) => _riseSeededKeys.Remove(key);
+
         /// <summary>Check if a word key has already been scored (for external validation).</summary>
         public bool IsScoredKey(string key) => _scoredWordKeys.Contains(key);
 
@@ -482,7 +807,7 @@ namespace WordDrop
             }
             Instance = this;
             ClearBoard();
-//             Debug.Log("[RulesEngine] Awake — 7×6 board initialized. " +
+//             WDLog.Log("[RulesEngine] Awake — 7×6 board initialized. " +
                       // "Detecting horizontal + vertical words (3–7 letters). NO diagonals.");
         }
 
@@ -724,7 +1049,7 @@ namespace WordDrop
                 _board[chosen[rest[i]].x, chosen[rest[i]].y].RequiredWordLength = Mathf.Max(2, midWordLen);
             // Remaining chests keep RequiredWordLength = 0 (regular — crack on any word).
 
-            Debug.Log($"[Vault] SeedVaultBoard: startFillRows={startFillRows} density={fillDensity:0.00} → column heights {minH}-{maxH} of {ROWS} (cap {fillCap}); placed {chosen.Count}/{vaultCount} — {hi} high(≥{highWordLen}) {mid} mid(≥{midWordLen}) {Mathf.Max(0, chosen.Count - hi - mid)} regular.");
+            WDLog.Log($"[Vault] SeedVaultBoard: startFillRows={startFillRows} density={fillDensity:0.00} → column heights {minH}-{maxH} of {ROWS} (cap {fillCap}); placed {chosen.Count}/{vaultCount} — {hi} high(≥{highWordLen}) {mid} mid(≥{midWordLen}) {Mathf.Max(0, chosen.Count - hi - mid)} regular.");
         }
 
         /// <summary>Vaults: how many anchored vaults remain on the board (objective polls this).</summary>
@@ -819,13 +1144,14 @@ namespace WordDrop
                     _board[col, row] = null;
 
             _scoredWordKeys.Clear();
+            _riseSeededKeys.Clear();
             _primedRegistry.Clear();
             _globalTurn = 0;
             ClearAllBonusCells();
             ClearAllCyanCells();
             ClearEchoCounters();
 
-//             Debug.Log("[RulesEngine] Board cleared.");
+//             WDLog.Log("[RulesEngine] Board cleared.");
         }
 
         public int GetLowestEmptyRow(int col)
@@ -986,7 +1312,7 @@ namespace WordDrop
                 _board[col, 0] = null;
             }
 
-//             Debug.Log($"[RulesEngine] ShiftBoardUp — moved {moves.Count} tiles up by 1 row.");
+//             WDLog.Log($"[RulesEngine] ShiftBoardUp — moved {moves.Count} tiles up by 1 row.");
             return moves;
         }
 
@@ -1546,7 +1872,7 @@ namespace WordDrop
                     PurgeScoredKeysForCells(new List<Vector2Int> { new Vector2Int(col, row) });
 
                     nudged++;
-//                     Debug.Log($"[PostGravityFertility] Nudged ({col},{row}): '{oldLetter}' → '{bestLetter}'");
+//                     WDLog.Log($"[PostGravityFertility] Nudged ({col},{row}): '{oldLetter}' → '{bestLetter}'");
                 }
             }
 
@@ -1577,7 +1903,7 @@ namespace WordDrop
             bool fertility = SurvivalManager.IsSurvivalMode && !SurvivalManager.NoAssistMode;
 
             // Stone tiles
-            float stoneChance = SurvivalManager.IsSurvivalMode && !StonesDisabled && SurvivalManager.Instance != null
+            float stoneChance = !ROCKS_OFF && SurvivalManager.IsSurvivalMode && !StonesDisabled && SurvivalManager.Instance != null
                 ? SurvivalManager.Instance.GetStoneChance() : 0f;
             var stoneColumns = new HashSet<int>();
             for (int col = 0; col < COLS; col++)
@@ -1609,6 +1935,33 @@ namespace WordDrop
                     }
                 }
 
+                // 2026-09-03: HIGH-VALUE LETTER INJECTION.
+                // Best-of-N selection quietly EXCLUDES rare letters: J/X/Q/Z/K/V form far
+                // fewer words, so every candidate row containing one scores worse and
+                // loses. Across 12-24 attempts they essentially never survive — which is
+                // why the gold high-value tiles never appeared on the board. Nothing
+                // penalises them explicitly; it is emergent from picking the most
+                // "playable" row every time. So seed one deliberately, sometimes.
+                // RICH VEINS raises how often a rising row carries a high-value letter.
+                float hvChance = RunBuffs.HighValueChance(HIGH_VALUE_ROW_CHANCE);
+                if (bestRow != null && hvChance > 0f
+                    && SurvivalRng.Value < hvChance)
+                {
+                    // pick a column that is not a stone and not already high-value
+                    var slots = new List<int>();
+                    for (int c = 0; c < COLS; c++)
+                        if (!stoneColumns.Contains(c) && bestRow[c] != '\0' && bestRow[c] != '#'
+                            && LetterData.GetPoints(bestRow[c]) < Tile.HIGH_VALUE_POINTS)
+                            slots.Add(c);
+                    if (slots.Count > 0)
+                    {
+                        int col = slots[Mathf.Clamp((int)(SurvivalRng.Value * slots.Count), 0, slots.Count - 1)];
+                        int pick = Mathf.Clamp((int)(SurvivalRng.Value * HIGH_VALUE_LETTERS.Length),
+                                               0, HIGH_VALUE_LETTERS.Length - 1);
+                        bestRow[col] = HIGH_VALUE_LETTERS[pick];
+                    }
+                }
+
                 if (bestRow != null)
                     System.Array.Copy(bestRow, letters, COLS);
                 else
@@ -1621,7 +1974,7 @@ namespace WordDrop
                     }
                 }
 
-//                 Debug.Log($"[RulesEngine] FillBottomRow FERTILE — score={bestScore} row={new string(letters)}");
+//                 WDLog.Log($"[RulesEngine] FillBottomRow FERTILE — score={bestScore} row={new string(letters)}");
             }
             else
             {
@@ -1651,7 +2004,7 @@ namespace WordDrop
                     letters[col] = drawn;
                 }
 
-//                 Debug.Log($"[RulesEngine] FillBottomRow — {new string(letters)}");
+//                 WDLog.Log($"[RulesEngine] FillBottomRow — {new string(letters)}");
             }
 
             // Commit to board — skip empty columns (gaps from tall-column relief)
@@ -1706,10 +2059,11 @@ namespace WordDrop
                     string key = words[i].Word + "|" + words[i].CellKey;
                     if (_scoredWordKeys.Add(key))
                         registered++;
+                    _riseSeededKeys.Add(key);   // blocked for AUTO-priming only — a swipe may still claim it
                 }
             }
             // if (registered > 0)
-//                 Debug.Log($"[RulesEngine] RegisterWordsAtRow({row}): registered {registered} word(s)");
+//                 WDLog.Log($"[RulesEngine] RegisterWordsAtRow({row}): registered {registered} word(s)");
         }
 
         /// <summary>
@@ -1734,23 +2088,138 @@ namespace WordDrop
 
                 int expiresOn = _globalTurn + GetFuseLength(match.Word.Length);
                 int primedId = _primedRegistry.AddPrimedWord(
-                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score);
-                justPrimedIds.Add(primedId);
+                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score,
+                    isGold: false, hasHighValueLetter: HasHighValueLetter(match));
+                if (primedId >= 0) justPrimedIds.Add(primedId);   // -1 = rejected by the branch gate
 
                 _scoredWordKeys.Add(key);
 
                 newWords.Add(match);
-//                 Debug.Log($"[RulesEngine] Auto-drop created word '{match.Word}' ({score} pts) at ({col},{row}) — PRIMED!");
+//                 WDLog.Log($"[RulesEngine] Auto-drop created word '{match.Word}' ({score} pts) at ({col},{row}) — PRIMED!");
             }
 
             // if (newWords.Count > 0)
-//                 Debug.Log($"[RulesEngine] Auto-drop primed {newWords.Count} new word(s)!");
+//                 WDLog.Log($"[RulesEngine] Auto-drop primed {newWords.Count} new word(s)!");
             if (justPrimedIds.Count > 0)
                 ResetExistingPrimedWordsForNewPrime(justPrimedIds, _globalTurn);
 
             return newWords;
         }
 
+        // ── SWIPE-TO-CLAIM (2026-10-19 Spencer) ───────────────────────────────────
+        /// <summary>Master switch for the swipe-to-claim mechanic.</summary>
+        public static bool SWIPE_WORDS_ENABLED = true;
+
+        /// <summary>Minimum length for a SWIPED word.
+        ///
+        /// REVISED 2026-10-19 from 4 down to 3, same day it was written. The 4 was my call on
+        /// anti-spam grounds and it was wrong — Spencer swiped MAD and it silently refused.
+        ///
+        /// The original reasoning conflated ABUNDANT with EFFICIENT. 3-letter words are
+        /// everywhere (66 of the 75 accidental words on a random board), but MEASURED:
+        ///   • allowing 3 raises the best-swipe-available from 29.8 to 31.8 pts/move (+2.1),
+        ///     because the best word on the board is usually 4+ anyway;
+        ///   • a lone 3-letter word scores ~6 pts against building's 46 — SEVEN TIMES worse;
+        ///   • across 220 boards there was never one where 3-letter was the only option.
+        /// Each swipe costs a move, so a 6-point claim is self-limiting. The short-word-spam
+        /// problem was flat bonuses making them efficient, and that was already fixed on
+        /// 2026-09-09 by cutting BREAKER_BONUS 10 -> 2.
+        ///
+        /// MIN_WORD_LENGTH (3) is the engine-wide floor; this matches it deliberately, so
+        /// "it is a word in the dictionary" is the only rule a player has to learn.</summary>
+        public static int SWIPE_MIN_LENGTH = 3;
+
+        /// <summary>Whether a swipe may run diagonally. OFF — Spencer 2026-10-19: "you
+        /// shouldn't be able to make diagonal words". Claude added 8 directions unprompted;
+        /// "straight lines only" was answering straight-line-vs-Boggle-path, not endorsing
+        /// diagonals. Swipes are horizontal or vertical, in EITHER direction — which is what
+        /// the original ask ("shouldn't words work backwards too?") actually needed.</summary>
+        public static bool SWIPE_ALLOW_DIAGONAL = false;
+
+        /// <summary>Validates an explicit, player-selected straight-line path and returns the
+        /// word match for it, or null with a reason. Scoring and priming are deliberately NOT
+        /// done here — the caller routes the match through HandManager.PrimeAndPresentWords so
+        /// swipes and swaps share one scoring pipeline (chain multiplier, echo bonus, gold
+        /// multiplier, scored-key registration). A second scoring path is the documented
+        /// desync landmine.
+        ///
+        /// FOUR directions by default — horizontal and vertical, either way round. The AUTO
+        /// scanner reads only two (L-to-R, top-to-bottom), so the extra two are exactly the
+        /// backwards words it cannot see, which is what Spencer asked for. Auto-detecting
+        /// those would double the accidental words on a random board (21 -> 42, measured) and
+        /// arm webs nobody intended; a word the PLAYER traces is not an accident, so intent is
+        /// the filter. Diagonals are OFF — see SWIPE_ALLOW_DIAGONAL.</summary>
+        public RulesWordMatch BuildExplicitMatch(List<Vector2Int> cells, out string reject)
+        {
+            reject = null;
+            if (cells == null || cells.Count < SWIPE_MIN_LENGTH) { reject = "too short"; return null; }
+
+            // Straight line, one of the 8 compass directions, every step the same.
+            int dc = cells[1].x - cells[0].x;
+            int dr = cells[1].y - cells[0].y;
+            if (Mathf.Abs(dc) > 1 || Mathf.Abs(dr) > 1 || (dc == 0 && dr == 0))
+            { reject = "not a straight line"; return null; }
+            if (!SWIPE_ALLOW_DIAGONAL && dc != 0 && dr != 0)
+            { reject = "diagonal"; return null; }
+            for (int i = 1; i < cells.Count; i++)
+                if (cells[i].x - cells[i - 1].x != dc || cells[i].y - cells[i - 1].y != dr)
+                { reject = "not a straight line"; return null; }
+
+            var sb = new System.Text.StringBuilder(cells.Count);
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var cell = GetCell(cells[i].x, cells[i].y);
+                if (cell == null) { reject = "empty cell"; return null; }
+                // Same exclusions TryBoardSwap applies — a swipe must not claim a tile a swap
+                // could not touch, or the two verbs disagree about what the board contains.
+                if (cell.IsStone || cell.IsFrozen || cell.IsWild) { reject = "blocked tile"; return null; }
+                if (cell.IsSwapRefill || cell.IsEditRefill || cell.IsWildRefill) { reject = "blocked tile"; return null; }
+                if (_primedRegistry != null
+                    && _primedRegistry.GetPrimedWordsContaining(cells[i]).Count > 0)
+                { reject = "already armed"; return null; }
+                sb.Append(cell.Letter);
+            }
+
+            string word = sb.ToString();
+
+            // ACCEPT THE PATH IN EITHER ORDER. 2026-10-19 — this is the whole point of the
+            // feature and the first build missed it. The words a player can actually FIND by
+            // eye are precisely the ones the auto-scanner cannot see, i.e. the backwards and
+            // diagonal ones; a left-to-right word is already primed before they could trace it.
+            // But a player reading a backwards word still drags left-to-right, which spells it
+            // reversed. So try the trace order, then its reverse, and keep whichever is real.
+            // Cells are reversed alongside the word because downstream code maps Word[i] to
+            // Cells[i] (WildLetterIndices, the primed glow, CellKey).
+            var ordered = new List<Vector2Int>(cells);
+            if (!WordDictionary.IsValidWord(word))
+            {
+                char[] rev = word.ToCharArray();
+                System.Array.Reverse(rev);
+                string back = new string(rev);
+                if (!WordDictionary.IsValidWord(back))
+                { reject = $"neither '{word}' nor '{back}' is a word"; return null; }
+                word = back;
+                ordered.Reverse();
+            }
+
+            var match = new RulesWordMatch
+            {
+                Word      = word,
+                Cells     = ordered,
+                Direction = (dr == 0) ? WordDirection.Horizontal
+                          : (dc == 0) ? WordDirection.Vertical
+                                      : WordDirection.Diagonal,
+                Score     = 0,
+            };
+
+            // CellKey SORTS its cells before hashing, so a reversed claim over cells that have
+            // already scored collides with the existing key and is refused here with no extra
+            // rule — e.g. swiping TAC across the letters a CAT already used.
+            string mkey = word + "|" + match.CellKey;
+            if (IsScoredKey(mkey) && !IsRiseSeededKey(mkey))
+            { reject = "already claimed"; return null; }
+            return match;
+        }
         /// <summary>Scans the ENTIRE board and primes every valid word that isn't
         /// already primed/scored. Used by the Jester Hat shuffle so a rearrangement
         /// that happens to form words primes them (the booster's upside). Mirrors
@@ -1774,7 +2243,8 @@ namespace WordDrop
 
                 int expiresOn = _globalTurn + GetFuseLength(match.Word.Length);
                 int primedId = _primedRegistry.AddPrimedWord(
-                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score);
+                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score,
+                    isGold: false, hasHighValueLetter: HasHighValueLetter(match));
                 justPrimedIds.Add(primedId);
 
                 _scoredWordKeys.Add(key);
@@ -1814,7 +2284,8 @@ namespace WordDrop
 
                 int expiresOn = _globalTurn + GetFuseLength(match.Word.Length);
                 int primedId = _primedRegistry.AddPrimedWord(
-                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score);
+                    match.Word, match.Cells, -1, _globalTurn, expiresOn, score,
+                    isGold: false, hasHighValueLetter: HasHighValueLetter(match));
                 justPrimedIds.Add(primedId);
 
                 _scoredWordKeys.Add(key);
@@ -1839,8 +2310,10 @@ namespace WordDrop
             // Rising rows shift every tile up by 1 row.
             // Remap each existing scored key: y → y+1.
             // Drop any key whose cell would be at or above ROWS (tile was crushed).
-            var oldKeys = new List<string>(_scoredWordKeys);
+            var oldKeys  = new List<string>(_scoredWordKeys);
+            var oldSeeded = new HashSet<string>(_riseSeededKeys);
             _scoredWordKeys.Clear();
+            _riseSeededKeys.Clear();
 
             int remapped = 0;
             int dropped  = 0;
@@ -1876,7 +2349,11 @@ namespace WordDrop
 
                 if (valid)
                 {
-                    _scoredWordKeys.Add(wordPart + "|" + newCoords.ToString());
+                    string newKey = wordPart + "|" + newCoords.ToString();
+                    _scoredWordKeys.Add(newKey);
+                    // The exemption has to ride along, or the word becomes unclaimable the
+                    // instant it rises one row.
+                    if (oldSeeded.Contains(key)) _riseSeededKeys.Add(newKey);
                     remapped++;
                 }
                 else
@@ -1885,7 +2362,7 @@ namespace WordDrop
                 }
             }
 
-//             Debug.Log($"[RulesEngine] RebuildScoredKeysAfterRise — remapped {remapped} keys, dropped {dropped} (crushed/invalid).");
+//             WDLog.Log($"[RulesEngine] RebuildScoredKeysAfterRise — remapped {remapped} keys, dropped {dropped} (crushed/invalid).");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -1955,12 +2432,12 @@ namespace WordDrop
 
             if (wildIndices != null && wildIndices.Count > 0)
             {
-//                 Debug.Log($"[RulesEngine] CalculateWordScore('{word}'): " +
+//                 WDLog.Log($"[RulesEngine] CalculateWordScore('{word}'): " +
                           // $"raw={raw} (wilds={wildIndices.Count} zeroed) × {multiplier:F1} = {score}");
             }
             else
             {
-//                 Debug.Log($"[RulesEngine] CalculateWordScore('{word}'): " +
+//                 WDLog.Log($"[RulesEngine] CalculateWordScore('{word}'): " +
                           // $"raw={raw} × {multiplier:F1} = {score}");
             }
 
@@ -1994,7 +2471,7 @@ namespace WordDrop
             int targetRow = GetLowestEmptyRow(col);
             if (targetRow < 0)
             {
-//                 Debug.Log($"[RulesEngine] ProcessDrop: col {col} is full — cannot place.");
+//                 WDLog.Log($"[RulesEngine] ProcessDrop: col {col} is full — cannot place.");
                 return result;
             }
 
@@ -2010,7 +2487,7 @@ namespace WordDrop
             };
             _board[col, targetRow] = cellData;
 
-//             Debug.Log($"[RulesEngine] ProcessDrop: placed '{letter}' at ({col},{targetRow}) " +
+//             WDLog.Log($"[RulesEngine] ProcessDrop: placed '{letter}' at ({col},{targetRow}) " +
                       // $"player={playerIndex}");
 
             // 3. Emit TileDropped event
@@ -2075,7 +2552,7 @@ namespace WordDrop
                 });
 
                 // if (chainStep > 0)
-//                     Debug.Log($"[RulesEngine] CHAIN step {chainStep}: {newWords.Count} new word(s)!");
+//                     WDLog.Log($"[RulesEngine] CHAIN step {chainStep}: {newWords.Count} new word(s)!");
 
                 // 5c. Score, prime, and check triggers for each new word
                 // Collect all cells that need to be exploded this step
@@ -2118,7 +2595,7 @@ namespace WordDrop
                     baseScoreAccum += baseScore;
                     chainBonusAccum += chainBonus;
 
-                    Debug.Log($"[RulesEngine] Scored '{match.Word}': base={baseScore}" +
+                    WDLog.Log($"[RulesEngine] Scored '{match.Word}': base={baseScore}" +
                               (chainBonus > 0 ? $" +chain({chainBonus}, effStep={effectiveChainStep})" : "") +
                               (echoBonus > 0 ? $" +echo({echoBonus})" : "") +
                               $" = {finalScore} pts  [rawStep={chainStep}, clusterSize={newWords.Count}]");
@@ -2145,7 +2622,8 @@ namespace WordDrop
                         _globalTurn,
                         expiresOn,
                         finalScore,
-                        isGoldWord);
+                        isGoldWord,
+                        HasHighValueLetter(match));
 
                     justPrimedThisResolution.Add(primedId);
 
@@ -2188,7 +2666,7 @@ namespace WordDrop
 
                             primedIdsToExplode.Add(pw.Id);
 
-//                             Debug.Log($"[RulesEngine] TRIGGER! New word '{match.Word}' " +
+//                             WDLog.Log($"[RulesEngine] TRIGGER! New word '{match.Word}' " +
                                       // $"at cell ({cell.x},{cell.y}) overlaps primed " +
                                       // $"'{pw.Word}' (id={pw.Id})");
 
@@ -2240,7 +2718,7 @@ namespace WordDrop
                                 oldPw.OverlapFuseBonusGranted += OVERLAP_FUSE_EXTENSION;
                                 alreadyExtended.Add(oldPw.Id);
                                 RefreshPrimedWordTiles(oldPw, _globalTurn);
-                                Debug.Log($"[OverlapFuse] Legacy: '{newPw.Word}' touched '{oldPw.Word}' " +
+                                WDLog.Log($"[OverlapFuse] Legacy: '{newPw.Word}' touched '{oldPw.Word}' " +
                                           $"→ +{OVERLAP_FUSE_EXTENSION} fuse " +
                                           $"(expires={oldPw.ExpiresOnTurn}, " +
                                           $"granted={oldPw.OverlapFuseBonusGranted}/{MAX_OVERLAP_FUSE_BONUS})");
@@ -2262,7 +2740,7 @@ namespace WordDrop
                         var pw = connectedGroup[g];
                         if (primedIdsToExplode.Contains(pw.Id)) continue;
                         primedIdsToExplode.Add(pw.Id);
-//                         Debug.Log($"[PrimedChain] Legacy path: chain-connected '{pw.Word}' (id={pw.Id})");
+//                         WDLog.Log($"[PrimedChain] Legacy path: chain-connected '{pw.Word}' (id={pw.Id})");
                     }
                 }
 
@@ -2299,16 +2777,18 @@ namespace WordDrop
                         // Detonation bonus: base + heat fuse + chain-depth scaling
                         int survivedTurns = Mathf.Max(0, _globalTurn - pw.PrimedOnTurn);
                         int heatBonus = Mathf.Min(survivedTurns * HEAT_FUSE_PER_TURN, HEAT_FUSE_MAX_BONUS);
-                        int rawBonus = Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER) + BREAKER_BONUS + heatBonus;
+                        // BIGGER BLAST scales the re-score; SHORT FUSE raises the flat floor.
+                int rawBonus = Mathf.RoundToInt(pw.Score * RunBuffs.DetonationMultiplier(DETONATION_SCORE_MULTIPLIER))
+                             + RunBuffs.BreakerBonus(BREAKER_BONUS) + heatBonus;
 
                         // Evaluate multiplier at depth+1 so the opening detonation is 2x,
                         // not a flat 1x. The triangular cap still applies inside the helper.
                         float chainMultiplier = TriangularChainMultiplier(chainStep + 1);
-                        float goldMultiplier = pw.IsGold ? 2f : 1f; // balanced: same 2x as normal gold scoring // gold primed words detonate for 3x
+                        float goldMultiplier = pw.IsGold ? RunBuffs.GoldMultiplier(2f) : 1f;   // GOLDEN TOUCH // balanced: same 2x as normal gold scoring // gold primed words detonate for 3x
                         int bonus = Mathf.RoundToInt(rawBonus * chainMultiplier * goldMultiplier);
 
                         detonationBonus += bonus;
-//                         Debug.Log($"[RulesEngine] DETONATION BONUS: '{pw.Word}' explodes for +{bonus} pts " +
+//                         WDLog.Log($"[RulesEngine] DETONATION BONUS: '{pw.Word}' explodes for +{bonus} pts " +
                                   // $"(base={BREAKER_BONUS} heat={heatBonus} survived={survivedTurns} chain={chainStep} x{chainMultiplier:F1})");
 
                         // Remove from registry
@@ -2320,6 +2800,7 @@ namespace WordDrop
                     detonationBonusAccum += detonationBonus;
 
                     if (!_splashFiredThisResolution
+                        && BigMomentSplashEnabled       // 2026-09-10: off for the armed-web game
                         && JunkSplashEnabled            // master splash switch — off for splashOff tutorial levels
                         && SurvivalManager.IsSurvivalMode
                         && (chainStep >= 2 || longestPrimedWord >= 6 || primedIdsToExplode.Count >= 2))
@@ -2449,7 +2930,7 @@ namespace WordDrop
                                 if (_board[c, r] != null)
                                     localSeedCells.Add(new Vector2Int(c, r));
 
-//                         Debug.Log($"[RulesEngine] Gravity applied — {gravityMoves.Count} tile(s) moved.");
+//                         WDLog.Log($"[RulesEngine] Gravity applied — {gravityMoves.Count} tile(s) moved.");
                     }
 
                     // Update primed word cell positions after gravity shift
@@ -2491,7 +2972,7 @@ namespace WordDrop
             {
                 foreach (var pw in expiredList2)
                     _scoredWordKeys.Remove(pw.Word + "|" + pw.CellsString());
-//                 Debug.Log($"[RulesEngine] Expired {expired} primed word(s) at turn {_globalTurn}, scored keys purged");
+//                 WDLog.Log($"[RulesEngine] Expired {expired} primed word(s) at turn {_globalTurn}, scored keys purged");
             }
 
             // FINAL cleanup: remove any primed words whose letters no longer match
@@ -2501,7 +2982,7 @@ namespace WordDrop
             result.ChainBonusTotal = chainBonusAccum;
             result.DetonationBonusTotal = detonationBonusAccum;
 
-//             Debug.Log($"[RulesEngine] ProcessDrop complete: " +
+//             WDLog.Log($"[RulesEngine] ProcessDrop complete: " +
                       // $"words={result.ScoredWords.Count}, " +
                       // $"explosions={result.Explosions.Count}, " +
                       // $"chains={result.ChainSteps}, " +
@@ -2556,7 +3037,7 @@ namespace WordDrop
                         bool ok = (act == exp);
                         mismatchDetail += $" [{cc},{rr}]:{exp}{(ok ? "=" : "≠")}{act}";
                     }
-//                     Debug.Log($"[RulesEngine] Removing invalid primed word '{pw.Word}' (id={pw.Id}) —{mismatchDetail}");
+//                     WDLog.Log($"[RulesEngine] Removing invalid primed word '{pw.Word}' (id={pw.Id}) —{mismatchDetail}");
 
                     // Clear primed glow on surviving tiles so they don't keep glowing
                     if (GridManager.Instance != null)
@@ -2595,7 +3076,7 @@ namespace WordDrop
                     removed++;
                 }
             }
-//             Debug.Log($"[RulesEngine] ExplodeCells: removed {removed} cell(s) from data.");
+//             WDLog.Log($"[RulesEngine] ExplodeCells: removed {removed} cell(s) from data.");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -2771,11 +3252,14 @@ namespace WordDrop
                             string candidate = new string(chars);
                             if (!WordDictionary.IsValidWord(candidate)) continue;
 
-                            // Dedup by sorted cell positions — prevents same word
-                            // being found in both directions (e.g. CAT left-to-right
-                            // and CAT right-to-left at same cells)
+                            // ONE CLAIM PER CELL SET. Dedup on the CELLS ALONE, not word+cells.
+                            // 2026-10-19: with backwards scanning on, a reversible pair (BAT/TAB
+                            // — 186 such pairs in dict_core, 2% of it) is TWO different words over
+                            // the SAME tiles, so a word+cells key let both prime and paid twice for
+                            // one set of letters. Crossing words are unaffected: they share at most
+                            // one cell, so their cell keys differ.
                             string sortedCellKey = BuildSortedCellKey(cells);
-                            string dedupKey = candidate + "|" + sortedCellKey;
+                            string dedupKey = sortedCellKey;
                             if (seenKeys.Contains(dedupKey)) continue;
                             seenKeys.Add(dedupKey);
 
@@ -2896,7 +3380,7 @@ namespace WordDrop
                     var primedAtWild = _primedRegistry.GetPrimedWordsContaining(wildPos);
                     if (primedAtWild != null && primedAtWild.Count > 0)
                     {
-                        Debug.Log($"[WildResolve] SKIP ({col},{row}) — locked by {primedAtWild.Count} primed word(s): " +
+                        WDLog.Log($"[WildResolve] SKIP ({col},{row}) — locked by {primedAtWild.Count} primed word(s): " +
                                   string.Join(",", primedAtWild.ConvertAll(p => p.Word)));
                         continue; // locked by an active primed word
                     }
@@ -2928,13 +3412,13 @@ namespace WordDrop
                         // first-time '\0'→X resolution) is a NEW seed — words through it must
                         // be (re)scanned so a delayed-wild word actually primes/triggers.
                         if (oldLetter != bestLetter) resolvedCells.Add(wildPos);
-                        Debug.Log($"[WildResolve] OK ({col},{row}) '{oldLetter}'→'{bestLetter}' (longest word len={bestLen})");
+                        WDLog.Log($"[WildResolve] OK ({col},{row}) '{oldLetter}'→'{bestLetter}' (longest word len={bestLen})");
                     }
                     else
                     {
                         // Dump neighbor context so we can see why no word was possible.
                         string ctx = DumpWildNeighborhood(col, row);
-                        Debug.Log($"[WildResolve] NO-WORD ({col},{row}) stays uncommitted. {ctx}");
+                        WDLog.Log($"[WildResolve] NO-WORD ({col},{row}) stays uncommitted. {ctx}");
                     }
                 }
             }
@@ -3069,7 +3553,7 @@ namespace WordDrop
             // Purge any scored keys involving this cell so new words through the wild score fresh.
             PurgeScoredKeysForCells(new List<Vector2Int> { new Vector2Int(col, row) });
 
-//             Debug.Log($"[RulesEngine] DebugSetWild: ({col},{row}) is now a wild tile (letter cleared).");
+//             WDLog.Log($"[RulesEngine] DebugSetWild: ({col},{row}) is now a wild tile (letter cleared).");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -3161,7 +3645,7 @@ namespace WordDrop
 
             if (!InBounds(col, row) || _board[col, row] == null)
             {
-//                 Debug.Log($"[RulesEngine] FindNewWords({col},{row}) — cell is empty or out of bounds.");
+//                 WDLog.Log($"[RulesEngine] FindNewWords({col},{row}) — cell is empty or out of bounds.");
                 return results;
             }
 
@@ -3268,13 +3752,15 @@ namespace WordDrop
                         if (!WordDictionary.IsValidWord(candidate))
                             continue;
 
+                        // ONE CLAIM PER CELL SET — see the note on the other scanner.
+                        // A reversible pair (BAT/TAB) is two words over identical cells.
                         string sortedCellKey = BuildSortedCellKey(wordCells);
-                        string dedupKey = candidate + "|" + sortedCellKey;
+                        string dedupKey = sortedCellKey;
                         if (seenKeys.Contains(dedupKey)) continue;
                         seenKeys.Add(dedupKey);
 
                         string dirName = dirIdx % 2 == 0 ? "horizontal" : "vertical";
-//                         Debug.Log($"[RulesEngine] Found word '{candidate}' " +
+//                         WDLog.Log($"[RulesEngine] Found word '{candidate}' " +
                                   // $"({dirName}) at cells {BuildCellKey(wordCells)}");
 
                         results.Add(new RulesWordMatch
@@ -3290,7 +3776,7 @@ namespace WordDrop
             }
 
             // if (results.Count > 0)
-//                 Debug.Log($"[RulesEngine] FindNewWords({col},{row}) → {results.Count} word(s) found.");
+//                 WDLog.Log($"[RulesEngine] FindNewWords({col},{row}) → {results.Count} word(s) found.");
 
             return results;
         }
@@ -3395,7 +3881,7 @@ namespace WordDrop
         [ContextMenu("Run Unit Tests")]
         public void RunUnitTests()
         {
-//             Debug.Log("[RulesEngine] ══ BEGIN UNIT TESTS ══");
+//             WDLog.Log("[RulesEngine] ══ BEGIN UNIT TESTS ══");
 
             // ── Test 1: 3-cell horizontal CAT ─────────────────────────────────────
             ClearBoard();
@@ -3405,7 +3891,7 @@ namespace WordDrop
 
             var matches1 = FindNewWords(1, 0);
             bool found1 = ContainsWord(matches1, "CAT");
-//             Debug.Log($"[RulesEngine] Test 1 — horizontal 'CAT': " +
+//             WDLog.Log($"[RulesEngine] Test 1 — horizontal 'CAT': " +
                       // $"{(found1 ? "✓ PASS" : "✗ FAIL")}");
 
             // ── Test 2: diagonal CAT — should NOT find ─────────────────────────────
@@ -3416,7 +3902,7 @@ namespace WordDrop
 
             var matches2 = FindNewWords(1, 1);
             bool found2 = ContainsWord(matches2, "CAT");
-//             Debug.Log($"[RulesEngine] Test 2 — diagonal 'CAT': " +
+//             WDLog.Log($"[RulesEngine] Test 2 — diagonal 'CAT': " +
                       // $"{(!found2 ? "✓ PASS" : "✗ FAIL")}");
 
             // ── Test 3: CalculateWordScore ─────────────────────────────────────────
@@ -3424,7 +3910,7 @@ namespace WordDrop
             int scoreFire = CalculateWordScore("FIRE");  // F(4)+I(1)+R(1)+E(1)=7 × 1.5 = 11 (rounded)
             int scoreSlate = CalculateWordScore("SLATE"); // S(1)+L(1)+A(1)+T(1)+E(1)=5 × 2.0 = 10
             bool test3 = (scoreCat == 5) && (scoreFire == 11) && (scoreSlate == 10);
-//             Debug.Log($"[RulesEngine] Test 3 — CalculateWordScore: CAT={scoreCat}(exp5) " +
+//             WDLog.Log($"[RulesEngine] Test 3 — CalculateWordScore: CAT={scoreCat}(exp5) " +
                       // $"FIRE={scoreFire}(exp11) SLATE={scoreSlate}(exp10) " +
                       // $"{(test3 ? "✓ PASS" : "✗ FAIL")}");
 
@@ -3454,7 +3940,7 @@ namespace WordDrop
             OnWordPrimed -= primedHandler;
 
             bool test4 = wordScoredFired && wordPrimedFired && res4.AnyWordScored;
-//             Debug.Log($"[RulesEngine] Test 4 — ProcessDrop 'T' forms CAT: " +
+//             WDLog.Log($"[RulesEngine] Test 4 — ProcessDrop 'T' forms CAT: " +
                       // $"scored={wordScoredFired} primed={wordPrimedFired} " +
                       // $"{(test4 ? "✓ PASS" : "✗ FAIL")}");
 
@@ -3466,7 +3952,7 @@ namespace WordDrop
             List<RulesWordMatch> simMatches = SimulateDrop(3, 'S', 1);
             // 'S' at (3,0) — horizontal: ...T S — "ATS"? unlikely to be valid
             // This mainly verifies SimulateDrop runs without error.
-//             Debug.Log($"[RulesEngine] Test 5 — SimulateDrop('S', col=3): " +
+//             WDLog.Log($"[RulesEngine] Test 5 — SimulateDrop('S', col=3): " +
                       // $"{simMatches.Count} match(es) found ✓ (no crash)");
 
             // ── Test 6: SimulateDropWithTriggerCheck ────────────────────────────────
@@ -3480,12 +3966,12 @@ namespace WordDrop
             // Clean up the manually placed cell
             _board[1, 1] = null;
 
-//             Debug.Log($"[RulesEngine] Test 6 — SimulateDropWithTriggerCheck: " +
+//             WDLog.Log($"[RulesEngine] Test 6 — SimulateDropWithTriggerCheck: " +
                       // $"wouldTrigger={wouldTrigger} matches={trigMatches.Count}");
 
             // ── Summary ───────────────────────────────────────────────────────────
             bool allPassed = found1 && !found2 && test3 && test4;
-//             Debug.Log($"[RulesEngine] ══ UNIT TESTS {(allPassed ? "ALL PASSED ✓" : "SOME FAILED ✗")} ══");
+//             WDLog.Log($"[RulesEngine] ══ UNIT TESTS {(allPassed ? "ALL PASSED ✓" : "SOME FAILED ✗")} ══");
 
             ClearBoard();
         }
@@ -3755,7 +4241,7 @@ namespace WordDrop
                 _bonusCells[col, targetRow] = false;
 
                 replaced = true;
-//                 Debug.Log($"[RulesEngine] BeginDrop: column {col} full — replacing top tile '{oldLetter}' with '{letter}'");
+//                 WDLog.Log($"[RulesEngine] BeginDrop: column {col} full — replacing top tile '{oldLetter}' with '{letter}'");
             }
 
             var cellData = new RulesCellData
@@ -3789,7 +4275,7 @@ namespace WordDrop
 
             // Expiry moved to FinalizeDrop — gives last-turn detonation chance
 
-//             Debug.Log($"[RulesEngine] BeginDrop: placed '{letter}' at ({col},{targetRow}) player={playerIndex}");
+//             WDLog.Log($"[RulesEngine] BeginDrop: placed '{letter}' at ({col},{targetRow}) player={playerIndex}");
 
             OnTileDropped?.Invoke(new TileDroppedEvent
             {
@@ -3867,7 +4353,7 @@ namespace WordDrop
             _stepSeedCells          = new List<Vector2Int> { new Vector2Int(col, row) };
             _currentPhase           = ResolutionPhase.TileDropped;
 
-//             Debug.Log($"[RulesEngine] BeginRewrite: replaced '{oldLetter}' with '{newLetter}' " +
+//             WDLog.Log($"[RulesEngine] BeginRewrite: replaced '{oldLetter}' with '{newLetter}' " +
                       // $"at ({col},{row}) player={playerIndex}");
 
             return new StepResult { Phase = ResolutionPhase.TileDropped, Row = row };
@@ -3883,6 +4369,7 @@ namespace WordDrop
         /// </summary>
         public void BeginSwapResolution(List<RulesWordMatch> detectedWords, int playerIndex, HashSet<int> justPrimedIds)
         {
+            _tapResolution = false;   // a word the PLAYER made may chain; see _tapResolution
             LastResolutionWasSwap   = true; // swap/edit-initiated → swap-tutorial objectives count these explosions
             _stepPlayerIndex        = playerIndex;
             _stepChainDepth         = 0;
@@ -3907,9 +4394,93 @@ namespace WordDrop
             // NextStep() at WordsScored calls DoCheckTriggers().
             _currentPhase = ResolutionPhase.WordsScored;
 
-//             Debug.Log($"[RulesEngine] BeginSwapResolution: {detectedWords.Count} word(s) from swap, " +
+//             WDLog.Log($"[RulesEngine] BeginSwapResolution: {detectedWords.Count} word(s) from swap, " +
                       // $"{_stepJustPrimed.Count} just-primed, player={playerIndex}");
         }
+
+        // ── BeginTapDetonation (ARMED-WEB) ───────────────────────────────────────────
+
+        /// <summary>2026-09-03 ARMED-WEB: the PLAYER taps a primed word to fire it.
+        /// Seeds the resolution with that word plus every primed word connected to it,
+        /// then hands off to the SAME staggered chain payoff the auto-fuse used
+        /// (DoCheckTriggers → DoExplode → gravity → cascade). Returns false if the tap
+        /// did not land on a primed word.</summary>
+        /// <summary>How many primed words contain this cell — lets the input layer ask
+        /// "is this tile part of an armed word?" without reaching into the registry.</summary>
+        public int GetPrimedWordsContainingPublic(Vector2Int cell)
+        {
+            var hits = _primedRegistry != null ? _primedRegistry.GetPrimedWordsContaining(cell) : null;
+            return hits != null ? hits.Count : 0;
+        }
+
+        /// <summary>Every cell of every primed word containing this cell — i.e. exactly what a
+        /// tap here is about to detonate. Exists so the press can react on the WHOLE word rather
+        /// than the one tile under the finger. Empty list if nothing is primed here. 2026-09-08.</summary>
+        public System.Collections.Generic.List<Vector2Int> GetPrimedCellsContaining(Vector2Int cell)
+        {
+            var outCells = new System.Collections.Generic.List<Vector2Int>();
+            var words = _primedRegistry != null ? _primedRegistry.GetPrimedWordsContaining(cell) : null;
+            if (words == null) return outCells;
+            for (int i = 0; i < words.Count; i++)
+            {
+                var c = words[i].Cells;
+                if (c == null) continue;
+                for (int j = 0; j < c.Count; j++)
+                    if (!outCells.Contains(c[j])) outCells.Add(c[j]);
+            }
+            return outCells;
+        }
+
+        public bool BeginTapDetonation(Vector2Int cell, int playerIndex)
+        {
+            if (!ArmedWebMode) return false;
+            var hits = _primedRegistry.GetPrimedWordsContaining(cell);
+            if (hits == null || hits.Count == 0) return false;
+
+            LastResolutionWasSwap    = true;   // player-initiated, like a swap
+            _stepPlayerIndex         = playerIndex;
+            _stepChainDepth          = 0;
+            _stepTotalScore          = 0;
+            _stepChainTriggeredCount = 0;
+            _splashFiredThisResolution = false;
+            _tapResolution           = true;
+            _stepJustPrimed          = new HashSet<int>();   // nothing is exempt — the player chose
+            _stepScoredKeys          = new HashSet<string>();
+            _stepPendingWords        = new List<RulesWordMatch>();
+            _stepTriggerWords        = null;
+            _stepPendingTriggers     = null;
+
+            // Seed with the tapped word(s); DoCheckTriggers expands to the whole
+            // connected web via FindConnectedGroup, exactly as an auto-trigger did.
+            _tapCell    = cell;
+            _tapDiag    = true;
+            _tapSeedIds = new HashSet<int>();
+            for (int i = 0; i < hits.Count; i++) _tapSeedIds.Add(hits[i].Id);
+
+            var seeds = new List<Vector2Int>();
+            for (int i = 0; i < hits.Count; i++)
+                if (hits[i].Cells != null) seeds.AddRange(hits[i].Cells);
+            _stepSeedCells = seeds;
+
+            _currentPhase = ResolutionPhase.WordsScored;
+            WDLog.Log($"[ArmedWeb] Tap at ({cell.x},{cell.y}) -> seeding {_tapSeedIds.Count} primed word(s)");
+            return true;
+        }
+
+        /// <summary>True while a resolution that the player STARTED BY TAPPING is running.
+        ///
+        /// Crossing a primed word to link it into the web is the core verb — but it is meant to
+        /// happen when the PLAYER makes a word, not off the back of a cascade they did not
+        /// author. Without this flag, tapping one web detonated it, the falling tiles happened
+        /// to form a word that overlapped a completely separate primed cluster on the other side
+        /// of the board, and that cluster detonated too — the player never chose it, and its
+        /// outline was left hanging over the empty cells. 2026-09-10 Spencer.</summary>
+        private bool _tapResolution;
+
+        /// <summary>Ids the player's tap seeded this resolution; consumed by DoCheckTriggers.</summary>
+        private HashSet<int> _tapSeedIds;
+        private Vector2Int   _tapCell;
+        private bool         _tapDiag;
 
         // ── BeginCascadeAfterBoosterClear ────────────────────────────────────────────
 
@@ -3993,7 +4564,7 @@ namespace WordDrop
 
             _currentPhase = ResolutionPhase.GravityApplied;
 
-            Debug.Log($"[RulesEngine] BeginCascadeAfterBoosterClear: " +
+            WDLog.Log($"[RulesEngine] BeginCascadeAfterBoosterClear: " +
                       $"cleared={clearedList.Count}, moves={gravityMoves.Count}, " +
                       $"seeds={_stepSeedCells.Count}, player={playerIndex}");
 
@@ -4007,7 +4578,7 @@ namespace WordDrop
                     if (i > 0) cb.Append(",");
                     cb.Append($"({clearedList[i].x},{clearedList[i].y})");
                 }
-                Debug.Log($"[BoosterDbg] CascadeClearedList: {cb}");
+                WDLog.Log($"[BoosterDbg] CascadeClearedList: {cb}");
             }
             if (gravityMoves.Count > 0)
             {
@@ -4019,7 +4590,7 @@ namespace WordDrop
                     mb.Append($"({kvp.Key.x},{kvp.Key.y})→({kvp.Value.x},{kvp.Value.y})");
                     first = false;
                 }
-                Debug.Log($"[BoosterDbg] CascadeGravityMoves: {mb}");
+                WDLog.Log($"[BoosterDbg] CascadeGravityMoves: {mb}");
             }
 
             return gravityMoves;
@@ -4069,7 +4640,7 @@ namespace WordDrop
             // so we must be idempotent.
             if (_currentPhase == ResolutionPhase.Idle)
             {
-//                 Debug.Log("[RulesEngine] FinalizeDrop: already Idle — skipping (idempotent guard).");
+//                 WDLog.Log("[RulesEngine] FinalizeDrop: already Idle — skipping (idempotent guard).");
                 return;
             }
 
@@ -4082,7 +4653,7 @@ namespace WordDrop
                 // Purge scored keys so expired words can be re-primed
                 foreach (var pw in expiredList)
                     _scoredWordKeys.Remove(pw.Word + "|" + pw.CellsString());
-//                 Debug.Log($"[RulesEngine] FinalizeDrop: expired {expired} primed word(s), scored keys purged");
+//                 WDLog.Log($"[RulesEngine] FinalizeDrop: expired {expired} primed word(s), scored keys purged");
 
                 // 2026-06-03 Spencer: diffuse cue — these words extinguished without
                 // detonating. Collect their tiles and hand them to WordDropFX for a
@@ -4101,7 +4672,7 @@ namespace WordDrop
                             if (t != null) diffuseTiles.Add(t);
                         }
                     }
-                    Debug.Log($"[DiffusePop] FinalizeDrop expired {expired} word(s) → queued {diffuseTiles.Count} tile(s) (turn={_globalTurn})");
+                    WDLog.Log($"[DiffusePop] FinalizeDrop expired {expired} word(s) → queued {diffuseTiles.Count} tile(s) (turn={_globalTurn})");
                     WordDropFX.Instance.QueueDiffusePops(diffuseTiles);
                 }
             }
@@ -4121,7 +4692,7 @@ namespace WordDrop
             _stepPendingWords    = null;
             _stepPendingTriggers = null;
 
-//             Debug.Log($"[RulesEngine] FinalizeDrop: turn incremented to {_globalTurn}, phase=Idle.");
+//             WDLog.Log($"[RulesEngine] FinalizeDrop: turn incremented to {_globalTurn}, phase=Idle.");
         }
 
         // ── FinalizeBoosterCascade ───────────────────────────────────────────────────
@@ -4149,7 +4720,7 @@ namespace WordDrop
             _stepPendingWords    = null;
             _stepPendingTriggers = null;
 
-            Debug.Log("[RulesEngine] FinalizeBoosterCascade: phase=Idle (globalTurn unchanged).");
+            WDLog.Log("[RulesEngine] FinalizeBoosterCascade: phase=Idle (globalTurn unchanged).");
         }
 
         // ── Do* step methods ─────────────────────────────────────────────────────────
@@ -4182,7 +4753,7 @@ namespace WordDrop
             {
                 RemoveInvalidPrimedWords();
                 _currentPhase = ResolutionPhase.Complete;
-//                 Debug.Log($"[RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth={_stepChainDepth}).");
+//                 WDLog.Log($"[RulesEngine] DoDetectWords: no new words — resolution complete (chainDepth={_stepChainDepth}).");
                 return new StepResult
                 {
                     Phase = ResolutionPhase.Complete,
@@ -4193,7 +4764,7 @@ namespace WordDrop
             _stepPendingWords = newWords;
             _currentPhase = ResolutionPhase.WordsDetected;
 
-//             Debug.Log($"[RulesEngine] DoDetectWords: found {newWords.Count} new word(s) at chainDepth={_stepChainDepth}.");
+//             WDLog.Log($"[RulesEngine] DoDetectWords: found {newWords.Count} new word(s) at chainDepth={_stepChainDepth}.");
 
             return new StepResult
             {
@@ -4214,6 +4785,11 @@ namespace WordDrop
             // moment, flat score. See decision log 2026-04-17.
             int effectiveChainStep = _stepChainDepth + Mathf.Max(0, _stepPendingWords.Count - 1);
 
+            // NOTE: this loop SCORES and PRIMES the words a cascade forms. It is NOT the
+            // trigger loop — that is the second pass over _stepPendingWords further down, and
+            // that is the one gated on _tapResolution. Gating THIS one (2026-09-10, briefly)
+            // stopped cascade words scoring or priming at all during a tap, which is how a
+            // cascade could spell BOMB and leave it sitting there dead.
             for (int w = 0; w < _stepPendingWords.Count; w++)
             {
                 RulesWordMatch match = _stepPendingWords[w];
@@ -4233,7 +4809,7 @@ namespace WordDrop
                 match.Score    = finalScore;
                 _stepTotalScore += finalScore;
 
-                Debug.Log($"[RulesEngine] Scored '{match.Word}': base={baseScore}" +
+                WDLog.Log($"[RulesEngine] Scored '{match.Word}': base={baseScore}" +
                           (chainBoosted - baseScore > 0 ? $" +chain({chainBoosted - baseScore}, effStep={effectiveChainStep})" : "") +
                           (echoBonus > 0 ? $" +echo({echoBonus})" : "") +
                           $" = {finalScore} pts  [rawStep={_stepChainDepth}, clusterSize={_stepPendingWords.Count}]");
@@ -4250,7 +4826,8 @@ namespace WordDrop
                     _globalTurn,
                     expiresOn,
                     finalScore,
-                    isGoldWord);
+                    isGoldWord,
+                    HasHighValueLetter(match));
 
                 _stepJustPrimed.Add(primedId);
 
@@ -4286,7 +4863,7 @@ namespace WordDrop
                 };
                 OnWordPrimed?.Invoke(primedEvt);
 
-//                 Debug.Log($"[RulesEngine] DoScoreAndPrime: '{match.Word}' base={baseScore}" +
+//                 WDLog.Log($"[RulesEngine] DoScoreAndPrime: '{match.Word}' base={baseScore}" +
 //                           (chainBonus > 0 ? $" +chain({chainBonus})" : "") +
 //                           $" = {finalScore} pts  [chain={_stepChainDepth}] primedId={primedId}");
             }
@@ -4361,36 +4938,74 @@ namespace WordDrop
             }
 
             if (resetCount > 0)
-                Debug.Log($"[FuseReset] Total: {resetCount} words reset, {_primedRegistry.Count} total primed");
+                WDLog.Log($"[FuseReset] Total: {resetCount} words reset, {_primedRegistry.Count} total primed");
 #pragma warning restore CS0162
         }
 
-        public void RefreshAllPrimedWordTiles(int currentTurn = -1)
+        /// <summary>Ids already given the "you armed a word" flash, so a refresh after
+        /// every gravity step re-applies the glow WITHOUT re-flashing the whole board.</summary>
+        private readonly HashSet<int> _flashedPrimedIds = new HashSet<int>();
+
+        public void RefreshAllPrimedWordTiles(int currentTurn = -1, bool flashNew = false)
         {
             if (_primedRegistry == null) return;
             int turn = currentTurn >= 0 ? currentTurn : _globalTurn;
 
+            bool anyNew = false;
             for (int p = 0; p < _primedRegistry.Count; p++)
             {
                 var pw = _primedRegistry.GetByIndex(p);
-                RefreshPrimedWordTiles(pw, turn);
+                if (pw == null) continue;
+                // 2026-09-03: words formed by a CASCADE prime just like a dropped word,
+                // so they get the same arm flash. Judged by the word's OWN PrimedOnTurn —
+                // tracking flashed ids failed because primed-word ids are REUSED, so new
+                // cascade words came back with ids already marked as flashed.
+                bool isNew = flashNew && pw.PrimedOnTurn >= turn;
+                RefreshPrimedWordTiles(pw, turn, playFlash: isNew);
+                if (isNew) anyNew = true;
+            }
+
+            if (anyNew)
+            {
+                GameAudio.Instance?.PlayTilePrimed();
+                HapticsManager.Light();
             }
         }
 
-        private void RefreshPrimedWordTiles(PrimedWordRegistry.PrimedWord pw, int currentTurn, int heatOverride = -1)
+        private void RefreshPrimedWordTiles(PrimedWordRegistry.PrimedWord pw, int currentTurn, int heatOverride = -1, bool playFlash = false)
         {
             if (GridManager.Instance == null || pw == null || pw.Cells == null) return;
 
             int survived = Mathf.Max(0, currentTurn - pw.PrimedOnTurn);
             int heatLevel = heatOverride >= 0 ? heatOverride : Mathf.Min(survived, HEAT_FUSE_MAX_BONUS);
             int fuseRemaining = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
-            Color glowColor = pw.IsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
+            // GOLD primed colour for gold-bonus words AND for words containing a
+            // high-value letter (visual parity with the gold resting face).
+            bool goldLook = pw.IsGold || pw.HasHighValueLetter;
+            Color glowColor = goldLook ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
 
             for (int c = 0; c < pw.Cells.Count; c++)
             {
                 Tile tile = GridManager.Instance.GetTile(pw.Cells[c].x, pw.Cells[c].y);
-                if (tile != null)
-                    tile.SetPrimedGlow(glowColor, playFlash: false, heatLevel: heatLevel, fuseRemaining: fuseRemaining, isGold: pw.IsGold, maxAge: pw.MaxAgeSeconds);
+                if (tile == null) continue;
+
+                // GOLD WINS, ALWAYS (2026-09-10 Spencer: "a gold word should take precedence
+                // over everything else. no half colours if there's two words that overlap").
+                // This method repaints PER WORD, so on a shared tile whichever word refreshed
+                // last won — a rose word would stomp the gold another word had just set, and the
+                // tile flickered between the two. Ask the CELL whether any word on it is gold,
+                // not just the word being refreshed.
+                bool cellGold = goldLook;
+                if (!cellGold)
+                {
+                    var onCell = _primedRegistry.GetPrimedWordsContaining(pw.Cells[c]);
+                    if (onCell != null)
+                        for (int w = 0; w < onCell.Count && !cellGold; w++)
+                            if (onCell[w].IsGold || onCell[w].HasHighValueLetter) cellGold = true;
+                }
+                Color cellColor = cellGold ? Tile.PRIMED_GOLD_GLOW : glowColor;
+
+                tile.SetPrimedGlow(cellColor, playFlash: playFlash, heatLevel: heatLevel, fuseRemaining: fuseRemaining, isGold: cellGold, maxAge: pw.MaxAgeSeconds);
             }
         }
 
@@ -4399,15 +5014,42 @@ namespace WordDrop
             var triggeredIds = new HashSet<int>();
             var triggerEvents = new List<PrimedTriggeredEvent>();
 
+            // ARMED-WEB: a player TAP seeds the trigger set directly. Everything below
+            // (connected-group expansion, DoExplode, the staggered payoff) then runs
+            // exactly as it did for an auto-trigger.
+            if (_tapSeedIds != null && _tapSeedIds.Count > 0)
+            {
+                Vector2Int cellTapped = _tapCell;
+                foreach (int id in _tapSeedIds)
+                {
+                    var pw = _primedRegistry.GetById(id);
+                    if (pw == null || triggeredIds.Contains(id)) continue;
+                    triggeredIds.Add(id);
+                    triggerEvents.Add(new PrimedTriggeredEvent
+                    {
+                        TriggeredWord  = pw.Word,
+                        TriggeredCells = new List<Vector2Int>(pw.Cells),
+                        TriggerWord      = "TAP",        // player-initiated, no crossing word
+                        OverlapCell      = cellTapped,
+                        OwnerPlayerIndex = pw.OwnerPlayer,
+                        PrimedWordId     = pw.Id,
+                    });
+                }
+                _tapSeedIds = null;
+            }
+
             // Bonus Mode redesign (2026-04-18): auto-detonate removed. Bonus is now
             // "5 free moves" — normal gameplay continues, just without rising-row
             // tick or stage-budget cost. No triangular scoring, no forced ignition.
 
-//             Debug.Log($"[RulesEngine] DoCheckTriggers: {_stepPendingWords.Count} new word(s), " +
+//             WDLog.Log($"[RulesEngine] DoCheckTriggers: {_stepPendingWords.Count} new word(s), " +
                       // $"{_primedRegistry.Count} primed word(s) on board, " +
                       // $"{_stepJustPrimed.Count} just-primed this resolution");
 
-            for (int w = 0; w < _stepPendingWords.Count; w++)
+            // A tap detonates the web the player CHOSE and nothing else. Words the cascade
+            // throws up still score and prime normally (loop above) — they just cannot ignite
+            // an unrelated primed cluster on the far side of the board. 2026-09-10 Spencer.
+            for (int w = 0; !_tapResolution && w < _stepPendingWords.Count; w++)
             {
                 RulesWordMatch match = _stepPendingWords[w];
 
@@ -4442,9 +5084,13 @@ namespace WordDrop
                             && _stepChainDepth > 0;
                         if (!skipJustPrimedFilter && _stepJustPrimed.Contains(pw.Id)) continue;
                         if (triggeredIds.Contains(pw.Id)) continue;
+                        // ARMED-WEB: crossing LINKS the words (they are already in the
+                        // registry, so FindConnectedGroup will treat them as one web)
+                        // but must NOT detonate. The player pulls the trigger.
+                        if (ArmedWebMode) continue;
 
                         triggeredIds.Add(pw.Id);
-//                         Debug.Log($"[RulesEngine] DoCheckTriggers: '{match.Word}' OVERLAPS primed '{pw.Word}' (id={pw.Id}) at ({cell.x},{cell.y})");
+//                         WDLog.Log($"[RulesEngine] DoCheckTriggers: '{match.Word}' OVERLAPS primed '{pw.Word}' (id={pw.Id}) at ({cell.x},{cell.y})");
 
                         triggerEvents.Add(new PrimedTriggeredEvent
                         {
@@ -4472,9 +5118,10 @@ namespace WordDrop
 
                             if (_stepJustPrimed.Contains(pw.Id)) continue;
                             if (triggeredIds.Contains(pw.Id)) continue;
+                            if (ArmedWebMode) continue;   // adjacency links, never fires
 
                             triggeredIds.Add(pw.Id);
-//                             Debug.Log($"[RulesEngine] DoCheckTriggers: '{match.Word}' ADJACENT to primed '{pw.Word}' (id={pw.Id}) at ({cell.x},{cell.y})");
+//                             WDLog.Log($"[RulesEngine] DoCheckTriggers: '{match.Word}' ADJACENT to primed '{pw.Word}' (id={pw.Id}) at ({cell.x},{cell.y})");
 
                             triggerEvents.Add(new PrimedTriggeredEvent
                             {
@@ -4501,7 +5148,15 @@ namespace WordDrop
                 // cascade (chainDepth > 0) in level/survival, words primed THIS resolution ARE allowed to trigger,
                 // so they must also be allowed to JOIN the connected chain group. Was: always excluded here →
                 // cascade-formed connected primes silently failed to chain. 2026-07-08 Spencer.
-                var chainExclude = ((GameManager.IsLevelMode || SurvivalManager.IsSurvivalMode) && _stepChainDepth > 0)
+                // ARMED-WEB (2026-09-09 Spencer): words primed THIS resolution — the ones
+                // gravity just formed — must NOT be swept into the detonation that created
+                // them. That is the "explode one set and another primed area goes off by
+                // itself" behaviour. It was correct for the drop game, where cascades were
+                // meant to self-propagate; here the player pulls every trigger, so a cascade
+                // word primes and WAITS to be tapped. Excluding them always keeps that true.
+                var chainExclude = (!ArmedWebMode
+                                    && (GameManager.IsLevelMode || SurvivalManager.IsSurvivalMode)
+                                    && _stepChainDepth > 0)
                     ? null : _stepJustPrimed;
                 var connectedGroup = _primedRegistry.FindConnectedGroup(triggeredIds, chainExclude);
                 for (int g = 0; g < connectedGroup.Count; g++)
@@ -4511,8 +5166,13 @@ namespace WordDrop
 
                     triggeredIds.Add(pw.Id);
                     chainTriggeredCount++;
+                    // 2026-09-10: is the chained word REALLY sharing a tile with the tapped web,
+                    // or is the grouping looser than the outline's? Prints the cells so a run can
+                    // answer it instead of another guess. Remove once settled.
+                    if (_tapDiag)
+                        WDLog.Log($"[ChainDiag] chained '{pw.Word}' cells=[{string.Join(" ", (pw.Cells ?? new List<Vector2Int>()).ConvertAll(c => $"({c.x},{c.y})"))}]");
 
-//                     Debug.Log($"[PrimedChain] Chain-connected: '{pw.Word}' (id={pw.Id}) added to detonation group");
+//                     WDLog.Log($"[PrimedChain] Chain-connected: '{pw.Word}' (id={pw.Id}) added to detonation group");
 
                     triggerEvents.Add(new PrimedTriggeredEvent
                     {
@@ -4530,7 +5190,7 @@ namespace WordDrop
 
                 if (chainTriggeredCount > 0)
                 {
-//                     Debug.Log($"[PrimedChain] ConnectedGroup size={triggeredIds.Count} " +
+//                     WDLog.Log($"[PrimedChain] ConnectedGroup size={triggeredIds.Count} " +
                               // $"(direct={triggeredIds.Count - chainTriggeredCount}, chain={chainTriggeredCount}) " +
                               // $"words=[{string.Join(", ", triggerEvents.ConvertAll(e => e.TriggeredWord))}]");
                 }
@@ -4573,7 +5233,7 @@ namespace WordDrop
                             oldPw.OverlapFuseBonusGranted += OVERLAP_FUSE_EXTENSION;
                             alreadyExtendedThisStep.Add(oldPw.Id);
                             RefreshPrimedWordTiles(oldPw, _globalTurn);
-                            Debug.Log($"[OverlapFuse] '{newPw.Word}' touched '{oldPw.Word}' " +
+                            WDLog.Log($"[OverlapFuse] '{newPw.Word}' touched '{oldPw.Word}' " +
                                       $"→ +{OVERLAP_FUSE_EXTENSION} fuse " +
                                       $"(expires={oldPw.ExpiresOnTurn}, " +
                                       $"granted={oldPw.OverlapFuseBonusGranted}/{MAX_OVERLAP_FUSE_BONUS})");
@@ -4582,13 +5242,19 @@ namespace WordDrop
                 }
             }
 
+            if (_tapDiag)
+            {
+                _tapDiag = false;
+                WDLog.Log($"[ArmedWeb] DoCheckTriggers end: triggeredIds={triggeredIds.Count} " +
+                          $"chainAdded={chainTriggeredCount} phase->{(triggeredIds.Count==0?"Complete":"TriggersFound")}");
+            }
             if (triggeredIds.Count == 0)
             {
                 // No triggers — resolution done for this chain
                 RemoveInvalidPrimedWords();
                 _currentPhase = ResolutionPhase.Complete;
 
-//                 Debug.Log($"[RulesEngine] DoCheckTriggers: no triggers — resolution complete.");
+//                 WDLog.Log($"[RulesEngine] DoCheckTriggers: no triggers — resolution complete.");
 
                 return new StepResult
                 {
@@ -4647,6 +5313,9 @@ namespace WordDrop
             {
                 data.IsFrozen = false;          // thaw: ice cleared, tile becomes a normal letter
                 thawed.Add(cell);               // surface to the visual layer for the defrost VFX
+                // Bounty rides the SAME accumulator the words use (_stepTotalScore -> StepResult
+                // .TotalScore), so it flows through the one scoring path rather than a second one.
+                _stepTotalScore += ICE_BOUNTY;
                 return true;                    // tile survives — NOT destroyed, NOT in allExplodedCells
             }
             // Already thawed earlier THIS resolution (by the word) — a later splash sweep must not
@@ -4792,7 +5461,7 @@ namespace WordDrop
                 // by the full triangular + cluster multiplier.
                 OnDetonationScored?.Invoke(bonus);
 
-//                 Debug.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
+//                 WDLog.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
                           // $"(rescore={Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER)} base={BREAKER_BONUS} heat={heatBonus} chain={_stepChainDepth} x{chainMultiplier:F1})");
 
                 _primedRegistry.RemovePrimedWord(pid);
@@ -4878,7 +5547,8 @@ namespace WordDrop
                 // depth inflation in DoExplode — see top-of-method comment.
                 // Phase 9.7: big-moment splash stays Survival-only even though the
                 // outer trigger-word-clear block now runs in Level mode too.
-                bool splashGate = SurvivalManager.IsSurvivalMode
+                bool splashGate = BigMomentSplashEnabled   // 2026-09-10: off for the armed-web game
+                    && SurvivalManager.IsSurvivalMode
                     && !_splashFiredThisResolution
                     && ((_stepChainDepth >= 2)
                         || (longestPrimedWord >= 6)
@@ -5031,11 +5701,11 @@ namespace WordDrop
                     }
 
                     _stepTotalScore += splashBaseBonus + splashPrimedBonus;
-//                     Debug.Log($"[DoExplode] Splash: +{splashBaseBonus} base + {splashPrimedBonus} primed detonation = {splashBaseBonus + splashPrimedBonus}");
+//                     WDLog.Log($"[DoExplode] Splash: +{splashBaseBonus} base + {splashPrimedBonus} primed detonation = {splashBaseBonus + splashPrimedBonus}");
                 }
 
                 _stepTriggerWords = null;
-//                 Debug.Log($"[RulesEngine] DoExplode: Survival trigger-word clear — total exploded cells: {allExplodedCells.Count}");
+//                 WDLog.Log($"[RulesEngine] DoExplode: Survival trigger-word clear — total exploded cells: {allExplodedCells.Count}");
             }
 
             // NOTE: _stepPendingTriggers nulled AFTER splash/row-clear logic below
@@ -5108,7 +5778,7 @@ namespace WordDrop
             // Now safe to add stone positions to the exploded list
             allExplodedCells.AddRange(stoneCleared);
             // if (stoneClearCount > 0)
-//                 Debug.Log($"[RulesEngine] DoExplode: cleared {stoneClearCount} stone tile(s) via splash damage");
+//                 WDLog.Log($"[RulesEngine] DoExplode: cleared {stoneClearCount} stone tile(s) via splash damage");
 
             // ── Junk splash: scales with PRIMED word length ──
             // 3-letter: 0 splash (tactical glue, not artillery)
@@ -5177,7 +5847,7 @@ namespace WordDrop
                 }
 
                 // if (junkCleared > 0)
-//                     Debug.Log($"[RulesEngine] DoExplode: junk splash cleared {junkCleared} tile(s) (wordLen={longestPrimedWord})");
+//                     WDLog.Log($"[RulesEngine] DoExplode: junk splash cleared {junkCleared} tile(s) (wordLen={longestPrimedWord})");
             }
 
             // ── 7-letter jackpot: clear the entire row of the longest primed word ──
@@ -5216,7 +5886,7 @@ namespace WordDrop
                         }
                     }
                     // if (rowCleared > 0)
-//                         Debug.Log($"[RulesEngine] DoExplode: 7-LETTER JACKPOT — cleared row {clearRow} ({rowCleared} extra tiles)");
+//                         WDLog.Log($"[RulesEngine] DoExplode: 7-LETTER JACKPOT — cleared row {clearRow} ({rowCleared} extra tiles)");
                 }
             }
 
@@ -5227,7 +5897,7 @@ namespace WordDrop
             PurgeStepScoredKeysForCells(allExplodedCells);
 
             // if (swapRefillCount > 0 || editRefillCount > 0 || wildRefillCount > 0)
-//                 Debug.Log($"[RulesEngine] DoExplode: refills collected — swap={swapRefillCount} edit={editRefillCount} wild={wildRefillCount}");
+//                 WDLog.Log($"[RulesEngine] DoExplode: refills collected — swap={swapRefillCount} edit={editRefillCount} wild={wildRefillCount}");
 
             return new StepResult
             {
@@ -5285,7 +5955,7 @@ namespace WordDrop
                     }
                 }
 
-//                 Debug.Log($"[RulesEngine] DoGravity: {gravityMoves.Count} tile(s) moved.");
+//                 WDLog.Log($"[RulesEngine] DoGravity: {gravityMoves.Count} tile(s) moved.");
             }
 
             RemoveInvalidPrimedWords();
@@ -5302,14 +5972,14 @@ namespace WordDrop
             //     {
             //         int nudged = NudgeTilesForFertility(2 - nearWords);
             //         if (nudged > 0)
-            //             Debug.Log($"[RulesEngine] PostGravityFertility: nudged {nudged} tile(s) (nearWords was {nearWords})");
+            //             WDLog.Log($"[RulesEngine] PostGravityFertility: nudged {nudged} tile(s) (nearWords was {nearWords})");
             //     }
             // }
 
             _stepChainDepth++;
             _currentPhase = ResolutionPhase.GravityApplied;
 
-//             Debug.Log($"[RulesEngine] DoGravity: chainDepth now {_stepChainDepth}, looping back to detect.");
+//             WDLog.Log($"[RulesEngine] DoGravity: chainDepth now {_stepChainDepth}, looping back to detect.");
 
             return new StepResult
             {
@@ -5362,6 +6032,7 @@ namespace WordDrop
     {
         Horizontal = 0,
         Vertical   = 1,
+        Diagonal   = 2,   // swipe-only; the auto scanner never produces this
     }
 
     public class RulesWordMatch

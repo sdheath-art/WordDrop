@@ -47,9 +47,28 @@ namespace WordDrop
         // tile sprite being TALLER than its cell. (An earlier pass used a separate
         // non-square row pitch from a 0.782 aspect measured off a 70px screenshot
         // crop; that was wrong and made the tiles look tall and skinny.)
-        public const float TILE_ASPECT   = 0.833f;   // tile w/h
+        /// <summary>Tile width / height, taken from the ACTUAL art. 2026-09-15: the tile is now
+        /// rendered FRONT-ON at 249x239, so 249/239 = 1.0418. It was **0.833** (= 249/299), which
+        /// described the old TILTED art whose extra ~20% height was the top face.
+        ///
+        /// Two places derive from it and BOTH were adding phantom height at the top:
+        ///   playH        = CellSize * ((ROWS-1) + 1/TILE_ASPECT)   -- reserved 1.20 cells for the
+        ///                  top row instead of 0.96, so the board carried 0.24 of a cell of dead
+        ///                  space up there and the top margin read fatter than the bottom.
+        ///   overshootHalf= ((1/TILE_ASPECT) - 1) * 0.5             -- biased EVERY row up by 0.10
+        ///                  of a cell to let the top face stick up behind the tile above.
+        /// At 1.0418 the first becomes 0.96 and the second becomes -0.02, i.e. both effectively
+        /// vanish — margins equal on all four sides. Spencer: "you dont have to account for the
+        /// weird perspective sizing anymore so every side should have the same border".</summary>
+        public const float TILE_ASPECT   = 1.0040f;  // 502/500 — Spencer's peach_tile, front-on
         public const float TILE_TOP_FACE = 0.167f;   // hidden behind the tile above
-        public float RowPitch => CellSize;           // SQUARE pitch
+        /// <summary>Vertical pitch = the tile's REAL height. 2026-09-15: was `CellSize` (a square
+        /// pitch), which was right when the tile overhung its cell by 20% and rows OVERLAPPED.
+        /// Front-on the tile is 0.96 cells tall, so a square pitch left a 0.04-cell gap between
+        /// rows while columns butted edge-to-edge (TILE_DISPLAY_RATIO = 1.0) — uneven spacing.
+        /// Now rows butt exactly like columns. Spencer: "each letter should have equal spacing
+        /// between the top and sides".</summary>
+        public float RowPitch => CellSize / TILE_ASPECT;
         public const float ROW_Z_STEP = 0.01f;   // per-row depth so upper rows draw in front
 
         public static int COLS     => RulesEngine.COLS;
@@ -76,9 +95,74 @@ namespace WordDrop
         // See project_wordrop_visual_direction_2026_05_30.
         // 2026-06-24 Spencer: shifted from cyan #0076b0 to a softer CORNFLOWER blue to match the Candy Crush
         // board (their blue is less green/cyan, more periwinkle).
-        private static readonly Color FRAME_OUTER    = new Color(0.20f, 0.38f, 0.62f, 1f);  // deeper cornflower — matches BOARD_INNER
+        // 2026-09-10 palette pass: was deep cornflower (0.20,0.38,0.62), which sat within a
+        // few points of BOARD_INNER — so the board had no edge and read as a hole punched in
+        // the cyan background. Warm gold does three jobs at once: separates board from
+        // background, echoes the gold high-value tiles, and is the frame colour measured off
+        // Royal Match in [[reference-match3-hud-anatomy]] (#F6A212). Revert = restore the line below.
+        // 2026-09-10: REVERTED to the original warm gold at Spencer's request. (I had retuned it
+        // to hue 50 to match the tile gold on my own theory that the two were fighting — he did
+        // not ask for that. Don't change the frame as a side effect of a tile change.)
+        private static readonly Color FRAME_OUTER    = new Color(0.93f, 0.64f, 0.13f, 1f);  // warm gold rim
         private static readonly Color FRAME_EDGE     = new Color(0.220f, 0.270f, 0.540f, 1f);  // brighter top lip — sculpted
-        private static readonly Color BOARD_INNER    = new Color(0.20f, 0.38f, 0.62f, 1f);  // deeper cornflower (darkened from too-light 0.27/0.45/0.70)
+        // 2026-09-09 Spencer: #201E2C -> #453860. Compared five board values with the real
+        // tiles, correct row overlap and letters on. The old near-black made the empty area
+        // ABOVE the stack read as a hole rather than a surface — that void was the source of
+        // the "too dark / not happy" feeling, not the tiles. Deep plum is the first value
+        // where it reads as a surface while cream and gold still pop; going lighter (mid
+        // violet, or RM's #A2AEDE) starts merging the CREAM tile into the field, and cream is
+        // the majority piece. Warm violet-red bias rather than the old cold blue-black.
+        // 2026-09-10: was #453860 deep plum — measured at only 26% saturation, i.e. grey with a
+        // purple lean, which is why it read dusty rather than candy. Spencer picked mid blue from
+        // a 4-up and then a light 4-up, and he was right on both counts:
+        //  • LIGHTER is happier — the dark options all read moody next to it.
+        //  • but NOT Royal Match's lavender (#99A8D3, sat 30%). RM can use a desaturated board
+        //    because its pieces are saturated reds/greens/golds that break it up. WordDrop's
+        //    tiles are ALL ONE CREAM, so a low-chroma board just repeats the dusty problem.
+        // Mid blue at ~42% sat: complements the warm cream tiles (hue 215 vs tile hue 40) and
+        // is bright enough to feel happy without washing the tiles out.
+        // Revert = the line below.
+        //   was: new Color(0.271f, 0.220f, 0.376f, 1f)  // #453860 deep plum
+        // 2026-09-10: ROYAL MATCH lavender, measured off ~/Documents/WordDrop_Art/refs_2026_09_10/
+        // royalmatch.png = #99A8D3 (hue 224, sat 30%, L 66). Specified ~8% brighter than target
+        // because MEASURED: this project's post (bloom 1.3 / vignette) renders colours ~8% under
+        // the literal — #59739A came out #516A8F, #6696CC came out #5F8DC2.
+        // 2026-09-10 (Spencer's idea): TRANSLUCENT DARK TINT instead of an opaque slab — the
+        // Candy Crush construction, where the board is a smoked panel and the background reads
+        // THROUGH it. Two reasons it is the right call here:
+        //  • it ties the board to the scene instead of parking an opaque rectangle on top of it,
+        //  • it is the right foundation for the painted background he wants later — the art will
+        //    show through the play area rather than being hidden behind it.
+        // Alpha survives CreateRoundedRect (it does col.a *= coverage for the AA edge) and the
+        // default sprite material blends normally.
+        // 2026-09-10: TOON BLAST construction. Measured off the reference: TB has NO board
+        // surface at all — a thin outline round the play area and the painted scene straight
+        // through it (visible in the notches where no cube sits). The earlier 52% smoked panel
+        // still read as a slab because a tint over a FLAT gradient just makes another flat
+        // colour; there was nothing behind it to see.
+        // NOTE: TB gets away with this because its board is always FULL — every cell holds a
+        // saturated cube, so the surface is never visible. WordDrop's board is ~2/3 EMPTY, so
+        // this shows a lot of background. It needs the painted art behind it to pay off.
+        // 2026-09-10 — SPENCER CALLED IT: "i think its just black with alpha down to look like a
+        // tint". MEASURED off toonblast.png and he is right. Cross-section of TB's board edge:
+        //   x=10-19  #C1D2D0 L=81  background
+        //   x=20-26  #E4C795 L=79  cream frame rim (~7px)
+        //   x=27-46  #3A3B3D L=24  BOARD  (~20px of padding before the first cube)
+        //   x=47+                  first cube
+        // #3A3B3D is 58,59,61 — NEUTRAL grey, R~=G~=B. A coloured panel never lands that
+        // neutral. And background #C1D2D0 x 0.30 = (58,63,62), i.e. pure BLACK at ~70% alpha.
+        // So: no hue at all. Just black, alpha down. Every tinted-navy attempt before this was
+        // wrong for the same reason — it added a colour where the reference has none.
+        /// <summary>Board surface. 2026-09-21 Spencer: **#113B77**.
+        /// Was pure black at alpha 0.62, i.e. the colour came from whatever showed THROUGH it —
+        /// which is why it read as teal rather than any chosen value. Now opaque, so the hex is
+        /// exactly what renders. CELL_GRID_A/B still stack on top as low-alpha black, so the
+        /// checkerboard continues to work off this as its base.</summary>
+        // 2026-09-22: #113B77 -> #1A468E, sampled from Spencer's authored inner_board@2x.
+        // Kept in sync so anything deriving from BOARD_INNER (the checkerboard washes, the
+        // mini-board at CreateBoardSprite) agrees with the panel the player actually sees.
+        private static readonly Color BOARD_INNER    = new Color(0.1020f, 0.2745f, 0.5569f, 1f); // #1A468E
+
 
         // Cells: readable against board — lighter face, dark inset border
         private static readonly Color CELL_FILL_COLOR   = new Color(0.150f, 0.190f, 0.410f, 1f);  // slightly brighter than board inner
@@ -113,6 +197,63 @@ namespace WordDrop
         [SerializeField, Range(0.5f, 1.3f)] private float _cellLinerScale   = 0.95f; // 2026-06-05 Spencer: back to original. Size as a fraction of the cell pitch.
         [SerializeField] private Color _cellLinerTint    = Color.white;
         [SerializeField, Range(0f, 1f)]     private float _cellLinerOpacity = 1f;
+        // ── BAKED CELL GRID (2026-09-10) ───────────────────────────────────────────
+        // The board interior was flat plum, so a settled row read as ONE SLAB of letters
+        // rather than nine movable pieces — which fights the swap verb, since the thing the
+        // player must see is individual, rearrangeable objects.
+        //
+        // The cell-liner system above already existed for this, but (a) it was compile-gated
+        // OFF to chase frame drops on device and (b) its authored texture
+        // ("menu psds/cell_liner") is MISSING from Resources, so turning it back on draws
+        // nothing. It also cost 99 SpriteRenderers — one per cell — which is why it cost
+        // frames in the first place.
+        //
+        // This bakes the whole grid into ONE sprite instead: zero per-cell renderers, one
+        // draw call, no missing asset. Colours are derived from BOARD_INNER rather than
+        // imported from the Royal Match reference, so it adds STRUCTURE without changing
+        // Spencer's palette. Set CELL_GRID_ENABLED=false to revert entirely.
+        /// <summary>Margin between the board's inner edge and the tiles, as a fraction of the
+        /// playable width, per side. 2026-09-10 Spencer: "there's still no space padding between
+        /// the edges and the letters" — and he was right, there was mathematically NONE:
+        /// `CellSize = playW / COLS` sized the tiles to fill the playable area exactly, so they
+        /// ran straight into the frame. MEASURED on toonblast.png: ~20px of board between the
+        /// frame rim and the first cube, against a ~63px cube — about a third of a cell.
+        /// 0 restores the old flush behaviour.</summary>
+        /// 2026-09-10: started at 0.025 (24% of a cell) — Spencer: "the margin you gave me is
+        /// huge in comparison to the toon blast margin". My measurement was inflated because the
+        /// scan kept hitting TB's side rail rather than a normal cube. Halved to ~12% of a cell.
+        public static float BOARD_PAD_FRAC = 0.008f;   // 2026-09-10: 0.025 too big, 0.012 still a touch wide — Spencer wanted the tiles a hair closer to the rim
+
+        public static bool  CELL_GRID_ENABLED = true;
+
+        // 2026-09-22: Spencer's authored socket (rectangle_pattern@2x, re-centred on import).
+        // When present it REPLACES the procedural rounded rect and the A/B checkerboard — his
+        // art is one design, drawn identically in every cell. Clear the string to go back.
+        public static string CELL_SOCKET_ASSET  = "Tiles/cell_socket@2x";
+        // Fraction of the CELL the socket occupies. His export is 226 px against a 245 px cell
+        // pitch at 2x (0.922), which is the size he drew it — but tiles butt edge-to-edge at
+        // TILE_DISPLAY_RATIO = 1.0, so at 0.922 an empty cell was 8% smaller than the tile that
+        // fills it and the grid changed rhythm as the board filled. 1.0 makes the empty slot the
+        // exact footprint of its tile. Back to 226f/245f for his authored gutter.
+        public static float  CELL_SOCKET_W_FRAC = 1.0f;
+        public static float CELL_GRID_INSET   = 0.05f;   // gap around each cell, as a fraction of the cell
+        public static float CELL_GRID_RADIUS  = 0.20f;   // corner radius, as a fraction of the cell
+        /// <summary>The two checkerboard shades. Both start from BOARD_INNER (#453860) nudged
+        /// lighter, so the board still reads plum. Push them apart for a stronger check.</summary>
+        // 2026-09-10: on the old DARK plum board these were LIGHTER than it. On the new mid-blue
+        // board they must be DARKER — a socket is a recess, so it reads as shadow, not highlight.
+        // Sockets sit slightly DARKER than the board — a recess reads as shadow, not highlight.
+        // Sockets sit slightly DARKER than the board — a recess reads as shadow, not highlight.
+        // Sockets are a SECOND light dark wash on top of the smoked panel, so they read as
+        // recesses. Keep the alpha low — it stacks on BOARD_INNER's.
+        // With no panel behind them the sockets carry the grid structure on their own, so they
+        // need a touch more presence than they did over the smoked slab.
+        // Sockets: also pure black, a touch more alpha so they read as recesses.
+        public static Color CELL_GRID_A = new Color(0f, 0f, 0f, 0.16f);
+        public static Color CELL_GRID_B = new Color(0f, 0f, 0f, 0.07f);
+        private GameObject _cellGridGO;
+        private GameObject _specShadowGO;
+
         private SpriteRenderer[,] _cellLinerSRs = new SpriteRenderer[COLS, MAX_ROWS];
         private Sprite _cellLinerSprite;
 
@@ -152,13 +293,88 @@ namespace WordDrop
                 tile = go.AddComponent<Tile>();
                 tile.Initialise(letter, col, row, cellSize, ownerIndex);
             }
+            // A level entry was requested before the grid existed — run it now, before this
+            // tile (and every tile after it) is placed. 2026-09-10 Spencer.
+            if (_boardEntryRequested && _gridRoot != null) PrepBoardEntry();
+            if (!_boardEntryPrepped)
+                WDLog.Log($"[EntryDiag] tile '{letter}' at ({col},{row}) created with NO entry active (frame {Time.frameCount})");
+
             _allTileObjects.Add(tile.gameObject);
+
+            // BORN DURING A LEVEL ENTRY? PrepBoardEntry snapshots and parks the tiles that exist
+            // AT THAT MOMENT. A tile created afterwards was never in that list, so it sat at its
+            // rest position while the rest of the board was parked off-screen — which is a fully
+            // populated board showing through the level map before the slide-in. Intermittent,
+            // because it depended on whether the board finished populating before or after the
+            // park. Same pattern the spec frame/inner panel already uses below. 2026-09-10 Spencer.
+            if (_boardEntryPrepped)
+            {
+                _boardEntryTfs.Add(tile.transform);
+                _boardEntryRests.Add(tile.transform.position);
+                tile.transform.position += new Vector3(_boardEntryOffX, 0f, 0f);
+            }
+
             return tile;
+        }
+
+        /// <summary>Make every tile's FROST match the rules data. 2026-10-19.
+        ///
+        /// AnimateRiseRow contains ZERO references to IsFrozen and checks fresh tiles out of
+        /// the pool for the new bottom row, so after a rise nothing reconciled Tile.IsFrozen
+        /// against RulesCellData.IsFrozen. ShiftBoardUp moves the DATA cell objects (the frozen
+        /// flag travels with them correctly) but the VISUAL layer was never told, so the two
+        /// drifted apart and the drift compounded with every rise. That produced all three of
+        /// Spencer's symptoms at once:
+        ///   • a normal-looking tile that refuses to swap  (data says frozen, visual does not)
+        ///   • tiles "taking on ice properties" after a rise (visual frost on the wrong tile)
+        ///   • ice "completely disappearing" after a rise   (frost lost when a tile recycled)
+        ///
+        /// Cheap: one pass over the board comparing two bools. Logs every correction, so if
+        /// this keeps firing it means something upstream is still desyncing and the real fix
+        /// belongs there rather than in this safety net.</summary>
+        public void ReconcileFrozenVisuals(RulesEngine rules)
+        {
+            if (rules == null) return;
+            int fixedCount = 0;
+            for (int col = 0; col < RulesEngine.COLS; col++)
+            for (int row = 0; row < RulesEngine.ROWS; row++)
+            {
+                Tile t = GetTile(col, row);
+                if (t == null) continue;
+                var cell = rules.GetCell(col, row);
+                bool shouldBeFrozen = cell != null && cell.IsFrozen;
+                if (t.IsFrozen != shouldBeFrozen)
+                {
+                    t.SetFrozenVisual(shouldBeFrozen);
+                    fixedCount++;
+                    WDLog.Log($"[IceSync] ({col},{row}) '{t.Letter}' visual={!shouldBeFrozen} " +
+                              $"data={shouldBeFrozen} → corrected");
+                }
+            }
+            if (fixedCount > 0)
+                WDLog.Log($"[IceSync] corrected {fixedCount} frost mismatch(es) after a board change");
         }
 
         private void ReturnTile(Tile tile)
         {
             if (tile == null) return;
+
+            // DOUBLE-RETURN GUARD. 2026-10-19 — ReturnTile has FOUR call sites and pushed
+            // unconditionally, so the same Tile could land in the pool twice. CheckoutTile then
+            // hands the SAME live object out for two different cells: one cell's tile silently
+            // becomes the other's, leaving an orphan rendering on top of its neighbour. That
+            // is one of the two things that can produce the "glitchy board" Spencer sees (a
+            // tile showing several letters blended together); the other is a double Initialise,
+            // guarded separately in Tile.BuildVisuals. Logging it rather than failing silently
+            // so the next occurrence names the caller.
+            if (_tilePool.Contains(tile))
+            {
+                Debug.LogWarning($"[TilePool] DOUBLE RETURN of tile '{tile.Letter}' at " +
+                                 $"({tile.Col},{tile.Row}) — ignored. A caller is releasing a " +
+                                 $"tile it had already released.");
+                return;
+            }
+
             _allTileObjects.Remove(tile.gameObject);
             tile.ResetForPool();
             _tilePool.Push(tile);
@@ -168,15 +384,40 @@ namespace WordDrop
         // NOT the hand rack (it isn't in _allTileObjects / under _gridRoot, so it stays still). Decaying
         // Perlin offset; doesn't hard-restore tiles so a tile pooled mid-shake can't get snapped back.
         // 2026-06-18 Spencer.
-        public void ShakeBoard(float magnitude, float duration)
+        private Coroutine _shakeCo;
+
+        /// <summary>Shake the board. Only ONE shake runs at a time — six call sites can fire
+        /// this, and overlapping shakes each drive the same transform every frame, so they
+        /// fight and the board judders or sticks off-centre. A new shake REPLACES the running
+        /// one (keeping the stronger of the two) rather than stacking on top of it.
+        /// 2026-09-09 Spencer — this is what made the score slam "fire at weird times".</summary>
+        public void ShakeBoard(float magnitude, float duration,
+            [System.Runtime.CompilerServices.CallerMemberName] string caller = "",
+            [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
         {
+            // TEMP 2026-09-09: the board jiggles when nothing is happening. CallerMemberName
+            // is filled in by the COMPILER, so this names the culprit with no stack walking.
+            WDLog.Log($"[ShakeDbg] ShakeBoard(mag={magnitude:F3}, dur={duration:F2}) from {caller}:{line}");
             if (_gridRoot == null || magnitude <= 0f || duration <= 0f) return;
-            StartCoroutine(ShakeBoardCoroutine(magnitude, duration));
+            // NEVER interrupt a running shake. It moves every tile by an additive DELTA
+            // each frame and only subtracts the residual when it completes — killing it
+            // mid-flight strands every tile permanently off-grid. So a second shake is
+            // DROPPED rather than stacked or swapped in. Overlapping shakes also fight
+            // over the same transforms, which is the juddering. 2026-09-09 Spencer.
+            if (_shakeCo != null) return;
+            _shakeCo = StartCoroutine(ShakeBoardTracked(magnitude, duration));
         }
+
 
         private readonly List<Transform> _boardEntryTfs   = new List<Transform>();
         private readonly List<Vector3>   _boardEntryRests = new List<Vector3>();
         private bool _boardEntryPrepped; // true between PrepBoardEntry (park) and AnimateBoardIn completion
+        private bool _boardEntryRequested; // entry asked for before the grid existed — run it as soon as it does
+
+        /// <summary>True while the board is parked off-screen or sliding in. Input must be
+        /// dead for this whole window — a tap during it was landing as a tile selection the
+        /// moment the board arrived. 2026-09-09 Spencer.</summary>
+        public bool BoardEntryInProgress => _boardEntryPrepped;
 
         /// <summary>Level-entry: the board SHOOTS IN from the right, overshoots, and settles. The grid FRAME
         /// (cells/bg under _gridRoot) AND every letter tile (tiles live at scene root, NOT under _gridRoot) are
@@ -188,8 +429,24 @@ namespace WordDrop
         /// so it's never seen sitting at centre during the beat before it slides in. 2026-07-13 Spencer.</summary>
         public void PrepBoardEntry()
         {
-            if (_gridRoot == null) return;
-            if (_boardEntryPrepped) return; // already snapshotted + parked — don't re-snapshot the parked pos as "rest"
+            if (_gridRoot == null)
+            {
+                WDLog.Log($"[EntryDiag] PrepBoardEntry DEFERRED — no grid root yet (frame {Time.frameCount})");
+                // The grid does not exist YET. Returning silently meant the park never happened,
+                // _boardEntryPrepped stayed false, and the board built itself at rest in full
+                // view — then AnimateBoardIn parked it late and slid it in, which reads as "the
+                // board was already there, then tiles flew in from the side". REMEMBER the
+                // request and honour it the moment the grid exists. 2026-09-10 Spencer.
+                _boardEntryRequested = true;
+                return;
+            }
+            _boardEntryRequested = false;
+            ClusterOutline.Instance?.Clear();   // never carry an outline into a level entry
+            if (_boardEntryPrepped)
+            {
+                WDLog.Log($"[EntryDiag] PrepBoardEntry SKIPPED — already prepped (frame {Time.frameCount}, tracked={_boardEntryTfs.Count})");
+                return; // already snapshotted + parked — don't re-snapshot the parked pos as "rest"
+            }
             _boardEntryPrepped = true;
             _boardEntryTfs.Clear(); _boardEntryRests.Clear();
             _boardEntryTfs.Add(_gridRoot.transform); _boardEntryRests.Add(_gridRoot.transform.position);
@@ -200,6 +457,8 @@ namespace WordDrop
             { _boardEntryTfs.Add(_specFrameGO.transform); _boardEntryRests.Add(_specFrameGO.transform.position); }
             if (_specInnerGO != null)
             { _boardEntryTfs.Add(_specInnerGO.transform); _boardEntryRests.Add(_specInnerGO.transform.position); }
+            if (_cellGridGO != null)
+            { _boardEntryTfs.Add(_cellGridGO.transform); _boardEntryRests.Add(_cellGridGO.transform.position); }
             for (int i = 0; i < _allTileObjects.Count; i++)
                 if (_allTileObjects[i] != null)
                 {
@@ -211,6 +470,7 @@ namespace WordDrop
             // 2.6 half-widths clears the FULL board off the right edge (1 half-width to reach the edge + up to 1 for
             // the board's own half-width + margin) — at 1.35 the board's left half was still peeking in. 2026-07-13.
             if (cam != null) _boardEntryOffX = cam.orthographicSize * cam.aspect * 2.6f;
+            WDLog.Log($"[EntryDiag] PrepBoardEntry PARKED {_boardEntryTfs.Count} transform(s), offX={_boardEntryOffX:F2} (frame {Time.frameCount})");
             ApplyBoardEntryOffset(_boardEntryOffX); // park off-screen NOW
         }
 
@@ -218,6 +478,7 @@ namespace WordDrop
         public void AnimateBoardIn()
         {
             if (_gridRoot == null) return;
+            WDLog.Log($"[EntryDiag] AnimateBoardIn — tracked={_boardEntryTfs.Count} prepped={_boardEntryPrepped} (frame {Time.frameCount})");
             if (_boardEntryTfs.Count == 0) PrepBoardEntry(); // FX-test / direct call: park first
             DOTween.Kill("boardEntry");
             DOTween.To(() => _boardEntryOffX, ApplyBoardEntryOffset, 0f, 0.52f)
@@ -254,6 +515,12 @@ namespace WordDrop
         /// 2026-07-14 Spencer.</summary>
         public void PrepBoardExit()
         {
+            // The cluster outline is a separate world-space mesh — it does NOT ride the board's
+            // entry/exit slide, so it hung in mid-air with its payout badge while the board slid
+            // away behind the win screen. Clearing here covers EVERY route out of a level
+            // (stage clear, level complete, quit) instead of chasing them one at a time — which
+            // is how the LevelController-only clear missed the score-run path. 2026-09-10 Spencer.
+            ClusterOutline.Instance?.Clear();
             if (_gridRoot == null) return;
             DOTween.Kill("boardEntry");
             // Leave _boardEntryPrepped FALSE — the next level's PrepBoardEntry must run fully to re-snapshot the new
@@ -272,40 +539,45 @@ namespace WordDrop
             // NOTE: no ApplyBoardEntryOffset here — the board stays at rest until the exit tween slides it out.
         }
 
+        private System.Collections.IEnumerator ShakeBoardTracked(float mag, float dur)
+        {
+            yield return StartCoroutine(ShakeBoardCoroutine(mag, dur));
+            _shakeCo = null;                       // free the slot only once it has cleaned up
+        }
+
         private System.Collections.IEnumerator ShakeBoardCoroutine(float mag, float dur)
         {
-            // Shake the board letter tiles via an ADDITIVE per-frame DELTA (not a captured base) so it
-            // rides ON TOP of gravity/cascade motion instead of fighting it — fighting made the shake
-            // invisible during cascade/edit detonations (gravity overwrote the offset). Board area only
-            // (Y filter) → the hand rack stays still. 2026-06-18 Spencer.
-            float boardBottom = GridBottom - CellSize * 0.5f;
-            var ts = new System.Collections.Generic.List<Transform>();
-            for (int i = 0; i < _allTileObjects.Count; i++)
-            {
-                var go = _allTileObjects[i];
-                if (go == null || go.transform.position.y < boardBottom) continue;
-                ts.Add(go.transform);
-            }
-            if (ts.Count == 0) yield break;
+            // ── CAMERA SHAKE (2026-09-09 Spencer) ────────────────────────────────────────
+            // This used to nudge EVERY TILE's position individually, additively, each frame.
+            // Two things broke it:
+            //  1. Tiles are simultaneously driven by DOTween (gravity, pops, landings), and a
+            //     tween OVERWRITES position every frame. So mid-tween tiles ignored the shake
+            //     while idle ones moved — and during a cascade the set of tweening tiles
+            //     changes constantly, so the shake rippled across the board as a WAVE.
+            //     That is Spencer's "jiggle shockwave across the screen".
+            //  2. It held Transform references for the whole shake while tiles were being
+            //     pooled and re-checked-out elsewhere, so the residual removal at the end
+            //     could shove an unrelated tile.
+            // Moving the CAMERA fixes both by construction: it is one transform, it is uniform,
+            // no tween can fight it, and it always returns to rest so nothing can be stranded.
+            // The HUD is a screen-space overlay so it stays still, and the background is a flat
+            // gradient so its movement is invisible.
+            var cam = Camera.main;
+            if (cam == null || mag <= 0f || dur <= 0f) yield break;
+            Vector3 rest = cam.transform.position;
             float seedX = Random.value * 100f, seedY = Random.value * 100f + 50f;
             float t = 0f;
-            Vector3 prevOff = Vector3.zero;
             while (t < dur)
             {
                 t += Time.unscaledDeltaTime;
-                float decay = 1f - Mathf.Clamp01(t / dur);                 // ease the shake out to zero
+                float decay = 1f - Mathf.Clamp01(t / dur);
                 float nx = (Mathf.PerlinNoise(seedX, t * 38f) * 2f - 1f) * mag * decay;
                 float ny = (Mathf.PerlinNoise(seedY, t * 38f) * 2f - 1f) * mag * decay;
-                Vector3 off = new Vector3(nx, ny, 0f);
-                Vector3 delta = off - prevOff;                              // apply only the CHANGE this frame
-                prevOff = off;
-                for (int i = 0; i < ts.Count; i++)
-                    if (ts[i] != null) ts[i].position += delta;
+                if (cam == null) yield break;
+                cam.transform.position = rest + new Vector3(nx, ny, 0f);
                 yield return null;
             }
-            if (prevOff != Vector3.zero)                                    // remove residual so tiles end at rest
-                for (int i = 0; i < ts.Count; i++)
-                    if (ts[i] != null) ts[i].position -= prevOff;
+            if (cam != null) cam.transform.position = rest;   // always exactly back to rest
         }
 
         // ---------------------------------------------------------------------------
@@ -327,7 +599,7 @@ namespace WordDrop
             CalculateLayout();
             BuildGridVisuals();
 
-//             Debug.Log($"[GridManager] Awake — cellSize={CellSize:F3}, " +
+//             WDLog.Log($"[GridManager] Awake — cellSize={CellSize:F3}, " +
                       // $"gridLeft={GridLeft:F3}, gridBottom={GridBottom:F3}");
         }
 
@@ -367,7 +639,7 @@ namespace WordDrop
             CalculateLayout();
             BuildGridVisuals();
 
-//             Debug.Log($"[GridManager] RebuildGrid — ROWS={ROWS}, cellSize={CellSize:F3}");
+//             WDLog.Log($"[GridManager] RebuildGrid — ROWS={ROWS}, cellSize={CellSize:F3}");
         }
 
         // ---------------------------------------------------------------------------
@@ -417,6 +689,9 @@ namespace WordDrop
         public const int   SPEC_ROWS     = 11;   // the spec's row count; board height holds even if ROWS differs
         /// <summary>Use the 2026-09-03 board spec instead of the legacy auto-fit.</summary>
         public static bool UseBoardSpec = true;
+        /// <summary>Vertical nudge for the board as a fraction of screen height.
+        /// 0 = centred between the HUD and booster bands. Negative = higher.</summary>
+        public static float BOARD_BIAS = 0f;
 
         public static bool PinBoardToPSD = false;
 
@@ -468,31 +743,43 @@ namespace WordDrop
                 float screenWorldW = halfW * 2f;
                 float boardW = screenWorldW * (SPEC_BOARD_W / SPEC_SCREEN_W);
                 float playW  = screenWorldW * (SPEC_PLAY_W  / SPEC_SCREEN_W);
-                CellSize = playW / COLS;
+                // Inset the TILES inside the playable area so the board breathes at the rim.
+                // The board itself keeps its full size; only the grid shrinks. 2026-09-10.
+                float pad = playW * Mathf.Max(0f, BOARD_PAD_FRAC);
+                CellSize = (playW - pad * 2f) / COLS;
 
                 // playable height for the ACTUAL row count: (ROWS-1) square pitches
                 // plus one full tile height (the tile is 1/TILE_ASPECT tall).
-                float playH  = CellSize * ((ROWS - 1) + (1f / TILE_ASPECT));
+                float playH  = CellSize * (ROWS * (1f / TILE_ASPECT));
                 float borderY = screenWorldW * ((SPEC_BOARD_H - SPEC_PLAY_H) * 0.5f / SPEC_SCREEN_W);
-                float boardH = playH + borderY * 2f;
+                // Same margin top and bottom — boardH carries the pad so the rows sit inside it.
+                float boardH = playH + pad * 2f + borderY * 2f;
 
                 // Vertical placement: centre the board in the gap between the HUD
                 // band at the top and the booster band at the bottom.
-                float topBand    = halfH * 2f * 0.145f;
-                float bottomBand = halfH * 2f * 0.245f;
+                // 2026-09-04: bands were 14.5% top / 24.5% bottom, which pushed the board
+                // ~130px ABOVE balanced and left a dead gap underneath. Derived from what
+                // each band must actually HOLD on a 1179x2556:
+                //   top    = 59 notch + ~40 breathing + ~300 HUD plaques = ~399
+                //   bottom = ~300 booster row + 34 home indicator + ~40  = ~374
+                // Near-equal, so the leftover splits evenly and the board sits centred.
+                // BOARD_BIAS nudges it: negative = higher, positive = lower.
+                float topBand    = halfH * 2f * (0.195f - BOARD_BIAS);
+                float bottomBand = halfH * 2f * (0.195f + BOARD_BIAS);
                 float freeTop    = halfH - topBand;
                 float freeBottom = -halfH + bottomBand;
                 float boardCentreY = (freeTop + freeBottom) * 0.5f;
 
-                GridLeft   = -playW * 0.5f;
-                GridRight  =  playW * 0.5f;
+                GridLeft   = -playW * 0.5f + pad;
+                GridRight  =  playW * 0.5f - pad;
                 GridBottom = boardCentreY - playH * 0.5f;
                 GridTop    = GridBottom + playH;
 
                 _specBoardW = boardW; _specBoardH = boardH; _specBoardCentreY = boardCentreY;
                 _specUsed = true;
-                Debug.Log($"[Grid] SPEC board {boardW:F2}x{boardH:F2} world, cell {CellSize:F3}, " +
-                          $"{COLS}x{ROWS}, playable {playW:F2}x{playH:F2}");
+                WDLog.Log($"[Grid] SPEC board {boardW:F2}x{boardH:F2} world, cell {CellSize:F3}, " +
+                          $"{COLS}x{ROWS}, playable {playW:F2}x{playH:F2}, pad {pad:F3} " +
+                          $"({(CellSize > 0.0001f ? pad / CellSize : 0f):P0} of a cell)");
                 // NOTE: do NOT call BuildGridVisuals here. Every caller of
                 // CalculateLayout calls it immediately afterwards, and a second call
                 // destroys the root (and the board panel) that the first one built.
@@ -560,12 +847,12 @@ namespace WordDrop
 
             float cellFromWidth = availableWidth / COLS;
             // rows are RowPitchRatio tall (plus the one un-overlapped tile top)
-            float cellFromHeight = availableHeight / ((ROWS - 1) + (1f / TILE_ASPECT));
+            float cellFromHeight = availableHeight / (ROWS * (1f / TILE_ASPECT));
 
             CellSize = Mathf.Min(cellFromWidth, cellFromHeight);
 
             float gridWorldWidth = CellSize * COLS;
-            float gridWorldHeight = CellSize * ((ROWS - 1) + (1f / TILE_ASPECT));
+            float gridWorldHeight = CellSize * (ROWS * (1f / TILE_ASPECT));
 
             // Anchor grid to bottom of available space — tiles build upward
             float gridCenterX = 0f;
@@ -602,7 +889,8 @@ namespace WordDrop
             {
                 Destroy(_gridRoot);
                 _gridRoot = null;
-                _specFrameGO = null; _specInnerGO = null; _gridBackgroundSR = null;
+                _specFrameGO = null; _specInnerGO = null; _specShadowGO = null; _gridBackgroundSR = null;
+                _cellGridGO = null;
             }
             _gridRoot = new GameObject("GridRoot");
             _gridRoot.transform.SetParent(transform, false);
@@ -638,6 +926,10 @@ namespace WordDrop
             // grid-derived panel as well put two offset rounded rects on screen.)
             if (UseBoardSpec && _specUsed)
                 CreateSpecBoardPanel(_specBoardW, _specBoardH, _specBoardCentreY);
+
+            // Cell sockets, baked into one sprite. Must come AFTER the board panel so it
+            // layers on top of it (order 1 vs 0) and below the tiles (5).
+            CreateCellGridOverlay();
 
             int texSize = Mathf.Clamp(Mathf.RoundToInt(CellSize * 200f), 64, 512);
             int radius  = texSize / 6;   // slightly rounder corners
@@ -707,8 +999,81 @@ namespace WordDrop
                 }
         }
 
+        // ── TOP-OUT DANGER PULSE (2026-09-03 Spencer) ────────────────────────────────
+        // Tiles sitting in the top row(s) pulse RED. The HUD already shows a
+        // moves-until-top-out number, but nobody watching the board reads a number —
+        // this puts the warning where the player is actually looking.
+        // Driven through the ADDITIVE bloom overlay (SetBloomGlow) rather than the face
+        // colour, so it layers over primed magenta / scored green / gold without
+        // fighting any of them.
+        public static bool  DANGER_PULSE_ENABLED = true;
+        public static int   DANGER_ROWS          = 2;      // how many top rows count as danger
+        private static readonly Color DANGER_HDR = new Color(1.7f, 0.25f, 0.2f, 1f); // HDR red
+        private const float DANGER_BLINK_SECONDS = 1.1f;   // length of one alert burst
+        private const int   DANGER_BLINK_COUNT   = 3;      // blinks within that burst
+        private float _dangerBlinkUntil;
+        private readonly System.Collections.Generic.HashSet<Tile> _dangerTiles
+            = new System.Collections.Generic.HashSet<Tile>();
+
+        private void UpdateTopOutDanger()
+        {
+            // 2026-09-08: was gated on IsSurvivalMode, so this never fired in the endless
+            // LEVEL — the mode we actually playtest. The real condition is "can this board
+            // top out", i.e. rows are rising. Survival qualifies; so does any rising level.
+            bool canTopOut = SurvivalManager.IsSurvivalMode
+                          || (SurvivalManager.Instance != null && !SurvivalManager.Instance.ActiveRisesOff);
+            if (!DANGER_PULSE_ENABLED || !canTopOut)
+            {
+                if (_dangerTiles.Count > 0)
+                {
+                    foreach (var t in _dangerTiles) if (t != null) t.SetDangerPulse(0f);
+                    _dangerTiles.Clear();
+                }
+                return;
+            }
+
+            // ── BLINK, DON'T HOLD (2026-09-09 Spencer) ───────────────────────────────
+            // This used to pulse CONTINUOUSLY between 0.25 and 0.85, so a tile in the top
+            // rows was permanently part-red. Two problems: a warning that is always on stops
+            // being a warning, and a permanently tinted tile reads as a different KIND of
+            // tile rather than a state — which is why it looked like an orange piece.
+            // Now it fires a short BURST of blinks when tiles first enter the danger zone,
+            // then releases them back to their real colour. It re-arms whenever a NEW tile
+            // enters, so each rise that puts you in trouble gets its own alert.
+            var stillInDanger = new System.Collections.Generic.HashSet<Tile>();
+            int firstDangerRow = Mathf.Max(0, ROWS - DANGER_ROWS);
+            for (int row = firstDangerRow; row < ROWS; row++)
+                for (int col = 0; col < COLS; col++)
+                {
+                    Tile t = _tiles[col, row];
+                    if (t == null) continue;
+                    stillInDanger.Add(t);
+                    if (!_dangerTiles.Contains(t)) _dangerBlinkUntil = Time.time + DANGER_BLINK_SECONDS;
+                }
+
+            // Full-strength blinks while the burst is live, then clear. Reaching 1.0 at the
+            // peak (the old pulse capped at 0.85) is what makes it read as a FLASH rather
+            // than a tint; the troughs go to 0 so the tile's real colour shows between them.
+            float pulse = 0f;
+            if (Time.time < _dangerBlinkUntil)
+            {
+                float t01 = 1f - (_dangerBlinkUntil - Time.time) / DANGER_BLINK_SECONDS;
+                pulse = Mathf.Abs(Mathf.Sin(t01 * Mathf.PI * DANGER_BLINK_COUNT));
+            }
+            foreach (var t in stillInDanger) if (t != null) t.SetDangerPulse(pulse);
+
+            // anything that LEFT the danger zone (detonated, or gravity pulled it down)
+            foreach (var t in _dangerTiles)
+                if (t != null && !stillInDanger.Contains(t)) t.SetDangerPulse(0f);
+
+            _dangerTiles.Clear();
+            foreach (var t in stillInDanger) _dangerTiles.Add(t);
+        }
+
         private void Update()
         {
+            UpdateTopOutDanger();
+
             // Live cell-liner tuning — see ApplyCellLinerTuning. Cheap (stored SRs, no GetComponent).
             ApplyCellLinerTuning();
 
@@ -719,8 +1084,220 @@ namespace WordDrop
             Tile.SetBoardShadowStrength(_boardShadowStrength);
         }
 
+        /// <summary>Draw every cell socket into ONE sprite and lay it over the board panel.
+        /// Aligned off the real grid geometry (GridLeft/GridBottom/CellSize, and RowPitch ==
+        /// CellSize) rather than by dividing the panel up, so it cannot drift out of register
+        /// with the tiles. 2026-09-10.</summary>
+        private void CreateCellGridOverlay()
+        {
+            if (!CELL_GRID_ENABLED || _gridRoot == null) return;
+
+            // 2026-09-22: 96 -> 128. A cell is ~110 px on a 1179-wide phone, so at 96 the socket
+            // was baked at 86 texels and upsampled 28% — which softens exactly the 3 px bevel
+            // Spencer's art relies on. 128 puts it near 1:1. Costs 9x11x128^2 RGBA = ~6.5 MB,
+            // in line with the tile sprites already resident.
+            const int PX = 128;                      // texels per cell
+            int texW = COLS * PX, texH = ROWS * PX;
+            var px = new Color[texW * texH];
+            for (int i = 0; i < px.Length; i++) px[i] = Color.clear;
+
+            var socketTex = string.IsNullOrEmpty(CELL_SOCKET_ASSET)
+                          ? null : Resources.Load<Texture2D>(CELL_SOCKET_ASSET);
+
+            if (socketTex != null)
+            {
+                // Resample the authored socket ONCE, then memcpy it into all 99 cells. Sampling
+                // per cell would be ~1.6M bilinear fetches on the frame the board is built —
+                // the same shape as the first-row-rise hitch that cost a session on 2026-09-21.
+                int sw = Mathf.Clamp(Mathf.RoundToInt(PX * CELL_SOCKET_W_FRAC), 2, PX);
+                int sh = Mathf.Clamp(Mathf.RoundToInt(sw * (socketTex.height / (float)socketTex.width)), 2, PX);
+                var cell = new Color[sw * sh];
+                for (int y = 0; y < sh; y++)
+                    for (int x = 0; x < sw; x++)
+                        cell[y * sw + x] = socketTex.GetPixelBilinear((x + 0.5f) / sw, (y + 0.5f) / sh);
+
+                int ox0 = (PX - sw) / 2, oy0 = (PX - sh) / 2;   // his art is centred, so this centres the shape
+                for (int col = 0; col < COLS; col++)
+                    for (int row = 0; row < ROWS; row++)
+                    {
+                        int ox = col * PX + ox0, oy = row * PX + oy0;
+                        for (int y = 0; y < sh; y++)
+                            System.Array.Copy(cell, y * sw, px, (oy + y) * texW + ox, sw);
+                    }
+                WDLog.Log($"[Grid] cell sockets = authored {CELL_SOCKET_ASSET} " +
+                          $"({socketTex.width}x{socketTex.height} -> {sw}x{sh} of a {PX} cell)");
+            }
+            else
+            {
+                int inset  = Mathf.RoundToInt(PX * Mathf.Clamp01(CELL_GRID_INSET));
+                int side   = Mathf.Max(2, PX - inset * 2);
+                int radius = Mathf.Clamp(Mathf.RoundToInt(PX * CELL_GRID_RADIUS), 0, side / 2);
+
+                for (int col = 0; col < COLS; col++)
+                    for (int row = 0; row < ROWS; row++)
+                    {
+                        Color c = (((col + row) & 1) == 0) ? CELL_GRID_A : CELL_GRID_B;
+                        int ox = col * PX + inset, oy = row * PX + inset;
+                        for (int y = 0; y < side; y++)
+                            for (int x = 0; x < side; x++)
+                            {
+                                float cov = SocketCoverage(x, y, side, radius);
+                                if (cov <= 0f) continue;
+                                Color cc = c; cc.a *= cov;
+                                px[(oy + y) * texW + (ox + x)] = cc;
+                            }
+                    }
+                WDLog.Log("[Grid] cell sockets = procedural checkerboard (no authored asset)");
+            }
+
+            var tex = new Texture2D(texW, texH, TextureFormat.RGBA32, false);
+            tex.filterMode = FilterMode.Bilinear;
+            tex.wrapMode   = TextureWrapMode.Clamp;
+            tex.SetPixels(px); tex.Apply();
+
+            float gw = COLS * CellSize, gh = ROWS * RowPitch;
+            var go = new GameObject("CellGrid"); _cellGridGO = go;
+            go.transform.SetParent(_gridRoot.transform, false);
+            go.transform.position = new Vector3(GridLeft + gw * 0.5f, GridBottom + gh * 0.5f, 0f);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = Sprite.Create(tex, new Rect(0, 0, texW, texH), new Vector2(0.5f, 0.5f), 100f);
+            sr.sortingOrder = 1;                     // board panel 0 < grid 1 < tiles 5
+            go.transform.localScale = new Vector3(gw / (texW / 100f), gh / (texH / 100f), 1f);
+
+            // Born mid-entry? Park it with everything else, same as the panel does.
+            if (_boardEntryPrepped)
+            {
+                _boardEntryTfs.Add(go.transform); _boardEntryRests.Add(go.transform.position);
+                ApplyBoardEntryOffset(_boardEntryOffX);
+            }
+        }
+
+        /// <summary>2x2-supersampled coverage of a rounded square — antialiases the socket
+        /// corners so they do not read as stair-steps when the sprite is scaled.</summary>
+        private static float SocketCoverage(int x, int y, int side, int r)
+        {
+            float acc = 0f;
+            for (int sy = 0; sy < 2; sy++)
+                for (int sx = 0; sx < 2; sx++)
+                {
+                    float fx = x + 0.25f + sx * 0.5f;
+                    float fy = y + 0.25f + sy * 0.5f;
+                    if (r <= 0)
+                    {
+                        if (fx >= 0f && fy >= 0f && fx < side && fy < side) acc += 0.25f;
+                        continue;
+                    }
+                    float cx = Mathf.Clamp(fx, r, side - r);
+                    float cy = Mathf.Clamp(fy, r, side - r);
+                    float dx = fx - cx, dy = fy - cy;
+                    if (dx * dx + dy * dy <= (float)r * r) acc += 0.25f;
+                }
+            return acc;
+        }
+
         /// <summary>Board + frame drawn to the 2026-09-03 spec: two rounded rects,
         /// outer 1143x1415 r38 and inner 1121x1395 r27, radii scaled with the board.</summary>
+        /// <summary>The authored frame as a 9-sliced sprite, or null to fall back.
+        /// FRAME_SOURCE_W is the width of the ORIGINAL export the compact cut came from — the
+        /// corner must draw at (border / sourceWidth) of the board, not at its texel size.</summary>
+        public static string FRAME_ASSET    = "Tiles/board_frame@2x";
+        public static int    FRAME_BORDER_PX = 90;     // matches spriteBorder in the .meta
+        public static float  FRAME_SOURCE_W  = 2294f;  // Spencer's export width
+        public static int    FRAME_CUT_W      = 188;   // the cut on disk: 90 + 8 + 90
+        private static Sprite s_slicedFrame; private static float s_slicedFrameW;
+
+        public static string INNER_ASSET     = "Tiles/inner_board@2x";
+        public static int    INNER_BORDER_PX  = 120;   // clears the 47px corner arc with room to spare
+        public static int    INNER_CUT_W      = 248;   // the cut on disk: 120 + 8 + 120
+        public static float  INNER_SOURCE_W   = 2242f; // Spencer's export width (= SPEC_PLAY_W x2)
+        private static Sprite s_slicedInner; private static float s_slicedInnerW;
+
+        private static Sprite LoadSlicedInner(float innerW)
+        {
+            if (innerW <= 0.0001f) return null;
+            if (s_slicedInner != null && Mathf.Abs(s_slicedInnerW - innerW) < 0.001f) return s_slicedInner;
+            var tex = Resources.Load<Texture2D>(INNER_ASSET);
+            if (tex == null) return null;
+            float texScale = tex.width / (float)INNER_CUT_W;      // see the note in LoadSlicedFrame
+            if (Mathf.Abs(texScale - 1f) > 0.001f)
+                Debug.LogWarning($"[Grid] inner_board loaded at {tex.width}px, not {INNER_CUT_W} — check its .meta.");
+            float bpx = INNER_BORDER_PX * texScale;
+            float ppu = INNER_SOURCE_W / innerW * texScale;
+            s_slicedInner = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                          new Vector2(0.5f, 0.5f), ppu, 0,
+                                          SpriteMeshType.FullRect, new Vector4(bpx, bpx, bpx, bpx));
+            s_slicedInnerW = innerW;
+            return s_slicedInner;
+        }
+
+        // ── Board drop shadow (2026-09-22) ────────────────────────────────────────
+        // Spencer's frame_shadow@2x, rebuilt for LINEAR blending and cut as a 9-slice.
+        // PAD_* is where the FRAME sits inside the shadow's canvas. MEASURED off the KNOCKOUT
+        // boundary: Photoshop's "Layer Knocks Out Drop Shadow" zeroes the shadow exactly where
+        // the casting layer is opaque, so the first zero after the ramp IS the frame's own edge.
+        // That is exact, unlike correlating a blurred silhouette — a correlation fit put PAD_TOP
+        // at 98 and left a visible 6 px gap between the shadow and the top of the rim.
+        // Self-checks: the knockout box came out 2284x2828 against a frame of 2294x2838 — 5 px
+        // inset on every side, which is the frame's own AA ramp, identical on all four edges.
+        // 74 + 2838 + 154 = 3066 and 32 + 2294 + 32 = 2358, both exactly the canvas.
+        public static string FRAME_SHADOW_ASSET     = "Tiles/frame_shadow@2x";
+        public static int    FRAME_SHADOW_BORDER_PX = 280;
+        public static int    FRAME_SHADOW_CUT_W     = 568;   // 280 + 8 + 280
+        public static float  FRAME_SHADOW_SRC_W     = 2358f; // his canvas
+        public static float  FRAME_SHADOW_PAD_X     = 32f;   // frame inset inside that canvas
+        public static float  FRAME_SHADOW_PAD_TOP   = 74f;
+        public static float  FRAME_SHADOW_PAD_BOT   = 154f;  // => a 40 texel drop at 2x
+        private static Sprite s_slicedShadow; private static float s_slicedShadowW;
+
+        private static Sprite LoadSlicedShadow(float boardW)
+        {
+            if (boardW <= 0.0001f) return null;
+            if (s_slicedShadow != null && Mathf.Abs(s_slicedShadowW - boardW) < 0.001f) return s_slicedShadow;
+            var tex = Resources.Load<Texture2D>(FRAME_SHADOW_ASSET);
+            if (tex == null) return null;
+            float texScale = tex.width / (float)FRAME_SHADOW_CUT_W;
+            if (Mathf.Abs(texScale - 1f) > 0.001f)
+                Debug.LogWarning($"[Grid] frame_shadow loaded at {tex.width}px, not {FRAME_SHADOW_CUT_W} — check its .meta.");
+            float bpx = FRAME_SHADOW_BORDER_PX * texScale;
+            // SAME scale as the frame (FRAME_SOURCE_W / boardW), so the blur keeps a constant
+            // world thickness against the frame's corners instead of drifting with board height.
+            float ppu = FRAME_SOURCE_W / boardW * texScale;
+            s_slicedShadow = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                           new Vector2(0.5f, 0.5f), ppu, 0,
+                                           SpriteMeshType.FullRect, new Vector4(bpx, bpx, bpx, bpx));
+            s_slicedShadowW = boardW;
+            return s_slicedShadow;
+        }
+
+        private static Sprite LoadSlicedFrame(float boardW)
+        {
+            if (boardW <= 0.0001f) return null;
+            if (s_slicedFrame != null && Mathf.Abs(s_slicedFrameW - boardW) < 0.001f) return s_slicedFrame;
+            var tex = Resources.Load<Texture2D>(FRAME_ASSET);
+            if (tex == null) return null;
+
+            // 🚨 THE BORDER IS IN TEXELS OF THE TEXTURE UNITY ACTUALLY LOADED, which is not
+            // necessarily the file on disk. 2026-09-22: the .meta shipped with nPOTScale: 1, so
+            // Unity silently resampled the 188x188 cut up to 256x256 on import. A hardcoded 90
+            // then pointed at the wrong texels — the corners drew undersized and the edge strips
+            // sampled the empty middle, giving four gold curls and no frame. nPOTScale is 0 now,
+            // but scaling by the loaded width means a future rescale degrades instead of breaking.
+            float texScale = tex.width / (float)FRAME_CUT_W;
+            if (Mathf.Abs(texScale - 1f) > 0.001f)
+                Debug.LogWarning($"[Grid] board_frame loaded at {tex.width}px, not {FRAME_CUT_W} " +
+                                 $"— check nPOTScale/maxTextureSize in its .meta. Border scaled x{texScale:F3}.");
+            float bpx = FRAME_BORDER_PX * texScale;
+
+            // the whole source maps to boardW, so a texel is boardW / FRAME_SOURCE_W world units
+            float ppu = FRAME_SOURCE_W / boardW * texScale;
+            var border = new Vector4(bpx, bpx, bpx, bpx);
+            s_slicedFrame = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
+                                          new Vector2(0.5f, 0.5f), ppu, 0,
+                                          SpriteMeshType.FullRect, border);
+            s_slicedFrameW = boardW;
+            return s_slicedFrame;
+        }
+
         private void CreateSpecBoardPanel(float boardW, float boardH, float centreY)
         {
             if (_gridRoot == null)
@@ -730,36 +1307,107 @@ namespace WordDrop
             }
             int texW = Mathf.Clamp(Mathf.RoundToInt(boardW * 150f), 64, 2048);
             int texH = Mathf.Clamp(Mathf.RoundToInt(boardH * 150f), 64, 2048);
-            Debug.Log($"[Grid] spec panel tex {texW}x{texH}  rOuter/rInner/border scaled from spec");
+            WDLog.Log($"[Grid] spec panel tex {texW}x{texH}  rOuter/rInner/border scaled from spec");
             float pxPerSpec = texW / SPEC_BOARD_W;               // texels per spec pixel
             int rOuter = Mathf.Max(2, Mathf.RoundToInt(SPEC_R_OUTER * pxPerSpec));
             int rInner = Mathf.Max(2, Mathf.RoundToInt(SPEC_R_INNER * pxPerSpec));
             int borderPx = Mathf.Max(1, Mathf.RoundToInt((SPEC_BOARD_W - SPEC_PLAY_W) * 0.5f * pxPerSpec));
 
-            // outer frame
-            var frame = TileRenderer.CreateRoundedRect(texW, texH, rOuter, FRAME_OUTER, FRAME_OUTER, 1);
-            if (frame == null) { Debug.LogError("[Grid] frame sprite NULL"); return; }
+            // outer frame — a HOLLOW RING, not a filled slab. 2026-09-10: this used to pass
+            // FRAME_OUTER as BOTH fill and border, i.e. a solid gold rectangle that the opaque
+            // inner panel happened to cover all but the rim of. The moment the panel was made
+            // see-through, that gold slab showed straight through the whole board and it went
+            // brown. A transparent fill + gold border of the real border width gives the same
+            // rim when the panel is opaque, and lets the scene through when it is not.
+            // AUTHORED 9-SLICE FRAME (2026-09-22). Spencer's board_frame@2x is a compact
+            // 188x188 cut of a 2294x2838 export: four corners at full detail plus an 8px strip of
+            // each edge, which stretches. Falls back to the procedural ring if the asset is gone.
+            //
+            // 🔑 THE PPU IS THE WHOLE TRICK. Sliced draw mode renders the border at
+            // borderPixels / PPU world units, so a FIXED ppu would keep the corners a constant
+            // world size while the board resized — thin corners on a big screen, fat on a small
+            // one. Deriving it from boardW keeps the corner a constant PROPORTION of the board,
+            // which is the reason to 9-slice instead of just stretching the sprite.
+            // Shadow first, behind everything (scene bg is the camera, not a sprite, in spec mode).
+            Sprite shadowSprite = LoadSlicedShadow(boardW);
+            if (shadowSprite != null)
+            {
+                float u = boardW / FRAME_SOURCE_W;                    // world units per canvas texel
+                var shGO = new GameObject("BoardFrameShadow");
+                shGO.transform.SetParent(_gridRoot.transform, false);
+                // the canvas is padded 98 above / 130 below the frame, so its centre sits
+                // (130-98)/2 = 16 texels BELOW the board's — that offset IS the drop.
+                shGO.transform.position = new Vector3(
+                    0f, centreY - (FRAME_SHADOW_PAD_BOT - FRAME_SHADOW_PAD_TOP) * 0.5f * u, 0f);
+                var shSR = shGO.AddComponent<SpriteRenderer>();
+                shSR.sprite    = shadowSprite;
+                shSR.drawMode  = SpriteDrawMode.Sliced;
+                shSR.size      = new Vector2(boardW + FRAME_SHADOW_PAD_X * 2f * u,
+                                             boardH + (FRAME_SHADOW_PAD_TOP + FRAME_SHADOW_PAD_BOT) * u);
+                shSR.sortingOrder = -2;                               // shadow -2 < frame -1 < panel 0
+                _specShadowGO = shGO;
+                if (_boardEntryPrepped)
+                { _boardEntryTfs.Add(shGO.transform); _boardEntryRests.Add(shGO.transform.position); }
+                WDLog.Log($"[Grid] board shadow = 9-slice frame_shadow@2x, size {shSR.size.x:F2}x{shSR.size.y:F2}");
+            }
+
             var frameGO = new GameObject("BoardFrame"); _specFrameGO = frameGO;
             frameGO.transform.SetParent(_gridRoot.transform, false);
             frameGO.transform.position = new Vector3(0f, centreY, 0f);
             var fsr = frameGO.AddComponent<SpriteRenderer>();
-            fsr.sprite = frame; fsr.sortingOrder = -1;
-            frameGO.transform.localScale = new Vector3(boardW / (texW / 100f), boardH / (texH / 100f), 1f);
+            fsr.sortingOrder = -1;
+
+            Sprite sliced = LoadSlicedFrame(boardW);
+            if (sliced != null)
+            {
+                fsr.sprite    = sliced;
+                fsr.drawMode  = SpriteDrawMode.Sliced;
+                fsr.size      = new Vector2(boardW, boardH);
+                frameGO.transform.localScale = Vector3.one;
+                WDLog.Log($"[Grid] board frame = 9-slice board_frame@2x, size {boardW:F2}x{boardH:F2}");
+            }
+            else
+            {
+                var frame = TileRenderer.CreateRoundedRect(texW, texH, rOuter, new Color(0f, 0f, 0f, 0f), FRAME_OUTER, borderPx);
+                if (frame == null) { Debug.LogError("[Grid] frame sprite NULL"); return; }
+                fsr.sprite = frame;
+                frameGO.transform.localScale = new Vector3(boardW / (texW / 100f), boardH / (texH / 100f), 1f);
+                WDLog.Log("[Grid] board frame = procedural ring (board_frame@2x not found)");
+            }
 
             // inner board
             int itexW = Mathf.Max(8, texW - borderPx * 2);
             int itexH = Mathf.Max(8, texH - borderPx * 2);
-            var inner = TileRenderer.CreateRoundedRect(itexW, itexH, rInner, BOARD_INNER, BOARD_INNER, 1);
-            if (inner == null) { Debug.LogError("[Grid] inner sprite NULL"); return; }
             var innerGO = new GameObject("GridBackground"); _specInnerGO = innerGO;
             innerGO.transform.SetParent(_gridRoot.transform, false);
             innerGO.transform.position = new Vector3(0f, centreY, 0f);
             var isr = innerGO.AddComponent<SpriteRenderer>();
-            isr.sprite = inner; isr.sortingOrder = 0;
+            isr.sortingOrder = 0;
             _gridBackgroundSR = isr;
             float innerW = boardW * (SPEC_PLAY_W / SPEC_BOARD_W);
             float innerH = boardH * (SPEC_PLAY_H / SPEC_BOARD_H);
-            innerGO.transform.localScale = new Vector3(innerW / (itexW / 100f), innerH / (itexH / 100f), 1f);
+
+            // Authored panel, 9-sliced for the same reason the frame is: the board is NOT a
+            // fixed aspect — it is built at 9x5 and at 9x11 in the same session — so a stretched
+            // sprite would squash the corner radius by half between them. Sliced keeps the
+            // corner a constant proportion of the board's WIDTH on every layout.
+            Sprite innerSliced = LoadSlicedInner(innerW);
+            if (innerSliced != null)
+            {
+                isr.sprite   = innerSliced;
+                isr.drawMode = SpriteDrawMode.Sliced;
+                isr.size     = new Vector2(innerW, innerH);
+                innerGO.transform.localScale = Vector3.one;
+                WDLog.Log($"[Grid] inner board = 9-slice inner_board@2x, size {innerW:F2}x{innerH:F2}");
+            }
+            else
+            {
+                var inner = TileRenderer.CreateRoundedRect(itexW, itexH, rInner, BOARD_INNER, BOARD_INNER, 1);
+                if (inner == null) { Debug.LogError("[Grid] inner sprite NULL"); return; }
+                isr.sprite = inner;
+                innerGO.transform.localScale = new Vector3(innerW / (itexW / 100f), innerH / (itexH / 100f), 1f);
+                WDLog.Log("[Grid] inner board = procedural rounded rect (inner_board@2x not found)");
+            }
 
             // If the entry slide already parked the board off-screen before this panel
             // existed, register + park it now so it does not pop in at rest position.
@@ -874,10 +1522,11 @@ namespace WordDrop
         public Vector3 CellToWorld(int col, int row)
         {
             float x = GridLeft   + (col + 0.5f) * CellSize;
-            // The tile is 1/TILE_ASPECT cells tall (1.2). Bias every row UP by half the
-            // overshoot so the BOTTOM row sits flush with the board floor and the extra
-            // height sticks up as the top face — which the tile above covers.
-            float overshootHalf = ((1f / TILE_ASPECT) - 1f) * 0.5f;
+            // Bias every row up by half the tile's overshoot past one cell. With the old
+            // tilted art that was +0.10 of a cell, letting the top face stick up behind the
+            // tile above. FRONT-ON art is 0.96 cells tall, so this is now ~-0.02 — near zero,
+            // which is correct: there is no top face to hide any more. 2026-09-15.
+            const float overshootHalf = 0f;   // front-on art fills its pitch exactly — no overhang to bias for
             float y = GridBottom + (row + 0.5f + overshootHalf) * RowPitch;
             // UPPER rows must draw IN FRONT so each tile's top face is hidden behind the
             // tile above it. Done with Z (sprites of equal sortingOrder sort by depth) so
@@ -892,7 +1541,13 @@ namespace WordDrop
         public bool WorldToCell(Vector3 worldPos, out int col, out int row)
         {
             col = Mathf.FloorToInt((worldPos.x - GridLeft) / CellSize);
-            row = Mathf.FloorToInt((worldPos.y - GridBottom) / RowPitch);
+            // 2026-09-03: MUST invert CellToWorld exactly. CellToWorld biases every row
+            // UP by half the tile's overshoot (so the bottom row sits flush with the board
+            // floor); without the same bias here, world->cell and cell->world disagree and
+            // a tap resolves to the WRONG ROW — taps landing on unrelated tiles, swaps
+            // starting on the wrong cell.
+            const float overshootHalfW = 0f;  // must mirror CellToWorld or taps hit the wrong row
+            row = Mathf.FloorToInt((worldPos.y - GridBottom) / RowPitch - overshootHalfW);
             if (col < 0 || col >= COLS) return false;
             if (row < 0 || row >= ROWS) return false;
             return true;
@@ -927,7 +1582,7 @@ namespace WordDrop
             int targetRow = GetLowestEmptyRow(col);
             if (targetRow < 0)
             {
-//                 Debug.Log($"[GridManager] Column {col} is full — ignoring drop.");
+//                 WDLog.Log($"[GridManager] Column {col} is full — ignoring drop.");
                 return null;
             }
 
@@ -951,7 +1606,7 @@ namespace WordDrop
 
             // Gold bonus cells only apply to rising row tiles, not player/AI drops
 
-//             Debug.Log($"[GridManager] Dropped '{letter}' → col={col}, row={targetRow}");
+//             WDLog.Log($"[GridManager] Dropped '{letter}' → col={col}, row={targetRow}");
 
             return tile;
         }
@@ -1078,7 +1733,7 @@ namespace WordDrop
                 if (_bonusOverlays[i] != null) Destroy(_bonusOverlays[i]);
             _bonusOverlays.Clear();
 
-//             Debug.Log("[GridManager] All cells cleared.");
+//             WDLog.Log("[GridManager] All cells cleared.");
         }
 
         /// <summary>
@@ -1167,7 +1822,7 @@ namespace WordDrop
                 }
             }
 
-//             Debug.Log($"[GridManager] RebuildFromRulesEngine — created {created} tiles.");
+//             WDLog.Log($"[GridManager] RebuildFromRulesEngine — created {created} tiles.");
         }
 
         /// <summary>Self-heal for the HeroWord escort object ("drop to the bottom"). A drop-target is
@@ -1202,8 +1857,39 @@ namespace WordDrop
         /// Tiles that exist in data but are in wrong visual position get snapped.
         /// Tiles that exist visually but not in data get destroyed.
         /// </summary>
+        /// <summary>Force every tile onto its exact cell position.
+        ///
+        /// Rises tween with Ease.OutBack, which OVERSHOOTS the target and settles back. Fire
+        /// several in quick succession — as the starved-board refill does — and a new rise can
+        /// begin from a not-yet-settled position, compounding small errors. The board sync
+        /// only corrects drift above 0.01 world units (~1.5px here), so anything under that
+        /// survives as a dark seam where the board shows between tiles. This removes the
+        /// residue outright. 2026-09-09 Spencer.</summary>
+        public void SnapAllTilesToCells()
+        {
+            for (int col = 0; col < COLS; col++)
+                for (int row = 0; row < ROWS; row++)
+                {
+                    var t = _tiles[col, row];
+                    if (t == null || t.IsAnimating) continue;
+                    t.transform.DOKill();
+                    t.transform.position = CellToWorld(col, row);
+                    // Scale too. Position-only left tiles stranded mid-pop at the wrong
+                    // size, which shows as purple gaps between letters. 2026-09-10 Spencer.
+                    t.SnapRestScale();
+                }
+        }
+
         public void SyncToRulesState(RulesEngine rules)
         {
+            // Every board sync re-asserts sorting order, so an expired FX lift cannot persist.
+            for (int _c = 0; _c < COLS; _c++)
+                for (int _r = 0; _r < ROWS; _r++)
+                {
+                    _tiles[_c, _r]?.ReassertSortingOrder();
+                    _tiles[_c, _r]?.RefreshArmedFace();   // gold art converges, never sticks rose
+                }
+            // Cluster outlines are rebuilt at the END of this method — see the call below.
             if (rules == null) return;
 
             int fixed_count = 0;
@@ -1254,6 +1940,13 @@ namespace WordDrop
                             visualTile.SetLetter(rulesCell.Letter);
                             fixed_count++;
                         }
+                        // The resting face is per-letter (gold for high-value). SetLetter only
+                        // paints it while the tile is already resting, so a letter that arrived
+                        // mid-cascade kept the wrong face forever. This sync runs after every
+                        // board change and is the one place that sees every tile — correct it
+                        // here rather than chasing each path. No-op when not resting. 2026-09-08.
+                        visualTile.RefreshRestingFace();
+                        visualTile.SyncSelectRim();   // rim must agree with selection — see Tile.SyncSelectRim
                         // Vaults: a live letter tile can be converted into a vault in-place
                         // (SeedVaultBoard flips IsStone+IsAnchored on an existing cell). Reflect it —
                         // anchored → treasure chest, plain stone → grey.
@@ -1322,7 +2015,10 @@ namespace WordDrop
                 }
             }
 
-        }
+        
+            // ONE rebuild per sync — the outline must never outlive the cluster it traces.
+            ClusterOutline.Instance?.Refresh();
+}
 
         public bool IsGridFull()
         {
@@ -1349,7 +2045,8 @@ namespace WordDrop
             if (worldPos.x < GridLeft || worldPos.x > GridRight) return new Vector2Int(-1, -1);
             if (worldPos.y < GridBottom || worldPos.y > GridTop) return new Vector2Int(-1, -1);
             int col = Mathf.FloorToInt((worldPos.x - GridLeft) / CellSize);
-            int row = Mathf.FloorToInt((worldPos.y - GridBottom) / CellSize);
+            const float overshootHalfW2 = 0f; // see WorldToCell above
+            int row = Mathf.FloorToInt((worldPos.y - GridBottom) / RowPitch - overshootHalfW2);  // was CellSize — a real bug once RowPitch != CellSize
             col = Mathf.Clamp(col, 0, COLS - 1);
             row = Mathf.Clamp(row, 0, ROWS - 1);
             return new Vector2Int(col, row);
@@ -1413,7 +2110,7 @@ namespace WordDrop
                 _cells[col, row] = null;
             }
 
-//             Debug.Log($"[GridManager] RemoveTiles — removed {removedCount} tile(s) " +
+//             WDLog.Log($"[GridManager] RemoveTiles — removed {removedCount} tile(s) " +
                       // $"from {cells.Count} requested positions.");
 
             // Refresh bonus overlays in case any were consumed by scoring
@@ -1528,7 +2225,7 @@ namespace WordDrop
 
             if (totalMoved > 0)
             {
-//                 Debug.Log($"[GridManager] ApplyGravity — {totalMoved} tile(s) falling.");
+//                 WDLog.Log($"[GridManager] ApplyGravity — {totalMoved} tile(s) falling.");
 
                 // Wait for all gravity animations to complete
                 int  safety       = 0;
@@ -1546,16 +2243,29 @@ namespace WordDrop
                             break;
                         }
                     }
-                    if (anyAnimating) yield return null;
+                    if (anyAnimating)
+                    {
+                        // Ride the fall. The outline traces the tiles' LIVE positions, so
+                        // retracing each frame keeps the line on the letters all the way
+                        // down instead of waiting at the destination for them to arrive.
+                        // 2026-09-09 Spencer.
+                        ClusterOutline.Instance?.Refresh();
+                        yield return null;
+                    }
                 }
 
-//                 Debug.Log("[GridManager] ApplyGravity — all tiles settled.");
+//                 WDLog.Log("[GridManager] ApplyGravity — all tiles settled.");
             }
             else
             {
-//                 Debug.Log("[GridManager] ApplyGravity — no tiles needed to move.");
+//                 WDLog.Log("[GridManager] ApplyGravity — no tiles needed to move.");
             }
-        }
+        
+            // Letters may have been pulled apart — drop any word that no longer exists
+            // BEFORE retracing, so the outline never traces a word that just died.
+            RulesEngine.Instance?.ValidatePrimedWords();
+            ClusterOutline.Instance?.Refresh();   // tiles moved — retrace the cluster outlines
+}
 
         /// <summary>
         /// Event-driven gravity: moves specific tiles based on RulesEngine event data.
@@ -1565,7 +2275,7 @@ namespace WordDrop
         {
             if (tileMoves == null || tileMoves.Count == 0)
             {
-//                 Debug.Log("[GridManager] ApplyGravityFromEvents — no moves.");
+//                 WDLog.Log("[GridManager] ApplyGravityFromEvents — no moves.");
                 yield break;
             }
 
@@ -1640,7 +2350,7 @@ namespace WordDrop
 
             if (animatingTiles.Count > 0)
             {
-//                 Debug.Log($"[GridManager] ApplyGravityFromEvents — {animatingTiles.Count} tile(s) falling.");
+//                 WDLog.Log($"[GridManager] ApplyGravityFromEvents — {animatingTiles.Count} tile(s) falling.");
 
                 int safety = 0;
                 bool anyAnimating = true;
@@ -1656,12 +2366,25 @@ namespace WordDrop
                             break;
                         }
                     }
-                    if (anyAnimating) yield return null;
+                    if (anyAnimating)
+                    {
+                        // Ride the fall. The outline traces the tiles' LIVE positions, so
+                        // retracing each frame keeps the line on the letters all the way
+                        // down instead of waiting at the destination for them to arrive.
+                        // 2026-09-09 Spencer.
+                        ClusterOutline.Instance?.Refresh();
+                        yield return null;
+                    }
                 }
             }
 
-//             Debug.Log("[GridManager] ApplyGravityFromEvents — complete.");
-        }
+//             WDLog.Log("[GridManager] ApplyGravityFromEvents — complete.");
+        
+            // Letters may have been pulled apart — drop any word that no longer exists
+            // BEFORE retracing, so the outline never traces a word that just died.
+            RulesEngine.Instance?.ValidatePrimedWords();
+            ClusterOutline.Instance?.Refresh();   // tiles moved — retrace the cluster outlines
+}
 
         // ---------------------------------------------------------------------------
         // Rising Row animation
@@ -1677,6 +2400,14 @@ namespace WordDrop
             Dictionary<Vector2Int, Vector2Int> shiftMoves,
             char[] newBottomLetters)
         {
+            // Heal anything the LAST rise left stranded before starting this one. The new-tile
+            // pop is a 0.85s scale bounce but input unblocks at 0.18s, so a second rise (or a
+            // gravity step) can kill that tween mid-bounce and leave the tile at the wrong
+            // size — the purple gaps Spencer saw after a three-row rise. Doing it here, at the
+            // START, heals the previous rise without cutting this one's pop short.
+            // 2026-09-10 Spencer.
+            SnapAllTilesToCells();
+
             // 2026-05-28: shift at 0.18s — completes BEFORE the new tile
             // reaches its pop overshoot peak (~0.26s with period 0.30 at
             // the longer 0.85s duration).
@@ -1749,6 +2480,9 @@ namespace WordDrop
                 // to every "new tile/card arrives" moment in the game.
                 float POP_DURATION = UIAnimations.NEW_TILE_POP_DURATION;
                 List<Tween> popTweens = new List<Tween>();
+
+                // Outlines ride the rise with the tiles instead of snapping after it.
+                ClusterOutline.Instance?.RiseBy(CellSize, RISE_DURATION);
 
                 for (int col = 0; col < COLS && col < newBottomLetters.Length; col++)
                 {
@@ -1856,10 +2590,25 @@ namespace WordDrop
                     if (popTween != null) popTweens.Add(popTween);
                 }
 
-                // Total animation length = max(shift, pop). They run together
-                // so we just wait long enough for both to finish.
+                // ── POST-RISE LAG (2026-09-08 Spencer) ──────────────────────────────
+                // "there's a bit of lag after a row rise to settle before the game is
+                // responsive." This waited max(shift, pop) — and POP_DURATION is 0.85s
+                // while the shift is 0.18s, so the game blocked input for ~0.90s after a
+                // rise even though the tiles stopped MOVING after 0.18s. Roughly seven
+                // tenths of a second of dead time with the board already settled.
+                //
+                // The pop is a scale bounce on the newly spawned tiles. It moves nothing
+                // between cells, so a tap during it still resolves to the right cell — it
+                // is safe to let it finish on its own while the player plays. Only the
+                // MOVEMENT has to complete before input reopens, because that is what
+                // world-position-to-cell lookups depend on.
                 if (popTweens.Count > 0)
-                    yield return new WaitForSeconds(Mathf.Max(RISE_DURATION, POP_DURATION) + 0.05f);
+                    yield return new WaitForSeconds(RISE_DURATION + 0.05f);
+
+            // Rows moved — the outline traces CELL coordinates, so it must be rebuilt or it
+            // stays drawn where the words used to be. The rise path never calls
+            // SyncToRulesState, so hooking it there was not enough. 2026-09-09 Spencer.
+            ClusterOutline.Instance?.Refresh();
             }
         }
 

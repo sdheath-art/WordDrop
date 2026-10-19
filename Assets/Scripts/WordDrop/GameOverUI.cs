@@ -83,7 +83,7 @@ namespace WordDrop
             Instance = this;
             BuildUI();
             SetVisible(false);
-//             Debug.Log("[GameOverUI] Awake — panel built and hidden");
+//             WDLog.Log("[GameOverUI] Awake — panel built and hidden");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -246,7 +246,7 @@ namespace WordDrop
 
         private IEnumerator ShowWithReplay()
         {
-//             Debug.Log("[GameOverUI] Playing detonation replay before showing scores.");
+//             WDLog.Log("[GameOverUI] Playing detonation replay before showing scores.");
 
             var chain = DetonationRecorder.Instance.GetBestChain();
             Coroutine replay = DetonationReplay.Instance.PlayReplay(chain);
@@ -458,8 +458,25 @@ namespace WordDrop
                 }
                 else
                 {
-                    _bestScoreText.text  = $"Best: {bestScore}{comboStr}";
-                    _bestScoreText.color = TEXT_DIM;
+                    // ── THE NEAR MISS (2026-09-09 Spencer) ───────────────────────────
+                    // "Best: 8,420" is a fact. "190 SHORT" is a reason to press retry.
+                    // The most retention-efficient line in a score game is the GAP, not
+                    // the record — it reframes a loss as an almost. Only when it really
+                    // was close: a 4,000-point gap dressed up as "so close" reads as a
+                    // lie and costs trust.
+                    int gap = bestScore - playerScore;
+                    bool nearMiss = gap > 0 && bestScore > 0
+                                    && gap <= Mathf.Max(150, Mathf.RoundToInt(bestScore * 0.12f));
+                    if (nearMiss)
+                    {
+                        _bestScoreText.text  = $"{gap:N0} SHORT OF YOUR BEST{comboStr}";
+                        _bestScoreText.color = GOLD;
+                    }
+                    else
+                    {
+                        _bestScoreText.text  = $"Best: {bestScore}{comboStr}";
+                        _bestScoreText.color = TEXT_DIM;
+                    }
                 }
             }
 
@@ -612,7 +629,7 @@ namespace WordDrop
             string shareText = DailyDropManager.GenerateShareText(playerScore, streak);
 
             GUIUtility.systemCopyBuffer = shareText;
-//             Debug.Log($"[GameOverUI] Share text copied to clipboard:\n{shareText}");
+//             WDLog.Log($"[GameOverUI] Share text copied to clipboard:\n{shareText}");
 
             // Brief visual feedback on share button
             if (_shareButton != null)

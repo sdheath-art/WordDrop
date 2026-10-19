@@ -77,7 +77,7 @@ namespace WordDrop
             _escortWinPending = false;
             obj?.Reset();
             PushHud();
-            Debug.Log($"[Objective] Set: {(obj != null ? obj.Title : "none")}");
+            WDLog.Log($"[Objective] Set: {(obj != null ? obj.Title : "none")}");
         }
 
         public void ClearObjective()
@@ -155,7 +155,7 @@ namespace WordDrop
             s_crossCells = new List<Vector2Int> { new Vector2Int(X - 1, R), new Vector2Int(X, R), new Vector2Int(X + 1, R), new Vector2Int(X + 2, R) };
             completing.Add('O'); // 1st drop → completes + charges COIN, reveals _ORD
             completing.Add('W'); // 2nd drop → completes WORD → crosses COIN's O → POP
-            Debug.Log($"[CrossSeed] stamped COIN x WORD @ (col {X}, row {R}); lane carved; supports filled.");
+            WDLog.Log($"[CrossSeed] stamped COIN x WORD @ (col {X}, row {R}); lane carved; supports filled.");
             return completing;
         }
 
@@ -306,7 +306,7 @@ namespace WordDrop
                 completing.Add(w[2]);
                 c += 3;                                       // next near-word starts right after this one
             }
-            Debug.Log($"[NearWord] seeded {completing.Count} near-word(s) in row 0.");
+            WDLog.Log($"[NearWord] seeded {completing.Count} near-word(s) in row 0.");
             return completing;
         }
 
@@ -534,7 +534,7 @@ namespace WordDrop
                 if (SurvivalManager.NoAssistMode)
                 {
                     SurvivalManager.NoAssistMode = false;
-                    Debug.Log("[LevelTable] Tutorial level forced NoAssistMode OFF (assists are required here).");
+                    WDLog.Log("[LevelTable] Tutorial level forced NoAssistMode OFF (assists are required here).");
                 }
                 MatchController.Instance?.GuaranteeFirstWordForCurrentBoard();
             }
@@ -602,7 +602,7 @@ namespace WordDrop
             else
                 GameAudio.Instance?.PlaySurvivalMusic();
 
-            Debug.Log($"[LevelTable] Install L{levelIndex} → {e.Mode} ({e.Profile}) " +
+            WDLog.Log($"[LevelTable] Install L{levelIndex} → {e.Mode} ({e.Profile}) " +
                       $"len-seed:{e.LengthSeed} deton-seed:{e.DetonSeed} assist:{e.AssistFreq:0.00} " +
                       $"rise:{e.RiseCadence} | {e.Why}");
 
@@ -648,6 +648,14 @@ namespace WordDrop
                 LevelIntroModal.Instance?.SetDeferred(Active, levelIndex); // non-map: unlock modal shows the deferred intro
             else
                 LevelIntroModal.Instance?.Show(Active, levelIndex);
+
+            // ── PER-STAGE RULES (2026-10-19 Spencer) ──────────────────────────────────
+            // Applied LAST so it wins over the LevelTable dials set above. Those were authored
+            // for the drop game and several of them now drive nothing (the seeding toggles feed
+            // PlayerHand, which the swap pivot removed). LevelRules is score-mode native: it
+            // only touches switches that still do something, and it seeds the ice whose bounty
+            // is what makes a blocker worth engaging with in a score-only game.
+            LevelRules.Apply(levelIndex);
         }
 
         // Load an icon that may be imported as a plain Texture (default type) rather than a Sprite. 2026-07-13.
@@ -866,7 +874,7 @@ namespace WordDrop
             // (LastResolutionWasSwap) OR the word itself was FORMED/PRIMED by an edit (primedByEdit). So the
             // natural combo "edit to prime the word, drop to set it off" still counts — the edit did the work.
             // 2026-07-10 Spencer (was: only edit-TRIGGERED pops counted, which read as "why didn't that count?").
-            Debug.Log($"[PopDiag] pop '{word}' primedByEdit={primedByEdit} lastResWasSwap={RulesEngine.LastResolutionWasSwap} swapOnly={_swapExplosionsOnly} → {((!_swapExplosionsOnly || RulesEngine.LastResolutionWasSwap || primedByEdit) ? "COUNT" : "SKIP")}");
+            WDLog.Log($"[PopDiag] pop '{word}' primedByEdit={primedByEdit} lastResWasSwap={RulesEngine.LastResolutionWasSwap} swapOnly={_swapExplosionsOnly} → {((!_swapExplosionsOnly || RulesEngine.LastResolutionWasSwap || primedByEdit) ? "COUNT" : "SKIP")}");
             if (_swapExplosionsOnly && !RulesEngine.LastResolutionWasSwap && !primedByEdit) return;
             bool wasComplete = Active.IsComplete;
             Active.OnWordExploded(word, ownerPlayerIndex);
@@ -906,7 +914,7 @@ namespace WordDrop
             if (Active != null && !wasComplete && Active.IsComplete && !_firedComplete)
             {
                 _firedComplete = true;
-                Debug.Log($"[Objective] COMPLETE: {Active.Title}");
+                WDLog.Log($"[Objective] COMPLETE: {Active.Title}");
                 OnObjectiveComplete?.Invoke(Active);
                 if (deferToLand)
                 {

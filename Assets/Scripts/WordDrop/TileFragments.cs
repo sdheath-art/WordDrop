@@ -84,7 +84,7 @@ namespace WordDrop
                 Sprite.Create(tex, new Rect(0,    0,    half, half), new Vector2(0.5f, 0.5f), 100f), // bottom-left
                 Sprite.Create(tex, new Rect(half, 0,    half, half), new Vector2(0.5f, 0.5f), 100f), // bottom-right
             };
-            Debug.Log($"[TileFragments] Loaded debris atlas {tex.width}×{tex.height} — 4 sub-sprites built");
+            WDLog.Log($"[TileFragments] Loaded debris atlas {tex.width}×{tex.height} — 4 sub-sprites built");
         }
 
         private void PrewarmPool()

@@ -51,6 +51,10 @@ namespace WordDrop
 
         private void Update()
         {
+            // 2026-09-08: same master switch as HintManager — the idle "you are jammed"
+            // hint is part of the word-hint system.
+            if (HintManager.HINTS_DISABLED) { ClearHint(); return; }
+
             // Hint button disabled — gets in the way of gameplay.
             // Phase 5 note: if re-enabled, add the mechanic gate here:
             //   if (!LevelController.IsMechanicAllowed("jam_hint")) { HideButton(); return; }
@@ -260,7 +264,7 @@ namespace WordDrop
             {
                 // No valid play — shouldn't happen since we pre-check, but just hide
                 HideButton();
-//                 Debug.Log("[JamHint] No valid plays found on scan (edge case)");
+//                 WDLog.Log("[JamHint] No valid plays found on scan (edge case)");
             }
         }
 
@@ -307,7 +311,7 @@ namespace WordDrop
                 }
             }
 
-//             Debug.Log($"[JamHint] Hint: drop '{letter}' (slot {handSlot}) → col {col} row {row}");
+//             WDLog.Log($"[JamHint] Hint: drop '{letter}' (slot {handSlot}) → col {col} row {row}");
         }
 
         /// <summary>Call when player drops a tile or scores — clears the hint.</summary>

@@ -187,7 +187,7 @@ namespace WordDrop
                     new Rect(0, 0, bubbleTex.width, bubbleTex.height),
                     new Vector2(0.5f, 0.5f), 200f);
 
-            Debug.Log($"[FlipbookFX] glow load — bubble@2x: " +
+            WDLog.Log($"[FlipbookFX] glow load — bubble@2x: " +
                       $"{(bubbleTex != null ? $"{bubbleTex.width}x{bubbleTex.height}" : "MISSING")}");
 
             // 2026-06-03 Spencer: VFX_Circle ring for the tier-1 pop bubble (only).
@@ -916,7 +916,7 @@ namespace WordDrop
             // Magenta/pink aura tint with HDR > 1 so bloom catches it cleanly.
             Color baseTint = new Color(1.6f, 0.4f, 1.4f, 1f);
 
-            Debug.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s mask={(mask != null ? "ON" : "OFF")}");
+            WDLog.Log($"[FX-Heat] Spawned tile heat aura at {worldPos} duration={duration:F2}s mask={(mask != null ? "ON" : "OFF")}");
 
             float elapsed = 0f;
             // Math: square_aura.png is 256x256 at ppu=100 → native world

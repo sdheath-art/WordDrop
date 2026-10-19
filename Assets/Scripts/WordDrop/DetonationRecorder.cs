@@ -91,7 +91,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-//             Debug.Log("[DetonationRecorder] Awake");
+//             WDLog.Log("[DetonationRecorder] Awake");
         }
 
         // ── Public API ──────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ namespace WordDrop
             _currentChain = null;
             _pendingSnapshot = null;
             _currentChainHasDetonations = false;
-//             Debug.Log("[DetonationRecorder] Reset");
+//             WDLog.Log("[DetonationRecorder] Reset");
         }
 
         /// <summary>
@@ -303,7 +303,7 @@ namespace WordDrop
             if (isBetter)
             {
                 _bestChain = _currentChain;
-//                 Debug.Log($"[DetonationRecorder] New best chain! depth={_bestChain.MaxChainDepth} " +
+//                 WDLog.Log($"[DetonationRecorder] New best chain! depth={_bestChain.MaxChainDepth} " +
                           // $"bonus={_bestChain.TotalDetonationBonus} triggers={_bestChain.TotalTriggeredCount} " +
                           // $"steps={_bestChain.Steps.Count}");
             }

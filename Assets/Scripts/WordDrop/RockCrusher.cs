@@ -48,7 +48,7 @@ namespace WordDrop
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);
 
-            Debug.Log($"[StoneSplitter] Shattered {toRemove.Count} rock(s) board-wide");
+            WDLog.Log($"[StoneSplitter] Shattered {toRemove.Count} rock(s) board-wide");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
         }

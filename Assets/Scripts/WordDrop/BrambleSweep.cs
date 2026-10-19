@@ -60,7 +60,7 @@ namespace WordDrop
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);
 
-            Debug.Log($"[BrambleSweep L{Level}] Cleared rows {rMin}-{rMax}: {toRemove.Count} tiles");
+            WDLog.Log($"[BrambleSweep L{Level}] Cleared rows {rMin}-{rMax}: {toRemove.Count} tiles");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
         }

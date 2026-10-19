@@ -462,7 +462,7 @@ namespace WordDrop
             LevelData nextData = LevelLoader.Load(nextId);
             if (nextData == null)
             {
-                Debug.Log($"[LevelCompletedModal] No level_{nextId}.json — returning to Level Select.");
+                WDLog.Log($"[LevelCompletedModal] No level_{nextId}.json — returning to Level Select.");
                 OnMenuClicked();
                 return;
             }

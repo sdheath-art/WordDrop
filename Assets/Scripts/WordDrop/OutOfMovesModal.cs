@@ -311,7 +311,7 @@ namespace WordDrop
             // while the stub is sleeping.
             if (LevelController.Instance == null || LevelController.Instance.RunToken != runToken)
             {
-                Debug.Log("[OutOfMovesModal] Ad-stub callback ignored — run changed during wait.");
+                WDLog.Log("[OutOfMovesModal] Ad-stub callback ignored — run changed during wait.");
                 yield break;
             }
             TryGrantBoosterMoves(source: "rewarded_ad");

@@ -38,7 +38,7 @@ namespace WordDrop
 
         private void Awake()
         {
-//             Debug.Log("[SceneBootstrap] Awake begin");
+//             WDLog.Log("[SceneBootstrap] Awake begin");
 
             // ── Mobile optimizations ──
             // Disable physics — no colliders, no rigidbodies
@@ -64,7 +64,7 @@ namespace WordDrop
             SetupVisualBridge();
             SetupUIScreens();
 
-//             Debug.Log("[SceneBootstrap] Awake complete — all managers created and initialized");
+//             WDLog.Log("[SceneBootstrap] Awake complete — all managers created and initialized");
         }
 
         private void Start()
@@ -84,7 +84,7 @@ namespace WordDrop
             if (MenuUI.Instance != null)
             {
                 MenuUI.Instance.SetVisible(true);
-//                 Debug.Log("[SceneBootstrap] Start — showing menu");
+//                 WDLog.Log("[SceneBootstrap] Start — showing menu");
             }
             else if (GameManager.Instance != null)
             {
@@ -103,7 +103,7 @@ namespace WordDrop
             if (Input.GetKeyDown(KeyCode.M))
             {
                 _debugIsLevelMode = !_debugIsLevelMode;
-                Debug.Log($"[SceneBootstrap] GameMode toggle → {(_debugIsLevelMode ? "Level" : "Survival")} (stub — Phase 2 wires this to actual mode routing)");
+                WDLog.Log($"[SceneBootstrap] GameMode toggle → {(_debugIsLevelMode ? "Level" : "Survival")} (stub — Phase 2 wires this to actual mode routing)");
             }
         }
 #endif
@@ -148,10 +148,66 @@ namespace WordDrop
             // Vertical gradient background.
             // 2026-06-02: candy-bright CYAN per Spencer's Royal-Match/Candy-Crush
             // reference — vivid sky-cyan at top → mint-teal toward the board.
-            Color bgTop    = new Color(0.40f, 0.82f, 0.96f, 1f); // vivid sky cyan (top)
-            Color bgBottom = new Color(0.50f, 0.90f, 0.84f, 1f); // bright mint-teal (toward the board)
+            // 2026-09-10 palette pass — MEASURED against Candy Crush / Royal Match / Toon Blast /
+            // Monopoly Go / Scrabble GO (~/Documents/WordDrop_Art/refs_2026_09_10).
+            //
+            // FOUR of those five make the PLAY FIELD the brightest thing on screen (Royal Match:
+            // chrome L=15, board L=66). Only Candy Crush inverts it — bright bg L=79 over a dark
+            // slab L=41 — and WordDrop had copied that (bg L=76, board L=25) but pushed it further,
+            // so the board read as a HOLE punched in the wrapper and the eye landed on empty cyan.
+            //
+            // We do NOT fix that by lightening the board: WordDrop's tiles are CREAM (L=89), and on
+            // a Royal-Match-light board they would only clear it by ~23 points and go mushy. The
+            // dark board is RIGHT for this tile art. So the background comes down instead, until
+            // the TILES are the brightest thing on screen — which is what players should look at.
+            //
+            // Still clearly a bright candy sky (L≈49→36), just no longer competing with the board.
+            // Revert = the two lines in the comment below.
+            //   was: bgTop (0.40,0.82,0.96) L=76   bgBottom (0.50,0.90,0.84) L=82
+            // 2026-09-10: first pass went to L 49/36 and Spencer called it "pretty dark" — too far.
+            // Walked back to L 62/52: still a bright candy sky, but the cream tiles (L=89) stay the
+            // brightest thing on screen and the board (L=24) is no longer competing with the wrapper.
+            Color bgTop    = new Color(0.32f, 0.68f, 0.84f, 1f); // bright sky (L~62)
+            Color bgBottom = new Color(0.24f, 0.58f, 0.70f, 1f); // slightly deeper toward the board (L~52)
+
+            // ── PAINTED SCREEN BACKGROUND (2026-10-19 Spencer) ────────────────────────
+            // Spencer's castle/terrace painting, exported at 2358x5110 — aspect 0.4614,
+            // which is the 1179x2556 phone to within 0.0001, so it is composed for the
+            // full screen rather than tiled. Loaded as a sprite and COVER-fitted below.
+            // Falls back to the old two-colour gradient if the asset is missing, so a bad
+            // import cannot ship a blank screen.
+            // IMPORT GOTCHA: its .meta must carry nPOTScale: 0 — the default (1) silently
+            // resamples non-power-of-two textures to the nearest POT and has cost this
+            // project hours before (see the 2026-09-11 session note).
+            Sprite bgArt = Resources.Load<Sprite>("UI/bg@2x");
+            if (bgArt == null) bgArt = Resources.Load<Sprite>("bg@2x");
+
+            GameObject bgGO = new GameObject(bgArt != null ? "ScreenBackground" : "BackgroundGradient");
+            if (bgArt != null)
+            {
+                var artSR = bgGO.AddComponent<SpriteRenderer>();
+                artSR.sprite       = bgArt;
+                artSR.sortingOrder = -10;
+                artSR.color        = Color.white;
+
+                // COVER fit: scale uniformly so the art fills the camera on BOTH axes and
+                // crops the overflow, rather than letterboxing on a different aspect. The
+                // 1.04 overscan keeps camera shake from exposing an edge.
+                const float OVERSCAN = 1.04f;
+                float nativeW = bgArt.rect.width  / bgArt.pixelsPerUnit;
+                float nativeH = bgArt.rect.height / bgArt.pixelsPerUnit;
+                float fit = Mathf.Max((halfW * 2f * OVERSCAN) / nativeW,
+                                      (halfH * 2f * OVERSCAN) / nativeH);
+                bgGO.transform.localScale = new Vector3(fit, fit, 1f);
+                bgGO.transform.position   = new Vector3(0f, 0f, 4f);
+                WDLog.Log($"[SceneBootstrap] screen background '{bgArt.name}' " +
+                          $"{bgArt.rect.width}x{bgArt.rect.height}px → fit {fit:F3} " +
+                          $"(view {halfW * 2f:F2}x{halfH * 2f:F2} world units)");
+                return;
+            }
+
+            Debug.LogWarning("[SceneBootstrap] UI/bg@2x not found — falling back to the gradient.");
             Sprite bgGrad = TileRenderer.CreateGradientRect(4, 128, bgBottom, bgTop);
-            GameObject bgGO = new GameObject("BackgroundGradient");
             // NOT parented to camera — stays still while camera shakes
             SpriteRenderer bgSR = bgGO.AddComponent<SpriteRenderer>();
             bgSR.sprite = bgGrad;
@@ -170,7 +226,7 @@ namespace WordDrop
 
             // Old sprite vignette removed — URP post-processing handles vignette now
 
-//             Debug.Log($"[SceneBootstrap] Camera — halfH={halfH:F2}, halfW={halfW:F2}  " +
+//             WDLog.Log($"[SceneBootstrap] Camera — halfH={halfH:F2}, halfW={halfW:F2}  " +
                       // $"({Screen.width}x{Screen.height})");
         }
 
@@ -182,14 +238,14 @@ namespace WordDrop
         {
             if (FindAnyObjectByType<EventSystem>() != null)
             {
-//                 Debug.Log("[SceneBootstrap] EventSystem already exists — skipping creation.");
+//                 WDLog.Log("[SceneBootstrap] EventSystem already exists — skipping creation.");
                 return;
             }
 
             GameObject esGO = new GameObject("EventSystem");
             esGO.AddComponent<EventSystem>();
             esGO.AddComponent<StandaloneInputModule>();
-//             Debug.Log("[SceneBootstrap] EventSystem created");
+//             WDLog.Log("[SceneBootstrap] EventSystem created");
         }
 
         // -----------------------------------------------------------------------
@@ -221,7 +277,7 @@ namespace WordDrop
             // AIAgent — depends on MatchController + RulesEngine
             new GameObject("AIAgent").AddComponent<AIAgent>();
 
-//             Debug.Log("[SceneBootstrap] Core managers created: " +
+//             WDLog.Log("[SceneBootstrap] Core managers created: " +
                       // "GameManager, ScoreManager, MatchManager(stub), RulesEngine, " +
                       // "MatchController, AdManager, AIAgent");
         }
@@ -229,25 +285,25 @@ namespace WordDrop
         private void SetupGrid()
         {
             new GameObject("GridManager").AddComponent<GridManager>();
-//             Debug.Log("[SceneBootstrap] GridManager created");
+//             WDLog.Log("[SceneBootstrap] GridManager created");
         }
 
         private void SetupHand()
         {
             new GameObject("HandManager").AddComponent<HandManager>();
-//             Debug.Log("[SceneBootstrap] HandManager created");
+//             WDLog.Log("[SceneBootstrap] HandManager created");
         }
 
         private void SetupHUD()
         {
             new GameObject("HUDManager").AddComponent<HUDManager>();
-//             Debug.Log("[SceneBootstrap] HUDManager created");
+//             WDLog.Log("[SceneBootstrap] HUDManager created");
         }
 
         private void SetupColumnArrows()
         {
             new GameObject("ColumnArrowManager").AddComponent<ColumnArrowManager>();
-//             Debug.Log("[SceneBootstrap] ColumnArrowManager created");
+//             WDLog.Log("[SceneBootstrap] ColumnArrowManager created");
         }
 
         private void SetupVisualBridge()
@@ -255,7 +311,7 @@ namespace WordDrop
             // GameVisualBridge subscribes to RulesEngine + MatchController events in Start().
             // Must be created after RulesEngine and MatchController exist.
             new GameObject("GameVisualBridge").AddComponent<GameVisualBridge>();
-//             Debug.Log("[SceneBootstrap] GameVisualBridge created");
+//             WDLog.Log("[SceneBootstrap] GameVisualBridge created");
         }
 
         private void SetupUIScreens()
@@ -282,6 +338,7 @@ namespace WordDrop
             new GameObject("BoosterManager").AddComponent<BoosterManager>();
             new GameObject("BoosterHUDSlot").AddComponent<BoosterHUDSlot>();
             new GameObject("BoosterChoiceModal").AddComponent<BoosterChoiceModal>();
+            new GameObject("ClusterOutline").AddComponent<ClusterOutline>();
             new GameObject("ContinueModal").AddComponent<ContinueModal>();
             new GameObject("OutOfMovesModal").AddComponent<OutOfMovesModal>();
             new GameObject("HeartWaitModal").AddComponent<HeartWaitModal>();
@@ -306,7 +363,7 @@ namespace WordDrop
             // The Scrabble-drop game does not use round-based flow.
             // RulesEngine handles all word detection.
 
-//             Debug.Log("[SceneBootstrap] UI screens created (MenuUI hidden, GameOverUI hidden). " +
+//             WDLog.Log("[SceneBootstrap] UI screens created (MenuUI hidden, GameOverUI hidden). " +
                       // "No RoundManager / WordleEvaluator / RoundOverUI — removed in Job 12.");
         }
 

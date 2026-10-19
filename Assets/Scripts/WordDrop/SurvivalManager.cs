@@ -63,8 +63,41 @@ namespace WordDrop
         // Budget curve:
         //   S1-2 = STAGE_MOVES_BASE
         //   S3-4 = -2  moves, S5-6 = -4, S7+ = floor at STAGE_MOVES_FLOOR
-        public const int   STAGE_TARGET_BASE    = 400;
-        public const float STAGE_TARGET_GROWTH  = 1.5f;  // ~1.5× per stage
+        // ── STAGE CURVE (2026-09-09 Spencer — A PROBE, NOT AN ANSWER) ────────────────
+        // Retuned for the SWAP game. The old 400 / 1.5x was calibrated for the DROP game,
+        // where a word scored its face value. Detonations now multiply by web size
+        // (2x/6x/13x/20x/27x), so a single three-word web is ~650 — it cleared the old L1
+        // of 400 before the player had made a real decision.
+        //
+        // WHY FLATTER, NOT STEEPER. Balatro's targets grow 2.5x early because the PLAYER's
+        // engine grows exponentially too — jokers multiply, so the curve is chasing the
+        // player. WordDrop has no engine-building yet: scoring power is FLAT across a run
+        // while the board tightens. Against flat power, 1.5x per stage means each stage
+        // takes 1.5x LONGER than the last — stage 8 would take ~17x stage 1. The run would
+        // not get harder, it would get slower, which is the grind Spencer was feeling.
+        // Stages here are an ODOMETER, not a gate — you cannot fail one, the run ends by
+        // topping out — so their job is pacing, and near-flat growth is right.
+        //
+        // MEASURE THESE, DO NOT TRUST THEM. Play three runs with the bar visible and note
+        // the clock at each stage-up. Aim: L1 ~45-60s, L5 no more than ~2x that. Adjust
+        // BASE for the first, GROWTH for the second.
+        // If the stage-up buff choice gets built, power will compound and the growth
+        // should climb back toward Balatro's shape.
+        // ── SCORE RUN (2026-09-09 Spencer) ──────────────────────────────────────────
+        // "i went over the target and nothing happened."
+        // Two blockers, both drop-game inheritance. (1) The endless level still carries an
+        // objective — the fake LongWord goal of 999999 — so CheckStageClear took the
+        // OBJECTIVE branch, where clearing requires the objective to be complete, which by
+        // design it never can be. The score target is only consulted when no objective
+        // exists. (2) The hook that calls CheckStageClear on a score change was gated on
+        // IsSurvivalMode, and L11 is a LEVEL, so it was never called at all.
+        // ScoreRunMode says "this run is scored, stages advance on the score target" and is
+        // the SINGLE source of truth — HUDManager.ScoreHudMode reads this one rather than
+        // keeping its own copy.
+        public static bool ScoreRunMode = true;
+
+        public const int   STAGE_TARGET_BASE    = 1200;  // ~2 good three-word webs
+        public const float STAGE_TARGET_GROWTH  = 1.15f; // near-flat: power does not compound yet
         // Curve with base=400, growth=1.5 (rounded to nearest 50):
         //   S1=400, S2=600, S3=900, S4=1350, S5=2050, S6=3050, S7=4550, S8=6850
         // Target: Spencer-skill players routinely clear S1-S5, first real wall
@@ -260,8 +293,41 @@ namespace WordDrop
         /// rise every turn (full pressure). The level sequencer can OVERRIDE this per level
         /// (SetRiseCadenceOverride) so a Boss level can rise faster than its stage number implies.
         /// </summary>
+        // 2026-09-09 Spencer: pressure pulled down — a rise every 2nd turn at EVERY stage.
+        // Was 2 for stages 1-4 then 1 from stage 5 on, which doubled the pressure exactly when
+        // the branch-priming rule was making words harder to find. Flat 2 while that settles.
         public static int GetTurnsPerRiseForStage(int stage)
-            => _riseCadenceOverride > 0 ? _riseCadenceOverride : (stage <= 4 ? 2 : 1);
+            => _riseCadenceOverride > 0 ? _riseCadenceOverride : 2;
+
+        // ── OCCUPANCY-RESPONSIVE CADENCE (2026-09-09 Spencer) ───────────────────────
+        // The cadence was FIXED regardless of the board, so it was wrong at both ends: a
+        // full board got a rise every 2 moves (a crush) and an empty board got a rise every
+        // 2 moves (a dead screen with two tiles and nothing to do). Spencer cleared the board
+        // and had nothing to play with — the best move in the game was punished.
+        // Now the board looks after itself: clear it out and it refills fast, get buried and
+        // it eases off so you can dig out. Also means CLEARING is rewarded with material.
+        // NOTE: MovesUntilRise reads this same property, so the HUD countdown can never
+        // disagree with what actually fires — the mistake that made it flick 8 -> 1.
+        public const float RISE_OCC_EMPTY = 0.20f;   // below this, refill fast
+        public const float RISE_OCC_FULL  = 0.70f;   // above this, give a breather
+        public const float STARVED_OCC        = 0.18f;  // below this the board refills on its own
+        public const float STARVED_TARGET_OCC = 0.32f;  // and stops once it reaches this
+
+        public int TurnsPerRiseNow
+        {
+            get
+            {
+                // 2026-09-09 Spencer: FLAT cadence. The occupancy overrides were dropping this
+                // to every 1 move whenever the board was under 20% full — which, with words
+                // clearing regularly, was most of the time. So the "every 2 turns" setting was
+                // effectively never in force.
+                // One mechanism per problem: the CADENCE is now constant and predictable, and a
+                // barren board is handled by the starved-board auto-refill below, which queues
+                // rises without needing a move. Speeding up the cadence was solving the same
+                // problem twice, and the two were fighting each other.
+                return GetTurnsPerRiseForStage(_currentStageIndex);
+            }
+        }
 
         /// <summary>
         /// Estimated player MOVES until the board tops out, given the current board
@@ -292,7 +358,20 @@ namespace WordDrop
         }
 
         /// <summary>Current stage target.</summary>
-        public int CurrentStageTarget => ComputeStageTarget(_currentStageIndex);
+        /// <summary>Score needed to clear the current stage.
+        ///
+        /// ⚠️ KEYED ON THE **RUN LEVEL**, NOT THE INTERNAL INDEX. 2026-10-19 — with the tutorial
+        /// complete a run starts at INTERNAL stage 11, so this was handing the player's very
+        /// first level stage-11's target: **4,850 instead of 1,200**. Spencer scored 1,471 on
+        /// what the HUD called "LEVEL 1", saw an objective-complete flourish, and the stage
+        /// never advanced — it looked like a freeze but the target genuinely was not met.
+        /// Same root cause as the ice-on-level-1 bug: internal stage index != displayed level.
+        /// Tutorial stages (1..10) keep the raw index — they are authored and untested against
+        /// this mapping.</summary>
+        public int CurrentStageTarget => ComputeStageTarget(
+            LevelMapPanel.IsTutorialLevel(_currentStageIndex)
+                ? _currentStageIndex
+                : Mathf.Max(1, LevelMapPanel.RunLevel(_currentStageIndex)));
         /// <summary>Current stage move budget. Authored/tutorial levels can override it
         /// (SetStageMoveBudgetOverride); otherwise the per-stage ComputeStageMoves curve.</summary>
         public int CurrentStageMoveBudget =>
@@ -455,15 +534,15 @@ namespace WordDrop
             // while MatchController.IsProcessing is still true (word scoring,
             // detonations, gravity), so we defer the rise via a wait-coroutine
             // until processing clears.
-            Debug.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused} clearedThisDrop={clearedStageThisDrop}");
+            WDLog.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused} clearedThisDrop={clearedStageThisDrop}");
             if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused && !clearedStageThisDrop && !ActiveRisesOff)
             {
                 // Onboarding ramp: stages 1-4 rise every 2 turns, stages 5+ every turn.
                 _turnsSinceLastTurnRise++;
-                int turnsPerRise = GetTurnsPerRiseForStage(_currentStageIndex);
+                int turnsPerRise = TurnsPerRiseNow;   // occupancy-responsive
                 if (_turnsSinceLastTurnRise < turnsPerRise)
                 {
-                    Debug.Log($"[RisePerMove] holding rise — stage {_currentStageIndex}, turn {_turnsSinceLastTurnRise}/{turnsPerRise}");
+                    WDLog.Log($"[RisePerMove] holding rise — stage {_currentStageIndex}, turn {_turnsSinceLastTurnRise}/{turnsPerRise}");
                 }
                 else
                 {
@@ -471,11 +550,11 @@ namespace WordDrop
                     // Glade Stillness: consume a rise-skip charge if active; suppress this turn's rise.
                     if (ConsumeGladeRiseIfActive())
                     {
-                        Debug.Log("[RisePerMove] rise suppressed by Glade Stillness");
+                        WDLog.Log("[RisePerMove] rise suppressed by Glade Stillness");
                     }
                     else
                     {
-                        Debug.Log($"[RisePerMove] scheduling rise (stage {_currentStageIndex}, cadence {turnsPerRise})");
+                        WDLog.Log($"[RisePerMove] scheduling rise (stage {_currentStageIndex}, cadence {turnsPerRise})");
                         _riseTimerSeconds = 0f;
                         _riseScheduledPending = true; // a rise is queued; if a tile is already in the top row it's FATAL
                         StartCoroutine(WaitAndExecuteRise());
@@ -499,7 +578,7 @@ namespace WordDrop
             if (_moveLimitTopOut && UsesStageMoveBudget
                 && !clearedStageThisDrop && CurrentStageMovesRemaining <= 0)
             {
-                Debug.Log($"[MoveLimit] budget spent ({_currentStageMovesUsed}/{CurrentStageMoveBudget}), goal not met → top out.");
+                WDLog.Log($"[MoveLimit] budget spent ({_currentStageMovesUsed}/{CurrentStageMoveBudget}), goal not met → top out.");
                 TriggerTopOut();
             }
         }
@@ -584,7 +663,10 @@ namespace WordDrop
                 // 2026-06-08: an active objective IS the win condition (replaces the score
                 // target). Clear only when it's complete; otherwise the score target gates the
                 // clear (endless mode with no objective).
-                bool objMode = ObjectiveManager.Instance != null && ObjectiveManager.Instance.HasObjective;
+                // ScoreRunMode overrides: the objective is decoration in an endless score
+                // run, so the score target governs the clear.
+                bool objMode = !ScoreRunMode
+                               && ObjectiveManager.Instance != null && ObjectiveManager.Instance.HasObjective;
                 if (objMode)
                 {
                     if (IsMoveCapLevel)
@@ -599,7 +681,25 @@ namespace WordDrop
                     }
                     else if (!ObjectiveManager.Instance.Active.IsComplete) return;
                 }
-                else { if (CurrentStageScore < CurrentStageTarget) return; }
+                else
+                {
+                    // DIAGNOSTIC 2026-10-19: say WHY a clear was refused. "It freezes after I
+                    // finish the level" has twice turned out to be the target quietly not being
+                    // met, and a silent `return` gives nothing to go on.
+                    if (CurrentStageScore < CurrentStageTarget)
+                    {
+                        if (Time.frameCount % 120 == 0)
+                            WDLog.Log($"[StageGate] NOT cleared — stage {_currentStageIndex} " +
+                                      $"(LEVEL {LevelMapPanel.DisplayNum(_currentStageIndex)}) " +
+                                      $"score {CurrentStageScore}/{CurrentStageTarget} " +
+                                      $"(player {(ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : -1)}, " +
+                                      $"baseline {_stageStartScore})");
+                        return;
+                    }
+                }
+                WDLog.Log($"[StageGate] PASSED — stage {_currentStageIndex} " +
+                          $"(LEVEL {LevelMapPanel.DisplayNum(_currentStageIndex)}) " +
+                          $"score {CurrentStageScore}/{CurrentStageTarget} — advancing");
                 safety++;
 
                 // Capture everything we need BEFORE mutating state or calling handlers,
@@ -621,6 +721,21 @@ namespace WordDrop
                 // (Royal-Match cascade) when the map shows. 2026-07-14 Spencer.
                 LevelMapPanel.Instance?.SetPendingCoinReward(coinsEarned);
 
+                // ── OBJECTIVE-COMPLETE CELEBRATION (2026-09-10 Spencer) ───────────────
+                // The checkmark drop + "bing" that used to fire when an objective completed.
+                // Both still exist in full — they were wired only to ObjectiveManager, which
+                // is not what ends a stage in score-run mode, so hitting the score target
+                // passed in silence. Fires here, on the rising edge of the clear, so it lands
+                // BEFORE the Well Done modal rather than competing with it.
+                if (!_currentStageCleared)
+                {
+                    // Land the score on its true total BEFORE celebrating — it was still
+                    // counting up as the win screen took over. 2026-09-10 Spencer.
+                    HUDManager.Instance?.SnapScoreToTarget();
+                    GameAudio.Instance?.PlayBing();
+                    HUDManager.Instance?.FlashObjectiveComplete();
+                }
+
                 // Advance stage state FIRST — before any external callbacks — so that
                 // even if the event handler blows up, state machine is consistent.
                 _currentStageCleared = true;
@@ -637,7 +752,7 @@ namespace WordDrop
                 // MVP P4: refill booster charge on stage clear ("1 charge per stage").
                 BoosterManager.Instance?.RefillForStage();
 
-                Debug.Log($"[Stage] CLEARED stage {clearedStage}: target {clearedTarget}, scored {clearedScore}, overshoot {overshoot}, coins +{coinsEarned}, moves {clearedMoves}/{clearedBudget}, rises {clearedRises}");
+                WDLog.Log($"[Stage] CLEARED stage {clearedStage}: target {clearedTarget}, scored {clearedScore}, overshoot {overshoot}, coins +{coinsEarned}, moves {clearedMoves}/{clearedBudget}, rises {clearedRises}");
 
                 // Safe to fire analytics now — state is already advanced
                 try
@@ -671,6 +786,18 @@ namespace WordDrop
                     CoinsEarned  = coinsEarned,
                     Offers       = null,
                 };
+                // ── THE ENGINE (2026-09-09 Spencer) ───────────────────────────────
+                // Auto-grant for now, deliberately: prove that compounding power makes runs
+                // feel different BEFORE building a choice screen for it. If it does, this
+                // becomes a pick-one-of-three; if it does not, we have not wasted a modal.
+                if (ScoreRunMode)
+                {
+                    var ids = System.Enum.GetValues(typeof(RunBuffs.Id));
+                    var pick = (RunBuffs.Id)ids.GetValue(Random.Range(0, ids.Length));
+                    RunBuffs.Grant(pick);
+                    HUDManager.Instance?.FlashBuffGranted(RunBuffs.Title(pick), RunBuffs.Describe(pick));
+                }
+
                 try { OnStageCleared?.Invoke(ctx); }
                 catch (System.Exception ex) { Debug.LogError($"[Stage] OnStageCleared handler threw: {ex}"); }
 
@@ -679,6 +806,18 @@ namespace WordDrop
                 // stops being the live win condition (so the loop won't re-clear) and resets to a
                 // fresh objective when the modal closes. 2026-06-09.
                 if (objMode) { ObjectiveManager.Instance?.RetireForStageClear(); return; }
+
+                // ── SCORE MODE MUST RETIRE TOO, OR THE RUN NEVER ADVANCES. 2026-10-19 ────
+                // THIS is why clearing a level hung on the "Level Cleared" screen forever.
+                // RetireForStageClear only ran in objMode, and objMode = !ScoreRunMode — so
+                // with the score-mode pivot it stopped running at all. Retiring is what sets
+                // ObjectiveManager._retired, which on modal close fires ClearObjective(),
+                // which nulls Active, which is the ONLY condition that lets InstallLevel run
+                // for the next stage. Without it: stage clears, modal shows, modal dismisses,
+                // and the game sits there with no HUD (overlay pause) and no next level.
+                // No `return` here — score mode must keep looping so one huge cascade can
+                // clear several stages, which is the objMode-only behaviour above.
+                ObjectiveManager.Instance?.RetireForStageClear();
 
                 // Loop: if the same NotifyScoreDelta call's score also crossed
                 // the next stage's target, fire that event too. The modal
@@ -744,7 +883,7 @@ namespace WordDrop
             LevelMapPanel.Instance?.HardReset();
             WorldCompleteModal.Instance?.ForceHide();
             ObjectiveManager.Instance?.InstallLevel(_currentStageIndex, viaDebugJump: true);
-            Debug.Log($"[DebugJump] Jumped to stage {_currentStageIndex}");
+            WDLog.Log($"[DebugJump] Jumped to stage {_currentStageIndex}");
         }
 
         /// <summary>True if any tile on the board is currently mid-animation.
@@ -859,7 +998,7 @@ namespace WordDrop
                 _postClearBoostTime = 15f; // falloff after 15s even if player is slow
             }
 
-//             Debug.Log($"[SurvivalManager] PostClearBoost activated: {boostDrops} drops " +
+//             WDLog.Log($"[SurvivalManager] PostClearBoost activated: {boostDrops} drops " +
                       // $"(cleared={cellsCleared}, chain={chainDepth})");
 
             // ── Board Clear Bonus + Renewal Row ──
@@ -897,7 +1036,7 @@ namespace WordDrop
                 // Renewal Row — truly sparse board
                 if (tilesRemaining <= 5 && !_isRisingRow)
                 {
-//                     Debug.Log($"[SurvivalManager] Renewal row triggered — only {tilesRemaining} tiles remaining");
+//                     WDLog.Log($"[SurvivalManager] Renewal row triggered — only {tilesRemaining} tiles remaining");
                     // Force-arm: next Update() tick (once resolution clears) fires a rise.
                     // Phase 11b: set both compat counter and the wall-clock
                     // timer so whichever gate Update() is reading picks it up.
@@ -913,7 +1052,7 @@ namespace WordDrop
             if (_postClearBoostDrops > 0)
             {
                 _postClearBoostDrops--;
-//                 Debug.Log($"[SurvivalManager] PostClearBoost consumed — {_postClearBoostDrops} remaining");
+//                 WDLog.Log($"[SurvivalManager] PostClearBoost consumed — {_postClearBoostDrops} remaining");
             }
         }
 
@@ -960,6 +1099,30 @@ namespace WordDrop
         /// streak doesn't instantly spiral — "the board is dangerous, but there
         /// is usually at least one intelligent path to relief."
         /// </summary>
+        /// <summary>Moves left before the next row rises — the ONE piece of pressure in the
+        /// game, previously invisible. NOTE: this reads _turnsSinceLastTurnRise /
+        /// GetTurnsPerRiseForStage, which is what ACTUALLY fires a rise. The obvious-looking
+        /// CurrentMovesPerRise / _movesSinceLastRise pair is vestigial and still increments,
+        /// so displaying that would show a number that does not match the board.
+        /// 2026-09-09 Spencer.</summary>
+        private System.Collections.IEnumerator SnapAfterRefill()
+        {
+            // Wait out the rise tween (plus the OutBack settle) before snapping, or we would
+            // fight the animation instead of tidying up after it.
+            yield return new WaitForSeconds(0.45f);
+            GridManager.Instance?.SnapAllTilesToCells();
+        }
+
+        public int MovesUntilRise
+        {
+            get
+            {
+                if (ActiveRisesOff || !RisePerMoveDebug) return -1;   // -1 = no rise pressure
+                int per = TurnsPerRiseNow;            // same source as the rise itself
+                return Mathf.Max(0, per - _turnsSinceLastTurnRise);
+            }
+        }
+
         public int CurrentMovesPerRise
         {
             get
@@ -1087,7 +1250,7 @@ namespace WordDrop
             Instance = this;
             // Force-load NoAssistMode from PlayerPrefs on first access
             _ = NoAssistMode;
-//             Debug.Log("[SurvivalManager] Awake");
+//             WDLog.Log("[SurvivalManager] Awake");
         }
 
         private void Update()
@@ -1228,7 +1391,7 @@ namespace WordDrop
                 if (_postClearBoostTime <= 0f)
                 {
                     _postClearBoostDrops = 0;
-//                     Debug.Log("[SurvivalManager] PostClearBoost expired (time falloff)");
+//                     WDLog.Log("[SurvivalManager] PostClearBoost expired (time falloff)");
                 }
             }
 
@@ -1254,6 +1417,25 @@ namespace WordDrop
             // fire extra rising rows to bring it up to the minimum. Consume
             // one pending rise per Update frame so animations complete between
             // them (feels like a dramatic "board fills up, new stage ready").
+            // ── STARVED BOARD (2026-09-09 Spencer) ──────────────────────────────────
+            // The occupancy-responsive cadence only changes how often a MOVE triggers a rise.
+            // On a nearly-empty board there is often nothing worth doing, so no moves happen,
+            // so nothing rises — the refill was gated behind the very problem it fixes.
+            // This tops up the pending-rise queue, which Update drains WITHOUT needing a move.
+            // Deliberately refills to a modest 32%: enough to have something to play with,
+            // not so much that clearing the board stops being a good outcome.
+            if (!ActiveRisesOff && _stageStartRisesPending == 0 && !_isRisingRow && !_isGameOver
+                && RulesEngine.Instance != null)
+            {
+                float occ = RulesEngine.Instance.GetBoardOccupancy();
+                if (occ < STARVED_OCC)
+                {
+                    int rows = Mathf.CeilToInt((STARVED_TARGET_OCC - occ) * RulesEngine.MAX_ROWS);
+                    _stageStartRisesPending = Mathf.Clamp(rows, 1, 4);
+                    WDLog.Log($"[Starved] occupancy {occ:P0} -> queueing {_stageStartRisesPending} refill row(s)");
+                }
+            }
+
             if (_stageStartRisesPending > 0 && !ActiveRisesOff)
             {
                 if (!IsBoardAnimating())
@@ -1261,6 +1443,9 @@ namespace WordDrop
                     _stageStartRisesPending--;
                     NotifyRiseFired();
                     StartCoroutine(ExecuteRisingRow());
+                    // Last refill row — clean up any sub-pixel residue the stacked
+                    // overshooting rises left behind, or it shows as dark seams.
+                    if (_stageStartRisesPending == 0) StartCoroutine(SnapAfterRefill());
                 }
                 return; // don't process normal rising this frame — stage-start takes precedence
             }
@@ -1338,6 +1523,9 @@ namespace WordDrop
             _currentStageMovesUsed  = 0;
             _currentStageCleared    = false;
             _lastStageReached       = 1;
+            // Drop the HUD's latched "score/target" number, or the previous run's target
+            // survives into this one. 2026-10-19.
+            HUDManager.Instance?.ResetScoreTargetLatch();
             _lastStageShortfall     = 0;
             _lastStageTarget        = 0;
             _risesInCurrentStage    = 0;
@@ -1368,6 +1556,7 @@ namespace WordDrop
             // MVP P4: reset booster state. ActiveBooster gets granted by choice
             // modal pick (P5); for now P4 dev-test path auto-grants via debug menu.
             BoosterManager.Instance?.StartRun();
+            RunBuffs.ResetRun();          // buffs are RUN-scoped — never carry between runs
             // MVP P5: reset switch-rescue counter for the new run.
             BoosterChoiceModal.Instance?.ResetForNewRun();
 
@@ -1377,7 +1566,7 @@ namespace WordDrop
             // Phase 11+ — Survival BGM. No-op if the music clip isn't loaded
             // (GameAudio warns once). Fades any prior track out first.
             GameAudio.Instance?.PlaySurvivalMusic();
-//             Debug.Log("[SurvivalManager] Survival started!");
+//             WDLog.Log("[SurvivalManager] Survival started!");
         }
 
         public void StopSurvival()
@@ -1402,7 +1591,7 @@ namespace WordDrop
 
             // MVP P4: wipe booster state at run end.
             BoosterManager.Instance?.EndRun();
-//             Debug.Log($"[SurvivalManager] Survival ended — elapsed={_elapsedTime:F1}s drops={_totalAutoDrops}");
+//             WDLog.Log($"[SurvivalManager] Survival ended — elapsed={_elapsedTime:F1}s drops={_totalAutoDrops}");
         }
 
         /// <summary>Track longest chain for game-over stats.</summary>
@@ -1651,7 +1840,7 @@ namespace WordDrop
 	                        Tile tile = grid.GetTile(cell.x, cell.y);
 	                        if (tile != null)
 	                        {
-	                            tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+	                            tile.SetPrimedGlow(RulesEngine.PrimedGlowForCell(new Vector2Int(tile.Col, tile.Row)), playFlash: true, fuseRemaining: fuse);
 	                            GameParticles.Instance?.PlayPrimed(tile.transform.position);
 	                        }
                     }
@@ -1660,7 +1849,7 @@ namespace WordDrop
             }
 
             string bonusTag = isGold ? " [GOLD]" : isWildRefill ? " [WILD]" : isSwapRefill ? " [SWAP]" : isEditRefill ? " [EDIT]" : "";
-//             Debug.Log($"[SurvivalManager] Auto-drop #{_totalAutoDrops}: '{letter}' → col={col} row={targetRow}{bonusTag}");
+//             WDLog.Log($"[SurvivalManager] Auto-drop #{_totalAutoDrops}: '{letter}' → col={col} row={targetRow}{bonusTag}");
 
             // Top-out check
             if (ShouldTopOut(rules))
@@ -1731,7 +1920,7 @@ namespace WordDrop
             }
             // Re-check guards (player might've topped out or modal opened during the wait).
             if (_isRisingRow || _isAutoDropping || _isOverlayPaused || _isGameOver) { _riseScheduledPending = false; yield break; }
-            Debug.Log($"[RisePerMove] firing rise after {waited:F2}s wait");
+            WDLog.Log($"[RisePerMove] firing rise after {waited:F2}s wait");
             yield return StartCoroutine(ExecuteRisingRow());
         }
 
@@ -1752,25 +1941,25 @@ namespace WordDrop
             bool isProcessing = MatchController.Instance != null && MatchController.Instance.IsProcessing;
             bool isRewriting  = HandManager.Instance != null && HandManager.Instance.IsRewriteModeActive;
             bool rmExists     = RisingRowManager.Instance != null;
-            Debug.Log($"[RisePerMove/Execute] isProcessing={isProcessing} isRewriting={isRewriting} rmExists={rmExists}");
+            WDLog.Log($"[RisePerMove/Execute] isProcessing={isProcessing} isRewriting={isRewriting} rmExists={rmExists}");
 
             // If player is mid-drop or in rewrite mode, defer (rewrite auto-cancels after 5s)
             if (isProcessing)
             {
-                Debug.Log("[RisePerMove/Execute] blocked: IsProcessing=true");
+                WDLog.Log("[RisePerMove/Execute] blocked: IsProcessing=true");
                 _isRisingRow = false;
                 yield break;
             }
             if (isRewriting)
             {
-                Debug.Log("[RisePerMove/Execute] blocked: IsRewriteModeActive=true");
+                WDLog.Log("[RisePerMove/Execute] blocked: IsRewriteModeActive=true");
                 _isRisingRow = false;
                 yield break;
             }
 
             if (!rmExists)
             {
-                Debug.Log("[RisePerMove/Execute] blocked: RisingRowManager null");
+                WDLog.Log("[RisePerMove/Execute] blocked: RisingRowManager null");
                 _isRisingRow = false;
                 yield break;
             }
@@ -1783,12 +1972,12 @@ namespace WordDrop
             if (ObjectiveManager.Instance != null && ObjectiveManager.Instance.Active != null
                 && (ObjectiveManager.Instance.Active.IsComplete || ObjectiveManager.Instance.EscortWinPending))
             {
-                Debug.Log("[RisePerMove/Execute] blocked: objective complete / escort-win pending (stage won) — freezing the rise");
+                WDLog.Log("[RisePerMove/Execute] blocked: objective complete / escort-win pending (stage won) — freezing the rise");
                 _isRisingRow = false;
                 yield break;
             }
 
-//             Debug.Log($"[SurvivalManager] Rising row at {_elapsedTime:F1}s");
+//             WDLog.Log($"[SurvivalManager] Rising row at {_elapsedTime:F1}s");
 
             bool overflowed = false;
             yield return StartCoroutine(RisingRowManager.Instance.RiseRow((overflow) =>
@@ -1859,7 +2048,7 @@ namespace WordDrop
                                         && glowTile.Letter != rc.Letter)
                                         glowTile.SetLetter(rc.Letter);
                                 }
-                                glowTile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+                                glowTile.SetPrimedGlow(RulesEngine.PrimedGlowForCell(new Vector2Int(glowTile.Col, glowTile.Row)), playFlash: true, fuseRemaining: fuse);
                                 GameParticles.Instance?.PlayPrimed(glowTile.transform.position);
                             }
                         }
@@ -1919,7 +2108,7 @@ namespace WordDrop
             {
                 if (!CanOfferContinue)
                 {
-                    Debug.Log($"[Continue] Run continue cap reached ({_continuesInRun}/{MAX_CONTINUES_PER_RUN}) — forcing game over.");
+                    WDLog.Log($"[Continue] Run continue cap reached ({_continuesInRun}/{MAX_CONTINUES_PER_RUN}) — forcing game over.");
                     FinalizeGameOver();
                     return;
                 }
@@ -1969,7 +2158,7 @@ namespace WordDrop
         {
             if (_glaedStillnessRisesRemaining <= 0) return false;
             _glaedStillnessRisesRemaining--;
-            Debug.Log($"[GladeStillness] Rise skipped. Remaining: {_glaedStillnessRisesRemaining}");
+            WDLog.Log($"[GladeStillness] Rise skipped. Remaining: {_glaedStillnessRisesRemaining}");
             return true;
         }
 
@@ -2038,6 +2227,14 @@ namespace WordDrop
                     GridManager.Instance.StartCoroutine(GridManager.Instance.ApplyGravityFromEvents(gravityMoves));
             }
 
+            // Words lost letters to the wipe — drop any that no longer exist, and retrace.
+            // Without this a word kept ONE surviving tile primed and its outline stretched up
+            // into the empty rows the rescue had just cleared, still showing a payout for a
+            // word that was gone. Same five-event rule as every other board display: a wipe is
+            // a board change. 2026-09-10 Spencer.
+            RulesEngine.Instance?.ValidatePrimedWords();
+            ClusterOutline.Instance?.Refresh();
+
             // 2) Refill edits + swaps using the existing stage-clear helper.
             MatchController.StageClearRefillSummary summary = default;
             if (MatchController.Instance != null)
@@ -2047,7 +2244,7 @@ namespace WordDrop
             // Caller (ContinueModal) has already paid (coins or ad) before calling.
             _continuesInRun++;
 
-            Debug.Log($"[Continue] Rescue applied: cleared {toRemove.Count} tiles, edits→{summary.RewritesAfter}, swaps→{summary.SwapsAfter}, continues_used={_continuesInRun}/{MAX_CONTINUES_PER_RUN}");
+            WDLog.Log($"[Continue] Rescue applied: cleared {toRemove.Count} tiles, edits→{summary.RewritesAfter}, swaps→{summary.SwapsAfter}, continues_used={_continuesInRun}/{MAX_CONTINUES_PER_RUN}");
             try
             {
                 AnalyticsManager.Log("continue_accepted",
@@ -2111,12 +2308,12 @@ namespace WordDrop
             PlayerPrefs.SetInt(PB_TOTAL_RUNS_KEY, priorTotalRuns + 1);
             PlayerPrefs.Save();
 
-            Debug.Log($"[PB] Compare → stage {finalStage} vs prior best {priorBestStage} → newStage={newBestStage} | score {finalScore} vs prior best {priorBestScore} → newScore={newBestScore} | run #{priorTotalRuns + 1}");
+            WDLog.Log($"[PB] Compare → stage {finalStage} vs prior best {priorBestStage} → newStage={newBestStage} | score {finalScore} vs prior best {priorBestScore} → newScore={newBestScore} | run #{priorTotalRuns + 1}");
 
             if (anyNewBest)
             {
                 CoinWallet.Add(PB_BONUS_COINS);
-                Debug.Log($"[PB] NEW PERSONAL BEST — stage:{newBestStage} score:{newBestScore} (+{PB_BONUS_COINS} coins)");
+                WDLog.Log($"[PB] NEW PERSONAL BEST — stage:{newBestStage} score:{newBestScore} (+{PB_BONUS_COINS} coins)");
                 try
                 {
                     AnalyticsManager.Log("personal_best",

@@ -104,7 +104,7 @@ namespace WordDrop
             foreach (var b in _inventory)
                 _charges[b.Id] = STARTING_CHARGES;
 
-            Debug.Log($"[Booster] StartRun: {_inventory.Count} boosters granted, {STARTING_CHARGES} charges each");
+            WDLog.Log($"[Booster] StartRun: {_inventory.Count} boosters granted, {STARTING_CHARGES} charges each");
             OnStateChanged?.Invoke();
         }
 
@@ -147,13 +147,13 @@ namespace WordDrop
             {
                 ArmedBooster = booster;
                 AimMode = true;
-                Debug.Log($"[Booster] {booster.DisplayName} → aim mode active");
+                WDLog.Log($"[Booster] {booster.DisplayName} → aim mode active");
                 OnStateChanged?.Invoke();
             }
             else
             {
                 _charges[boosterId] = GetCharges(boosterId) - 1;
-                Debug.Log($"[Booster] {booster.DisplayName} resolved (untargeted), charges→{_charges[boosterId]}");
+                WDLog.Log($"[Booster] {booster.DisplayName} resolved (untargeted), charges→{_charges[boosterId]}");
                 OnStateChanged?.Invoke();
                 // Snapshot occupied cells BEFORE the booster mutates _board so
                 // we can derive the set of cleared cells once it completes.
@@ -183,7 +183,7 @@ namespace WordDrop
             // tap and stay armed so the player can retry. NO charge consumed.
             if (!ArmedBooster.CanResolveAt(col, row))
             {
-                Debug.Log($"[Booster] {ArmedBooster.DisplayName} — invalid target ({col},{row}), staying armed (no charge spent)");
+                WDLog.Log($"[Booster] {ArmedBooster.DisplayName} — invalid target ({col},{row}), staying armed (no charge spent)");
                 GameAudio.Instance?.PlayUIClick();
                 return;
             }
@@ -192,7 +192,7 @@ namespace WordDrop
             _charges[id] = GetCharges(id) - 1;
             AimMode = false;
             ArmedBooster = null;
-            Debug.Log($"[Booster] {booster.DisplayName} resolved at ({col},{row}), charges→{_charges[id]}");
+            WDLog.Log($"[Booster] {booster.DisplayName} resolved at ({col},{row}), charges→{_charges[id]}");
             OnStateChanged?.Invoke();
             // Snapshot occupied cells BEFORE the booster mutates _board so we
             // can derive the set of cleared cells once it completes.
@@ -211,7 +211,7 @@ namespace WordDrop
             if (!AimMode) return;
             AimMode = false;
             ArmedBooster = null;
-            Debug.Log($"[Booster] Aim cancelled (no charge consumed)");
+            WDLog.Log($"[Booster] Aim cancelled (no charge consumed)");
             OnStateChanged?.Invoke();
         }
 
@@ -276,7 +276,7 @@ namespace WordDrop
                         clearedCells.Add(cell);
                 }
             }
-            Debug.Log($"[BoosterDbg] Cascade snapshotBefore={occupiedBefore?.Count ?? 0} " +
+            WDLog.Log($"[BoosterDbg] Cascade snapshotBefore={occupiedBefore?.Count ?? 0} " +
                       $"clearedDiff={clearedCells.Count}");
 
             // 2. Engine entry: applies gravity + full bookkeeping, returns moves.

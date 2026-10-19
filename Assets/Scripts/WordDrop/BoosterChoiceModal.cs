@@ -318,7 +318,7 @@ namespace WordDrop
             {
                 picked.Level = 2;
                 _switchRescueUsed = true;
-                Debug.Log($"[BoosterChoiceModal] Switch rescue applied — {picked.DisplayName} promoted L1 → L2");
+                WDLog.Log($"[BoosterChoiceModal] Switch rescue applied — {picked.DisplayName} promoted L1 → L2");
             }
 
             bm?.GrantBooster(picked);

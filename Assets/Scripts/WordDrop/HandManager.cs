@@ -241,7 +241,7 @@ namespace WordDrop
             BuildShuffleButton();
             BuildNextTilePreview();
             BuildTileBagButton();
-//             Debug.Log("[HandManager] Awake complete — cards + shuffle + next-tile + tile-bag built, IsInteractable=false.");
+//             WDLog.Log("[HandManager] Awake complete — cards + shuffle + next-tile + tile-bag built, IsInteractable=false.");
         }
 
         private void Start()
@@ -250,7 +250,7 @@ namespace WordDrop
             if (MatchController.Instance != null)
             {
                 MatchController.Instance.OnHandRefilled += OnHandRefilled;
-//                 Debug.Log("[HandManager] Subscribed to MatchController.OnHandRefilled");
+//                 WDLog.Log("[HandManager] Subscribed to MatchController.OnHandRefilled");
             }
             else
             {
@@ -274,7 +274,7 @@ namespace WordDrop
             if (evt.Letters == null) return;
 
             SetHand(evt.Letters);
-//             Debug.Log($"[HandManager] Hand updated from OnHandRefilled: {new string(evt.Letters)}");
+//             WDLog.Log($"[HandManager] Hand updated from OnHandRefilled: {new string(evt.Letters)}");
         }
 
         // ── Public API ────────────────────────────────────────────────────────────
@@ -298,7 +298,7 @@ namespace WordDrop
             BuildTileBagButton();
             RefreshAllCardVisuals();
 
-//             Debug.Log($"[HandManager] RebuildHandLayout — cardRowY={GetCardRowY():F2} shuffleY={_shuffleButtonY:F2}");
+//             WDLog.Log($"[HandManager] RebuildHandLayout — cardRowY={GetCardRowY():F2} shuffleY={_shuffleButtonY:F2}");
         }
 
         private void DestroyHandUI()
@@ -905,7 +905,7 @@ namespace WordDrop
         {
             _swapModeActive = active;
             RefreshAllCardVisuals();
-//             Debug.Log($"[HandManager] Swap mode: {active}");
+//             WDLog.Log($"[HandManager] Swap mode: {active}");
         }
 
         // ── Input handling ────────────────────────────────────────────────────────
@@ -947,6 +947,21 @@ namespace WordDrop
         private int   _rewriteTargetCol = -1;
         private int   _rewriteTargetRow = -1;
         private float _rewriteTimeoutTimer = 0f;
+        /// <summary>2026-09-03: the SELECTED tile itself, not just its coordinates.
+        /// Rising rows shift every tile up a row, so the stored col/row goes stale almost
+        /// immediately — CancelRewriteMode was then clearing the glow on whatever tile had
+        /// moved INTO that cell (or nothing), leaving the real selection glowing forever
+        /// and pointing the swap at the wrong cell.</summary>
+        private Tile  _rewriteTargetTile;
+
+        // ── INPUT BUFFER (2026-09-03) ────────────────────────────────────────────────
+        // Rows now rise on nearly every move, and input is blocked for the whole rise
+        // animation — so a tap landing during one was silently DROPPED and the player
+        // had to tap again. Standard match-3 fix: remember a press that arrives while
+        // blocked and replay it the moment input frees up (if still fresh).
+        private Vector3 _bufferedPressWorld;
+        private float   _bufferedPressAt = -1f;
+        private const float INPUT_BUFFER_WINDOW = 0.45f;   // seconds a buffered tap stays valid
 
         /// <summary>
         /// Called after a rising row shifts the board up by 1.
@@ -965,7 +980,7 @@ namespace WordDrop
                 // If shifted off the top, cancel rewrite
                 if (_rewriteTargetRow >= RulesEngine.ROWS)
                 {
-//                     Debug.Log("[HandManager] Rewrite target shifted off board — cancelling");
+//                     WDLog.Log("[HandManager] Rewrite target shifted off board — cancelling");
                     CancelRewriteMode();
                     return;
                 }
@@ -985,7 +1000,7 @@ namespace WordDrop
                     return;
                 }
 
-//                 Debug.Log($"[HandManager] Rewrite target shifted up → ({_rewriteTargetCol},{_rewriteTargetRow})");
+//                 WDLog.Log($"[HandManager] Rewrite target shifted up → ({_rewriteTargetCol},{_rewriteTargetRow})");
             }
         }
         public  bool IsRewriteModeActive => _rewriteModeActive;
@@ -1164,13 +1179,28 @@ namespace WordDrop
             // stray drop could go in and desync the script. Same reasoning as levelLocked:
             // this must be checked independently of IsInteractable.
             bool tutorialGateClosed = TutorialManager.GateClosed;
-            if (!IsInteractable ||
+            // The board is parked off-screen or sliding in — nothing on screen is where it
+            // will be, so a tap here is meaningless. 2026-09-09 Spencer.
+            bool boardEntering = GridManager.Instance != null && GridManager.Instance.BoardEntryInProgress;
+            if (boardEntering ||
+                !IsInteractable ||
                 levelLocked ||
                 overlayPaused ||
                 aimModeActive ||
                 tutorialGateClosed ||
                 (MatchController.Instance != null && MatchController.Instance.IsProcessing))
             {
+                // Buffer a press that arrives while input is blocked so it is not lost —
+                // EXCEPT during board entry. The buffer exists so a tap during a rise or a
+                // detonation still counts; a tap while the board is flying in is not a move
+                // the player meant, and replaying it selected a tile the instant the board
+                // landed. Drop it instead, and clear anything already held. 2026-09-09.
+                if (boardEntering) { _bufferedPressAt = -1f; }
+                else if (mouseDown)
+                {
+                    _bufferedPressWorld = worldPos;
+                    _bufferedPressAt    = Time.unscaledTime;
+                }
                 if (DropPreview.Instance != null)
                     DropPreview.Instance.ClearPreview();
                 if (_inputMode != InputMode.Idle)
@@ -1178,13 +1208,54 @@ namespace WordDrop
                 return;
             }
 
+            // Input is free again — replay a recent buffered press as if it just happened.
+            if (!mouseDown && _bufferedPressAt > 0f)
+            {
+                bool fresh = (Time.unscaledTime - _bufferedPressAt) <= INPUT_BUFFER_WINDOW;
+                Vector3 bufWorld = _bufferedPressWorld;
+                _bufferedPressAt = -1f;
+                if (fresh)
+                {
+                    mouseDown = true;
+                    worldPos  = bufWorld;
+                }
+            }
+
             bool risingRowActive = SurvivalManager.Instance != null && SurvivalManager.Instance.IsRisingRow;
+
+            // ── ARMED-WEB: tap a primed tile → detonate its connected cluster ──────────
+            // First thing after the input gate, before the drag/swap state machine, so a
+            // press on a primed tile can never be consumed as the start of a swap.
+            // A rise does not always trip the gate above, so buffer here too rather than
+            // dropping the press — this was the "had to tap twice" case.
+            if (mouseDown && risingRowActive)
+            {
+                _bufferedPressWorld = worldPos;
+                _bufferedPressAt    = Time.unscaledTime;
+            }
+
+            if (RulesEngine.ArmedWebMode && mouseDown && !_rewriteModeActive && !risingRowActive)
+            {
+                Vector2Int tapCell = _grid.WorldToCell(worldPos);
+                if (tapCell.x >= 0 && tapCell.y >= 0)
+                {
+                    int primedHere = RulesEngine.Instance != null
+                        ? RulesEngine.Instance.GetPrimedWordsContainingPublic(tapCell) : -1;
+                    if (TryTapDetonate(tapCell)) return;
+                }
+            }
 
             // Rewrite mode timeout — auto-cancel to prevent indefinite pause
             if (_rewriteModeActive && !TutorialManager.EditGateActive) // no auto-timeout during the L5 edit tutorial
             {
                 _rewriteTimeoutTimer -= Time.deltaTime;
                 if (_rewriteTimeoutTimer <= 0f)
+                {
+                    CancelRewriteMode();
+                }
+                // The selected tile can be destroyed mid-selection (detonation, top-out).
+                // Without this the mode stays "on" with nothing selected.
+                else if (_rewriteTargetTile == null)
                 {
                     CancelRewriteMode();
                 }
@@ -1211,6 +1282,9 @@ namespace WordDrop
                         else
                         {
                             // Check if tapped any board tile → Board Swap (any two regular tiles)
+                            // Rising rows / gravity may have moved the SELECTED tile since it
+                            // was picked, so re-read its cell before using the coords.
+                            RefreshRewriteTarget();
                             Vector2Int boardTap = _grid.WorldToCell(worldPos);
                             // EDIT-gated tutorial: lock the board-swap to the script.
                             //  • Gated STAMP step (AllowedEditCol>=0, no swap target): board-swap is
@@ -1231,12 +1305,14 @@ namespace WordDrop
                             // then fade to white at the end (FadeEditGlowOut in BoardSwapTurnSequence). If the swap
                             // is invalid, CancelRewriteMode's normal cleanup handles it. 2026-07-10 Spencer.
                             if (boardTap.x >= 0 && boardTap.y >= 0 && swapGateOk
-                                && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow))
+                                && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow)
+                                && CanSelectForSwap(boardTap.x, boardTap.y))
                                 _grid.GetTile(boardTap.x, boardTap.y)?.SetEditSelected(true);
                             if (boardTap.x >= 0 && boardTap.y >= 0
                                 && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow)
                                 && swapGateOk
-                                && TryBoardSwap(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y))
+                                && (TryBoardSwap(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y)
+                                    || TryBoardMoveToEmpty(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y)))
                             {
                                 // Swap succeeded — rewrite mode exits inside TryBoardSwap
                             }
@@ -1375,7 +1451,7 @@ namespace WordDrop
                                     }
                                 }
 
-//                                 Debug.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
+//                                 WDLog.Log($"[Input] CarryToBoard: card={_touchCardIndex} letter={_hand[_touchCardIndex]}");
                             }
                             else if (dx > dy * REORDER_LOCK_RATIO
                                      && !HandReorderLocked)
@@ -1389,7 +1465,7 @@ namespace WordDrop
                                 GameAudio.Instance?.PlayButtonClick();
                                 _dragStartX = worldPos.x;
 
-//                                 Debug.Log($"[Input] Reordering: card={_touchCardIndex}");
+//                                 WDLog.Log($"[Input] Reordering: card={_touchCardIndex}");
                             }
                         }
                     }
@@ -1545,7 +1621,7 @@ namespace WordDrop
                         else
                         {
                             if (TutorialManager.Instance != null && TutorialManager.Instance.IsActive)
-                                Debug.Log($"[Tutorial] drop snap-back — dropCol={dropCol} overBoard={overBoard} " +
+                                WDLog.Log($"[Tutorial] drop snap-back — dropCol={dropCol} overBoard={overBoard} " +
                                     $"card={_touchCardIndex} colAvail={(dropCol >= 0 && _grid.IsColumnAvailable(dropCol))} " +
                                     $"tutColOk={tutColOk} tutCardOk={tutCardOk} " +
                                     $"matchActive={(MatchController.Instance != null && MatchController.Instance.IsMatchActive)} " +
@@ -1592,7 +1668,7 @@ namespace WordDrop
                                     dragSR.sprite = GetSlotDragSprite(cardIdx);
                             }
 
-//                             Debug.Log($"[Input] Reordering → CarryToBoard: card={cardIdx}");
+//                             WDLog.Log($"[Input] Reordering → CarryToBoard: card={cardIdx}");
                             break;
                         }
 
@@ -1775,7 +1851,7 @@ namespace WordDrop
             int swapsLeft = MatchController.Instance.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
             if (swapsLeft <= 0)
             {
-//                 Debug.Log("[HandManager] No swaps remaining.");
+//                 WDLog.Log("[HandManager] No swaps remaining.");
                 return;
             }
 
@@ -1796,7 +1872,7 @@ namespace WordDrop
                 GetCardRowY() + CARD_SELECT_RAISE * 1.8f + _cardSize * 0.7f,
                 Color.white);
 
-//             Debug.Log($"[HandManager] Swap confirmation triggered for card {cardIndex} ({swapsLeft} swaps left)");
+//             WDLog.Log($"[HandManager] Swap confirmation triggered for card {cardIndex} ({swapsLeft} swaps left)");
         }
 
         private GameObject CreateConfirmLabel(string text, float x, float y, Color color)
@@ -1875,7 +1951,7 @@ namespace WordDrop
             bool success = MatchController.Instance.UseSwap(cardIndex);
             if (success)
             {
-//                 Debug.Log($"[HandManager] SwapViaBagDrop: card {cardIndex} swapped");
+//                 WDLog.Log($"[HandManager] SwapViaBagDrop: card {cardIndex} swapped");
                 RestoreAllCardSortOrder();
                 // Clear selection so RefreshCardVisual doesn't paint the new
                 // card with the green-bordered _spriteSelected (the swapped
@@ -1939,7 +2015,7 @@ namespace WordDrop
             bool success = MatchController.Instance.UseSwap(cardIndex);
             if (success)
             {
-//                 Debug.Log($"[HandManager] Swap executed on card {cardIndex}");
+//                 WDLog.Log($"[HandManager] Swap executed on card {cardIndex}");
                 RefreshHandFromMatchController();
                 RefreshAllCardVisuals();
             }
@@ -1973,7 +2049,7 @@ namespace WordDrop
             int rewritesLeft = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
             if (rewritesLeft <= 0)
             {
-//                 Debug.Log("[HandManager] Rewrite: no rewrites remaining.");
+//                 WDLog.Log("[HandManager] Rewrite: no rewrites remaining.");
                 return;
             }
 
@@ -1984,12 +2060,12 @@ namespace WordDrop
             Tile existingTile = _grid.GetTile(col, row);
             if (existingTile != null && existingTile.IsGoldBonus)
             {
-//                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is gold — cannot rewrite.");
+//                 WDLog.Log($"[HandManager] Rewrite: tile at ({col},{row}) is gold — cannot rewrite.");
                 return;
             }
             if (cell.IsStone)
             {
-//                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is stone — cannot rewrite.");
+//                 WDLog.Log($"[HandManager] Rewrite: tile at ({col},{row}) is stone — cannot rewrite.");
                 return;
             }
             // Frozen (ice) tiles are LOCKED — can't rewrite their letter until the ice thaws.
@@ -2010,7 +2086,7 @@ namespace WordDrop
                 .GetPrimedWordsContaining(new Vector2Int(col, row));
             if (primed != null && primed.Count > 0)
             {
-//                 Debug.Log($"[HandManager] Rewrite: tile at ({col},{row}) is primed.");
+//                 WDLog.Log($"[HandManager] Rewrite: tile at ({col},{row}) is primed.");
                 return;
             }
 
@@ -2029,6 +2105,7 @@ namespace WordDrop
             _rewriteModeActive = true;
             _rewriteTargetCol = col;
             _rewriteTargetRow = row;
+            _rewriteTargetTile = _grid != null ? _grid.GetTile(col, row) : null;
             _rewriteTimeoutTimer = REWRITE_TIMEOUT;
             // 2026-05-29: pickup SFX silenced — only drop sound plays now.
             // GameAudio.Instance?.PlayTileSelect();
@@ -2051,7 +2128,7 @@ namespace WordDrop
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(false);
 
-//             Debug.Log($"[HandManager] Entered REWRITE mode: target ({col},{row}) " +
+//             WDLog.Log($"[HandManager] Entered REWRITE mode: target ({col},{row}) " +
                       // $"letter='{cell.Letter}' — tap a hand card to replace it");
         }
 
@@ -2074,6 +2151,109 @@ namespace WordDrop
         // board-swap doesn't fire MatchController.OnRewriteUsed the way a hand-STAMP does. 2026-07-07 Spencer.
         public static event System.Action OnBoardSwapDone;
 
+        /// <summary>Can this cell take part in a swap? Mirrors the guards the FIRST tap
+        /// already applies (stone / ice / anchored / chest / escort / primed). 2026-09-03:
+        /// the SECOND tap applied the teal selected-glow with NO validation, so rocks and
+        /// primed tiles lit up as if selectable before the swap was rejected.</summary>
+        private bool CanSelectForSwap(int col, int row)
+        {
+            var rules = RulesEngine.Instance;
+            if (rules == null || _grid == null) return false;
+            var cell = rules.GetCell(col, row);
+            if (cell == null) return false;
+            if (cell.IsStone || cell.IsFrozen) return false;
+            if (cell.IsAnchored || cell.IsDropTarget) return false;
+            var t = _grid.GetTile(col, row);
+            if (t != null && (t.IsVault || t.IsGoldBonus)) return false;
+            // HIGH-VALUE GOLD letters are not swappable. 2026-09-21 Spencer: "i shouldnt be able
+            // to press a golden tile". This also makes the deselect bug unreachable for them —
+            // selecting then cancelling was dropping the gold face back to the plain white one.
+            if (Tile.GOLD_LETTERS_LOCKED && t != null && t.IsHighValueLetter) return false;
+            var primed = rules.PrimedRegistry.GetPrimedWordsContaining(new Vector2Int(col, row));
+            if (primed != null && primed.Count > 0) return false;
+            return true;
+        }
+
+        // ── MOVE A TILE INTO AN EMPTY SPACE (2026-09-09 Spencer) ────────────────────
+        // Tap a tile, tap an empty cell: the tile relocates there, and the column it left
+        // collapses. Deliberately UNCONDITIONAL — no cost, no charge, no limit — because
+        // every condition is another rule to teach, and taught rules are where casual
+        // players fall off. Difficulty comes from the board rising, which needs no explaining.
+        //
+        // This is the old DROP verb returning, but sourced from the board rather than a hand:
+        // you no longer receive tiles, you relocate them.
+        // 2026-09-09: OFF. Shipped without a visual path — the data move (SetCell) had no
+        // corresponding tile handoff, so the display desynced from the board: letters drawn
+        // on top of each other, stuck selection rims, wrong tints. The MECHANIC is sound and
+        // the rules side works; what is missing is moving the TILE with the data. Do that
+        // before turning this back on.
+        /// <summary>How often the deep finale BOOM lands at the end of a big explosion.
+        /// 1 = every time (the old behaviour), 0 = never. 2026-09-10 Spencer.</summary>
+        public static float BIG_POP_FINALE_CHANCE = 0.25f;
+
+        public static bool AllowMoveToEmpty = false;
+
+        private bool TryBoardMoveToEmpty(int fromCol, int fromRow, int toCol, int toRow)
+        {
+            var rules = RulesEngine.Instance;
+            if (!AllowMoveToEmpty || rules == null || _grid == null) return false;
+
+            var src = rules.GetCell(fromCol, fromRow);
+            if (src == null) return false;
+            if (rules.GetCell(toCol, toRow) != null) return false;   // destination must be empty
+
+            // Same restrictions as a swap — a moved tile is still a tile.
+            if (src.IsStone || src.IsFrozen || src.IsWild) return false;
+            if (src.IsSwapRefill || src.IsEditRefill || src.IsWildRefill) return false;
+            var st = _grid.GetTile(fromCol, fromRow);
+            if (st != null && st.IsGoldBonus) return false;
+            var reg = rules.PrimedRegistry;
+            if (reg != null && reg.GetPrimedWordsContaining(new Vector2Int(fromCol, fromRow)).Count > 0)
+                return false;   // primed words are committed, same as swapping
+
+            CancelRewriteMode(keepGlow: true);
+            IsInteractable = false;
+            _selectedIndex = -1;
+            StartCoroutine(BoardMoveTurnSequence(fromCol, fromRow, toCol, toRow));
+            OnBoardSwapDone?.Invoke();
+            return true;
+        }
+
+        private System.Collections.IEnumerator BoardMoveTurnSequence(int fromCol, int fromRow, int toCol, int toRow)
+        {
+            var rules = RulesEngine.Instance;
+            var grid  = GridManager.Instance;
+            if (rules == null || grid == null) { IsInteractable = true; yield break; }
+
+            MatchController.Instance?.BeginProcessing();
+
+            // 1. Move the DATA. Destination first, then clear the source, so the letter is
+            //    never in two places or in none.
+            var src = rules.GetCell(fromCol, fromRow);
+            rules.SetCell(toCol, toRow, src);
+            rules.SetCell(fromCol, fromRow, null);
+            rules.PurgeScoredKeysForCells(new System.Collections.Generic.List<Vector2Int> {
+                new Vector2Int(fromCol, fromRow), new Vector2Int(toCol, toRow) });
+
+            // 2. Settle. The source column collapses and the moved tile falls if unsupported —
+            //    both fall out of ordinary gravity, so the player never has to be told either.
+            var moves = rules.ApplyGravityInDataPublic();
+            if (moves != null && moves.Count > 0)
+            {
+                rules.PrimedRegistry?.UpdateCellPositions(moves);
+                rules.ValidatePrimedWords();
+                yield return grid.ApplyGravityFromEvents(moves);
+            }
+            grid.SyncToRulesState(rules);
+            GameAudio.Instance?.PlaySwap();
+
+            // 3. A move costs a turn, exactly like a swap — no new rule.
+            SurvivalManager.Instance?.NotifyDropCommitted();
+
+            MatchController.Instance?.EndProcessing();
+            IsInteractable = true;
+        }
+
         private bool TryBoardSwap(int col1, int row1, int col2, int row2)
         {
             var rules = RulesEngine.Instance;
@@ -2083,32 +2263,33 @@ namespace WordDrop
             // Both tiles must exist
             var cell1 = rules.GetCell(col1, row1);
             var cell2 = rules.GetCell(col2, row2);
-            if (cell1 == null || cell2 == null) return false;
+            if (cell1 == null || cell2 == null) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: empty cell"); return false; }
 
             // Cannot swap special tiles
-            if (cell1.IsStone || cell2.IsStone) return false;
-            if (cell1.IsFrozen || cell2.IsFrozen) return false; // ice tiles locked until thawed (2026-06-15 Spencer)
-            if (cell1.IsSwapRefill || cell1.IsEditRefill || cell1.IsWildRefill) return false;
-            if (cell2.IsSwapRefill || cell2.IsEditRefill || cell2.IsWildRefill) return false;
-            if (cell1.IsWild || cell2.IsWild) return false;
+            if (cell1.IsStone || cell2.IsStone) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: stone"); return false; }
+            if (cell1.IsFrozen || cell2.IsFrozen) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: ICE (frozen)"); return false; } // ice tiles locked until thawed (2026-06-15 Spencer)
+            if (cell1.IsSwapRefill || cell1.IsEditRefill || cell1.IsWildRefill) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: refill tile A"); return false; }
+            if (cell2.IsSwapRefill || cell2.IsEditRefill || cell2.IsWildRefill) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: refill tile B"); return false; }
+            if (cell1.IsWild || cell2.IsWild) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: wild"); return false; }
 
             // Cannot swap gold tiles
             Tile t1 = _grid.GetTile(col1, row1);
             Tile t2 = _grid.GetTile(col2, row2);
-            if (t1 != null && t1.IsGoldBonus) return false;
-            if (t2 != null && t2.IsGoldBonus) return false;
+            if (t1 != null && t1.IsGoldBonus) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: gold bonus A"); return false; }
+            if (t2 != null && t2.IsGoldBonus) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: gold bonus B"); return false; }
 
             // Cannot swap primed tiles
             var reg = rules.PrimedRegistry;
             if (reg != null)
             {
-                if (reg.GetPrimedWordsContaining(new Vector2Int(col1, row1)).Count > 0) return false;
-                if (reg.GetPrimedWordsContaining(new Vector2Int(col2, row2)).Count > 0) return false;
+                if (reg.GetPrimedWordsContaining(new Vector2Int(col1, row1)).Count > 0) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: ARMED word A"); return false; }
+                if (reg.GetPrimedWordsContaining(new Vector2Int(col2, row2)).Count > 0) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: ARMED word B"); return false; }
             }
 
             // Must have edit charges
             if (mc.GetRewritesRemaining(MatchController.PLAYER_HUMAN) <= 0)
             {
+                WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: NO EDIT CHARGES LEFT");
                 GameAudio.Instance?.PlayButtonClick();
                 return false;
             }
@@ -2156,7 +2337,7 @@ namespace WordDrop
 
             CancelRewriteMode(keepGlow: true); // keep the source's teal glow alive through the swap; faded out at the end
 
-//             Debug.Log($"[HandManager] Board swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}'");
+//             WDLog.Log($"[HandManager] Board swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}'");
 
             // Disable input and run the SAME resolution pipeline as a regular edit
             IsInteractable = false;
@@ -2174,6 +2355,455 @@ namespace WordDrop
         /// Animates a board swap (dissolve both tiles, pop in with new letters)
         /// then runs the full rewrite resolution pipeline for scoring/priming/detonation.
         /// </summary>
+        // ── ARMED-WEB: tap a primed tile to detonate its whole connected cluster ─────
+        // Deliberately its OWN path. Routing this through BoardSwapTurnSequence meant
+        // inheriting that method's scan/score/prime pass, its crossing rules and its
+        // gates — every one of which fought the tap. This does exactly three things:
+        // seed the engine from the tapped cell, walk the resolution, play the payoff.
+
+        /// <summary>True while a tap detonation is resolving (blocks re-entry).</summary>
+        private bool _tapDetonating;
+        private float _tapAtTime;
+
+        /// <summary>Player tapped a board cell. If it belongs to a primed word, detonate
+        /// that word and every primed word connected to it. Returns true if it fired.</summary>
+        private bool TryTapDetonate(Vector2Int cell)
+        {
+            if (_tapDetonating) return false;
+            var rules = RulesEngine.Instance;
+            if (rules == null || _grid == null) return false;
+            if (rules.GetPrimedWordsContainingPublic(cell) == 0) return false;
+
+            _tapDetonating = true;
+            // ── SAME-FRAME ACKNOWLEDGEMENT (2026-09-08 Spencer) ────────────────────────
+            // "there isn't an immediate reaction that i feel on a game like slay the spire."
+            // Slay the Spire does not RESOLVE faster — it ANSWERS faster. It fires a sound and
+            // moves the thing you clicked on the frame of the press, and once the player has
+            // been told "heard you", the resolution that follows stops reading as lag.
+            // This used to squish ONE tile, SILENTLY (playSound:false), plus a haptic that does
+            // nothing on desktop — so on a five-tile word four fifths of what you clicked did
+            // nothing, and there was no sound at all.
+            // Now: sound on the press, and every tile of the word reacts together, which also
+            // shows the player WHAT they are about to detonate.
+            var tapped = _grid.GetTile(cell.x, cell.y);
+            if (tapped != null) tapped.PlayLandingSquish(playSound: true);   // the one sound
+            var webCells = rules.GetPrimedCellsContaining(cell);
+            for (int i = 0; i < webCells.Count; i++)
+            {
+                if (webCells[i] == cell) continue;                           // squished above
+                var wt = _grid.GetTile(webCells[i].x, webCells[i].y);
+                if (wt != null) wt.PlayLandingSquish(playSound: false);      // one sound, not five
+            }
+            // Payout pop — fired HERE, at the tap, because the primed words still exist in the
+            // registry at this point. One step later they are gone and the payout is
+            // unrecoverable. Sourced from the same PreviewGroupPayout the badge shows, so the
+            // number that leaps off the board is the number the player was promised.
+            // 2026-09-10 Spencer.
+            if (ClusterOutline.Instance != null && _grid != null)
+            {
+                var cl = rules.GetPrimedClusters();
+                for (int i = 0; i < cl.Count; i++)
+                {
+                    if (cl[i].cells == null || !cl[i].cells.Contains(cell)) continue;
+                    // Start from the badge itself so the corner number is what grows and lifts.
+                    if (ClusterOutline.Instance.TryGetBadgeAnchor(cell, out var anchor, out var fs, out var bi, out var bc))
+                        ClusterOutline.Instance.PopPayout(anchor, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc);
+                    break;
+                }
+            }
+
+            HapticsManager.Light();
+            _tapAtTime = Time.unscaledTime;
+            StartCoroutine(TapDetonateSequence(cell));
+            return true;
+        }
+
+        private IEnumerator TapDetonateSequence(Vector2Int cell)
+        {
+            var rules = RulesEngine.Instance;
+            var grid  = GridManager.Instance;
+            if (rules == null || grid == null) { _tapDetonating = false; yield break; }
+
+            if (JamHint.Instance != null) JamHint.Instance.ClearHint();
+            // Drop the outline of the web being blown up — but ONLY that one. Clearing every
+            // outline made unrelated clusters blink out and back on each pop. 2026-09-09.
+            ClusterOutline.Instance?.RefreshExcluding(cell);
+            MatchController.Instance?.BeginProcessing();
+            IsInteractable = false;
+
+            if (!rules.BeginTapDetonation(cell, MatchController.PLAYER_HUMAN))
+            {
+                IsInteractable = true;
+                MatchController.Instance?.EndProcessing();
+                _tapDetonating = false;
+                yield break;
+            }
+
+            bool resolving = true;
+            int  guard     = 0;
+            while (resolving && guard++ < 200)
+            {
+                var step = rules.NextStep();
+                if (step == null) break;
+                WDLog.Log($"[ArmedWeb] {step.Phase} exploded={(step.ExplodedCells != null ? step.ExplodedCells.Count : 0)}");
+
+                switch (step.Phase)
+                {
+                    // 2026-09-03: words formed by the CASCADE after a detonation get the
+                    // same green scored sequence a dropped word used to get. Without this
+                    // case they scored and primed completely silently — the tap loop
+                    // only handled explode/gravity.
+                    case RulesEngine.ResolutionPhase.WordsScored:
+                    {
+                        // Timing MIRRORS the old drop path exactly. Two mistakes made it
+                        // read abrupt + clunky: (1) a per-word yield inside the loop, which
+                        // double-staggered against PlayWordScored's own wordIndex-driven
+                        // stagger; (2) no trailing settle, so it cut straight to the next
+                        // phase. Fire all words together, then ONE wait — shorter if a
+                        // detonation is about to follow.
+                        bool detonationComing = rules.PeekHasTriggers();
+                        int  _flashedWords    = 0;   // words we actually put on screen this step
+                        if (step.ScoredWords != null)
+                        {
+                            // Was a hardcoded magenta that no longer matched the armed tile.
+                            // Read the real constant so it can never drift again. 2026-09-09.
+                            Color primedMagenta = Tile.PRIMED_GLOW;
+                            int wIdx = 0;
+
+                            // EXPERIMENT (2026-09-10 Spencer): flash EVERY word formed, not just
+                            // the ones that scored. ScoredWords is filtered — a word already
+                            // scored this run pays nothing and so never flashed. NewWords is
+                            // everything the board detected. Flip FLASH_EVERY_WORD to false to
+                            // go back to flashing only what pays.
+                            // Carry the word + its score alongside the cells: a NewWord that
+                            // scored nothing has no FinalScore, so the points popup is skipped
+                            // for it rather than announcing a zero.
+                            var flashCells = new System.Collections.Generic.List<(System.Collections.Generic.List<Vector2Int> cells, string word, int score)>();
+                            if (WordDropFX.FLASH_EVERY_WORD && step.NewWords != null)
+                            { foreach (var nw in step.NewWords) if (nw.Cells != null) flashCells.Add((nw.Cells, nw.Word, 0)); }
+                            else
+                            { foreach (var sw in step.ScoredWords) if (sw.Cells != null) flashCells.Add((sw.Cells, sw.Word, sw.FinalScore)); }
+
+                            foreach (var fw in flashCells)
+                            {
+                                var scoredTiles = new System.Collections.Generic.List<Tile>();
+                                foreach (var sc in fw.cells)
+                                {
+                                    Tile t = grid.GetTile(sc.x, sc.y);
+                                    if (t != null) scoredTiles.Add(t);
+                                }
+                                if (scoredTiles.Count > 0 && WordDropFX.Instance != null)
+                                { WordDropFX.Instance.PlayWordScored(scoredTiles, primedMagenta, wIdx); _flashedWords++; }
+
+                                HapticsManager.Light();
+
+                                if (!detonationComing && BonusPopup.Instance != null && scoredTiles.Count > 0)
+                                {
+                                    Vector3 wc = Vector3.zero;
+                                    for (int st = 0; st < scoredTiles.Count; st++)
+                                        if (scoredTiles[st] != null) wc += scoredTiles[st].transform.position;
+                                    wc /= Mathf.Max(1, scoredTiles.Count);
+                                    if (fw.score > 0) BonusPopup.Instance.ShowWordScore(fw.word, fw.score, wc);
+                                }
+
+                                wIdx++;
+                            }
+                        }
+                        // ── THE TAP DELAY (2026-09-08 Spencer) ────────────────────────────
+                        // "cascade words explode instantly on click but the regular words have
+                        // a sort of delay." Two bugs stacked here.
+                        //
+                        // 1. This wait ran even when NOTHING was flashed. On the first step of a
+                        //    tap there are no newly-scored words to show, so the game sat waiting
+                        //    for an animation that was not playing. Dead time, every tap.
+                        //
+                        // 2. detonationComing comes from PeekHasTriggers(), which reads
+                        //    _stepPendingWords — and BeginTapDetonation initialises that list
+                        //    EMPTY. So it always answered "no detonation follows" and took the
+                        //    0.3s branch, even though a tap ALWAYS ends in a detonation. Mid
+                        //    cascade the list is populated and it correctly took 0.1s. That 3x
+                        //    difference is exactly the one Spencer could feel.
+                        //
+                        // detonationComing is left alone above because it also gates the score
+                        // popup; only the TIMING is corrected here.
+                        bool detonationCertain = detonationComing || _tapDetonating;
+                        if (_flashedWords > 0)
+                            yield return WaitCache.Get(detonationCertain ? 0.1f : 0.3f);
+                        break;
+                    }
+
+                    case RulesEngine.ResolutionPhase.TriggersFound:
+                        CacheBurstTriggers(step);
+                        // No anticipation beat on a TAP. That 0.05s pause was tuned for
+                        // AUTO-triggered detonations, where the player did not ask for it.
+                        // A tap is a direct command and must fire immediately.
+                        break;
+
+                    case RulesEngine.ResolutionPhase.Exploding:
+                    {
+                        DefrostThawedTiles(grid, step);
+                        // Drop the outline of EVERY cluster actually going up, not just the one
+                        // the player tapped. When a resolution took out more than one cluster,
+                        // the others' outline and payout badge hung over empty cells. Driving it
+                        // from the exploded cells means the display cannot disagree with what the
+                        // rules actually did. 2026-09-10 Spencer.
+                        if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
+                            ClusterOutline.Instance?.RefreshExcludingCells(
+                                new System.Collections.Generic.HashSet<Vector2Int>(step.ExplodedCells));
+                        if (_tapAtTime > 0f)
+                        {
+                            _tapAtTime = 0f;
+                        }
+                        if (step.ExplodedCells != null && step.ExplodedCells.Count > 0)
+                        {
+                            var dying = new System.Collections.Generic.List<Tile>();
+                            foreach (var c in step.ExplodedCells)
+                            {
+                                Tile t = grid.GetTile(c.x, c.y);
+                                if (t != null) dying.Add(t);
+                            }
+                            // ── THE MISSING AWARD (2026-09-09 Spencer) ────────────────────
+                            // "the score isnt updating when the letters fly up to the ui."
+                            // It was never updating at all: the tap path computed the detonation
+                            // score in RulesEngine and NOTHING handed it to ScoreManager. Only the
+                            // old drop paths in MatchController ever did that, and those are dead.
+                            // So every detonation was scored and thrown away.
+                            // DEPOSIT, don't award — each letter that lands on the score
+                            // withdraws its share, so the counter climbs on impact.
+                            //
+                            // ⚠️ MUST STAY ABOVE ExplodeWordsThenSplash (moved here 2026-10-03).
+                            // It used to sit BELOW it. Both FX calls are `yield return`ed, so the
+                            // whole explode + fly-up sequence ran to completion first — the letters
+                            // had already LANDED and called AwardOneFlyShare against an EMPTY bank
+                            // before this line ever deposited. debug_log proof:
+                            //     [556] AWARD share (pending=0, remaining=3)   <- 3 landings, no money
+                            //     [571] DEPOSIT 20 (pending was 0, remaining=0) <- 15 frames too late
+                            // Net effect: the counter ran ONE DETONATION BEHIND (the next blast's
+                            // landings paid the previous blast), and the LAST blast of a level had
+                            // nobody left to pay it, so ScoreManager's 1.6s FLY_FLUSH_TIMEOUT did —
+                            // 25 TIMEOUT-FLUSH lines in a single session. That late score is also
+                            // what made the level-complete checkmark + ding feel delayed: the score
+                            // crossed the target 1.6s late, and then the objective's deferToLand
+                            // handoff burned its OWN 1.6s deadline waiting for landings that were
+                            // already over.
+                            // Braces added too — the `if` guarded only the log line, so the deposit
+                            // was running unconditionally (harmless only because DepositFlyScore
+                            // early-returns on <= 0).
+                            if (step.TotalScore > 0)
+                            {
+                                WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} step {step.Phase} TotalScore={step.TotalScore}");
+                                ScoreManager.Instance?.DepositFlyScore(step.TotalScore);
+                            }
+
+                            if (dying.Count > 0 && WordDropFX.Instance != null)
+                            {
+                                FirePerWordBurst();
+                                FireTileFlashBoxes(dying);
+                                int wLen = step.LongestWordLength > 0 ? step.LongestWordLength : dying.Count;
+                                yield return WordDropFX.MaybeBigPopAndHold(dying);
+                                yield return ExplodeWordsThenSplash(step, dying, step.ChainDepth, wLen);
+                            }
+
+                            // ONE shake, HERE, at the blast — sized by what the blast was worth.
+                            // A single-word detonation previously got no shake at all (only the
+                            // multi-word crescendo and a vault case ever fired one), so the only
+                            // punch the player felt was the score landing, a beat too late.
+                            if (step.TotalScore > 0)
+                            {
+                                // Magnitude is in WORLD UNITS and the cell is ~0.8, so 0.18 moved the
+                                // whole board a fifth of a tile — over a long duration that reads as
+                                // a slow sweep, not an impact. The shipped shakes were 0.06-0.09.
+                                // Short and small: an impact is a jolt, not a slide. 2026-09-09.
+                                float sm = Mathf.Clamp01(step.TotalScore / 600f);
+                                GridManager.Instance?.ShakeBoard(0.025f + 0.045f * sm, 0.09f + 0.05f * sm);
+                            }
+
+                            grid.RemoveTiles(step.ExplodedCells);
+
+                            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                                SurvivalManager.Instance.NotifyDetonation(step.ExplodedCells.Count, step.ChainDepth);
+
+                            Vector3 centre = Vector3.zero;
+                            foreach (var t in dying) if (t != null) centre += t.transform.position;
+                            centre /= Mathf.Max(1, dying.Count);
+                            if (step.DetonationBonus > 0 && BonusPopup.Instance != null && dying.Count > 0)
+                                BonusPopup.Instance.ShowDetonation("", step.DetonationBonus, centre, step.ChainDepth);
+                            ApplyDetonationRefillRewards(step, centre, 0);
+                        }
+                        break;
+                    }
+
+                    case RulesEngine.ResolutionPhase.GravityApplied:
+                        yield return StartCoroutine(grid.ApplyGravity());
+                        // Gravity moves tiles, so primed words end up on DIFFERENT tile
+                        // objects with no glow — re-apply it. SILENTLY (flashNew:false):
+                        // the tiles that just landed are about to get the GREEN scored
+                        // flash on the next step, and firing the magenta arm flash here
+                        // too made them double-animate and read as a glitch. The green
+                        // flash is the celebration; magenta eases in behind it.
+                        rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
+                        // No pad here — ApplyGravity already yields until the tiles have
+                        // landed, so any extra wait is dead air between the landing and
+                        // the scored flash.
+                        break;
+
+case RulesEngine.ResolutionPhase.Complete:
+                        // NOTE: no flush here. The resolution finishes long before the
+                        // letters land — for a single word the sequence completes in a
+                        // fraction of a second while the letters are airborne for ~0.7s —
+                        // so flushing here paid the whole score out early and the counter
+                        // ran up before anything hit. The safety flush is time-driven in
+                        // ScoreManager instead. 2026-09-09 Spencer.
+                        resolving = false;
+                        rules.FinalizeDrop();
+                        // SyncToRulesState reconciles tiles IN PLACE. (RebuildFromRulesEngine
+                        // tears down and recreates GridRoot — which now also destroys and
+                        // rebuilds the board panel, so the whole board blinked out for a
+                        // frame after every detonation.)
+                        grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+
+            IsInteractable = true;
+            MatchController.Instance?.EndProcessing();
+            _tapDetonating = false;
+        }
+
+        /// <summary>Scores, primes and presents a set of freshly-detected words using the FULL
+        /// pipeline — chain multiplier, echo bonus, gold multiplier, scored-key registration,
+        /// primed glow, haptics, bonus popup, survival hooks and the global fuse reset.
+        ///
+        /// EXTRACTED 2026-10-19 from BoardSwapTurnSequence so the new SWIPE-TO-CLAIM path
+        /// (SwipeWordInput) scores through the exact same code. Writing a second scoring path
+        /// is the documented desync landmine: the comment inside this block records that an
+        /// earlier parallel path called CalculateWordScore directly and thereby skipped the
+        /// chain/echo/gold handling, leaving gold tiles reusable and echo streaks unrewarded.
+        /// One pipeline, two callers.</summary>
+        private System.Collections.Generic.HashSet<int> PrimeAndPresentWords(
+            System.Collections.Generic.List<RulesWordMatch> allNew, RulesEngine rules, GridManager grid)
+        {
+            if (allNew == null || allNew.Count == 0 || rules == null || grid == null)
+                return new System.Collections.Generic.HashSet<int>();
+            // Score, prime, and show visuals for each word — same as RewriteTurnSequence
+            var registry = rules.PrimedRegistry;
+            int globalTurn = rules.GlobalTurn;
+            int playerIdx = MatchController.PLAYER_HUMAN;
+            var justPrimedIds = new HashSet<int>();
+
+            // Mirror DoScoreAndPrime's cluster-bonus logic: when multiple
+            // words score in one swap, each gets a chainStep boost equal
+            // to (count - 1). Without this, swap multi-word scores
+            // collapse to flat per-word values.
+            int swapClusterChainStep = Mathf.Max(0, allNew.Count - 1);
+            for (int i = 0; i < allNew.Count; i++)
+            {
+                var match = allNew[i];
+                // Apply the same scoring pipeline drops/rewrites use —
+                // chain multiplier, echo bonus, gold tile multiplier.
+                // Previously: match.Score = RulesEngine.CalculateWordScore(...)
+                // skipped all of this, leaving gold tiles reusable + echo
+                // streaks unrewarded on swap-created words.
+                int baseScore = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
+                float chainMult = (swapClusterChainStep > 0)
+                    ? 1f + Mathf.Min(swapClusterChainStep, RulesEngine.CHAIN_DEPTH_SCALE_CAP) * 0.5f
+                    : 1f;
+                int chainBoosted = Mathf.RoundToInt(baseScore * chainMult);
+                int echoBonus = rules.ConsumeEchoBonus(match.Word, playerIdx);
+                bool isGoldWord = rules.HasGoldTile(match);
+                int bonusMult = rules.ConsumeGoldAndGetMultiplier(match);
+                match.Score = (chainBoosted + echoBonus) * bonusMult;
+                rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
+
+                int fuse = rules.GetFuseLengthPublic(match.Word.Length);
+                int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord,
+                    RulesEngine.Instance != null && RulesEngine.Instance.HasHighValueLetter(match));
+                justPrimedIds.Add(primedId);
+                // This swap path primes directly (no RulesEngine.OnWordScored) — notify
+                // the objective so swap/claim-made words still count. 2026-06-08.
+                ObjectiveManager.Instance?.NotifyWordScored(match.Word, playerIdx);
+
+                // Visual: primed glow + particles
+                var scoredTiles = new System.Collections.Generic.List<Tile>();
+                if (match.Cells != null)
+                {
+                    // BRANCH GATE: this primes from the word MATCH, not from the registry,
+                    // so it painted words the rules had already refused ("LIDS" armed while
+                    // the log said rejected). The registry is authoritative by this point —
+                    // the word has either been accepted into it or it has not. 2026-09-09.
+                    bool armedA = RulesEngine.Instance != null && match.Cells != null
+                        && match.Cells.Count > 0
+                        && RulesEngine.Instance.GetPrimedWordsContainingPublic(match.Cells[0]) > 0;
+                    if (armedA)
+                    for (int c = 0; c < match.Cells.Count; c++)
+                    {
+                        Tile t = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
+                        if (t != null)
+                        {
+                            t.SetPrimedGlow(RulesEngine.Instance != null && RulesEngine.Instance.HasHighValueLetter(match)
+                                    ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW,
+                                    playFlash: true, fuseRemaining: fuse, maxAge: match.Word.Length <= 3 ? 25f : match.Word.Length == 4 ? 30f : match.Word.Length == 5 ? 38f : 45f);
+                            GameParticles.Instance?.PlayPrimed(t.transform.position);
+                            scoredTiles.Add(t);
+                        }
+                    }
+                }
+
+                // 2026-05-29: removed duplicate PlayWordScored call —
+                // GameVisualBridge.cs:560 is the canonical word-presentation
+                // path (per the MatchController.cs:670 comment). When the
+                // edit/rewrite swap flow ran through here AND through
+                // GameVisualBridge, the pop SFX fired twice. Haptics still
+                // fire here since GameVisualBridge doesn't handle haptics.
+                HapticsManager.Light();
+
+                if (BonusPopup.Instance != null && scoredTiles.Count > 0)
+                {
+                    Vector3 center = Vector3.zero;
+                    for (int c = 0; c < scoredTiles.Count; c++)
+                        if (scoredTiles[c] != null) center += scoredTiles[c].transform.position;
+                    center /= Mathf.Max(1, scoredTiles.Count);
+                    BonusPopup.Instance.ShowWordScore(match.Word, match.Score, center);
+                }
+
+                // Survival rewrite meter
+                if (MatchController.Instance != null)
+                    MatchController.Instance.SurvivalWordScored();
+
+                // Survival long-word reward (5+/6+/7+) — was previously
+                // only called from the AI bridge path with a PLAYER_HUMAN
+                // gate that the AI bridge never satisfies, leaving 5+
+                // letter rewards unreachable. Survival is solo-only so
+                // SurvivalManager.IsSurvivalMode is the right gate.
+                if (SurvivalManager.IsSurvivalMode
+                    && GameVisualBridge.Instance != null
+                    && !string.IsNullOrEmpty(match.Word))
+                {
+                    GameVisualBridge.Instance.TriggerSurvivalLongWordReward(
+                        match.Word, scoredTiles, isPlayer: true);
+                }
+            }
+            GameAudio.Instance?.PlayTilePrimed();
+
+            // Global fuse reset: sync all existing primed words to the new
+            // fuse timeline, same as BeginDrop/BeginRewrite paths do via
+            // DoScoreAndPrime. Without this the board-swap path leaves
+            // pre-existing primes on their original, stale timers.
+            rules.ResetExistingPrimedWordsExternal(justPrimedIds);
+
+            // Swaps intentionally do NOT count as a move (Balatro-discard
+            // analog — no hand card consumed, pure board reshuffle).
+            // They DO contribute score (CurrentStageScore auto-derives
+            // from PlayerScore so swap points count automatically).
+            // Trigger the clear check in case this swap crossed target.
+            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                SurvivalManager.Instance.CheckStageClear();
+            return justPrimedIds;
+        }
+
         private IEnumerator BoardSwapTurnSequence(int col1, int row1, char newLetter1, int col2, int row2, char newLetter2)
         {
             if (JamHint.Instance != null) JamHint.Instance.ClearHint();
@@ -2259,108 +2889,8 @@ namespace WordDrop
 
             if (allNew.Count > 0)
             {
-                // Score, prime, and show visuals for each word — same as RewriteTurnSequence
                 var registry = rules.PrimedRegistry;
-                int globalTurn = rules.GlobalTurn;
-                int playerIdx = MatchController.PLAYER_HUMAN;
-                var justPrimedIds = new HashSet<int>();
-
-                // Mirror DoScoreAndPrime's cluster-bonus logic: when multiple
-                // words score in one swap, each gets a chainStep boost equal
-                // to (count - 1). Without this, swap multi-word scores
-                // collapse to flat per-word values.
-                int swapClusterChainStep = Mathf.Max(0, allNew.Count - 1);
-                for (int i = 0; i < allNew.Count; i++)
-                {
-                    var match = allNew[i];
-                    // Apply the same scoring pipeline drops/rewrites use —
-                    // chain multiplier, echo bonus, gold tile multiplier.
-                    // Previously: match.Score = RulesEngine.CalculateWordScore(...)
-                    // skipped all of this, leaving gold tiles reusable + echo
-                    // streaks unrewarded on swap-created words.
-                    int baseScore = RulesEngine.CalculateWordScore(match.Word, match.WildLetterIndices);
-                    float chainMult = (swapClusterChainStep > 0)
-                        ? 1f + Mathf.Min(swapClusterChainStep, RulesEngine.CHAIN_DEPTH_SCALE_CAP) * 0.5f
-                        : 1f;
-                    int chainBoosted = Mathf.RoundToInt(baseScore * chainMult);
-                    int echoBonus = rules.ConsumeEchoBonus(match.Word, playerIdx);
-                    bool isGoldWord = rules.HasGoldTile(match);
-                    int bonusMult = rules.ConsumeGoldAndGetMultiplier(match);
-                    match.Score = (chainBoosted + echoBonus) * bonusMult;
-                    rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
-
-                    int fuse = rules.GetFuseLengthPublic(match.Word.Length);
-                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord);
-                    justPrimedIds.Add(primedId);
-                    // This swap path primes directly (no RulesEngine.OnWordScored) — notify
-                    // the objective so swap/claim-made words still count. 2026-06-08.
-                    ObjectiveManager.Instance?.NotifyWordScored(match.Word, playerIdx);
-
-                    // Visual: primed glow + particles
-                    var scoredTiles = new System.Collections.Generic.List<Tile>();
-                    if (match.Cells != null)
-                    {
-                        for (int c = 0; c < match.Cells.Count; c++)
-                        {
-                            Tile t = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
-                            if (t != null)
-                            {
-                                t.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse, maxAge: match.Word.Length <= 3 ? 25f : match.Word.Length == 4 ? 30f : match.Word.Length == 5 ? 38f : 45f);
-                                GameParticles.Instance?.PlayPrimed(t.transform.position);
-                                scoredTiles.Add(t);
-                            }
-                        }
-                    }
-
-                    // 2026-05-29: removed duplicate PlayWordScored call —
-                    // GameVisualBridge.cs:560 is the canonical word-presentation
-                    // path (per the MatchController.cs:670 comment). When the
-                    // edit/rewrite swap flow ran through here AND through
-                    // GameVisualBridge, the pop SFX fired twice. Haptics still
-                    // fire here since GameVisualBridge doesn't handle haptics.
-                    HapticsManager.Light();
-
-                    if (BonusPopup.Instance != null && scoredTiles.Count > 0)
-                    {
-                        Vector3 center = Vector3.zero;
-                        for (int c = 0; c < scoredTiles.Count; c++)
-                            if (scoredTiles[c] != null) center += scoredTiles[c].transform.position;
-                        center /= Mathf.Max(1, scoredTiles.Count);
-                        BonusPopup.Instance.ShowWordScore(match.Word, match.Score, center);
-                    }
-
-                    // Survival rewrite meter
-                    if (MatchController.Instance != null)
-                        MatchController.Instance.SurvivalWordScored();
-
-                    // Survival long-word reward (5+/6+/7+) — was previously
-                    // only called from the AI bridge path with a PLAYER_HUMAN
-                    // gate that the AI bridge never satisfies, leaving 5+
-                    // letter rewards unreachable. Survival is solo-only so
-                    // SurvivalManager.IsSurvivalMode is the right gate.
-                    if (SurvivalManager.IsSurvivalMode
-                        && GameVisualBridge.Instance != null
-                        && !string.IsNullOrEmpty(match.Word))
-                    {
-                        GameVisualBridge.Instance.TriggerSurvivalLongWordReward(
-                            match.Word, scoredTiles, isPlayer: true);
-                    }
-                }
-                GameAudio.Instance?.PlayTilePrimed();
-
-                // Global fuse reset: sync all existing primed words to the new
-                // fuse timeline, same as BeginDrop/BeginRewrite paths do via
-                // DoScoreAndPrime. Without this the board-swap path leaves
-                // pre-existing primes on their original, stale timers.
-                rules.ResetExistingPrimedWordsExternal(justPrimedIds);
-
-                // Swaps intentionally do NOT count as a move (Balatro-discard
-                // analog — no hand card consumed, pure board reshuffle).
-                // They DO contribute score (CurrentStageScore auto-derives
-                // from PlayerScore so swap points count automatically).
-                // Trigger the clear check in case this swap crossed target.
-                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
-                    SurvivalManager.Instance.CheckStageClear();
+                var justPrimedIds = PrimeAndPresentWords(allNew, rules, grid);
 
                 // Teal dies out NOW — right after the exchange/prime, BEFORE the 0.3s wait and the detonation —
                 // so primed tiles hand straight to magenta and un-worded swapped tiles fade to white at the SAME
@@ -2368,11 +2898,30 @@ namespace WordDrop
                 grid.GetTile(col1, row1)?.FadeEditGlowOut();
                 grid.GetTile(col2, row2)?.FadeEditGlowOut();
 
-                yield return WaitCache.Get(0.3f);
+                // ── THE TAP DELAY (2026-09-08 Spencer) ──────────────────────────────────
+                // This 0.3s exists to give the DROP game a beat between "word primed" and
+                // "the crossing auto-detonates it" — it is the wind-up before the chain fires.
+                // In ARMED-WEB nothing auto-detonates: the trigger loop immediately below is
+                // gated `&& !RulesEngine.ArmedWebMode`, so it does nothing. The wait therefore
+                // leads nowhere — it just holds input locked for a third of a second while the
+                // tile is ALREADY sitting there magenta and looking ready to tap.
+                //
+                // That is the whole delay. The tap path itself fires on the same frame as the
+                // press (verified in debug_log: tap and Exploding share a frame number); the
+                // lag was the game refusing the click, not the click being slow. And it only
+                // affected words you had just MADE — tap a cascade word and the resolution has
+                // already ended, which is exactly the asymmetry Spencer noticed.
+                //
+                // One frame instead of zero so the teal-out tween is running before input
+                // reopens; the tween finishes on its own, it does not need to be waited on.
+                if (RulesEngine.ArmedWebMode) yield return null;
+                else                          yield return WaitCache.Get(0.3f);
 
-                // Check for detonation triggers
+                // Check for detonation triggers.
+                // ARMED-WEB: crossing LINKS words into the web, it never fires them.
+                // Only a player TAP detonates (see TapDetonateSequence).
                 bool triggeredPrimed = false;
-                for (int i = 0; i < allNew.Count && !triggeredPrimed; i++)
+                for (int i = 0; i < allNew.Count && !triggeredPrimed && !RulesEngine.ArmedWebMode; i++)
                 {
                     if (allNew[i].Cells == null) continue;
                     for (int c = 0; c < allNew[i].Cells.Count; c++)
@@ -2396,7 +2945,7 @@ namespace WordDrop
                     }
                 }
 
-//                 Debug.Log($"[BoardSwap] triggeredPrimed={triggeredPrimed}, allNew={allNew.Count}, justPrimed={justPrimedIds.Count}, registry={registry.Count}");
+//                 WDLog.Log($"[BoardSwap] triggeredPrimed={triggeredPrimed}, allNew={allNew.Count}, justPrimed={justPrimedIds.Count}, registry={registry.Count}");
 
                 // Apply base scores for the swap-created words
                 int swapBaseScore = 0;
@@ -2411,14 +2960,6 @@ namespace WordDrop
                     if (GameManager.IsLevelMode)
                         LevelController.Instance?.NotifyScore(swapBaseScore);
                 }
-
-                // A board-swap is an EDIT (it costs a charge). On edit-counting levels (L6/L8) it must
-                // tick the move counter too — but board-swaps bypass CompleteDropBookkeeping, so do it
-                // here. Fires once per swap regardless of whether a word formed. 2026-07-09 Spencer.
-                Debug.Log($"[BoardSwapMove] board swap resolved. survival={SurvivalManager.IsSurvivalMode}, editsCountAsMoves={(SurvivalManager.Instance != null ? SurvivalManager.Instance.EditsCountAsMoves.ToString() : "null")} → {((SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && SurvivalManager.Instance.EditsCountAsMoves) ? "COUNTING" : "not counted")}.");
-                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
-                    && SurvivalManager.Instance.EditsCountAsMoves)
-                    SurvivalManager.Instance.NotifyDropCommitted();
 
                 // If detonation triggered, run full step resolution
                 if (triggeredPrimed)
@@ -2505,13 +3046,13 @@ namespace WordDrop
 
                             case RulesEngine.ResolutionPhase.GravityApplied:
                                 yield return StartCoroutine(grid.ApplyGravity());
-                                yield return WaitCache.Get(0.1f);
+                                rules.RefreshAllPrimedWordTiles(-1, flashNew: false);   // see note above
                                 break;
 
                             case RulesEngine.ResolutionPhase.Complete:
                                 resolving = false;
                                 rules.FinalizeDrop();
-                                grid.SyncToRulesState(rules);
+                                grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
                                 break;
 
                             default:
@@ -2531,7 +3072,7 @@ namespace WordDrop
                     if (MatchController.Instance != null)
                     {
                         MatchController.Instance.RefundRewriteCharge(MatchController.PLAYER_HUMAN);
-//                         Debug.Log("[BoardSwap] Detonation → edit refunded");
+//                         WDLog.Log("[BoardSwap] Detonation → edit refunded");
                     }
                 }
             }
@@ -2540,7 +3081,7 @@ namespace WordDrop
             if (rules != null)
             {
                 rules.FinalizeDrop();
-                if (grid != null) grid.SyncToRulesState(rules);
+                if (grid != null) grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
             }
 
             // No-word swaps fade their teal HERE — right after the instant exchange (no pop happened). Word-forming
@@ -2550,6 +3091,16 @@ namespace WordDrop
                 grid.GetTile(col1, row1)?.FadeEditGlowOut();
                 grid.GetTile(col2, row2)?.FadeEditGlowOut();
             }
+
+            // A board-swap costs a MOVE. 2026-09-03: this used to live inside the
+            // `if (allNew.Count > 0)` branch, so a swap only counted when it happened to
+            // form a word — setup swaps (repositioning letters for a future word, which
+            // is the whole point of the swap game) were FREE. Now it fires once per swap
+            // regardless, which is what the comment always claimed.
+            WDLog.Log($"[BoardSwapMove] swap resolved. formedWord={allNew.Count > 0} survival={SurvivalManager.IsSurvivalMode} editsCountAsMoves={(SurvivalManager.Instance != null ? SurvivalManager.Instance.EditsCountAsMoves.ToString() : "null")} → {((SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && SurvivalManager.Instance.EditsCountAsMoves) ? "COUNTING" : "not counted")}");
+            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                && SurvivalManager.Instance.EditsCountAsMoves)
+                SurvivalManager.Instance.NotifyDropCommitted();
 
             IsInteractable = true;
             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
@@ -2618,7 +3169,7 @@ namespace WordDrop
                 // Swap doesn't create a word — revert
                 cell1.Letter = letter1;
                 cell2.Letter = letter2;
-//                 Debug.Log($"[HandManager] Legal swap ({col1},{row1})↔({col2},{row2}): no valid word — rejected");
+//                 WDLog.Log($"[HandManager] Legal swap ({col1},{row1})↔({col2},{row2}): no valid word — rejected");
                 GameAudio.Instance?.PlayButtonClick(); // feedback: "nope"
                 return false;
             }
@@ -2647,7 +3198,7 @@ namespace WordDrop
             CancelRewriteMode();
             GameAudio.Instance?.PlayTilePrimed(); // satisfying feedback
 
-//             Debug.Log($"[HandManager] Legal swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}' — word created!");
+//             WDLog.Log($"[HandManager] Legal swap ({col1},{row1})↔({col2},{row2}): '{letter1}'↔'{letter2}' — word created!");
 
             // Run resolution from the swap (words will be detected, primed, possibly detonated)
             StartCoroutine(SwapResolutionSequence(col1, row1, col2, row2));
@@ -2721,7 +3272,8 @@ namespace WordDrop
                     rules.RegisterScoredKey(match.Word + "|" + match.CellKey);
 
                     // Check if this new word overlaps or is adjacent to existing primed words → trigger
-                    if (registry != null && match.Cells != null)
+                    // ARMED-WEB: crossing LINKS, never fires.
+                    if (!RulesEngine.ArmedWebMode && registry != null && match.Cells != null)
                     {
                         for (int c = 0; c < match.Cells.Count && !triggeredPrimed; c++)
                         {
@@ -2748,7 +3300,8 @@ namespace WordDrop
                     // primed registry records gold status — without it,
                     // detonation bonuses on gold-primed words underscore.
                     int fuse = rules.GetFuseLengthPublic(match.Word.Length);
-                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord2);
+                    int primedId = registry.AddPrimedWord(match.Word, match.Cells, playerIdx, globalTurn, globalTurn + fuse, match.Score, isGoldWord2,
+                        RulesEngine.Instance != null && RulesEngine.Instance.HasHighValueLetter(match));
                     justPrimedIds.Add(primedId);
                     // Swap path primes directly (no OnWordScored) — notify the objective so
                     // swap/claim-made words still count. 2026-06-08.
@@ -2757,12 +3310,20 @@ namespace WordDrop
                     // Visual: apply primed glow
                     if (match.Cells != null)
                     {
+                        // BRANCH GATE: this primes from the word MATCH, not from the registry,
+                        // so it painted words the rules had already refused ("LIDS" armed while
+                        // the log said rejected). The registry is authoritative by this point —
+                        // the word has either been accepted into it or it has not. 2026-09-09.
+                        bool armedB = RulesEngine.Instance != null && match.Cells != null
+                            && match.Cells.Count > 0
+                            && RulesEngine.Instance.GetPrimedWordsContainingPublic(match.Cells[0]) > 0;
+                        if (armedB)
                         for (int c = 0; c < match.Cells.Count; c++)
                         {
                             Tile tile = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
                             if (tile != null)
                             {
-                                tile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+                                tile.SetPrimedGlow(RulesEngine.PrimedGlowForCell(new Vector2Int(tile.Col, tile.Row)), playFlash: true, fuseRemaining: fuse);
                                 GameParticles.Instance?.PlayPrimed(tile.transform.position);
                             }
                         }
@@ -2789,7 +3350,7 @@ namespace WordDrop
             // This is the fix for Codex audit #10: swaps must detonate, not just prime.
             if (triggeredPrimed && allNew.Count > 0)
             {
-//                 Debug.Log("[SwapResolution] Swap triggered primed word — running full resolution");
+//                 WDLog.Log("[SwapResolution] Swap triggered primed word — running full resolution");
 
                 // Feed swap words into RulesEngine for resolution.
                 // Use BeginRewrite-style init since the tile is already on the board.
@@ -2896,7 +3457,7 @@ namespace WordDrop
                                 // Refill rewards — was missing on this path.
                                 ApplyDetonationRefillRewards(step, swapResCenter, 0);
 
-//                                 Debug.Log($"[SwapResolution] Exploded {step.ExplodedCells.Count} tiles, bonus={step.DetonationBonus}");
+//                                 WDLog.Log($"[SwapResolution] Exploded {step.ExplodedCells.Count} tiles, bonus={step.DetonationBonus}");
                             }
                             swapScore = step.TotalScore; // cumulative — just take the latest
                             break;
@@ -2915,7 +3476,7 @@ namespace WordDrop
                                 ChainCounter.Instance.OnChainComplete();
                             resolving = false;
                             rules.FinalizeDrop();
-                            grid.SyncToRulesState(rules);
+                            grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
                             break;
                         }
 
@@ -2929,7 +3490,7 @@ namespace WordDrop
                 if (MatchController.Instance != null)
                 {
                     MatchController.Instance.RefundRewriteCharge(playerIdx);
-//                     Debug.Log("[SwapResolution] Swap detonation → rewrite refunded");
+//                     WDLog.Log("[SwapResolution] Swap detonation → rewrite refunded");
                 }
 
                 // Update score
@@ -2952,8 +3513,102 @@ namespace WordDrop
             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
         }
 
+        /// <summary>Re-reads the selected tile's CURRENT cell. Rising rows and gravity
+        /// move it, so anything using _rewriteTargetCol/Row must refresh first.</summary>
+        private void RefreshRewriteTarget()
+        {
+            if (_rewriteTargetTile == null) return;
+            _rewriteTargetCol = _rewriteTargetTile.Col;
+            _rewriteTargetRow = _rewriteTargetTile.Row;
+        }
+
+        /// <summary>Called by SwipeWordInput the moment a drag crosses a second cell, i.e. the
+        /// gesture is a SWIPE and not a tap. Pressing down on the board pre-selects that tile
+        /// for a tap-tap board swap, so without this the swiped-from tile stays lit and armed
+        /// as a swap source after the swipe resolves. 2026-10-19.</summary>
+        public void AbortPendingSwapSelection()
+        {
+            CancelRewriteMode();
+        }
+
+        /// <summary>Routes a player-SWIPED word through the exact pipeline a swap uses.
+        /// Returns false if the word was refused by the registry's branch gate.
+        ///
+        /// 2026-10-19 — MUST run inside BeginProcessing/EndProcessing. The first version did
+        /// not, and the symptom was a rise tearing through a just-primed word: the tiles under
+        /// the glow did not move up with the rest of the board. Cause: SurvivalManager defers
+        /// its rise via a wait-coroutine "until processing clears", and with IsProcessing
+        /// false that wait was already satisfied — so NotifyDropCommitted fired a rise in the
+        /// SAME FRAME the primed glow and particles were still being applied. Every other turn
+        /// path in the game is wrapped this way; the swipe path was the only one that was not.
+        /// </summary>
+        public bool CommitSwipedWord(RulesWordMatch match)
+        {
+            var rules = RulesEngine.Instance;
+            var grid  = GridManager.Instance;
+            if (match == null || rules == null || grid == null) return false;
+            StartCoroutine(SwipeCommitSequence(match, rules, grid));
+            return true;
+        }
+
+        private System.Collections.IEnumerator SwipeCommitSequence(
+            RulesWordMatch match, RulesEngine rules, GridManager grid)
+        {
+            IsInteractable = false;
+            if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
+
+            var one = new System.Collections.Generic.List<RulesWordMatch> { match };
+            var justPrimedIds = PrimeAndPresentWords(one, rules, grid);
+
+            // AddPrimedWord returns -1 when the registry refuses, and the extracted block adds
+            // the id unconditionally — so a non-empty set is NOT proof of success. Check for a
+            // real id, or a refused word would score and cost a move without arming.
+            bool armed = false;
+            foreach (int id in justPrimedIds) if (id >= 0) { armed = true; break; }
+
+            if (armed)
+            {
+                // Consume the rise-seeding exemption so the same word cannot be claimed twice.
+                rules.ClearRiseSeededKey(match.Word + "|" + match.CellKey);
+
+                if (match.Score > 0 && ScoreManager.Instance != null)
+                {
+                    ScoreManager.Instance.AddScore(match.Score, MatchController.PLAYER_HUMAN);
+                    if (GameManager.IsLevelMode)
+                        LevelController.Instance?.NotifyScore(match.Score);
+                }
+
+                // Let the prime glow + particles get a frame before anything moves the board.
+                yield return null;
+
+                // A SWIPE COSTS A MOVE (Spencer 2026-10-19). Gated identically to the
+                // board-swap path so the two verbs cost the same thing.
+                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                    && SurvivalManager.Instance.EditsCountAsMoves)
+                    SurvivalManager.Instance.NotifyDropCommitted();
+
+                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null)
+                    SurvivalManager.Instance.CheckStageClear();
+            }
+            else
+            {
+                WDLog.Log($"[Swipe] '{match.Word}' refused by the registry — no move charged");
+            }
+
+            if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+            IsInteractable = true;
+        }
+
         private void CancelRewriteMode(bool keepGlow = false)
         {
+            // Clear via the TILE REFERENCE — the stored cell may now hold a different tile.
+            if (_rewriteTargetTile != null && !keepGlow)
+            {
+                _rewriteTargetTile.SetEditSelected(false, popOnExit: true);
+                _rewriteTargetTile.ResetVisuals();
+            }
+            _rewriteTargetTile = null;
+
             if (_rewriteTargetCol >= 0 && _rewriteTargetRow >= 0)
             {
                 Tile targetTile = _grid.GetTile(_rewriteTargetCol, _rewriteTargetRow);
@@ -2969,7 +3624,7 @@ namespace WordDrop
             _rewriteModeActive = false;
             _rewriteTargetCol = -1;
             _rewriteTargetRow = -1;
-//             Debug.Log("[HandManager] Rewrite mode cancelled.");
+//             WDLog.Log("[HandManager] Rewrite mode cancelled.");
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -3043,10 +3698,10 @@ namespace WordDrop
         private const float TILE_FLASH_BOX_CHANCE = 0.6f; // 60% of detonations show boxes
         private void FireTileFlashBoxes(IList<Tile> dying)
         {
-            if (!WordDropFX.FX_TileFlashBox) { Debug.Log("[FX] TileFlashBox: SKIPPED"); return; }
+            if (!WordDropFX.FX_TileFlashBox) { WDLog.Log("[FX] TileFlashBox: SKIPPED"); return; }
             if (TileFlashBox.Instance == null || _grid == null || dying == null) return;
             if (dying.Count == 0) return;
-            Debug.Log("[FX] TileFlashBox: FIRED");
+            WDLog.Log("[FX] TileFlashBox: FIRED");
 
             // One roll for the entire detonation — all-or-nothing variety.
             if (Random.value >= TILE_FLASH_BOX_CHANCE) return;
@@ -3163,7 +3818,7 @@ namespace WordDrop
             bool bigMoment = _pendingBurstChainDepth == 0
                           && (_pendingBurstLongestWord >= 7
                               || _pendingBurstTriggers.Count >= 4);
-            Debug.Log($"[BigBurst] bigMoment={bigMoment} — chainDepth={_pendingBurstChainDepth} " +
+            WDLog.Log($"[BigBurst] bigMoment={bigMoment} — chainDepth={_pendingBurstChainDepth} " +
                       $"longestWord={_pendingBurstLongestWord} triggers={_pendingBurstTriggers.Count}");
             if (!bigMoment)
             {
@@ -3228,20 +3883,20 @@ namespace WordDrop
                 // which read wrong on mixed-direction cascades.
                 if (WordDropFX.FX_BigBurstFlash)
                 {
-                    Debug.Log("[FX] BigBurstFlash: FIRED (primed word)");
+                    WDLog.Log("[FX] BigBurstFlash: FIRED (primed word)");
                     float screenLength = ScreenExtentAlongAxis(vertical);
                     BigBurstFlash.Instance.Play(wordCenter, screenLength, thickness, vertical, burstTint);
                 }
-                else { Debug.Log("[FX] BigBurstFlash: SKIPPED (primed word)"); }
+                else { WDLog.Log("[FX] BigBurstFlash: SKIPPED (primed word)"); }
 
                 // HDR sparkle spray — 8-16 tiny stars flying radially outward.
                 if (WordDropFX.FX_SparkleSpray && SparkleSpray.Instance != null)
                 {
-                    Debug.Log("[FX] SparkleSpray: FIRED (primed word)");
+                    WDLog.Log("[FX] SparkleSpray: FIRED (primed word)");
                     float intensity = Mathf.Clamp01((wordLen - 3) / 4f + 0.4f);
                     SparkleSpray.Instance.Play(wordCenter, intensity);
                 }
-                else { Debug.Log("[FX] SparkleSpray: SKIPPED (primed word)"); }
+                else { WDLog.Log("[FX] SparkleSpray: SKIPPED (primed word)"); }
 
                 // Phase 11i — ScreenFlash now gated to MELTDOWN-grade events
                 // only. Used to fire on every "bigMoment" which fired on
@@ -3260,7 +3915,7 @@ namespace WordDrop
                 // Scatter flare_star sparkles along the full blast line.
                 if (WordDropFX.FX_SparkleLine && GameParticles.Instance != null)
                 {
-                    Debug.Log("[FX] SparkleLine: FIRED (primed word)");
+                    WDLog.Log("[FX] SparkleLine: FIRED (primed word)");
                     Vector3 lineStart, lineEnd;
                     if (vertical)
                     {
@@ -3275,7 +3930,7 @@ namespace WordDrop
                     int sparkleCount = Mathf.Clamp(14 + wordLen * 2, 14, 26);
                     GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, sparkleCount);
                 }
-                else { Debug.Log("[FX] SparkleLine: SKIPPED (primed word)"); }
+                else { WDLog.Log("[FX] SparkleLine: SKIPPED (primed word)"); }
             }
             // Second pass: the TRIGGER words themselves (the new words the player
             // just formed that ignited the primed cluster). Each gets its own blast
@@ -3312,23 +3967,23 @@ namespace WordDrop
 
                     if (WordDropFX.FX_BigBurstFlash)
                     {
-                        Debug.Log("[FX] BigBurstFlash: FIRED (trigger word)");
+                        WDLog.Log("[FX] BigBurstFlash: FIRED (trigger word)");
                         float screenLength = ScreenExtentAlongAxis(twVertical);
                         BigBurstFlash.Instance.Play(twCenter, screenLength, thickness, twVertical, burstTint);
                     }
-                    else { Debug.Log("[FX] BigBurstFlash: SKIPPED (trigger word)"); }
+                    else { WDLog.Log("[FX] BigBurstFlash: SKIPPED (trigger word)"); }
 
                     if (WordDropFX.FX_SparkleSpray && SparkleSpray.Instance != null)
                     {
-                        Debug.Log("[FX] SparkleSpray: FIRED (trigger word)");
+                        WDLog.Log("[FX] SparkleSpray: FIRED (trigger word)");
                         float intensity = Mathf.Clamp01((twWordLen - 3) / 4f + 0.4f);
                         SparkleSpray.Instance.Play(twCenter, intensity);
                     }
-                    else { Debug.Log("[FX] SparkleSpray: SKIPPED (trigger word)"); }
+                    else { WDLog.Log("[FX] SparkleSpray: SKIPPED (trigger word)"); }
 
                     if (WordDropFX.FX_SparkleLine && GameParticles.Instance != null)
                     {
-                        Debug.Log("[FX] SparkleLine: FIRED (trigger word)");
+                        WDLog.Log("[FX] SparkleLine: FIRED (trigger word)");
                         Vector3 lineStart, lineEnd;
                         if (twVertical)
                         {
@@ -3343,7 +3998,7 @@ namespace WordDrop
                         int twSparkleCount = Mathf.Clamp(14 + twWordLen * 2, 14, 26);
                         GameParticles.Instance.PlaySparkleLine(lineStart, lineEnd, twSparkleCount);
                     }
-                    else { Debug.Log("[FX] SparkleLine: SKIPPED (trigger word)"); }
+                    else { WDLog.Log("[FX] SparkleLine: SKIPPED (trigger word)"); }
                 }
             }
 
@@ -3570,7 +4225,7 @@ namespace WordDrop
             // slot as "nothing to stamp."
             if (!isWild && letter == '\0')
             {
-//                 Debug.Log("[HandManager] Rewrite: hand slot is empty — cancelling.");
+//                 WDLog.Log("[HandManager] Rewrite: hand slot is empty — cancelling.");
                 CancelRewriteMode();
                 return;
             }
@@ -3584,7 +4239,7 @@ namespace WordDrop
             bool success = MatchController.Instance.UseRewrite(handSlot, col, row, isWild);
             if (!success)
             {
-//                 Debug.Log("[HandManager] Rewrite: MatchController.UseRewrite rejected.");
+//                 WDLog.Log("[HandManager] Rewrite: MatchController.UseRewrite rejected.");
                 CancelRewriteMode();
                 return;
             }
@@ -3593,7 +4248,7 @@ namespace WordDrop
             char oldLetter = cell != null ? cell.Letter : '?';
 
             _rewriteMatchRewriteCount++;
-//             Debug.Log($"[HandManager] Rewrite ACCEPTED: '{letter}' → ({col},{row}) " +
+//             WDLog.Log($"[HandManager] Rewrite ACCEPTED: '{letter}' → ({col},{row}) " +
                       // $"replacing '{oldLetter}' | rewrite #{_rewriteMatchRewriteCount} this match");
 
             // Clear edit-selected visual on the committed tile
@@ -3777,7 +4432,7 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.WordsDetected:
                     {
                         int wc = step.NewWords != null ? step.NewWords.Count : 0;
-//                         Debug.Log($"[Rewrite] WordsDetected: {wc} word(s)");
+//                         WDLog.Log($"[Rewrite] WordsDetected: {wc} word(s)");
                         break;
                     }
                     case RulesEngine.ResolutionPhase.WordsScored:
@@ -3795,7 +4450,7 @@ namespace WordDrop
                             for (int w = 0; w < step.ScoredWords.Count; w++)
                             {
                                 var sw = step.ScoredWords[w];
-//                                 Debug.Log($"[Rewrite] Word scored: '{sw.Word}' +{sw.FinalScore}");
+//                                 WDLog.Log($"[Rewrite] Word scored: '{sw.Word}' +{sw.FinalScore}");
                                 totalScore += sw.FinalScore;
 
                                 // Survival rewrite meter: rewrites that score words count too
@@ -3868,7 +4523,7 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.TriggersFound:
                     {
                         rewriteTriggeredPrimed = true;
-//                         Debug.Log("[Rewrite] Primed word triggered!");
+//                         WDLog.Log("[Rewrite] Primed word triggered!");
 
                         // Multi-trigger callout (rewrite path)
                         if (step.Triggers != null && step.Triggers.Count >= 2 && step.ChainDepth == 0)
@@ -3890,7 +4545,7 @@ namespace WordDrop
                             if (BonusPopup.Instance != null)
                                 BonusPopup.Instance.Show(multiLabel, multiColor, multiCenter + Vector3.up * 0.5f, 1.3f);
                             GameAudio.Instance?.PlayScorePowerup();
-//                             Debug.Log($"[Rewrite] Multi-trigger: {multiLabel} ({step.Triggers.Count} primed words)");
+//                             WDLog.Log($"[Rewrite] Multi-trigger: {multiLabel} ({step.Triggers.Count} primed words)");
                         }
 
                         // Play detonation trigger visual + sound (same as normal drop path)
@@ -3996,7 +4651,7 @@ namespace WordDrop
                                 yield return ExplodeWordsThenSplash(step, dyingTiles, step.ChainDepth, wLen);
                             }
                             grid.RemoveTiles(step.ExplodedCells);
-//                             Debug.Log($"[Rewrite] Exploded {step.ExplodedCells.Count} tiles");
+//                             WDLog.Log($"[Rewrite] Exploded {step.ExplodedCells.Count} tiles");
 
                             // Notify post-clear boost system
                             if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
@@ -4026,7 +4681,10 @@ namespace WordDrop
                     case RulesEngine.ResolutionPhase.GravityApplied:
                     {
                         yield return StartCoroutine(grid.ApplyGravity());
-                        yield return WaitCache.Get(0.1f);
+                        // 2026-09-03: gravity moves tiles, so primed words end up on
+                        // DIFFERENT tile objects with no glow. Re-apply, or cascade-formed
+                        // words are armed but look plain.
+                        rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
                         break;
                     }
                     case RulesEngine.ResolutionPhase.Complete:
@@ -4037,7 +4695,7 @@ namespace WordDrop
 
                         int finalScore = step.TotalScore;
 
-//                         Debug.Log($"[Rewrite] Resolution complete. Score={finalScore} " +
+//                         WDLog.Log($"[Rewrite] Resolution complete. Score={finalScore} " +
                                   // $"chainContinues={step.ChainContinues}");
 
                         rules.FinalizeDrop();
@@ -4046,7 +4704,7 @@ namespace WordDrop
                         if (DetonationRecorder.Instance != null)
                             DetonationRecorder.Instance.FinalizeChain();
 
-                        try { grid.SyncToRulesState(rules); }
+                        try { grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false); }
                         catch (System.Exception ex) { Debug.LogError($"[Rewrite] SyncToRulesState: {ex}"); }
 
                         // Bookkeeping — consumes turn, switches player, refills hand slot.
@@ -4064,14 +4722,14 @@ namespace WordDrop
                         if (shouldRefund)
                         {
                             mc.RefundRewriteCharge(playerIdx);
-//                             Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) " +
+//                             WDLog.Log($"[RewriteRefund] Rewrite at ({col},{row}) " +
                                       // $"scored={rewriteScoredWord} triggered={rewriteTriggeredPrimed} refund=true");
                             if (BonusPopup.Instance != null && grid != null)
                                 BonusPopup.Instance.ShowRefund(grid.CellToWorld(col, row));
                         }
                         else
                         {
-//                             Debug.Log($"[RewriteRefund] Rewrite at ({col},{row}) no detonation refund=false");
+//                             WDLog.Log($"[RewriteRefund] Rewrite at ({col},{row}) no detonation refund=false");
                         }
 
                         break;
@@ -4123,7 +4781,7 @@ namespace WordDrop
             // Check if match ended during rewrite resolution
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
-//                 Debug.Log("[HandManager] RewriteTurnSequence: match ended during rewrite.");
+//                 WDLog.Log("[HandManager] RewriteTurnSequence: match ended during rewrite.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
@@ -4133,7 +4791,7 @@ namespace WordDrop
             {
                 if (BlitzManager.Instance != null && BlitzManager.Instance.CheckBlitzTimeUp())
                 {
-//                     Debug.Log("[HandManager] RewriteTurnSequence: Blitz time expired.");
+//                     WDLog.Log("[HandManager] RewriteTurnSequence: Blitz time expired.");
                     if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                     yield break;
                 }
@@ -4161,7 +4819,7 @@ namespace WordDrop
             // Check again if match ended after AI turn
             if (mc == null || !mc.IsMatchActive || mc.IsGameOver)
             {
-//                 Debug.Log("[HandManager] RewriteTurnSequence: match ended after AI turn.");
+//                 WDLog.Log("[HandManager] RewriteTurnSequence: match ended after AI turn.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
@@ -4169,7 +4827,7 @@ namespace WordDrop
             // If human has no turns left, force game over
             if (mc.IsPlayerDone(MatchController.PLAYER_HUMAN))
             {
-//                 Debug.Log("[HandManager] RewriteTurnSequence: human has no turns — forcing game over.");
+//                 WDLog.Log("[HandManager] RewriteTurnSequence: human has no turns — forcing game over.");
                 IsInteractable = false;
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 mc.ForceGameOver();
@@ -4403,7 +5061,7 @@ namespace WordDrop
                 UpdateCardPositions();
                 if (ColumnArrowManager.Instance != null)
                     ColumnArrowManager.Instance.ShowArrows(false);
-//                 Debug.Log($"[HandManager] Card {index} deselected");
+//                 WDLog.Log($"[HandManager] Card {index} deselected");
                 return;
             }
 
@@ -4430,7 +5088,7 @@ namespace WordDrop
             HideAllCardShadows(true); // animate old shadow dropping
             ShowCardShadow(index);
 
-//             Debug.Log($"[HandManager] Card {index} selected: '{_hand[index]}'");
+//             WDLog.Log($"[HandManager] Card {index} selected: '{_hand[index]}'");
 
             if (ColumnArrowManager.Instance != null)
                 ColumnArrowManager.Instance.ShowArrows(true);
@@ -4507,7 +5165,7 @@ namespace WordDrop
             _cardHaloSRs[a] = _cardHaloSRs[b];
             _cardHaloSRs[b] = tempHaloSR;
 
-//             Debug.Log($"[HandManager] Swapped slots {a}↔{b}: '{_hand[a]}' '{_hand[b]}'");
+//             WDLog.Log($"[HandManager] Swapped slots {a}↔{b}: '{_hand[a]}' '{_hand[b]}'");
         }
 
         /// <summary>Smoothly move cards to their target positions. Selected card pops up.</summary>
@@ -4613,7 +5271,7 @@ namespace WordDrop
             // Check if it's the human player's turn
             if (MatchController.Instance.CurrentPlayer != MatchController.PLAYER_HUMAN)
             {
-//                 Debug.Log("[HandManager] Not player's turn — ignoring drop.");
+//                 WDLog.Log("[HandManager] Not player's turn — ignoring drop.");
                 return;
             }
 
@@ -4622,7 +5280,7 @@ namespace WordDrop
             // Check if human player still has turns
             if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_HUMAN))
             {
-//                 Debug.Log("[HandManager] Human player has no turns remaining.");
+//                 WDLog.Log("[HandManager] Human player has no turns remaining.");
                 IsInteractable = false;
                 // Force game over if match should be done
                 if (MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI) ||
@@ -4636,7 +5294,7 @@ namespace WordDrop
             char letter = GetSelectedLetter();
             if (letter == '\0')
             {
-//                 Debug.Log("[HandManager] No letter selected — ignoring drop.");
+//                 WDLog.Log("[HandManager] No letter selected — ignoring drop.");
                 return;
             }
 
@@ -4652,7 +5310,7 @@ namespace WordDrop
             if (DropPreview.Instance != null)
                 DropPreview.Instance.ClearPreview();
 
-//             Debug.Log($"[HandManager] Player dropping '{letter}' into column {col} " +
+//             WDLog.Log($"[HandManager] Player dropping '{letter}' into column {col} " +
                       // $"(slot {_selectedIndex})");
 
             // Disable input during animation
@@ -4812,7 +5470,7 @@ namespace WordDrop
                 }
                 if (pops.Count > 0) pops[pops.Count - 1].AddRange(splash);
 
-                Debug.Log($"[ChainFX] STAGGER combo(4-part): stages={pops.Count} dying={dying.Count} chain={chainDepth}");
+                WDLog.Log($"[ChainFX] STAGGER combo(4-part): stages={pops.Count} dying={dying.Count} chain={chainDepth}");
 
                 var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
                 bool flyUpGoal = HUDManager.Instance != null && (flyObj is LongWordObjective || flyObj is ComboObjective)
@@ -4845,6 +5503,14 @@ namespace WordDrop
                         // GENTLER — the letters don't balloon during chains. ~1.05× (first) → ~1.35× (last).
                         // Toned down from 1.2→1.9 per Spencer 2026-07-27 (was ballooning on combos).
                         float popPeak = 1.05f + 0.30f * Mathf.Pow(t01, 1.6f);
+                        // Tell the bank how many landings to split this burst across, and pay a
+                        // share per landing — the FX path has always done this, but the COMBO
+                        // path passed a null callback and set no count, so nothing paid out and
+                        // the score sat in the bank until the 1.6s FLY_FLUSH_TIMEOUT backstop
+                        // swept it up. That backstop had quietly become the delivery mechanism
+                        // for every combo, which is the delay before the score moved.
+                        // 2026-09-10 Spencer.
+                        ScoreManager.Instance?.SetFlyLetterCount(flyTiles.Count);
                         for (int i = 0; i < flyTiles.Count; i++)
                         {
                             bool lastLetter = (i == flyTiles.Count - 1);
@@ -4862,7 +5528,7 @@ namespace WordDrop
                             // The TRIGGER word (stage 0, e.g. YES) keeps the ORIGINAL magenta; only the chained
                             // words (comboStep >= 1) ramp in hue via s_comboFlyRamp. 2026-07-27.
                             HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter,
-                                popIcon, null, i * 0.07f, false, popPeak, sortBase, comboStep: g);
+                                popIcon, () => ScoreManager.Instance?.AwardOneFlyShare(), i * 0.07f, false, popPeak, sortBase, comboStep: g, armedColor: flyTiles[i].DetonationColor);
                         }
                     }
 
@@ -4870,7 +5536,14 @@ namespace WordDrop
                     {
                         // The climax BOOM — moved here from the pre-windup so the deep boom lands ON the last
                         // pop and the audio BUILDS instead of firing front-loaded. 2026-07-06 Spencer.
-                        GameAudio.Instance?.PlayBigPop();
+                        //
+                        // 2026-09-10 Spencer: OCCASIONAL now. Hearing it on the end of every big
+                        // explosion made it read as an error tone rather than a reward — a
+                        // flourish stops being a flourish when it is guaranteed. The rising
+                        // pitched pops carry the climax on their own; this lands on top of them
+                        // now and then. Raise BIG_POP_FINALE_CHANCE to bring it back more often.
+                        if (UnityEngine.Random.value < BIG_POP_FINALE_CHANCE)
+                            GameAudio.Instance?.PlayBigPop();
                         if (groupTiles != null && groupTiles.Count > 0)
                         {
                             // Center the finale FX on the LAST WORD to explode (this stage's word tiles), NOT the
@@ -4892,10 +5565,17 @@ namespace WordDrop
                         }
                     }
 
-                    // Growing screen punch — light early, biggest on the climax.
-                    float mag = finale ? 0.30f : 0.06f + 0.10f * t01;
-                    float dur = finale ? 0.28f : 0.16f;
-                    GridManager.Instance?.ShakeBoard(mag, dur);
+                    // ── SHAKE REMOVED HERE (2026-09-09 Spencer) ──────────────────────
+                    // Measured from the live log: this fired four times per combo, and the
+                    // finale was mag 0.300 over 0.28s — 37% of a CELL, running a quarter of a
+                    // second. It starts during the explosion but OUTLASTS it, so the tail was
+                    // still going once the board had settled: "jiggling at times when nothing
+                    // is happening". The three smaller ones ahead of it were being dropped by
+                    // the overlap guard anyway, so the "growing punch" had already collapsed
+                    // to one huge late hit.
+                    // The detonation now owns the shake, ONCE, at the blast, scaled by score
+                    // (TapDetonateSequence). Two owners on one event is what made it unfixable
+                    // by tuning. Audio/scale escalation for the combo is untouched.
 
                     // Inter-pop beat — TIGHTENED so the whole clear finishes fast and gravity follows sooner
                     // (shrinks the "letters hang suspended" gap without touching removal/gravity). 2026-07-07 Spencer.
@@ -4936,7 +5616,7 @@ namespace WordDrop
             if (MatchController.Instance != null)
                 MatchController.Instance.ClearLastEditCells();
 
-//             Debug.Log($"[HandManager] FullTurnSequence BEGIN: " +
+//             WDLog.Log($"[HandManager] FullTurnSequence BEGIN: " +
                       // $"CurrentPlayer={playerIndexBeforeDrop} " +
                       // $"IsMatchActive={matchActiveBeforeDrop} " +
                       // $"col={col} letter='{letter}' handSlot={handSlot}");
@@ -5207,7 +5887,6 @@ namespace WordDrop
                                 if (WordDropFX.Instance != null)
                                     WordDropFX.Instance.PlayWordScored(scoredTiles, playerColor, wordIdx);
 
-                                GameAudio.Instance?.PlayTilePrimed();
                                 HapticsManager.Light();
 
                                 if (detonationComing)
@@ -5277,7 +5956,7 @@ namespace WordDrop
                             if (BonusPopup.Instance != null)
                                 BonusPopup.Instance.Show(multiLabel, multiColor, multiCenter + Vector3.up * 0.5f, 1.3f);
                             GameAudio.Instance?.PlayScorePowerup();
-//                             Debug.Log($"[HandManager] Multi-trigger: {multiLabel} ({step.Triggers.Count} primed words)");
+//                             WDLog.Log($"[HandManager] Multi-trigger: {multiLabel} ({step.Triggers.Count} primed words)");
                         }
 
                         // Big burst flash — rises during the micro-anticipation below,
@@ -5324,7 +6003,7 @@ namespace WordDrop
                                 }
                             }
                             // if (stoneDying > 0)
-//                                 Debug.Log($"[HandManager] Exploding: {stoneDying} stone tile(s) in blast zone");
+//                                 WDLog.Log($"[HandManager] Exploding: {stoneDying} stone tile(s) in blast zone");
 
                             // Chain counter — persistent on-screen combo display
                             if (ChainCounter.Instance != null)
@@ -5484,7 +6163,7 @@ namespace WordDrop
                 DetonationRecorder.Instance.FinalizeChain();
 
             // Sync without destroying existing tiles — avoids visual pop
-            grid.SyncToRulesState(rules);
+            grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
 
             // Reset all tile visuals: kill tweens, stop flash coroutines, restore everything
             for (int gc = 0; gc < RulesEngine.COLS; gc++)
@@ -5621,7 +6300,7 @@ namespace WordDrop
             int aiTurnsUsed = MatchController.Instance != null
                 ? MatchController.Instance.GetPlayerTurns(MatchController.PLAYER_AI) : -1;
 
-//             Debug.Log($"[HandManager] FullTurnSequence AFTER WAIT: " +
+//             WDLog.Log($"[HandManager] FullTurnSequence AFTER WAIT: " +
                       // $"CurrentPlayer={playerIndexAfterDrop} " +
                       // $"(was {playerIndexBeforeDrop} before drop) " +
                       // $"IsMatchActive={matchActiveAfterDrop} " +
@@ -5631,7 +6310,7 @@ namespace WordDrop
             // Check if match ended during player's drop
             if (MatchController.Instance == null || !MatchController.Instance.IsMatchActive)
             {
-//                 Debug.Log("[HandManager] FullTurnSequence: Match ended after player drop — skipping AI turn.");
+//                 WDLog.Log("[HandManager] FullTurnSequence: Match ended after player drop — skipping AI turn.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
             }
@@ -5644,7 +6323,7 @@ namespace WordDrop
             {
                 if (BlitzManager.Instance != null && BlitzManager.Instance.CheckBlitzTimeUp())
                 {
-//                     Debug.Log("[HandManager] FullTurnSequence: Blitz time expired after resolution.");
+//                     WDLog.Log("[HandManager] FullTurnSequence: Blitz time expired after resolution.");
                     if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                     yield break;
                 }
@@ -5656,7 +6335,7 @@ namespace WordDrop
                     IsInteractable = true;
                     if (ColumnArrowManager.Instance != null)
                         ColumnArrowManager.Instance.ShowArrows(true);
-//                     Debug.Log("[HandManager] FullTurnSequence END (blitz): Player input re-enabled.");
+//                     WDLog.Log("[HandManager] FullTurnSequence END (blitz): Player input re-enabled.");
                 }
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 yield break;
@@ -5706,7 +6385,7 @@ namespace WordDrop
                         if (fail && LevelController.Instance != null
                             && LevelController.Instance.IsActive)
                         {
-                            Debug.Log($"[Level/RisingRow] fail triggered — overflow={overflowed} boardJammed={!overflowed}");
+                            WDLog.Log($"[Level/RisingRow] fail triggered — overflow={overflowed} boardJammed={!overflowed}");
                             LevelController.Instance.ForceFail();
                         }
                     }
@@ -5723,7 +6402,7 @@ namespace WordDrop
             bool aiShouldAct = currentPlayerIsAI && aiHasTurnsRemaining && matchStillActive && !tutorialActive;
 
             // --- Job 4: Detailed logging of aiShouldAct determination ---
-//             Debug.Log($"[HandManager] FullTurnSequence AI TURN CHECK: " +
+//             WDLog.Log($"[HandManager] FullTurnSequence AI TURN CHECK: " +
                       // $"aiShouldAct={aiShouldAct} " +
                       // $"| currentPlayerIsAI={currentPlayerIsAI} (CurrentPlayer={playerIndexAfterDrop}, PLAYER_AI={MatchController.PLAYER_AI}) " +
                       // $"| aiHasTurnsRemaining={aiHasTurnsRemaining} (AiTurns={aiTurnsUsed}/{MatchController.MAX_TURNS}) " +
@@ -5731,11 +6410,11 @@ namespace WordDrop
 
             if (aiShouldAct)
             {
-//                 Debug.Log("[HandManager] AI turn should trigger: true — starting AI turn coroutine.");
+//                 WDLog.Log("[HandManager] AI turn should trigger: true — starting AI turn coroutine.");
             }
             else
             {
-//                 Debug.Log($"[HandManager] AI turn should trigger: false — reason: " +
+//                 WDLog.Log($"[HandManager] AI turn should trigger: false — reason: " +
                           // $"{(matchStillActive ? "" : "match not active, ")} " +
                           // $"{(currentPlayerIsAI ? "" : $"current player is {playerIndexAfterDrop} not AI, ")} " +
                           // $"{(aiHasTurnsRemaining ? "" : "AI has no turns remaining")}");
@@ -5759,14 +6438,14 @@ namespace WordDrop
                 bool freshAiDone = MatchController.Instance.IsPlayerDone(MatchController.PLAYER_AI);
                 bool freshMatchActive = MatchController.Instance.IsMatchActive;
 
-//                 Debug.Log($"[HandManager] FullTurnSequence FALLBACK recheck: " +
+//                 WDLog.Log($"[HandManager] FullTurnSequence FALLBACK recheck: " +
                           // $"freshCurrentPlayer={freshCurrentPlayer} " +
                           // $"freshAiDone={freshAiDone} " +
                           // $"freshMatchActive={freshMatchActive}");
 
                 if (freshCurrentPlayer == MatchController.PLAYER_AI && !freshAiDone && freshMatchActive)
                 {
-//                     Debug.Log("[HandManager] FullTurnSequence FALLBACK: AI turn detected on recheck — triggering.");
+//                     WDLog.Log("[HandManager] FullTurnSequence FALLBACK: AI turn detected on recheck — triggering.");
                     aiShouldAct = true;
                 }
                 else if (!freshAiDone && freshMatchActive)
@@ -5781,16 +6460,16 @@ namespace WordDrop
 
             if (aiShouldAct && GameVisualBridge.Instance != null)
             {
-//                 Debug.Log("[HandManager] Triggering AI turn...");
+//                 WDLog.Log("[HandManager] Triggering AI turn...");
                 yield return StartCoroutine(GameVisualBridge.Instance.ExecuteAITurnCoroutine());
-//                 Debug.Log("[HandManager] AI turn coroutine completed.");
+//                 WDLog.Log("[HandManager] AI turn coroutine completed.");
             }
 
             // 4. Check match state again after AI turn
             if (MatchController.Instance == null || !MatchController.Instance.IsMatchActive
                 || MatchController.Instance.IsGameOver)
             {
-//                 Debug.Log("[HandManager] FullTurnSequence: Match ended after AI turn — forcing GameOver transition.");
+//                 WDLog.Log("[HandManager] FullTurnSequence: Match ended after AI turn — forcing GameOver transition.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 if (GameManager.Instance != null)
                     GameManager.Instance.TransitionTo(GameState.GameOver);
@@ -5805,7 +6484,7 @@ namespace WordDrop
                 int globalTurn = RulesEngine.Instance != null ? RulesEngine.Instance.GlobalTurn : 0;
                 if (RisingRowManager.Instance.ShouldRiseThisTurn(globalTurn))
                 {
-//                     Debug.Log($"[HandManager] Rising row triggered at globalTurn={globalTurn}");
+//                     WDLog.Log($"[HandManager] Rising row triggered at globalTurn={globalTurn}");
                     bool overflowed = false;
                     yield return StartCoroutine(RisingRowManager.Instance.RiseRow((overflow) =>
                     {
@@ -5820,7 +6499,7 @@ namespace WordDrop
                         if (GameManager.IsLevelMode && LevelController.Instance != null
                             && LevelController.Instance.IsActive)
                         {
-                            Debug.Log("[HandManager] Rising row overflow in Level mode → LevelController.ForceFail.");
+                            WDLog.Log("[HandManager] Rising row overflow in Level mode → LevelController.ForceFail.");
                             LevelController.Instance.ForceFail();
                             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                             yield break;
@@ -5828,13 +6507,13 @@ namespace WordDrop
 
                         if (MatchController.Instance != null && !MatchController.Instance.IsLastWord)
                         {
-//                             Debug.Log("[HandManager] Rising row overflow → triggering LAST WORD phase!");
+//                             WDLog.Log("[HandManager] Rising row overflow → triggering LAST WORD phase!");
                             MatchController.Instance.TriggerLastWord();
                             // Continue — let players have their final turns
                         }
                         else
                         {
-//                             Debug.Log("[HandManager] Rising row overflow during Last Word — game over.");
+//                             WDLog.Log("[HandManager] Rising row overflow during Last Word — game over.");
                             if (MatchController.Instance != null)
                             {
                                 MatchController.Instance.ForceGameOver();
@@ -5854,7 +6533,7 @@ namespace WordDrop
             // 6. Check if match ended after player's turn (human was last)
             if (!MatchController.Instance.IsMatchActive || MatchController.Instance.IsGameOver)
             {
-//                 Debug.Log("[HandManager] FullTurnSequence: Match ended (human last turn) — forcing GameOver.");
+//                 WDLog.Log("[HandManager] FullTurnSequence: Match ended (human last turn) — forcing GameOver.");
                 if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
                 if (GameManager.Instance != null)
                     GameManager.Instance.TransitionTo(GameState.GameOver);
@@ -5874,11 +6553,11 @@ namespace WordDrop
                 // Refresh next tile preview — may not have been set during hand refresh
                 UpdateNextTilePreview();
 
-//                 Debug.Log("[HandManager] FullTurnSequence END: Player input re-enabled.");
+//                 WDLog.Log("[HandManager] FullTurnSequence END: Player input re-enabled.");
             }
             else
             {
-//                 Debug.Log($"[HandManager] FullTurnSequence END: No more turns. Forcing GameOver.");
+//                 WDLog.Log($"[HandManager] FullTurnSequence END: No more turns. Forcing GameOver.");
                 if (GameManager.Instance != null && !MatchController.Instance.IsGameOver)
                     MatchController.Instance.ForceGameOver();
                 if (GameManager.Instance != null)
@@ -5914,7 +6593,7 @@ namespace WordDrop
                     _hand[i] = slots[i];
 
                 RefreshAllCardVisuals();
-//                 Debug.Log($"[HandManager] Hand refreshed: {new string(_hand)}");
+//                 WDLog.Log($"[HandManager] Hand refreshed: {new string(_hand)}");
             }
         }
 
@@ -5954,7 +6633,7 @@ namespace WordDrop
                 if (!avail)
                 {
                     mc.Bag.ForceNextDraw(up);
-                    Debug.Log($"[HiddenSafetyNet] '{up}' unavailable everywhere — rigged into the next draw.");
+                    WDLog.Log($"[HiddenSafetyNet] '{up}' unavailable everywhere — rigged into the next draw.");
                     return; // one at a time
                 }
             }
@@ -6004,7 +6683,7 @@ namespace WordDrop
             RefreshHandFromMatchController();
             // Play the juicy wild-entry so the test button shows the real animation.
             PlayWildCardEntry(target);
-            Debug.Log($"[Debug] Forced WILD ('*') into hand slot {target} — drop it to see the wild tile.");
+            WDLog.Log($"[Debug] Forced WILD ('*') into hand slot {target} — drop it to see the wild tile.");
         }
 
         /// <summary>Juicy entry for an awarded WILD card at <paramref name="slot"/>:
@@ -6120,7 +6799,7 @@ namespace WordDrop
         /// sliced from the 2×2 sheet) behind the awarded wild card. 2026-06-04.</summary>
         private void PlayWildSparkBurst(Vector3 center, int sortingOrder)
         {
-            if (UIAnimations.ReducedMotion) { Debug.Log("[WildSpark] skipped — ReducedMotion"); return; }
+            if (UIAnimations.ReducedMotion) { WDLog.Log("[WildSpark] skipped — ReducedMotion"); return; }
             if (s_wildSparkSprites == null)
             {
                 Texture2D tex = Resources.Load<Texture2D>("Particles/vfx_sparks_2");
@@ -6285,7 +6964,7 @@ namespace WordDrop
                 _spriteSwap         = loadedSwap ?? loadedNormal;
                 _spriteSwapSelected = loadedSwap ?? loadedNormal; // swap+selected uses swap sprite
                 _spriteWild         = loadedWild ?? loadedNormal;
-//                 Debug.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
+//                 WDLog.Log("[HandManager] Loaded hand-drawn card sprites from Resources/Tiles.");
 
                 // Baked glassy wild tile + its separate baked drop shadow. They import
                 // as plain 1024px textures filling 80% / 91% of frame; we Sprite.Create
@@ -6316,7 +6995,7 @@ namespace WordDrop
                     // line up identically; ApplyShadowABLive (Update) swaps the active one.
                     _shadowSpriteA = MakeShadowSprite(_shadowTexA, glossyPPU);
                     _shadowSpriteB = MakeShadowSprite(_shadowTexB, glossyPPU);
-                    Debug.Log($"[ShadowAB] A='{_shadowTexA}' ({(_shadowSpriteA != null ? "LOADED" : "NULL")}), " +
+                    WDLog.Log($"[ShadowAB] A='{_shadowTexA}' ({(_shadowSpriteA != null ? "LOADED" : "NULL")}), " +
                               $"B='{_shadowTexB}' ({(_shadowSpriteB != null ? "LOADED" : "NULL")}), useB={_shadowUseB}");
                     // 2026-06-04 Spencer: dedicated wild shadow — same full-frame build at
                     // the same PPU so it aligns exactly like the normal card shadow.
@@ -6363,7 +7042,7 @@ namespace WordDrop
                                         CARD_FILL_NORMAL, CARD_BORDER_SWAP, border + 1);
                 _spriteSwapSelected= TileRenderer.CreateRoundedRect(texSize, texSize, radius,
                                         CARD_FILL_NORMAL, CARD_BORDER_SWAP_SEL, border + 2);
-//                 Debug.Log("[HandManager] Fallback: procedural card sprites.");
+//                 WDLog.Log("[HandManager] Fallback: procedural card sprites.");
             }
         }
 
@@ -6613,7 +7292,7 @@ namespace WordDrop
                 cardGO.SetActive(false);
             }
 
-//             Debug.Log($"[HandManager] Built {HAND_SIZE} card objects at Y={cardY:F2}");
+//             WDLog.Log($"[HandManager] Built {HAND_SIZE} card objects at Y={cardY:F2}");
         }
 
         // ── Card shadow helpers ───────────────────────────────────────────────────
@@ -7375,7 +8054,7 @@ namespace WordDrop
             }
 
             _selectedIndex = -1;
-//             Debug.Log($"[HandManager] Hand shuffled: {new string(letters)}");
+//             WDLog.Log($"[HandManager] Hand shuffled: {new string(letters)}");
         }
 
         private static Sprite _softShadowSprite;
@@ -7871,7 +8550,7 @@ namespace WordDrop
             MeshRenderer noMr = _swapTileNoLabel.GetComponent<MeshRenderer>();
             if (noMr != null) noMr.sortingOrder = 30;
 
-//             Debug.Log("[HandManager] Showing Swap Tile? popup");
+//             WDLog.Log("[HandManager] Showing Swap Tile? popup");
         }
 
         private void DismissSwapTilePopup()
@@ -8002,7 +8681,6 @@ namespace WordDrop
                                     if (WordDropFX.Instance != null)
                                         WordDropFX.Instance.PlayWordScored(scoredTiles, playerColor, wordIndex);
 
-                                    GameAudio.Instance?.PlayTilePrimed();
                                     HapticsManager.Light();
 
                                     if (!detonationComing && BonusPopup.Instance != null && scoredTiles.Count > 0)
@@ -8146,7 +8824,7 @@ namespace WordDrop
                 // finalize (does NOT tick _globalTurn / expire primed words) so
                 // booster use stays turn-neutral.
                 rules.FinalizeBoosterCascade();
-                try { grid.SyncToRulesState(rules); }
+                try { grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false); }
                 catch (System.Exception ex) { Debug.LogError($"[BoosterCascade] SyncToRulesState: {ex}"); }
 
                 // Apply persistent primed glow to every cell of every primed word.
@@ -8190,7 +8868,7 @@ namespace WordDrop
                         SurvivalManager.Instance.NotifyScoreDelta(totalScore);
                 }
 
-                Debug.Log($"[BoosterCascade] Complete — totalScore={totalScore}, maxChainDepth={maxChainDepth}");
+                WDLog.Log($"[BoosterCascade] Complete — totalScore={totalScore}, maxChainDepth={maxChainDepth}");
             }
             finally
             {

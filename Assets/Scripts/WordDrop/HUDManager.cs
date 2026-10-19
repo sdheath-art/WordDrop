@@ -33,6 +33,134 @@ namespace WordDrop
 
         private TextMeshProUGUI _playerScoreText;   // "P1:" label (static)
         private TextMeshProUGUI _playerScoreNum;    // number only (animated)
+
+        // ── SCORE HUD (2026-09-08 Spencer) ──────────────────────────────────────────
+        // The swap pivot went score-based endless, but the HUD still showed a LEVEL-game
+        // TARGET panel driven by a fake LongWord goal of 999999 — a target that can never
+        // be reached, sitting where the score should be. Meanwhile the score was being
+        // fully calculated and never shown, so the whole risk/reward curve on detonation
+        // (2x / 6x / 13x / 20x / 27x by web size) was invisible. A bet you cannot see is
+        // not a bet.
+        // ScoreHudMode repurposes the TARGET panel as SCORE. The objective stays alive
+        // underneath so CurrentExplosionCounts and the fly-up plumbing keep working — and
+        // because the fly-up aims at the objective icon, which lives in this panel, the
+        // detonated letters now fly INTO the score. Which is where they should land.
+        public static bool ScoreHudMode => SurvivalManager.ScoreRunMode;  // one source of truth
+        private TextMeshProUGUI _scorePanelNum;     // score shown in the (repurposed) TARGET panel
+        private Coroutine _scoreCountUp;
+        private int       _scoreTarget;      // where the running count-up is headed
+        // Letters land ~0.07s apart. A count-up must finish INSIDE that gap or the jumps
+        // stack up and the last one trails past the final impact sound. Each hit resolves
+        // with its own thud; the drama comes from the punch and the shake, not from a long
+        // roll that outlives the audio. 2026-09-09 Spencer.
+        private float _scoreShown;           // what the label currently reads
+        private float _scoreTickAt;          // last tick sound
+
+        /// <summary>The single rolling counter. Runs while the shown value is behind the
+        /// target and exits when it catches up; new points just move the target, so the
+        /// roll is never restarted mid-flight.</summary>
+        /// <summary>Master switch for showing "score / target" instead of a bare score.</summary>
+        public static bool SHOW_SCORE_TARGET = true;
+
+        /// <summary>Formats the score readout. With SHOW_SCORE_TARGET on and a stage running,
+        /// renders "score/needed" where `needed` is the ABSOLUTE PlayerScore that clears the
+        /// current stage — not the stage delta. Keeping the left number as the running total
+        /// preserves the climbing-score payoff the chase animation exists for, while still
+        /// answering "how much further". Falls back to a bare number outside survival, or when
+        /// no stage target applies. 2026-10-19 Spencer.</summary>
+        private int _shownStageIdx  = -1;
+        private int _shownAbsTarget = 0;
+
+        private string ScoreLabel(int shown)
+        {
+            if (!SHOW_SCORE_TARGET) return shown.ToString("N0");
+            var sm = SurvivalManager.Instance;
+            if (!SurvivalManager.IsSurvivalMode || sm == null) return shown.ToString("N0");
+            int delta = sm.CurrentStageTarget;
+            if (delta <= 0) return shown.ToString("N0");
+
+            // LATCH THE TARGET. 2026-10-19 Spencer: "when you achieve the goal all of a sudden
+            // the /number changes... it shouldn't change until you go onto the next level."
+            // AdvanceToNextStage() bumps _currentStageIndex AND _stageStartScore the instant
+            // the stage clears — before the StageClearModal has even shown — so reading the
+            // target live made it jump under the player mid-celebration. Hold the old number
+            // until the clear overlay is dismissed and the next stage is actually in play.
+            bool transitioning = sm.IsOverlayPaused;
+            if (_shownStageIdx != sm.CurrentStageIndex && !transitioning)
+            {
+                int total = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : shown;
+                _shownAbsTarget = total - sm.CurrentStageScore + delta;
+                _shownStageIdx  = sm.CurrentStageIndex;
+            }
+            else if (_shownStageIdx < 0)
+            {
+                // First read of the run — nothing latched yet, so take it live.
+                int total = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : shown;
+                _shownAbsTarget = total - sm.CurrentStageScore + delta;
+                _shownStageIdx  = sm.CurrentStageIndex;
+            }
+
+            if (_shownAbsTarget <= 0) return shown.ToString("N0");
+            return shown.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
+        }
+
+        /// <summary>Drop the latched stage target so the next read recomputes it. Call on run
+        /// start/reset, or the previous run's target survives into the new one.</summary>
+        public void ResetScoreTargetLatch() { _shownStageIdx = -1; _shownAbsTarget = 0; }
+
+        private IEnumerator ScoreChase()
+        {
+            while (_scorePanelNum != null && _scoreShown < _scoreTarget - 0.5f)
+            {
+                float gap = _scoreTarget - _scoreShown;
+                // Speed proportional to the gap gives a natural ease-out for free; the
+                // floor stops small remainders crawling.
+                float speed = Mathf.Max(gap * 7f, 40f);
+                _scoreShown = Mathf.MoveTowards(_scoreShown, _scoreTarget, speed * Time.unscaledDeltaTime);
+                int shown = Mathf.RoundToInt(_scoreShown);
+                string label = ScoreLabel(shown);
+                if (_scorePanelNum.text != label)
+                {
+                    _scorePanelNum.text = label;
+                    // Punch and pitch ride the GAP, so a big burst is visibly and audibly
+                    // louder while it is still catching up, and calms as it lands.
+                    float mag = Mathf.Clamp01(gap / 400f);
+                    _scorePanelNum.rectTransform.localScale = Vector3.one * Mathf.Lerp(1.06f, 1.34f, mag);
+                    if (Time.unscaledTime - _scoreTickAt >= 0.045f)
+                    {
+                        _scoreTickAt = Time.unscaledTime;
+                        GameAudio.Instance?.PlayScoreTick(Mathf.Lerp(1.55f, 0.95f, mag));
+                    }
+                }
+                else
+                {
+                    _scorePanelNum.rectTransform.localScale = Vector3.Lerp(
+                        _scorePanelNum.rectTransform.localScale, Vector3.one, Time.unscaledDeltaTime * 14f);
+                }
+                yield return null;
+            }
+            _scoreShown = _scoreTarget;
+            if (_scorePanelNum != null)
+            {
+                _scorePanelNum.text = ScoreLabel(Mathf.RoundToInt(_scoreShown));
+                _scorePanelNum.rectTransform.localScale = Vector3.one;
+            }
+            _scoreCountUp = null;
+        }
+
+        /// <summary>The finale — ONE shake, sized by the whole burst, fired on the last
+        /// letter to land. Separate from the per-impact count-up so it cannot stack.</summary>
+        public void PlayScoreSlam(int burstTotal)
+        {
+            // 2026-09-09 Spencer: "the screen shake is often occuring when the tiles hit the
+            // score rather than when an explosion happens." Correct — the shake belongs to the
+            // IMPACT, not to the accounting that follows it. The letters landing on the counter
+            // are a quiet bookkeeping beat; shaking there celebrates the wrong moment.
+            // The detonation now owns the shake (HandManager, Exploding step), sized by the
+            // same score. This stays as the score-side hook in case a purely HUD-side punch is
+            // ever wanted, but it deliberately does nothing to the board.
+            _ = burstTotal;
+        }
         private TextMeshProUGUI _aiScoreText;       // "AI:" label (static)
         private TextMeshProUGUI _aiScoreNum;        // number only (animated)
 
@@ -44,6 +172,8 @@ namespace WordDrop
         private UnityEngine.UI.Image _stageProgressFill;
         private RectTransform _stageProgressFillRT;
         private GameObject     _stageProgressBG;        // bar background (toggled off in objective mode; bar is endless-only)
+        private TextMeshProUGUI _stageTargetText;     // "1,240 / 3,000" — the number you are climbing to
+        private int _lastStageSeen = -1;
         private TextMeshProUGUI _swapCounterText;
         private TextMeshProUGUI _rewriteCounterText;
 
@@ -86,6 +216,7 @@ namespace WordDrop
         // ── Objective readout (the level's goal + progress) ───────────────────────
         private TextMeshProUGUI _objectiveText;       // fallback for objectives with no icon (Icon==None)
         private Image           _objectiveCheck;     // green check, pops in on objective complete
+        private RectTransform   _objectivePanelInner; // the TARGET/SCORE panel's inner rect — the check badge clamps to its corner
 
         // ── In-game TARGET: objective icon + COUNT-DOWN badge (replaces the "Explode words 0/3"
         // text). Icon rebuilt only when the objective TYPE changes; badge number = RemainingCount,
@@ -104,6 +235,9 @@ namespace WordDrop
         private Objective.HudIcon _shownObjectiveIcon = (Objective.HudIcon)(-1); // sentinel → first set always builds
         private string _shownIconWord; // Word icons share HudIcon.Word but differ by spelled word (WORD/FOUR/WORDS) — track so a length change rebuilds
         private GameObject        _movesPanel;          // "MOVES" framed box (right) — hosts the top-out counter
+        private TextMeshProUGUI   _movesPanelLabel;     // relabelled "RISE IN" in a score run
+        private bool _riseWarned;
+        private bool _riseCountdownOwnsLabel;
         private GameObject        _levelPanel;          // "LEVEL" framed box (center) — current level = the run goal
         private TextMeshProUGUI   _levelNumText;        // current level number
         private Sprite          _checkSpriteCache;
@@ -155,7 +289,7 @@ namespace WordDrop
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             BuildHUD();
-//             Debug.Log("[HUDManager] Awake — HUD built");
+//             WDLog.Log("[HUDManager] Awake — HUD built");
         }
 
         private void OnEnable()
@@ -189,6 +323,7 @@ namespace WordDrop
         /// the right) so the level begins on a BLANK screen. Runs before the map fade. 2026-07-13 Spencer.</summary>
         public void PrepLevelEntry()
         {
+            WDLog.Log($"[EntryDiag] PrepLevelEntry called (frame {Time.frameCount})");
             // Top bar → above the top edge.
             if (_hudBarRT != null)
             {
@@ -208,6 +343,7 @@ namespace WordDrop
         /// in from the right, second whoosh. 2026-07-13 Spencer.</summary>
         public void AnimateLevelEntryIn()
         {
+            WDLog.Log($"[EntryDiag] AnimateLevelEntryIn called (frame {Time.frameCount})");
             // Beat 1 — top drops, bottom pops (mirror).
             AnimateHudBarIn();
             BoosterHUDSlot.Instance?.AnimateBenchIn();
@@ -605,6 +741,7 @@ namespace WordDrop
             // 2026-06-24 Spencer: TARGET widened (0.33 → 0.63) into the space freed by removing the LEVEL
             // box — Royal-Match-style big target field, room for bigger words AND a future stacked-icon grid.
             _objectivePanel = BuildHudPanel(barGO.transform, "TargetPanel", 0.02f, 0.63f, "TARGET", out var tgtInner);
+            _objectivePanelInner = tgtInner as RectTransform;
             _objectivePanelLabel = _objectivePanel.transform.Find("TargetPanelLabel")?.GetComponent<TextMeshProUGUI>();
             {
                 var holderGO = new GameObject("ObjectiveIconHolder", typeof(RectTransform));
@@ -620,8 +757,11 @@ namespace WordDrop
                 var bRT = badgeGO.GetComponent<RectTransform>();
                 bRT.anchorMin = bRT.anchorMax = new Vector2(1f, 0f); // icon's bottom-right corner
                 bRT.pivot = new Vector2(0.5f, 0.5f);
-                bRT.sizeDelta = new Vector2(30f, 30f);
-                bRT.anchoredPosition = new Vector2(3f, -2f);          // overhang the corner, Royal Match style
+                // 2026-09-11 (Spencer): "sitting like a badge on the score total". Enlarged and
+                // pushed further out so the 3D check reads as a badge clamped onto the panel
+                // corner rather than a small icon tucked inside it.
+                bRT.sizeDelta = new Vector2(46f, 46f);
+                bRT.anchoredPosition = new Vector2(10f, -8f);         // overhang the corner, Royal Match style
                 var bImg = badgeGO.GetComponent<Image>();
                 bImg.color = new Color(0f, 0f, 0f, 0f);               // NO circle — bare outlined number like RM (Spencer 2026-06-15)
                 bImg.raycastTarget = false;
@@ -644,10 +784,24 @@ namespace WordDrop
                 ckRT.offsetMin = new Vector2(2f, 2f); ckRT.offsetMax = new Vector2(-2f, -2f);
                 _objectiveCheck = checkGO.GetComponent<Image>();
                 _objectiveCheck.sprite = LoadCheckSprite();
-                _objectiveCheck.color = new Color(0.4f, 1f, 0.45f);
+                // WHITE, not green: the 3D check carries its own colour AND shading. Tinting it
+                // green would multiply green over green and flatten the render. 2026-09-11.
+                _objectiveCheck.color = Color.white;
                 _objectiveCheck.preserveAspect = true;
                 _objectiveCheck.raycastTarget = false;
                 checkGO.SetActive(false);
+
+                // Score readout for ScoreHudMode — same slot, same styling as the other
+                // HUD numbers. Hidden unless SetObjective puts the panel in score mode.
+                _scorePanelNum = MakeLabel(tgtInner, "ScorePanelNum",
+                    anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                    pivot: new Vector2(0.5f, 0.5f), offMin: Vector2.zero, offMax: Vector2.zero,
+                    text: "0", size: 30, style: FontStyle.Bold, color: INK,
+                    align: TextAnchor.MiddleCenter);
+                _scorePanelNum.enableAutoSizing = true;
+                _scorePanelNum.fontSizeMin = 14f; _scorePanelNum.fontSizeMax = 34f;
+                if (heavyFont != null) _scorePanelNum.font = heavyFont;
+                _scorePanelNum.gameObject.SetActive(false);
             }
             _objectivePanel.SetActive(false);
 
@@ -663,6 +817,7 @@ namespace WordDrop
 
             // MOVES (right) — reparent the existing moves-to-top-out counter into the panel.
             _movesPanel = BuildHudPanel(barGO.transform, "MovesPanel", 0.67f, 0.98f, "MOVES", out var mvInner);
+            _movesPanelLabel = _movesPanel.transform.Find("MovesPanelLabel")?.GetComponent<TextMeshProUGUI>();
             if (_topOutNumText != null)
             {
                 var trt = _topOutNumText.rectTransform;
@@ -757,6 +912,22 @@ namespace WordDrop
             fillRT.pivot     = new Vector2(0f, 0.5f);
             fillRT.offsetMin = Vector2.zero;
             fillRT.offsetMax = Vector2.zero;
+            // ── THE NUMBER YOU NEED (2026-09-09 Spencer) ─────────────────────────────
+            // Balatro's core retention trick: you ALWAYS know the score you are climbing
+            // toward. The stage/target system already existed here — it even calls them
+            // "chip targets" — but the HUD only showed "L2" and a bar with no number, so
+            // the run had a hidden goal. A target you cannot read is not a target.
+            _stageTargetText = MakeLabel(bgGO.transform, "StageTargetText",
+                anchorMin: Vector2.zero, anchorMax: Vector2.one,
+                pivot: new Vector2(0.5f, 0.5f), offMin: Vector2.zero, offMax: Vector2.zero,
+                text: "", size: 15, style: FontStyle.Bold,
+                color: new Color(1f, 1f, 1f, 0.95f), align: TextAnchor.MiddleCenter);
+            _stageTargetText.enableAutoSizing = true;
+            _stageTargetText.fontSizeMin = 9f; _stageTargetText.fontSizeMax = 17f;
+            _stageTargetText.outlineWidth = 0.20f;
+            _stageTargetText.outlineColor = new Color32(20, 28, 55, 255);
+            if (heavyFont != null) _stageTargetText.font = heavyFont;
+
             _stageProgressFill = fillGO.GetComponent<Image>();
             _stageProgressFill.sprite = pillSprite;
             _stageProgressFill.color = new Color(0.40f, 0.90f, 0.95f, 1f);
@@ -1018,6 +1189,31 @@ namespace WordDrop
         /// <summary>Updates the P1 score with animated count-up.</summary>
         public void SetPlayerScore(int pts)
         {
+            // ScoreHudMode: drive the number in the repurposed TARGET panel, with the same
+            // count-up + pop the old score readout used — the climb is the reward. 2026-09-08.
+            if (ScoreHudMode && _scorePanelNum != null)
+            {
+                // ── ONE CONTINUOUS ROLL (2026-09-09 Spencer) ─────────────────────────
+                // "abruptly counting up too fast... stilted and robotic."
+                // Because it WAS five separate animations: every landing letter stopped
+                // the previous count-up and started its own. Five little starts and stops
+                // in a third of a second reads as a machine ticking, and no duration
+                // tuning fixes that — the structure is wrong.
+                // How this is actually done: ONE roll that chases a MOVING TARGET. An
+                // impact does not start an animation, it just raises the target. The
+                // number keeps rolling, accelerates when a lot lands at once, and eases
+                // out as it catches up — so it settles a beat AFTER the last thud instead
+                // of finishing early or trailing forever.
+                _scoreTarget = pts;
+                if (pts < _scoreShown)          // reset / new run — no roll, just land
+                {
+                    _scoreShown = pts;
+                    _scorePanelNum.text = ScoreLabel(pts);
+                    _scorePanelNum.rectTransform.localScale = Vector3.one;
+                }
+                else if (_scoreCountUp == null)
+                    _scoreCountUp = StartCoroutine(ScoreChase());
+            }
             if (_playerScoreNum == null) return;
             int current = 0;
             int.TryParse(_playerScoreNum.text, out current);
@@ -1164,14 +1360,36 @@ namespace WordDrop
             // The ScoringDisplay popup shows the per-word breakdown instead.
         }
 
-        private Coroutine _scorePopCoroutine;
+        // 🚨 ONE HANDLE PER TRANSFORM, NOT ONE FOR THE WHOLE HUD. 2026-09-24 Spencer: "why is
+        // the rise in number trapped in its animation" — the RISE IN counter was stuck at 2.2x
+        // scale and white, overflowing its pill.
+        //
+        // CAUSE: this used to be a single `_scorePopCoroutine` shared by all SIX callers (player
+        // score, AI score, objective text, RISE IN counter, stage label, stage progress plate).
+        // Starting any pop did StopCoroutine on whatever was running — so a pop on one element
+        // killed another element's coroutine mid-flight. The DOScale(2.2f) tween had already
+        // fired and is owned by DOTween, not the coroutine, so the scale-up completed; the
+        // coroutine that would have scaled it back never got to run. Lines 3655-3656 call it
+        // twice in a row on a stage change, which guarantees the first one is orphaned.
+        //
+        // Keyed per transform, an element only ever cancels its OWN pop.
+        private readonly Dictionary<Transform, Coroutine> _scorePops
+            = new Dictionary<Transform, Coroutine>();
+        /// <summary>Resting colour, captured BEFORE the first flash so an interrupted pop that
+        /// left the text white cannot be mistaken for its rest state.</summary>
+        private readonly Dictionary<Transform, Color> _scorePopRest
+            = new Dictionary<Transform, Color>();
 
         /// <summary>RTT-style score pop — exact RTT values with coroutine jitter.</summary>
         private void AnimateScorePop(Transform t)
         {
             if (t == null) return;
-            if (_scorePopCoroutine != null) StopCoroutine(_scorePopCoroutine);
-            _scorePopCoroutine = StartCoroutine(ScorePopCoroutine(t));
+            Coroutine running;
+            bool wasRunning = _scorePops.TryGetValue(t, out running) && running != null;
+            var popTmp = t.GetComponent<TextMeshProUGUI>();
+            if (popTmp != null && !wasRunning) _scorePopRest[t] = popTmp.color;
+            if (wasRunning) StopCoroutine(running);
+            _scorePops[t] = StartCoroutine(ScorePopCoroutine(t));
         }
 
         private IEnumerator ScorePopCoroutine(Transform t)
@@ -1182,7 +1400,15 @@ namespace WordDrop
 
             // Flash text color to bright white
             TextMeshProUGUI tmp = t.GetComponent<TextMeshProUGUI>();
-            Color origColor = (tmp == _playerScoreNum) ? PLAYER_COLOR : AI_COLOR;
+            // _scorePanelNum is neither the player nor the AI readout; without its own case
+            // it was being restored to AI_COLOR at the end of the pop. 2026-09-08.
+            // Rest colour captured by AnimateScorePop. The old fallback chain restored ANY
+            // unlisted element to AI_COLOR — which silently recoloured the RISE IN counter, the
+            // stage label and the objective text every time they popped.
+            Color origColor;
+            if (!_scorePopRest.TryGetValue(t, out origColor))
+                origColor = (tmp == _scorePanelNum)  ? new Color(0.16f, 0.16f, 0.28f, 1f)
+                          : (tmp == _playerScoreNum) ? PLAYER_COLOR : AI_COLOR;
             if (tmp != null) tmp.color = Color.white;
 
             // Scale PUNCH — big overshoot then elastic settle
@@ -1246,7 +1472,7 @@ namespace WordDrop
                 if (tmp != null) tmp.color = origColor;
             }
 
-            _scorePopCoroutine = null;
+            _scorePops.Remove(t);
         }
 
         /// <summary>Sync display scores to actual ScoreManager values.</summary>
@@ -1441,9 +1667,30 @@ namespace WordDrop
 
         // comboStep: the flying letter's word position in the detonation order (0 = trigger, 1,2,3… = chained
         // words). >= 1 ramps the fly-up tile + glow hue via s_comboFlyRamp; 0 keeps the default magenta. 2026-07-27.
-        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0)
+        // ── FLY-UP COLOUR (2026-09-08, Spencer) ─────────────────────────────────────
+        // THE THIRD colour ramp. WordDropFX had two (the detonation repaint and the face
+        // tint); this one coloured the LETTERS THAT FLY to the objective, so the letters
+        // still escalated pink→violet→blue-violet per chain step even after those were off.
+        // "take a look at the change of colours going on per letter."
+        // COMBO_FLY_RAMP=false: every flying letter carries the colour its tile was ARMED
+        // in — magenta, or GOLD for a high-value word, which is the one distinction that
+        // means something in the palette. Flip true to restore the ramp + cascade green.
+        public static bool COMBO_FLY_RAMP = false;
+
+        /// <summary>Do exploded letters fly up to the HUD? OFF as of 2026-09-10 (Spencer wants to
+        /// see the game without it — it used to be limited to one game mode).
+        ///
+        /// Turning it off is SAFE for scoring: every letter pays its share of the blast in its
+        /// landing callback, and the reduced-motion path below already fires that callback
+        /// immediately instead. So the points still arrive, just at once rather than over the
+        /// flight. Flip to true to bring the flight back.</summary>
+        public static bool FLY_LETTERS_ENABLED = false;
+
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0, Color? armedColor = null)
         {
+            if (!FLY_LETTERS_ENABLED) { onLand?.Invoke(); return; }
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
+            if (!COMBO_FLY_RAMP) { cascadeGreen = false; comboStep = 0; }
             Vector3 target = GetObjectiveIconScreenPos();
             _flyToTargetInFlight++;
             System.Action onArrive = () =>
@@ -1480,8 +1727,24 @@ namespace WordDrop
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, tile, glow, letter, target, onArrive, startDelay, popPeak, sortBase));
             }
             else
-                StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, new Color(1.7f, 0.7f, 1.5f, 1f),
-                    new Color(1.9f, 0.45f, 1.6f, 1f), letter, target, onArrive, startDelay, popPeak, sortBase));
+            {
+                // Glow = the colour this tile was armed in; face = a lighter sibling of it so the
+                // letter still reads against its own halo. Falls back to the original magenta pair
+                // when the caller has no tile to ask (older call sites).
+                // A tile that scored but never held a permanent primed glow still returns
+                // Tile._primedGlowColor's INITIAL value (0.812,0.812,0.863) — pale, grey and
+                // LDR, so it renders as a colourless haze that cannot bloom. Only trust the
+                // supplied colour if it is actually an HDR glow colour. 2026-09-08.
+                Color fallback = new Color(1.9f, 0.45f, 1.6f, 1f);
+                bool armedOK = armedColor.HasValue && Mathf.Max(armedColor.Value.r,
+                                   Mathf.Max(armedColor.Value.g, armedColor.Value.b)) > 1.05f;
+                Color glow = armedOK ? armedColor.Value : fallback;
+                Color face = armedOK
+                    ? new Color(glow.r * 0.92f, Mathf.Min(glow.g + 0.25f, 1f), glow.b * 0.95f, 1f)
+                    : new Color(1.7f, 0.7f, 1.5f, 1f);
+                StartCoroutine(FlyTileCoroutine(startWorld, Tile.PrimedSprite, face, glow,
+                    letter, target, onArrive, startDelay, popPeak, sortBase));
+            }
         }
 
         /// <summary>UI renders by hierarchy order, so bring the whole Target chain to the front before a
@@ -1820,10 +2083,27 @@ namespace WordDrop
 
             var glowSR = new GameObject("Glow").AddComponent<SpriteRenderer>();
             glowSR.transform.SetParent(go.transform, false);
-            glowSR.sprite = GetGlowSprite();
-            glowSR.color = new Color(glowColor.r, glowColor.g, glowColor.b, 0.75f);
+            glowSR.sprite = GetFlyGlowSprite();
+            if (s_flyGlowMat == null)
+            {
+                Shader gsh = Shader.Find("WordDrop/AdditiveSprite")
+                          ?? Resources.Load<Shader>("Shaders/AdditiveSprite");
+                if (gsh != null) s_flyGlowMat = new Material(gsh) { name = "FlyGlowAdditive" };
+            }
+            if (s_flyGlowMat != null)
+            {
+                glowSR.sharedMaterial = s_flyGlowMat;
+                if (s_flyGlowMPB == null) s_flyGlowMPB = new MaterialPropertyBlock();
+                glowSR.GetPropertyBlock(s_flyGlowMPB);
+                // HDR rgb via _Color (sr.color would clamp to Color32 on mobile);
+                // alpha stays 1 here so the vertex alpha below is the only fader.
+                s_flyGlowMPB.SetColor("_Color", new Color(glowColor.r, glowColor.g, glowColor.b, 1f));
+                glowSR.SetPropertyBlock(s_flyGlowMPB);
+                glowSR.color = new Color(1f, 1f, 1f, 0.75f);   // vertex alpha — DOFade drives this
+            }
+            else glowSR.color = new Color(glowColor.r, glowColor.g, glowColor.b, 0.75f);
             glowSR.sortingOrder = sortBase + 1;
-            glowSR.transform.localScale = Vector3.one * 2.9f; // 2026-07-27: toned the fly-up glow down a bit (was 3.3)
+            glowSR.transform.localScale = Vector3.one * FLY_GLOW_SCALE;
 
             var trail = go.AddComponent<TrailRenderer>();
             trail.time = 0.35f;
@@ -1955,10 +2235,21 @@ namespace WordDrop
             AnimateScorePop(_aiScoreNum.rectTransform);
         }
 
-        private IEnumerator CountUpScore(TextMeshProUGUI label, int from, int to, bool isPlayer)
+        private IEnumerator CountUpScore(TextMeshProUGUI label, int from, int to, bool isPlayer, float durationOverride = 0f)
         {
             int delta = to - from;
-            float duration = Mathf.Clamp(delta * 0.03f, 0.15f, 0.5f);
+            // ── MAGNITUDE (2026-09-09 Spencer) ──────────────────────────────────────
+            // Research on Balatro's scoring: the feedback channels stack MULTIPLICATIVELY,
+            // the same way the scoring does — number, punch, pitch and shake all escalate
+            // together, and no single channel carries it. Previously every score used one
+            // fixed 1.15x punch and the same pitch sweep, so a 27x five-word web landed
+            // exactly like a 2x single word. mag drives all of them from one place.
+            float mag = Mathf.Clamp01(delta / 600f);          // 0 = trivial, 1 = huge
+            float punchPeak = Mathf.Lerp(1.10f, 1.55f, mag);  // was a flat 1.15
+            float pitchTop  = Mathf.Lerp(1.25f, 1.90f, mag);  // was a flat 1.40 ceiling
+            float duration = durationOverride > 0f
+                ? durationOverride                                        // per-impact: must fit the landing gap
+                : Mathf.Clamp(delta * 0.03f, 0.15f, 0.85f);               // standalone: longer for big scores
             float elapsed = 0f;
             int lastDisplay = from;
             float tickInterval = 0.04f;
@@ -1976,12 +2267,12 @@ namespace WordDrop
                 {
                     label.text = display.ToString();
 
-                    // Scale punch on each tick
-                    label.transform.localScale = Vector3.one * 1.15f;
+                    // Scale punch on each tick — peak scales with the size of the score
+                    label.transform.localScale = Vector3.one * punchPeak;
 
                     if (elapsed - lastTickTime >= tickInterval)
                     {
-                        float pitch = Mathf.Lerp(0.9f, 1.4f, t);
+                        float pitch = Mathf.Lerp(0.9f, pitchTop, t);
                         GameAudio.Instance?.PlayScoreTick(pitch);
                         lastTickTime = elapsed;
                     }
@@ -1996,9 +2287,18 @@ namespace WordDrop
             }
             label.text = to.ToString();
             label.transform.localScale = Vector3.one;
+            // NOTE: the slam is deliberately NOT fired here. This coroutine now runs once
+            // per LANDING LETTER, so putting the shake here fired it five times in a third
+            // of a second on a five-letter word — five overlapping shakes fighting over the
+            // board transform, which is what "freezing and firing at weird times" was.
+            // The slam is one event: PlayScoreSlam, called on the final impact. 2026-09-09.
 
-            if (isPlayer) _playerCountUp = null;
-            else _aiCountUp = null;
+            // Clear the handle belonging to THIS label. Keyed on the label, not on
+            // isPlayer — the score-panel readout passes isPlayer:true and would otherwise
+            // null out the player count-up's handle instead of its own. 2026-09-08.
+            if (label == _scorePanelNum)      _scoreCountUp  = null;
+            else if (isPlayer)                _playerCountUp = null;
+            else                              _aiCountUp     = null;
         }
 
         /// <summary>
@@ -2213,8 +2513,18 @@ namespace WordDrop
         public void SetRound(int current, int max) { }
 
         /// <summary>Legacy stub — routes to SetPlayerScore for backward compat.</summary>
+        /// <summary>Finish the count-up NOW. The chase animates toward the target at a fixed
+        /// rate, so a big final payout was still climbing when the Well Done screen replaced it
+        /// — the player never saw their real total. Called on stage clear. 2026-09-10 Spencer.</summary>
+        public void SnapScoreToTarget()
+        {
+            _scoreShown = _scoreTarget;
+            if (_scorePanelNum != null) _scorePanelNum.text = ScoreLabel(Mathf.RoundToInt(_scoreShown));
+        }
+
         public void SetScore(int score)
         {
+            WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} HUD SetScore({score})");
             SetPlayerScore(score);
         }
 
@@ -2381,6 +2691,8 @@ namespace WordDrop
 
         private void RefreshTopOutDanger()
         {
+            // The rise countdown owns this label in a score run — see RefreshStageBar.
+            if (_riseCountdownOwnsLabel) return;
             if (_topOutNumText == null) return;
 
             bool survival = SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null;
@@ -2580,6 +2892,43 @@ namespace WordDrop
             tex.SetPixels(px); tex.Apply();
             _glowSpriteCache = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
             return _glowSpriteCache;
+        }
+
+        // 2026-09-08 Spencer: "the radius of the glow is a bit too much... too loud".
+        // Was 3.3 → 2.9 → 2.35. Tune here; it is the only place the fly-up glow size lives.
+        private const float FLY_GLOW_SCALE = 2.35f;
+        private static Material s_flyGlowMat;
+        private static MaterialPropertyBlock s_flyGlowMPB;
+        private Sprite _flyGlowSpriteCache;
+
+        /// <summary>Glow behind a flying letter. The shared GetGlowSprite() is 64px of pure
+        /// smoothstep — a WIDE even haze with no hot core, and at 2.9x scale it upsamples
+        /// roughly 7x, so it reads fuzzy and cloudy. A glow looks like emitted light when a
+        /// TIGHT bright core hugs the silhouette and a faint halo spreads past it; one broad
+        /// gradient always reads as fog. Two tiers at 256px. 2026-09-08.</summary>
+        private Sprite GetFlyGlowSprite()
+        {
+            if (_flyGlowSpriteCache != null) return _flyGlowSpriteCache;
+            const int size = 256;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+                { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            float r = size * 0.5f;
+            var px = new Color[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = (x + 0.5f - r) / r, dy = (y + 0.5f - r) / r;
+                    float d  = Mathf.Clamp01(Mathf.Sqrt(dx * dx + dy * dy));
+                    float t  = 1f - d;
+                    float core = Mathf.Pow(t, 6f);          // tight — dies just outside the tile
+                    float halo = Mathf.Pow(t, 2.2f) * 0.32f; // wide, faint
+                    px[y * size + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(core + halo));
+                }
+            tex.SetPixels(px); tex.Apply();
+            // PPU scales WITH the resolution (256/400 = 0.64 world units, same as the old
+            // 64px @ 100). Raising the texture without raising PPU made the glow 4x too big.
+            _flyGlowSpriteCache = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 400f);
+            return _flyGlowSpriteCache;
         }
 
         private Sprite _flareStarCache, _point1Cache;
@@ -2788,6 +3137,28 @@ namespace WordDrop
 
         /// <summary>Toggle the endless-mode score progress bar (BG+fill+stage label). Hidden in
         /// objective mode — the objective readout owns that center slot. 2026-06-15.</summary>
+        /// <summary>Announce a granted run buff. Reuses the objective text slot, which is
+        /// already styled, positioned and idle in a score run — a temporary readout so the
+        /// MECHANIC can be judged before any screen is designed for it. 2026-09-09.</summary>
+        public void FlashBuffGranted(string title, string desc)
+        {
+            if (_objectiveText == null) return;
+            StopCoroutine(nameof(BuffFlashRoutine));
+            _buffFlashText = $"{title} — {desc}";
+            StartCoroutine(nameof(BuffFlashRoutine));
+        }
+        private string _buffFlashText;
+        private IEnumerator BuffFlashRoutine()
+        {
+            _objectiveText.text = _buffFlashText;
+            _objectiveText.color = new Color(1f, 0.86f, 0.35f);
+            _objectiveText.gameObject.SetActive(true);
+            AnimateScorePop(_objectiveText.rectTransform);
+            yield return new WaitForSecondsRealtime(3.2f);
+            _objectiveText.gameObject.SetActive(false);
+            _objectiveText.color = Color.white;
+        }
+
         private void SetStageBarVisible(bool visible)
         {
             // Fill is a child of the BG, so toggling the BG hides/shows it too.
@@ -2795,6 +3166,8 @@ namespace WordDrop
                 _stageProgressBG.SetActive(visible);
             if (_stageLabelText != null && _stageLabelText.gameObject.activeSelf != visible)
                 _stageLabelText.gameObject.SetActive(visible);
+            if (_stageTargetText != null && _stageTargetText.gameObject.activeSelf != visible)
+                _stageTargetText.gameObject.SetActive(visible);
         }
 
         /// <summary>Show/refresh the level objective (title + progress). Null hides it.
@@ -2820,8 +3193,25 @@ namespace WordDrop
                 // Vault (reward) levels retitle the panel "REWARD"; everything else stays "TARGET".
                 if (_objectivePanelLabel != null)
                 {
-                    string want = obj.Icon == Objective.HudIcon.Vault ? "REWARD" : "TARGET";
+                    string want = ScoreHudMode ? "SCORE"
+                                : obj.Icon == Objective.HudIcon.Vault ? "REWARD" : "TARGET";
                     if (_objectivePanelLabel.text != want) _objectivePanelLabel.text = want;
+                }
+                if (ScoreHudMode)
+                {
+                    // Score replaces the target readout. The icon HOLDER stays in the
+                    // hierarchy (the fly-up asks it for a screen position) but its visuals
+                    // are hidden, so letters still fly to this panel — into the score.
+                    // ...UNLESS the completion checkmark is playing. This runs from
+                    // ObjectiveManager.Update EVERY FRAME, so it was switching the badge — and
+                    // the checkmark inside it — back off one frame after the celebration turned
+                    // it on. The tick was rendering for a single frame every time. 2026-09-10.
+                    bool checkShowing = _objectiveCheck != null && _objectiveCheck.gameObject.activeSelf;
+                    if (_objectiveBadge != null && !checkShowing) _objectiveBadge.SetActive(false);
+                    if (_objectiveIconGO != null) _objectiveIconGO.SetActive(false);
+                    if (_scorePanelNum   != null && !_scorePanelNum.gameObject.activeSelf)
+                        _scorePanelNum.gameObject.SetActive(true);
+                    return;   // skip the icon/badge refresh entirely
                 }
                 EnsureObjectiveIcon(obj);
                 UpdateObjectiveBadge(obj);
@@ -3067,11 +3457,68 @@ namespace WordDrop
 
         /// <summary>Drop the green check onto the badge (replacing the number). Check is a child of
         /// the badge (fixed position), so this is just the same big→small pop as always.</summary>
+        /// <summary>Put the check badge where it belongs for the current HUD mode.
+        ///
+        /// 2026-09-11 Spencer: "it needs to be in the bottom corner of the score like where the
+        /// badges used to be positioned on the target icons." The badge is parented to the 34x34
+        /// TARGET-ICON holder, so in SCORE mode — where there is no target icon — it was floating
+        /// in the middle of the panel instead of clamping to a corner. In score mode it reparents
+        /// to the PANEL and hangs off its bottom-right corner.</summary>
+        private void PositionObjectiveBadge()
+        {
+            if (_objectiveBadge == null) return;
+            var rt = _objectiveBadge.GetComponent<RectTransform>();
+            if (rt == null) return;
+
+            if (ScoreHudMode && _objectivePanelInner != null)
+            {
+                if (rt.parent != _objectivePanelInner) rt.SetParent(_objectivePanelInner, false);
+                rt.anchorMin = rt.anchorMax = new Vector2(1f, 0f);   // panel's bottom-right
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.anchoredPosition = new Vector2(-4f, 4f);          // hang ON the corner
+            }
+            else if (_objectiveIconHolder != null)
+            {
+                var holder = _objectiveIconHolder.transform as RectTransform;
+                if (holder != null && rt.parent != holder) rt.SetParent(holder, false);
+                rt.anchorMin = rt.anchorMax = new Vector2(1f, 0f);   // icon's bottom-right
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.anchoredPosition = new Vector2(10f, -8f);
+            }
+        }
+
+        /// <summary>FX-menu hook: play the checkmark pop on demand and clear it again, so the
+        /// badge art/position can be judged without finishing a level. 2026-09-11 Spencer.</summary>
+        public void DebugFlashObjectiveCheck(float holdSeconds = 2.5f)
+        {
+            StopCoroutine(nameof(DebugCheckRoutine));
+            StartCoroutine(DebugCheckRoutine(holdSeconds));
+        }
+
+        private System.Collections.IEnumerator DebugCheckRoutine(float hold)
+        {
+            // The check lives inside the objective badge, which is hidden in score mode — make
+            // sure both are visible or the pop fires into an inactive parent and you see nothing.
+            if (_objectiveBadge != null) _objectiveBadge.SetActive(true);
+            ShowObjectiveCheck();
+            WDLog.Log("[FXTest] objective check flashed");
+            yield return new WaitForSecondsRealtime(hold);
+            HideObjectiveCheck();
+        }
+
         private void ShowObjectiveCheck()
         {
             if (_objectiveCheck == null) return;
+            // THE PARENT. The check lives under ObjectiveBadge, and ScoreHudMode switches that
+            // badge OFF (the panel shows the score, not an objective icon). Activating the check
+            // inside an inactive parent renders nothing — which is why this "fired" three times
+            // and was never once visible. Wake the branch, and keep the count text hidden so
+            // only the tick shows. 2026-09-10 Spencer.
+            if (_objectiveBadge != null && !_objectiveBadge.activeSelf) _objectiveBadge.SetActive(true);
+            if (ScoreHudMode && _objectiveBadgeText != null) _objectiveBadgeText.gameObject.SetActive(false);
+            PositionObjectiveBadge();   // corner depends on HUD mode — see the method
             _objectiveCheck.gameObject.SetActive(true);
-            _objectiveCheck.color = new Color(0.4f, 1f, 0.45f); // green
+            _objectiveCheck.color = Color.white;   // 3D art carries its own colour — see above
             var t = _objectiveCheck.transform;
             t.DOKill();
             t.localScale = Vector3.one * 2.2f;                  // start BIG
@@ -3080,6 +3527,8 @@ namespace WordDrop
 
         private void HideObjectiveCheck()
         {
+            if (ScoreHudMode && _objectiveBadge != null && _objectiveBadge.activeSelf)
+                _objectiveBadge.SetActive(false);   // back to a clean score panel
             if (_objectiveCheck == null) return;
             _objectiveCheck.transform.DOKill();
             if (_objectiveCheck.gameObject.activeSelf) _objectiveCheck.gameObject.SetActive(false);
@@ -3088,7 +3537,11 @@ namespace WordDrop
         private Sprite LoadCheckSprite()
         {
             if (_checkSpriteCache != null) return _checkSpriteCache;
-            _checkSpriteCache = Resources.Load<Sprite>("Tiles/icon_check");
+            // 2026-09-11 (Spencer): use the 3D rendered check from the casual icon pack
+            // (AssetsCrafters "1chek", copied to Resources/UI). It matches the rendered style of
+            // the booster icons; the old flat Tiles/icon_check stays as the fallback.
+            _checkSpriteCache = Resources.Load<Sprite>("UI/icon_check_3d");
+            if (_checkSpriteCache == null) _checkSpriteCache = Resources.Load<Sprite>("Tiles/icon_check");
             if (_checkSpriteCache == null)
             {
                 Texture2D tex = Resources.Load<Texture2D>("Tiles/icon_check");
@@ -3233,7 +3686,54 @@ namespace WordDrop
             // no Image.fillAmount/Mask voodoo. anchorMax.x=0 → empty pill;
             // =1 → full pill. Both ends stay rounded since fill uses the same
             // pill sprite as the BG.
+            // ── RISE COUNTDOWN (2026-09-09 Spencer) ──────────────────────────────────
+            // The MOVES panel showed a fact about the past. The number the player actually
+            // needs is how many moves are left before the board rises — that is the only
+            // pressure in the game, and it was invisible, so the cash-out-or-push decision
+            // was being made blind. Red on the last move.
+            // ONE writer for this label. RefreshTopOutDanger already owned _topOutNumText
+            // (it writes the estimated moves-until-top-out); adding a second writer made the
+            // two alternate every frame — Spencer saw it flick 8 -> 1 -> 8. Same mistake as
+            // the score count-up fighting the score pop. The rise countdown WINS in a score
+            // run because it is the actionable number; the top-out estimate is suppressed.
+            int untilRise = sm.MovesUntilRise;
+            _riseCountdownOwnsLabel = untilRise >= 0;
+            if (_topOutNumText != null && untilRise >= 0)
+            {
+                _topOutNumText.text = untilRise.ToString();
+                bool urgent = untilRise <= 1;
+                _topOutNumText.color = urgent ? new Color(1f, 0.42f, 0.35f) : Color.white;
+                if (urgent && !_riseWarned) { _riseWarned = true; AnimateScorePop(_topOutNumText.rectTransform); }
+                if (!urgent) _riseWarned = false;
+                // The pulsing bubble behind the number — the existing top-out indicator,
+                // repointed. It was driven by RefreshTopOutDanger, which now stands down in a
+                // score run, so it would otherwise never appear. Firing it one move before a
+                // RISE puts the warning where the pressure actually is. 2026-09-09 Spencer.
+                if (urgent) ShowTopOutBubble(); else HideTopOutBubble();
+            }
+            if (_movesPanelLabel != null)
+            {
+                string want = untilRise >= 0 ? "RISE IN" : "MOVES";
+                if (_movesPanelLabel.text != want) _movesPanelLabel.text = want;
+            }
+
             if (_stageLabelText != null) _stageLabelText.text = $"L{stage}";
+            if (_stageTargetText != null)
+                _stageTargetText.text = stageTarget > 0
+                    ? $"{stageScore:N0} / {stageTarget:N0}" : "";
+            // A cleared stage is the run's milestone moment — the staircase step that turns
+            // an endless flat line into something with shape. Mark it loudly ONCE.
+            if (stage != _lastStageSeen)
+            {
+                if (_lastStageSeen >= 0 && stage > _lastStageSeen)
+                {
+                    GameAudio.Instance?.PlayMultiPopRelease();
+                    GridManager.Instance?.ShakeBoard(0.13f, 0.26f);
+                    if (_stageLabelText != null) AnimateScorePop(_stageLabelText.rectTransform);
+                    if (_stageProgressBG != null) AnimateScorePop(_stageProgressBG.transform);
+                }
+                _lastStageSeen = stage;
+            }
             if (_stageProgressFillRT != null)
             {
                 float fill = stageTarget > 0 ? (float)stageScore / stageTarget : 0f;

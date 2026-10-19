@@ -43,7 +43,7 @@ namespace WordDrop
             var registry = rules.PrimedRegistry;
             if (registry == null || registry.Count == 0)
             {
-                Debug.Log($"[Mooncall L{Level}] No primed words — no-op (charge refund not implemented).");
+                WDLog.Log($"[Mooncall L{Level}] No primed words — no-op (charge refund not implemented).");
                 onComplete?.Invoke();
                 return;
             }
@@ -91,7 +91,7 @@ namespace WordDrop
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);
 
-            Debug.Log($"[Mooncall L{Level}] Detonated {registry.Count} primed words, cleared {toRemove.Count} cells");
+            WDLog.Log($"[Mooncall L{Level}] Detonated {registry.Count} primed words, cleared {toRemove.Count} cells");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
         }

@@ -230,7 +230,7 @@ namespace WordDrop
             string logRows = "";
             for (int row = OPENING_ROWS - 1; row >= 0; row--)
                 logRows += $"  Row {row}: {rowStrs[row]}\n";
-            Debug.Log($"[OpeningSeed] Opening (fixed={UseFixedFirstBoard} seed={FirstBoardSeed} score={bestScore} placed={placed}):\n{logRows}" +
+            WDLog.Log($"[OpeningSeed] Opening (fixed={UseFixedFirstBoard} seed={FirstBoardSeed} score={bestScore} placed={placed}):\n{logRows}" +
                       $"  Primed: {(primedWord ?? "none")}");
 
             return bestName;
@@ -518,7 +518,7 @@ namespace WordDrop
             // Mark as scored so it doesn't get re-detected
             rules.RegisterScoredKey(best.Word + "|" + best.CellKey);
 
-//             Debug.Log($"[OpeningSeed] Pre-primed '{best.Word}' at {best.CellKey} (score={score}, fuse={fuse})");
+//             WDLog.Log($"[OpeningSeed] Pre-primed '{best.Word}' at {best.CellKey} (score={score}, fuse={fuse})");
 
             return best.Word;
         }
@@ -567,7 +567,7 @@ namespace WordDrop
                 });
             }
 
-//             Debug.Log($"[OpeningSeed] Legacy seed '{chosen.Name}'");
+//             WDLog.Log($"[OpeningSeed] Legacy seed '{chosen.Name}'");
             return chosen.Name;
         }
     }

@@ -43,7 +43,7 @@ namespace WordDrop
                 // same surface; for MVP we just log the intended count and fire
                 // once. v1.5 polish can queue/sequence multiple distinct hints.
                 HintManager.Instance.ForceShowHint();
-                Debug.Log($"[LanternTrace L{Level}] Hint(s) triggered (logical count={Level}).");
+                WDLog.Log($"[LanternTrace L{Level}] Hint(s) triggered (logical count={Level}).");
             }
             else
             {

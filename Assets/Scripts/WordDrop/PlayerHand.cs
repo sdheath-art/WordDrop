@@ -146,7 +146,7 @@ namespace WordDrop
         {
             if (index < 0 || index >= HAND_SIZE) return;
             if (_slots[index] != TileBag.WILD_CHAR) return;
-            Debug.Log($"[WildExpiry] ConsumeWildSlot FIRED — slot {index} (player dropped their wild)");
+            WDLog.Log($"[WildExpiry] ConsumeWildSlot FIRED — slot {index} (player dropped their wild)");
             _slots[index]      = '\0';
             _wildDropsElapsed  = 0;
             _wildVisibleSinceUnscaled = -1f;
@@ -205,7 +205,7 @@ namespace WordDrop
                 if (CountLetter(pick) == 0) break;
                 pick = vowels[SurvivalRng.Range(0, vowels.Length)];
             }
-            Debug.Log($"[WildExpiry] ExpireWildToVowel FIRED — slot {idx} → '{pick}'. _wildDropsElapsed was {_wildDropsElapsed}");
+            WDLog.Log($"[WildExpiry] ExpireWildToVowel FIRED — slot {idx} → '{pick}'. _wildDropsElapsed was {_wildDropsElapsed}");
             _slots[idx] = pick;
             _wildDropsElapsed = 0;
             _wildVisibleSinceUnscaled = -1f;
@@ -286,7 +286,7 @@ namespace WordDrop
                 _slots[i] = GovernedDraw(bag, i);
             PostDrawEnforce();
             PreCacheNext(bag);
-//             Debug.Log($"[Hand P{_playerIndex}] FillAll: {HandString()} vowels={CountVowels()} " +
+//             WDLog.Log($"[Hand P{_playerIndex}] FillAll: {HandString()} vowels={CountVowels()} " +
                       // $"playability={CalcPlayability()} next={_cachedNextLetter}");
         }
 
@@ -320,7 +320,7 @@ namespace WordDrop
                 // visible — prevents the HandManager-side clock from firing
                 // immediately on a new wild due to stale state from a previous one.
                 _wildVisibleSinceUnscaled = Time.unscaledTime;
-                Debug.Log($"[WildExpiry] Wild INJECTED into slot {index} at t={Time.unscaledTime:F1}s");
+                WDLog.Log($"[WildExpiry] Wild INJECTED into slot {index} at t={Time.unscaledTime:F1}s");
                 PostDrawEnforce();
                 // Do NOT re-cache here; PreCacheNext will recompute against the new hand.
                 PreCacheNext(bag);
@@ -334,7 +334,7 @@ namespace WordDrop
             if (HasWild && countsAsWildDrop)
             {
                 _wildDropsElapsed++;
-                Debug.Log($"[WildExpiry] Non-wild drop refilled slot {index} — wild dropsElapsed now {_wildDropsElapsed}/3");
+                WDLog.Log($"[WildExpiry] Non-wild drop refilled slot {index} — wild dropsElapsed now {_wildDropsElapsed}/3");
             }
 
             if (_cachedNextLetter != '\0')
@@ -356,7 +356,7 @@ namespace WordDrop
             PostDrawEnforce();
             PreCacheNext(bag);
 
-//             Debug.Log($"[Hand P{_playerIndex}] DrawSlot({index}): {HandString()} " +
+//             WDLog.Log($"[Hand P{_playerIndex}] DrawSlot({index}): {HandString()} " +
                       // $"playability={CalcPlayability()} drought={_droughtTurns} next={_cachedNextLetter}");
         }
 
@@ -507,7 +507,7 @@ namespace WordDrop
                         // Respect vowel ceiling even for drought assist
                         if (!IsVowel(helper) || vowelsInHand < VOWEL_CEILING)
                         {
-//                             Debug.Log($"[Hand P{_playerIndex}] L3 board-assist: '{helper}' (drought={_droughtTurns})");
+//                             WDLog.Log($"[Hand P{_playerIndex}] L3 board-assist: '{helper}' (drought={_droughtTurns})");
                             return helper;
                         }
                     }

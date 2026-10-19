@@ -33,7 +33,7 @@ namespace WordDrop
             _cam = Camera.main;
             BuildArrows();
             ShowArrows(false);
-//             Debug.Log("[ColumnArrowManager] Awake — arrows built and hidden");
+//             WDLog.Log("[ColumnArrowManager] Awake — arrows built and hidden");
         }
 
         private void BuildArrows()
@@ -78,12 +78,19 @@ namespace WordDrop
                 _arrowTexts[col]   = tm;
             }
 
-//             Debug.Log($"[ColumnArrowManager] Built {GridManager.COLS} column arrows " +
+//             WDLog.Log($"[ColumnArrowManager] Built {GridManager.COLS} column arrows " +
                       // $"at Y={arrowY:F2} (fontSize=24, characterSize=0.035)");
         }
 
+        /// <summary>OFF since the 2026-09 swap pivot. These per-column arrows marked where a
+        /// held tile would DROP — and tiles cannot be dropped any more, so they were eight
+        /// permanent white ticks above the board pointing at nothing. Flip ENABLED to true if a
+        /// column-targeted mechanic ever returns. 2026-09-10 Spencer.</summary>
+        private const bool ENABLED = false;
+
         public void ShowArrows(bool visible)
         {
+            if (!ENABLED) visible = false;
             _arrowsVisible = visible;
 
             // Reposition arrows to current GridTop each time they're shown

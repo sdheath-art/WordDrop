@@ -57,7 +57,7 @@ namespace WordDrop
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             BuildLabel();
-//             Debug.Log("[DetonationReplay] Awake");
+//             WDLog.Log("[DetonationReplay] Awake");
         }
 
         // ── Label setup ─────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ namespace WordDrop
                 yield break;
             }
 
-//             Debug.Log($"[DetonationReplay] Starting replay: {chain.Steps.Count} steps, " +
+//             WDLog.Log($"[DetonationReplay] Starting replay: {chain.Steps.Count} steps, " +
                       // $"depth={chain.MaxChainDepth}, bonus={chain.TotalDetonationBonus}");
 
             // 1. Clear the board and rebuild from snapshot
@@ -219,7 +219,7 @@ namespace WordDrop
             yield return null;
 
             _isPlaying = false;
-//             Debug.Log("[DetonationReplay] Replay complete.");
+//             WDLog.Log("[DetonationReplay] Replay complete.");
         }
 
         // ── Step playback ───────────────────────────────────────────────────────
@@ -442,8 +442,8 @@ namespace WordDrop
                 }
                 sb.Append("\n");
             }
-//             Debug.Log(sb.ToString());
-//             Debug.Log($"[DetonationReplay] Rebuilt board from snapshot: {created} tiles");
+//             WDLog.Log(sb.ToString());
+//             WDLog.Log($"[DetonationReplay] Rebuilt board from snapshot: {created} tiles");
         }
 
         // ── Label animation ─────────────────────────────────────────────────────

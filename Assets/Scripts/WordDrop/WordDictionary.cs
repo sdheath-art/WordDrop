@@ -64,7 +64,7 @@ namespace WordDrop
             if (tier == _currentTier && _wordSet != null) return;
             _currentTier = tier;
             _wordSet = null; // force reload
-//             Debug.Log($"[WordDictionary] Tier set to {tier} — will reload on next lookup.");
+//             WDLog.Log($"[WordDictionary] Tier set to {tier} — will reload on next lookup.");
         }
 
         /// <summary>
@@ -115,7 +115,7 @@ namespace WordDrop
             }
 
             _wordCount = _wordSet.Count;
-//             Debug.Log($"[WordDictionary] Loaded {_currentTier} tier: {_wordCount:N0} words " +
+//             WDLog.Log($"[WordDictionary] Loaded {_currentTier} tier: {_wordCount:N0} words " +
                       // $"from Resources/{resourceName}.txt");
 
             Resources.UnloadAsset(textAsset);

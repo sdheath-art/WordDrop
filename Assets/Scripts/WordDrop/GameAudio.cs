@@ -298,7 +298,7 @@ namespace WordDrop
             if (Input.GetKeyDown(KeyCode.M))
             {
                 MusicMuted = !MusicMuted;
-                Debug.Log($"[GameAudio] Music {(MusicMuted ? "MUTED" : "UNMUTED")} (press M to toggle)");
+                WDLog.Log($"[GameAudio] Music {(MusicMuted ? "MUTED" : "UNMUTED")} (press M to toggle)");
             }
         }
 
@@ -607,7 +607,7 @@ namespace WordDrop
             if (_gameOver != null) count++;
             if (_swap != null) count++;
             if (_rewrite != null) count++;
-//             Debug.Log($"[GameAudio] Loaded {count}/12 SFX clips. Vol={_volume:F1} Muted={_muted}");
+//             WDLog.Log($"[GameAudio] Loaded {count}/12 SFX clips. Vol={_volume:F1} Muted={_muted}");
         }
 
         // ── Core play method ───────────────────────────────────────────────────
@@ -623,7 +623,7 @@ namespace WordDrop
         {
             if (_muted || clip == null) return;
             if (LogSfxFiring)
-                Debug.Log($"[SFX] {caller} → {clip.name} (vol={_volume * volumeMult:F2} pitch={pitch:F2})");
+                WDLog.Log($"[SFX] {caller} → {clip.name} (vol={_volume * volumeMult:F2} pitch={pitch:F2})");
             if (Mathf.Approximately(pitch, 1f))
             {
                 // Normal pitch — use main source (no pitch interference)
@@ -696,7 +696,7 @@ namespace WordDrop
 
             float offsetSeconds = (float)onsetSample / clip.frequency;
             _boomOffsets[clip] = offsetSeconds;
-//             Debug.Log($"[GameAudio] Boom offset for {clip.name}: {offsetSeconds * 1000f:F1}ms");
+//             WDLog.Log($"[GameAudio] Boom offset for {clip.name}: {offsetSeconds * 1000f:F1}ms");
         }
 
         /// <summary>
@@ -840,7 +840,7 @@ namespace WordDrop
         /// <summary>Plays detonation SFX. Returns boom offset in seconds (lead-in before the hit).</summary>
         public float PlayDetonation(int chainDepth = 0)
         {
-            Debug.Log($"[DetonationSFX] PlayDetonation({chainDepth}) — muted={_muted}, " +
+            WDLog.Log($"[DetonationSFX] PlayDetonation({chainDepth}) — muted={_muted}, " +
                       $"detonation clip null? {_detonation == null}, alt null? {_detonationAlt == null}, " +
                       $"source null? {_source == null}");
             // Tiered sound — each level sounds distinctly different
@@ -1590,7 +1590,7 @@ namespace WordDrop
                     Resources.Load<AudioClip>("Audio/stage_up_5"),
                     Resources.Load<AudioClip>("Audio/stage_up_6"),
                 };
-//                 Debug.Log($"[GameAudio] Loaded {_stageUpVariants.Length} stage_up variants");
+//                 WDLog.Log($"[GameAudio] Loaded {_stageUpVariants.Length} stage_up variants");
             }
             Play(PickRandom(_stageUpVariants), 0.5f);
         }
@@ -1636,7 +1636,7 @@ namespace WordDrop
         public void PlayPoofExplosion()
         {
             var clip = PickRandom(_poofExplosionVariants);
-//             Debug.Log($"[GameAudio] PlayPoofExplosion clip={(clip != null ? clip.name : "NULL")}");
+//             WDLog.Log($"[GameAudio] PlayPoofExplosion clip={(clip != null ? clip.name : "NULL")}");
             if (clip != null)
                 Play(clip, 0.75f);
             else
@@ -1725,7 +1725,7 @@ namespace WordDrop
             if (now - _lastBigPopTime < BIG_POP_COOLDOWN) return;
             _lastBigPopTime = now;
             if (LogSfxFiring)
-                Debug.Log($"[SFX] PlayBigPop → big_pop (vol={_volume * 0.8f:F2} pitch=0.95 nudge={nudge:F3})");
+                WDLog.Log($"[SFX] PlayBigPop → big_pop (vol={_volume * 0.8f:F2} pitch=0.95 nudge={nudge:F3})");
             // Dedicated source so the clip start can be nudged with sample
             // accuracy — the frame-quantized explosion hold can only sync the
             // peak to within ~16ms; this slides it continuously onto the pop.
@@ -1904,7 +1904,7 @@ namespace WordDrop
         /// </summary>
         public void PlayDetonationLayered(int chainDepth)
         {
-//             Debug.Log($"[GameAudio] PlayDetonationLayered depth={chainDepth}");
+//             WDLog.Log($"[GameAudio] PlayDetonationLayered depth={chainDepth}");
             if (chainDepth <= 0)
             {
                 PlayPoofExplosion();

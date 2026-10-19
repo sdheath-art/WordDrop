@@ -77,7 +77,7 @@ namespace WordDrop
             {
                 var go = new GameObject("WordDropFX");
                 go.AddComponent<WordDropFX>();
-//                 Debug.Log("[WordDropFX] Auto-created with DOTween.");
+//                 WDLog.Log("[WordDropFX] Auto-created with DOTween.");
             }
         }
 
@@ -86,6 +86,12 @@ namespace WordDrop
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             DOTween.Init(false, true, LogBehaviour.ErrorsOnly);
+            // 2026-09-08 Spencer: the budget was never set, so it sat on DOTween's default of
+            // 200 tweeners / 50 sequences. A 9x11 board plus a chain detonation goes past that,
+            // and DOTween then REALLOCATES its pools mid-explosion — a stall exactly when the
+            // game is busiest, which is a strong candidate for the frame drops on big pops.
+            // Sized generously; the cost is a one-time allocation at startup, not per frame.
+            DOTween.SetTweensCapacity(tweenersCapacity: 800, sequencesCapacity: 200);
             DOTween.defaultEaseType = DG.Tweening.Ease.OutQuad;
         }
 
@@ -173,10 +179,42 @@ namespace WordDrop
         // WORD SCORED — staggered highlight with punch scale
         // ═══════════════════════════════════════════════════════════════════════════
 
-        public void PlayWordScored(List<Tile> tiles, Color color, int chainStep)
+        /// <summary>2026-09-03 swap-pivot: flash a scored word in its PRIMED colour and
+        /// leave it armed, rather than the green scored flash that settled to white before
+        /// the magenta primed glow took over. In armed-web the word is being ARMED, not
+        /// cleared, so green -> white -> magenta reads as a wrong-colour flicker.</summary>
+        // ── SCORED FLASH = THE ARMED COLOUR (2026-09-08 Spencer) ────────────────────
+        // "it should probably flash the colour that its changing, so magenta rather than the
+        // green... it momentarily flips from green to tan then to magenta. it should be smooth
+        // and seemless so that it just lights up to magenta and stays that colour."
+        //
+        // Tried once before and reverted as janky. TWO causes, both since removed:
+        //   1. The per-frame primed PULSE wrote sr.color every frame and fought this tween for
+        //      the same property. Armed tiles are static now (Tile.PRIMED_ANIMATION = false).
+        //   2. The loop forced the RESTING (tan) face while magenta eased in as a tint — that
+        //      is the tan flicker. Both of those writes are now gated on this flag.
+        //
+        // The flash lights straight up in the colour the word is BECOMING (gold for a
+        // high-value word, via the one PrimedGlowForCell chokepoint) and settles exactly onto
+        // Tile.ArmedRestColor — no green, no tan, no white gap.
+        public const bool SCORED_FLASH_USES_PRIMED_COLOR = true;
+
+        /// <summary>EXPERIMENT 2026-09-10 (Spencer): flash EVERY word the board forms, including
+        /// ones that score nothing because they were already scored this run. Set false to
+        /// restore "only words that pay get a flash".</summary>
+        public static bool FLASH_EVERY_WORD = true;
+
+        /// <summary>Flash peak for a GOLD word. Near-neutral on purpose — see wordFlashPeak.
+        /// Slightly warm so it still reads gold, above 1.0 so desktop bloom catches it.</summary>
+        public static Color GOLD_FLASH_PEAK = new Color(1.30f, 1.25f, 1.10f, 1f);
+
+        /// <summary>forceGold: for the FX test menu only. This method decides gold from the
+        /// TILES' letters and ignores the colour it is handed, so a test button could not make a
+        /// non-gold word flash gold — every variant looked the same. 2026-09-10 Spencer.</summary>
+        public void PlayWordScored(List<Tile> tiles, Color color, int chainStep, bool forceGold = false)
         {
             if (tiles == null || tiles.Count == 0) return;
-            Debug.Log($"[ScoredFlash] PlayWordScored fired: {tiles.Count} tile(s) arg3={chainStep} first='{(tiles[0] != null ? tiles[0].Letter.ToString() : "?")}'"); // TEMP cascade diagnostic 2026-06-11
+            WDLog.Log($"[ScoredFlash] PlayWordScored fired: {tiles.Count} tile(s) arg3={chainStep} first='{(tiles[0] != null ? tiles[0].Letter.ToString() : "?")}'"); // TEMP cascade diagnostic 2026-06-11
 
             // Feel-pass 2026-05-16: cap punch at 0.18 (1.18× peak).
             // Was uncapped — chain 6 reached 0.42 (1.42×), bigger than the
@@ -184,6 +222,45 @@ namespace WordDrop
             // the smaller celebration; detonation is the big one. Chain 0-1
             // values are unchanged; chain 2+ gets clamped to 1.18×.
             float punch = Mathf.Min(SCORE_POP_STRENGTH + chainStep * 0.05f, 0.18f);
+
+            // ── DECIDE GOLD ONCE, PER WORD (2026-09-09 Spencer) ──────────────────────
+            // "when a gold word is primed it is briefly turning magenta and then back to gold."
+            // PrimedGlowForCell is a PER-TILE question, and when the word is not yet in the
+            // registry it falls back to "is THIS tile a high-value letter?". But goldness
+            // belongs to the WORD — it is gold because it CONTAINS one high-value letter — so
+            // every other tile in that word correctly answered "no" and flashed magenta, then
+            // flipped once the word registered.
+            // The whole word is right here, so answer it once for the set and give every tile
+            // the same colour. No tile can disagree with its own word.
+            // Branch priming means a scored word does NOT necessarily arm. Ask the rules,
+            // using the same predicate the gate uses, or rejected words wear the armed colour.
+            var wcells = new System.Collections.Generic.List<Vector2Int>();
+            for (int ci = 0; ci < tiles.Count; ci++)
+                if (tiles[ci] != null) wcells.Add(new Vector2Int(tiles[ci].Col, tiles[ci].Row));
+            bool willArm = RulesEngine.Instance == null || RulesEngine.Instance.WillPrime(wcells);
+
+            bool wordIsGold = forceGold;
+            for (int gi = 0; gi < tiles.Count && !wordIsGold; gi++)
+            {
+                var gt = tiles[gi];
+                if (gt == null || gt.IsWild) continue;
+                if (LetterData.GetPoints(gt.Letter) >= Tile.HIGH_VALUE_POINTS) wordIsGold = true;
+                else if (RulesEngine.PrimedGlowForCell(new Vector2Int(gt.Col, gt.Row)) == Tile.PRIMED_GOLD_GLOW)
+                    wordIsGold = true;   // registry already knows
+            }
+            // NEUTRALISE for authored primed art — see Tile.NeutralisePrimedTint. Without this
+            // the cascade scored-flash multiplies a magenta over a green tile and it goes DARK.
+            Color wordArmedHdr = Tile.NeutralisePrimedTint(
+                wordIsGold ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW, wordIsGold);
+
+            // FLASH PEAK for a GOLD word (2026-09-10 Spencer: "it ends up turning into this
+            // orange colour that i don't like"). sr.color MULTIPLIES the sprite. A rose flash
+            // works because it multiplies a TAN tile by rose. A gold flash multiplied an already
+            // GOLD tile by gold: red clips at 1.0, blue is pulled to 0.64, and the hue slides to
+            // salmon. Multiplying gold by gold cannot make brighter gold — only more saturated
+            // orange. A near-NEUTRAL warm multiply raises brightness and leaves the hue alone,
+            // so the tile lights up as itself.
+            Color wordFlashPeak = wordIsGold ? GOLD_FLASH_PEAK : wordArmedHdr;   // already neutralised above
 
             // Staggered fuse-lit flash across tiles — each tile pops in sequence
             for (int i = 0; i < tiles.Count; i++)
@@ -205,8 +282,14 @@ namespace WordDrop
                 }
 
                 tile.transform.DOComplete();
-                tile.SetScoredSprite(true);
-                tile.SetSortingOrder(Tile.FX_TILE_ORDER);   // 2026-09-03: above every per-row band
+                if (!SCORED_FLASH_USES_PRIMED_COLOR) tile.SetScoredSprite(true);
+                // NO LIFT (2026-09-10 Spencer: "the butt ends pop out again and then tuck back
+                // in"). Raising the tile above every row band is what made its shaded top cap
+                // visible — that cap is hidden ONLY because the tile above draws in front of it,
+                // so lifting the tile necessarily exposes it, then hides it again when the lift
+                // expires. A colour flash does not need to be above the board: the only part of
+                // the tile a neighbour covers is the cap, which is meant to be covered.
+                // Call tile.LiftForFx(1.20f) here to restore the old behaviour.
 
                 // Stagger: each tile flashes white slightly after the previous
                 // Feel-pass 2026-05-16: 0.06 → 0.03 (matches TILE_STAGGER_DELAY
@@ -225,7 +308,13 @@ namespace WordDrop
                     // sprite), so the old R/B of 1.12 washed the flash toward white-green.
                     // Drop R/B so the peak reads as a vivid green bloom on a light base; green
                     // channel still floored at 1.62 for the glow.
-                    Color flashGreen = new Color(0.30f, Mathf.Max(ScoredFlashGreen, 1.45f), 0.30f, 1f);
+                    // Ask the ONE chokepoint what this cell arms to, so a high-value word
+                    // lights up gold rather than everything flashing magenta. 2026-09-08.
+                    Color armedHdr  = wordArmedHdr;   // decided once above, for the whole word
+                    bool  armedGold = wordIsGold;
+                    Color flashGreen = SCORED_FLASH_USES_PRIMED_COLOR
+                        ? wordFlashPeak         // brighten, do not re-tint (see wordFlashPeak)
+                        : new Color(0.30f, Mathf.Max(ScoredFlashGreen, 1.45f), 0.30f, 1f);
                     // 2026-06-04 Spencer: snap to bright green, HOLD at peak so the bloom
                     // actually reads, THEN settle. Was a 0.15s fade with no hold → far too
                     // quick to see, and the tile primes magenta the same frame which used
@@ -236,6 +325,13 @@ namespace WordDrop
                     DOTween.Sequence()
                         .AppendInterval(delay)
                         .AppendCallback(() => {
+                            // Swap the armed face HERE, inside the staggered callback — not up
+                            // front. Doing it before the tween put every tile's armed face on in
+                            // frame 0, so the whole word turned magenta at once and the stagger
+                            // vanished. The face and the flash have to land together, per tile,
+                            // for the wave to read. 2026-09-08 Spencer.
+                            if (SCORED_FLASH_USES_PRIMED_COLOR && willArm && flashTile != null)
+                                flashTile.ApplyArmedFaceNow(armedGold);
                             if (sr != null) sr.color = flashGreen; // green-biased flash; green peak is the bloom lever (FX Bloom Tuning slider)
                             // MOBILE bloom: sr.color clamps to 1.0 on iOS/Metal, so the green
                             // never crosses the 1.30 bloom line on device. Drive the additive
@@ -245,11 +341,18 @@ namespace WordDrop
                         })
                         .AppendInterval(SCORE_FLASH_HOLD)
                         .Append(DOTween.To(() => sr.color, c => { if (sr != null) sr.color = c; },
-                            Color.white, SCORE_FLASH_FADE).SetEase(DG.Tweening.Ease.OutQuad)) // settle to WHITE so the magenta primed-sprite handoff isn't muddied dark by a lingering green tint
+                            (SCORED_FLASH_USES_PRIMED_COLOR && willArm) ? Tile.ArmedRestColor(armedHdr) : Color.white,
+                            SCORE_FLASH_FADE).SetEase(DG.Tweening.Ease.OutQuad)) // settle EXACTLY onto the armed resting colour (or WHITE on the legacy green path, so the magenta hand-off isn't muddied)
                         .Join(DG.Tweening.DOVirtual.Float(0.90f, 0f, SCORE_FLASH_FADE,
                             a => { if (flashTile != null) flashTile.SetBloomGlow(flashGreen, a); })); // fade the mobile overlay out with the flash
                     // Hold the magenta primed takeover (sprite swap + per-frame pulse) until
                     // this tile's green flash has played through, so it doesn't get stomped.
+                    // The hold DEFERS the magenta primed takeover until the green flash
+                    // has settled to white — which is exactly the white gap. When the
+                    // flash is ALREADY the primed colour there is nothing to protect, so
+                    // let the primed visual apply immediately and the tile just stays lit.
+                    // Hold in BOTH modes: the tween owns sr.color for its whole run, and the
+                    // primed loop repainting mid-tween is what made the old attempt stutter.
                     tile.HoldPrimedVisual(delay + SCORE_FLASH_HOLD + SCORE_FLASH_FADE + 0.02f);
                 }
 
@@ -257,9 +360,20 @@ namespace WordDrop
                     .DOPunchScale(Vector3.one * punch, SCORE_POP_DURATION, 1, 0.5f)
                     .SetDelay(delay)
                     .SetEase(DG.Tweening.Ease.OutBack)
+                    .OnKill(() => {
+                        // ON KILL, not just on complete. The lift to FX_TILE_ORDER (60) was
+                        // undone in OnComplete — so any tween KILL left the tile stranded above
+                        // the whole board, and its shaded top cap drew over the row sitting on
+                        // top of it. Gravity, the landing squish and SnapAllTilesToCells all
+                        // DOKill tile tweens, and a cascade word meets all three. OnKill fires
+                        // on completion too, so this covers both. ReassertSortingOrder rather
+                        // than BaseSortingOrder, so a spotlight or aim-mode lift still wins.
+                        // 2026-09-10 Spencer.
+                        if (tile != null) tile.ReassertSortingOrder();
+                    })
                     .OnComplete(() => {
                         if (tile != null) {
-                            tile.SetSortingOrder(tile.BaseSortingOrder); // 2026-09-03: restore the tile's ROW band, not a flat 5
+                            tile.ReassertSortingOrder();
                             // 2026-06-03 Spencer: keep the green scored sprite — do NOT
                             // revert to white here. The tile stays green after the flash
                             // (no white flicker), holding green straight through until
@@ -277,6 +391,11 @@ namespace WordDrop
             // Pass chainStep so the chime pitches up alongside the pop — both
             // sounds rise together in the chord climb. Bug fix 2026-05-16.
             GameAudio.Instance?.PlayWordScored(chainStep);
+            // The primed chime belongs HERE, not at the call sites. Five different places call
+            // PlayWordScored and only three of them played it, so the same event sounded
+            // different depending on which path produced the word — "one makes a different
+            // sound". One owner, one sound. 2026-09-10 Spencer.
+            GameAudio.Instance?.PlayTilePrimed();
             if (tiles.Count > 0 && tiles[0] != null)
             {
                 Vector3 center = Vector3.zero;
@@ -383,7 +502,7 @@ namespace WordDrop
                 }
             }
 
-//             Debug.Log($"[FuseTrace] Drew {directPositions.Count * chainPositions.Count} trace(s) " +
+//             WDLog.Log($"[FuseTrace] Drew {directPositions.Count * chainPositions.Count} trace(s) " +
                       // $"from {directPositions.Count} direct → {chainPositions.Count} chain");
         }
 
@@ -597,7 +716,7 @@ namespace WordDrop
                     popped++;
                 }
             }
-            Debug.Log($"[DiffusePop] deferred fired: requested={tiles.Count} popped={popped}");
+            WDLog.Log($"[DiffusePop] deferred fired: requested={tiles.Count} popped={popped}");
         }
 
         /// <summary>
@@ -610,7 +729,7 @@ namespace WordDrop
         {
             float b = Tier3BurstScale;
             if (b <= 0.01f) return;
-            Debug.Log($"[Tier3Burst] FIRE center={center} span={spanUnits:F2} scale={b:F2} (fb={(FlipbookExplosion.Instance!=null)} light={(LightingSetup.Instance!=null)} parts={(GameParticles.Instance!=null)})");
+            WDLog.Log($"[Tier3Burst] FIRE center={center} span={spanUnits:F2} scale={b:F2} (fb={(FlipbookExplosion.Instance!=null)} light={(LightingSetup.Instance!=null)} parts={(GameParticles.Instance!=null)})");
 
             // Blue-dominant palette w/ a green accent wisp (HDR so bloom glows it).
             // Sized TIGHT to the cluster so it reads as a burst, not a full-screen
@@ -738,11 +857,19 @@ namespace WordDrop
         /// chain from machine-gunning the boom. Callers `yield return` this just
         /// before PlayExplosion.
         /// </summary>
+        /// <summary>Tiles needed for the big-pop hitstop. Keep it ABOVE a typical web
+        /// detonation or the time-freeze fires constantly and reads as stutter.</summary>
+        public const int BIG_POP_TILE_THRESHOLD = 20;
+
         public static IEnumerator MaybeBigPopAndHold(List<Tile> tiles)
         {
             int totalTiles = tiles != null ? tiles.Count : 0;
-            bool fire = totalTiles >= 8;
-            Debug.Log($"[BigPop] gate: tiles={totalTiles} → {(fire ? "FIRE+hold" : "skip")}");
+            // 2026-09-03 swap-pivot: threshold was 8. In the DROP game a word popped 3-5
+            // tiles, so 8+ was a rare celebration. With ARMED WEBS a tap routinely fires
+            // 9-16 tiles (one measured 41), so the hitstop — which sets Time.timeScale=0 —
+            // was freezing the game on MOST pops and reading as stutter/pausing.
+            bool fire = totalTiles >= BIG_POP_TILE_THRESHOLD;
+            WDLog.Log($"[BigPop] gate: tiles={totalTiles} → {(fire ? "FIRE+hold" : "skip")}");
             if (!fire) yield break;
 
             // Skip the pre-windup BOOM when a multi-word combo is about to STAGGER — otherwise the boom
@@ -826,6 +953,18 @@ namespace WordDrop
         // escalation. Indexed by (chainStep - 1): chainStep 0 = the TRIGGER word, deliberately SKIPPED so
         // it keeps its green scored-flash. These are HDR TINTS that multiply the pink primed sprite
         // (primed_test@2x ≈ 246,135,233), so the on-screen hue is sprite×tint. Tune freely.
+        /// <summary>Per-word hue escalation through a chain. OFF (2026-09-08) — it read as
+        /// arbitrary colour flicker against the one-meaning-per-hue palette.</summary>
+        public static bool COMBO_COLOUR_RAMP = false;
+
+        // 2026-09-08 Spencer: even with the RAMP off, chain words 2+ were still being
+        // repainted to s_comboDetonationRamp[0] (hot pink) — a DIFFERENT colour from the
+        // trigger word's magenta, and it stomped gold words too. So the board still read as
+        // "each successive word changes colour". COMBO_TINT_OVERRIDE=false stops the repaint
+        // entirely: every word detonates in the colour it was ARMED in (magenta, or gold for
+        // a high-value word). The chain still escalates through scale, shake, pitch, timing.
+        public static bool COMBO_TINT_OVERRIDE = false;
+
         private static readonly Color[] s_comboDetonationRamp = new Color[]
         {
             new Color(2.20f, 0.50f, 0.95f, 1f), // step 1 — hot pink (trigger stays magenta; chain ramps above it)
@@ -910,21 +1049,29 @@ namespace WordDrop
                     _flyDbg.Append($"{ft.Letter}(s{(ft.WasInScoredWord ? 1 : 0)}g{(ft.HasPermanentGlow ? 1 : 0)}{(isWordTile ? "→fly" : "")}) ");
                     if (isWordTile) flyTiles.Add(ft);
                 }
-                Debug.Log($"[FlyUp] wordLen={wordLength} tiles={tiles.Count} fly={flyTiles.Count} | {_flyDbg}");
                 // Ramp the fly-up pop per WORD along a chain: deeper words punch out bigger toward the
                 // camera, the finale biggest. Keyed on chainStep (the word's position in the stagger/cascade).
                 // Tasteful range: 1.28× (first) → ~1.65× (chainStep 4+). Glow scales with it (child). 2026-07-06.
                 float popPeak = 1.28f + Mathf.Min(chainStep * 0.10f, 0.37f);
+                // Tell the bank how many landings to split the blast across, so each
+                // impact pays an equal share and the counter climbs WITH the letters.
+                ScoreManager.Instance?.SetFlyLetterCount(flyTiles.Count);
                 for (int i = 0; i < flyTiles.Count; i++)
                 {
                     bool last = (i == flyTiles.Count - 1);
                     // The LAST letter to land releases any held objective-complete payoff (bing/checkmark/modal),
                     // so the win fires as a RESULT of the tiles hitting the target. 2026-07-10 Spencer.
-                    System.Action landCb = last
-                        ? (System.Action)(() => ObjectiveManager.Instance?.NotifyObjectiveFlyUpsLanded())
-                        : null;
+                    // EVERY letter pays its share on impact; the LAST one also closes out
+                    // the objective. Previously only the last letter had a callback at all,
+                    // which is why nothing could tick per landing. 2026-09-09 Spencer.
+                    bool isLast = last;
+                    System.Action landCb = () =>
+                    {
+                        ScoreManager.Instance?.AwardOneFlyShare();
+                        if (isLast) ObjectiveManager.Instance?.NotifyObjectiveFlyUpsLanded();
+                    };
                     // Own 4-slot sorting band per letter (+4) so a letter never bleeds onto a neighbour tile.
-                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, landCb, i * 0.07f, cascade, popPeak, 200 + (flyTiles.Count - 1 - i) * 4, comboStep: comboStagger ? chainStep : 0);
+                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, landCb, i * 0.07f, cascade, popPeak, 200 + (flyTiles.Count - 1 - i) * 4, comboStep: comboStagger ? chainStep : 0, armedColor: flyTiles[i].DetonationColor);
                 }
             }
 
@@ -967,9 +1114,17 @@ namespace WordDrop
             // so splash/junk collateral stays neutral. SetDetonationColor latches the tint on the tile so
             // the primed pulse (and any late re-glow) renders the new hue instead of magenta through the
             // pop. The big-blast/meltdown shatter path honours it via Tile.DetonationColor (~line 1660).
-            if (comboStagger && chainStep >= 1)
+            // 2026-09-08 Spencer: COMBO COLOUR ESCALATION OFF. Each successive word in a
+            // chain used to shift hue (hot pink -> violet -> blue-violet), which read as
+            // arbitrary — the board flickered through colours that mean nothing in the
+            // palette. Every word in a chain now detonates the SAME colour; the chain
+            // still escalates through scale, shake, pitch and timing.
+            // Set COMBO_COLOUR_RAMP true to bring the ramp back.
+            if (COMBO_TINT_OVERRIDE && comboStagger && chainStep >= 1)
             {
-                Color detoTint = s_comboDetonationRamp[Mathf.Min(chainStep - 1, s_comboDetonationRamp.Length - 1)];
+                Color detoTint = COMBO_COLOUR_RAMP
+                    ? s_comboDetonationRamp[Mathf.Min(chainStep - 1, s_comboDetonationRamp.Length - 1)]
+                    : s_comboDetonationRamp[0];
                 int _tinted = 0;
                 var _dbg = new System.Text.StringBuilder();
                 for (int i = 0; i < tiles.Count; i++)
@@ -980,11 +1135,9 @@ namespace WordDrop
                     _dbg.Append($"{ct.Letter}(s{(ct.WasInScoredWord?1:0)}g{(ct.HasPermanentGlow?1:0)}{(isWordTile?"→tint":"")}) ");
                     if (isWordTile) { ct.SetDetonationColor(detoTint); _tinted++; }
                 }
-                Debug.Log($"[ComboRamp] chainStep={chainStep} tint=({detoTint.r:F2},{detoTint.g:F2},{detoTint.b:F2}) tiles={tiles.Count} tinted={_tinted} | {_dbg}");
             }
-            else if (chainStep >= 1)
+            else if (COMBO_TINT_OVERRIDE && chainStep >= 1)
             {
-                Debug.Log($"[ComboRamp] SKIPPED (comboStagger=false) chainStep={chainStep} tiles={tiles.Count}");
             }
 
             return StartCoroutine(ExplosionCoroutineTracked(tiles, chainStep, wordLength, wordFlash));
@@ -1699,7 +1852,10 @@ namespace WordDrop
                 if (mt.HasPermanentGlow)
                 {
                     // Combo escalation: honour this tile's per-word detonation hue if it got one, else magenta.
-                    meltdownOriginalColors[i]  = mt.HasDetonationColor ? mt.DetonationFaceColor : Tile.PRIMED_TILE_TINT;
+                    // 2026-09-08: was falling back to hardcoded PRIMED_TILE_TINT, which repainted
+                    // GOLD-armed words magenta in the shatter path. DetonationFaceColor is the
+                    // tile's OWN primed colour normalised to LDR, so it is correct either way.
+                    meltdownOriginalColors[i]  = mt.DetonationFaceColor;
                     meltdownOriginalSprites[i] = Tile.PrimedSprite;
                 }
                 else if (mt.WasInScoredWord)
@@ -1725,7 +1881,7 @@ namespace WordDrop
             // Tier inline preview log — uses the actual formula at line ~995.
             // Was misleading (old inline used >=5/>=9 thresholds vs actual
             // >=8/>=12). Reflects what tier ACTUALLY gets assigned below.
-            Debug.Log($"[FX-Detonation] tier={(chainStep >= 3 || tileCount >= 15 ? 4 : chainStep >= 2 || tileCount >= 12 ? 3 : tileCount >= 8 ? 2 : 1)} chain={chainStep} tiles={tileCount}");
+            WDLog.Log($"[FX-Detonation] tier={(chainStep >= 3 || tileCount >= 15 ? 4 : chainStep >= 2 || tileCount >= 12 ? 3 : tileCount >= 8 ? 2 : 1)} chain={chainStep} tiles={tileCount}");
 
             // 2026-05-30: meltdown windup phase SKIPPED per Spencer. The
             // prefab itself fast-forwards past its windup inside
@@ -1807,7 +1963,7 @@ namespace WordDrop
             bool _mmActive_dbg     = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
             bool _tilesGate_dbg    = tileCount >= 8;
             bool meltdownActive    = _mmActive_dbg || _tilesGate_dbg;
-            Debug.Log($"[Meltdown] gate={meltdownActive} (mmActive={_mmActive_dbg}, tilesGate={_tilesGate_dbg}) — tier={tier} chain={chainStep} tiles={tileCount}");
+            WDLog.Log($"[Meltdown] gate={meltdownActive} (mmActive={_mmActive_dbg}, tilesGate={_tilesGate_dbg}) — tier={tier} chain={chainStep} tiles={tileCount}");
 
             // Junk filter for meltdown windup — only WORD tiles (scored
             // trigger words + primed words being detonated, populated
@@ -1834,7 +1990,7 @@ namespace WordDrop
 
             if (FX_MeltdownPrefab && meltdownActive && FlipbookExplosion.Instance != null)
             {
-                Debug.Log($"[FX] MeltdownPrefab: FIRED (wordTilesOnly={meltdownWordTiles != null}, wordCount={(meltdownWordTiles == null ? -1 : meltdownWordTiles.Count)})");
+                WDLog.Log($"[FX] MeltdownPrefab: FIRED (wordTilesOnly={meltdownWordTiles != null}, wordCount={(meltdownWordTiles == null ? -1 : meltdownWordTiles.Count)})");
 
                 // Earthquake rumble at the very start of the meltdown —
                 // plays on a dedicated AudioSource so we can cut it off
@@ -1928,7 +2084,7 @@ namespace WordDrop
                 // completes well before the blast peak at WINDUP_DELAY.
                 if (FX_MeltdownTilePunch)
                 {
-                    Debug.Log("[FX] MeltdownTilePunch: FIRED");
+                    WDLog.Log("[FX] MeltdownTilePunch: FIRED");
                     // Junk filter — punch only the word tiles, not collateral.
                     List<Tile> punchTiles = tiles;
                     if (meltdownWordTiles != null)
@@ -1983,13 +2139,13 @@ namespace WordDrop
                             .SetEase(DG.Tweening.Ease.OutQuart);
                     }
                 }
-                else { Debug.Log("[FX] MeltdownTilePunch: SKIPPED"); }
+                else { WDLog.Log("[FX] MeltdownTilePunch: SKIPPED"); }
 
                 // Tile heat-up overlay — runs in parallel with the prefab
                 // wind-up so each tile visibly charges before the bang.
                 if (FX_TileHeatOverlay)
                 {
-                    Debug.Log("[FX] TileHeatOverlay: FIRED");
+                    WDLog.Log("[FX] TileHeatOverlay: FIRED");
                     float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
                     for (int i = 0; i < tiles.Count; i++)
                     {
@@ -1999,7 +2155,7 @@ namespace WordDrop
                             tiles[i].transform.position, cellSize, MELTDOWN_WINDUP_DELAY);
                     }
                 }
-                else { Debug.Log("[FX] TileHeatOverlay: SKIPPED"); }
+                else { WDLog.Log("[FX] TileHeatOverlay: SKIPPED"); }
 
                 // Candy-Crush-color-bomb-style primed glow orb per tile —
                 // soft-circle additive halo on top of each tile that overlays
@@ -2007,7 +2163,7 @@ namespace WordDrop
                 // so the glow stays visible front-and-center the whole time.
                 if (FX_PrimedGlowOrb)
                 {
-                    Debug.Log("[FX] PrimedGlowOrb: FIRED");
+                    WDLog.Log("[FX] PrimedGlowOrb: FIRED");
                     float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
                     // Long max duration as a safety cap; the orb will exit
                     // earlier when its tile becomes inactive (shatter hides it).
@@ -2020,13 +2176,13 @@ namespace WordDrop
                             tiles[i].transform.position, cellSize, orbDuration, tiles[i].transform);
                     }
                 }
-                else { Debug.Log("[FX] PrimedGlowOrb: SKIPPED"); }
+                else { WDLog.Log("[FX] PrimedGlowOrb: SKIPPED"); }
 
                 // Violent Perlin-noise shake on each tile for the entire
                 // windup — magnitude ramps subtle→violent so tension builds
                 // into the explosion. Each tile shakes with its own seed so
                 // they jitter independently, not in sync.
-                Debug.Log("[FX] MeltdownShake: FIRED");
+                WDLog.Log("[FX] MeltdownShake: FIRED");
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
@@ -2050,17 +2206,17 @@ namespace WordDrop
                 // impact PlayBoardShake takes over cleanly.
                 if (FX_MeltdownWindupShake)
                 {
-                    Debug.Log("[FX] MeltdownWindupShake: FIRED");
+                    WDLog.Log("[FX] MeltdownWindupShake: FIRED");
                     StartCoroutine(MeltdownWindupShake(
                         duration: MELTDOWN_WINDUP_DELAY,
                         startMag: 0.015f,
                         endMag: 0.10f));
                 }
-                else { Debug.Log("[FX] MeltdownWindupShake: SKIPPED"); }
+                else { WDLog.Log("[FX] MeltdownWindupShake: SKIPPED"); }
 
                 yield return WaitCache.Get(MELTDOWN_WINDUP_DELAY);
             }
-            else { Debug.Log($"[FX] MeltdownPrefab: SKIPPED (toggle={FX_MeltdownPrefab}, meltdownActive={meltdownActive})"); }
+            else { WDLog.Log($"[FX] MeltdownPrefab: SKIPPED (toggle={FX_MeltdownPrefab}, meltdownActive={meltdownActive})"); }
 
             // Determine tier by tiles exploded + chain depth.
             // Thresholds widened 2026-05-01: most typical word matches (3-7
@@ -2069,11 +2225,11 @@ namespace WordDrop
             // large clusters or 2nd cascades, tier 4 for meltdown territory.
             // (Declaration hoisted up to where meltdownActive is computed so
             // the gate can include tier >= 2. Tier value re-used here.)
-            Debug.Log($"[VFX] Explosion tier={tier} tiles={tileCount} chain={chainStep}");
+            WDLog.Log($"[VFX] Explosion tier={tier} tiles={tileCount} chain={chainStep}");
 
             // Tiered haptic feedback
-            if (FX_Haptics) { Debug.Log("[FX] Haptics: FIRED"); HapticsManager.Explosion(tier); }
-            else { Debug.Log("[FX] Haptics: SKIPPED"); }
+            if (FX_Haptics) { WDLog.Log("[FX] Haptics: FIRED"); HapticsManager.Explosion(tier); }
+            else { WDLog.Log("[FX] Haptics: SKIPPED"); }
 
             // ── Tier-1 Candy-Crush-style pop branch ───────────────────────────
             // Replaces the generic stack for tier-1 detonations only. Each tile
@@ -2102,14 +2258,14 @@ namespace WordDrop
                 bool dbgTier3Burst   = tier == 3 && Tier3BurstScale > 0.01f;
                 bool dbgTier1Pop     = (tier == 1 && !meltdownActive) || isCascadePop;
                 bool dbgGenericStack = !dbgTier1Pop && !meltdownActive; // tier 2/3 generic
-                Debug.Log($"[ExplosionTier] tier={tier} tiles={tileCount} chain={chainStep} " +
+                WDLog.Log($"[ExplosionTier] tier={tier} tiles={tileCount} chain={chainStep} " +
                           $"(why: {(chainStep >= 3 ? "chain>=3" : tileCount >= 15 ? "tiles>=15" : chainStep >= 2 ? "chain>=2" : tileCount >= 12 ? "tiles>=12" : tileCount >= 8 ? "tiles>=8" : "default")}) " +
                           $"→ LAYERS: tier3Burst={dbgTier3Burst} meltdown={meltdownActive} tier1Pop={dbgTier1Pop}(cascade={isCascadePop}) genericStack={dbgGenericStack}");
             }
 
             if ((tier == 1 && !meltdownActive) || isCascadePop)
             {
-                Debug.Log($"[FX] Tier1Pop: FIRED (cascade={isCascadePop}, chain={chainStep}, tiles={tileCount})");
+                WDLog.Log($"[FX] Tier1Pop: FIRED (cascade={isCascadePop}, chain={chainStep}, tiles={tileCount})");
                 // Snapshot + clear the trigger-word side channel up-front so
                 // it can't leak into any later explosion this resolution step.
                 List<List<Tile>> cascadeWords = _pendingCascadeWords;
@@ -2220,7 +2376,7 @@ namespace WordDrop
             // explosion regardless of the FX_TileFlash toggle.
             if (FX_TileFlash || meltdownActive || isCascade)
             {
-                Debug.Log($"[FX] TileFlash: FIRED (toggle={FX_TileFlash}, meltdown={meltdownActive}, cascade={isCascade})");
+                WDLog.Log($"[FX] TileFlash: FIRED (toggle={FX_TileFlash}, meltdown={meltdownActive}, cascade={isCascade})");
                 for (int i = 0; i < tiles.Count; i++)
                 {
                     if (tiles[i] == null) continue;
@@ -2255,12 +2411,12 @@ namespace WordDrop
             // visual; the FX_FlipbookGlow-gated Play() reads as redundant.
             if ((FX_FlipbookGlow || isCascade) && !meltdownActive && FlipbookExplosion.Instance != null)
             {
-                Debug.Log("[FX] FlipbookGlow: FIRED");
+                WDLog.Log("[FX] FlipbookGlow: FIRED");
                 for (int i = 0; i < tiles.Count; i++)
                     if (tiles[i] != null)
                         FlipbookExplosion.Instance.Play(tiles[i].transform.position, tier);
             }
-            else { Debug.Log("[FX] FlipbookGlow: SKIPPED"); }
+            else { WDLog.Log("[FX] FlipbookGlow: SKIPPED"); }
 
             // Per-tile meltdown bubble fires UP in the meltdown prefab block
             // now (so it coincides with the spell prefab spawn on the same
@@ -2279,7 +2435,7 @@ namespace WordDrop
                 bool fragsThisShot = (FX_TileFragments || meltdownActive || isCascade || isInitial) && TileFragments.Instance != null;
                 if (fragsThisShot)
                 {
-                    if (i == 0) Debug.Log($"[FX] TileFragments: FIRED (toggle={FX_TileFragments}, meltdown={meltdownActive})");
+                    if (i == 0) WDLog.Log($"[FX] TileFragments: FIRED (toggle={FX_TileFragments}, meltdown={meltdownActive})");
                     // Restore scale to Vector3.one before Shatter samples it.
                     // During meltdown the windup shrinks tiles to 0.10×; without
                     // this restore, fragments would inherit the shrunken scale
@@ -2306,7 +2462,7 @@ namespace WordDrop
                     }
                     TileFragments.Instance.Shatter(tiles[i]);
                 }
-                else if (i == 0) { Debug.Log("[FX] TileFragments: SKIPPED"); }
+                else if (i == 0) { WDLog.Log("[FX] TileFragments: SKIPPED"); }
 
                 // Per-tile sparkle spray layer — sits over the chunks so each
                 // shatter point also emits sparkle stars. Always fires during
@@ -2315,20 +2471,20 @@ namespace WordDrop
                 bool sparkleSprayThisShot = (FX_SparkleSpray || meltdownActive || isCascade) && SparkleSpray.Instance != null;
                 if (sparkleSprayThisShot)
                 {
-                    if (i == 0) Debug.Log($"[FX] SparkleSpray (per-tile): FIRED (toggle={FX_SparkleSpray}, meltdown={meltdownActive})");
+                    if (i == 0) WDLog.Log($"[FX] SparkleSpray (per-tile): FIRED (toggle={FX_SparkleSpray}, meltdown={meltdownActive})");
                     SparkleSpray.Instance.Play(pos, intensity: 0.55f);
                 }
-                else if (i == 0) { Debug.Log("[FX] SparkleSpray (per-tile): SKIPPED"); }
+                else if (i == 0) { WDLog.Log("[FX] SparkleSpray (per-tile): SKIPPED"); }
 
                 // Sparkle stars + glow (tier 2+)
                 if ((FX_SparkleParticles || isCascade) && tier >= 2 && GameParticles.Instance != null)
                 {
-                    if (i == 0) Debug.Log("[FX] SparkleParticles: FIRED");
+                    if (i == 0) WDLog.Log("[FX] SparkleParticles: FIRED");
                     GameParticles.Instance.PlayPrimed(pos);
                     if (tier >= 3)
                         GameParticles.Instance.PlayWordScored(pos, tier * 3);
                 }
-                else if (i == 0) { Debug.Log($"[FX] SparkleParticles: SKIPPED (toggle={FX_SparkleParticles}, tier={tier})"); }
+                else if (i == 0) { WDLog.Log($"[FX] SparkleParticles: SKIPPED (toggle={FX_SparkleParticles}, tier={tier})"); }
 
                 // Detonation audio fires once (on the first tile) at the
                 // exact frame the tile disappears, so the bang is synced to
@@ -2337,7 +2493,7 @@ namespace WordDrop
                 // pattern); otherwise gated by FX_DetonationAudio.
                 if (i == 0 && (FX_DetonationAudio || meltdownActive || isCascade || isInitial))
                 {
-                    Debug.Log($"[FX] DetonationAudio: FIRED at tile-disappear (toggle={FX_DetonationAudio}, meltdown={meltdownActive}, cascade={isCascade}, initial={isInitial})");
+                    WDLog.Log($"[FX] DetonationAudio: FIRED at tile-disappear (toggle={FX_DetonationAudio}, meltdown={meltdownActive}, cascade={isCascade}, initial={isInitial})");
                     if (meltdownActive)
                     {
                         // Cut the earthquake rumble exactly when the bang fires
@@ -2389,12 +2545,12 @@ namespace WordDrop
             // ── Shake (tier 2+) ──
             if ((FX_BoardShake || meltdownActive || isCascade || isInitial) && boardShake)
             {
-                Debug.Log($"[FX] BoardShake: FIRED (toggle={FX_BoardShake}, meltdown={meltdownActive}, cascade={isCascade}, initial={isInitial})");
+                WDLog.Log($"[FX] BoardShake: FIRED (toggle={FX_BoardShake}, meltdown={meltdownActive}, cascade={isCascade}, initial={isInitial})");
                 PlayBoardShake(tier - 1, tileCount);
                 if (tier >= 3) ShakeHandCards(tier - 1, tileCount);
                 if (tier >= 4) PlayNeighborRipple(tiles, chainStep);
             }
-            else { Debug.Log($"[FX] BoardShake: SKIPPED (toggle={FX_BoardShake}, boardShake={boardShake})"); }
+            else { WDLog.Log($"[FX] BoardShake: SKIPPED (toggle={FX_BoardShake}, boardShake={boardShake})"); }
 
             // ── Confetti (tier 4) — REMOVED 2026-04-30 ──
             // The orange-ball confetti+burst (GameParticles.PlayDetonation +

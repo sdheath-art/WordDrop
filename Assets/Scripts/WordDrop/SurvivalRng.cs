@@ -40,14 +40,14 @@ namespace WordDrop
             _rng = new System.Random(seed);
             _seed = seed;
             _callCount = 0;
-            Debug.Log($"[SurvivalRng] Seeded with {seed} — gameplay random is now deterministic.");
+            WDLog.Log($"[SurvivalRng] Seeded with {seed} — gameplay random is now deterministic.");
         }
 
         /// <summary>Return to passthrough mode (UnityEngine.Random).</summary>
         public static void Reset()
         {
             if (_rng != null)
-                Debug.Log($"[SurvivalRng] Reset after {_callCount} calls (was seeded with {_seed}).");
+                WDLog.Log($"[SurvivalRng] Reset after {_callCount} calls (was seeded with {_seed}).");
             _rng = null;
             _seed = 0;
             _callCount = 0;

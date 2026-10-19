@@ -1509,7 +1509,7 @@ namespace WordDrop
         private void OpenCoinStore()
         {
             GameAudio.Instance?.PlayButtonClick();
-            Debug.Log("[LevelMapPanel] Coin store tapped — store not built yet (placeholder). 2026-07-14 Spencer.");
+            WDLog.Log("[LevelMapPanel] Coin store tapped — store not built yet (placeholder). 2026-07-14 Spencer.");
             // TODO: open the coin purchase store when it exists.
         }
 
@@ -1519,10 +1519,10 @@ namespace WordDrop
             if (s_lockTried) return s_lockIcon;
             s_lockTried = true;
             // Same padlock the boosters use. Imported as textureType Default → Texture2D fallback.
-            s_lockIcon = Resources.Load<Sprite>("Tiles/icon_lock");
+            s_lockIcon = Resources.Load<Sprite>("Tiles/icon_lock_02");
             if (s_lockIcon == null)
             {
-                var tex = Resources.Load<Texture2D>("Tiles/icon_lock");
+                var tex = Resources.Load<Texture2D>("Tiles/icon_lock_02");
                 if (tex != null)
                     s_lockIcon = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
             }
@@ -1669,7 +1669,7 @@ namespace WordDrop
             // reward would originate
             Vector3 src = new Vector3(Screen.width * 0.5f, Screen.height * 0.34f, 0f);
             CoinWallet.Add(coins);   // so the counter has something real to tick up to
-            SpawnCoinCascade(src, coins, () => Debug.Log($"[LevelMap] debug coin cascade done (+{coins})."));
+            SpawnCoinCascade(src, coins, () => WDLog.Log($"[LevelMap] debug coin cascade done (+{coins})."));
         }
 
         public void ShowForDebug()
@@ -1680,7 +1680,7 @@ namespace WordDrop
             int w = s_debugWorld;
             s_debugWorld = (s_debugWorld + 1) % s_worlds.Length;
             int mid = w * VISIBLE_NODES + 5; // middle-ish level of that world's batch
-            Show(mid - 1, mid, () => Debug.Log($"[LevelMap] debug preview → World {w + 1} ({s_worlds[w].Name})."));
+            Show(mid - 1, mid, () => WDLog.Log($"[LevelMap] debug preview → World {w + 1} ({s_worlds[w].Name})."));
         }
     }
 }

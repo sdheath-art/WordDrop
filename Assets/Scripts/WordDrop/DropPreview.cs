@@ -169,7 +169,7 @@ namespace WordDrop
                 ? string.Join(",", _previewWords.ConvertAll(w => w.Word))
                 : "none";
             int chainSize = _chainPrimedWords != null ? _chainPrimedWords.Count : 0;
-//             Debug.Log($"[Preview] Tile={letter} Col={col} Landing=({col},{targetRow}) " +
+//             WDLog.Log($"[Preview] Tile={letter} Col={col} Landing=({col},{targetRow}) " +
                       // $"Words={wordStr} Trigger={_wouldTriggerPrimed} ChainSize={chainSize}");
         }
 
@@ -188,7 +188,7 @@ namespace WordDrop
             _chainPrimedWords = null;
 
             ClearVisuals();
-//             Debug.Log("[Preview] Cleared");
+//             WDLog.Log("[Preview] Cleared");
         }
 
         public bool IsActive => _previewActive;

@@ -104,7 +104,7 @@ namespace WordDrop
             int n = positions.Count;
             if (n < 2)
             {
-                Debug.Log($"[JesterHat] Skipped — only {n} eligible tile(s) to shuffle");
+                WDLog.Log($"[JesterHat] Skipped — only {n} eligible tile(s) to shuffle");
                 GameAudio.Instance?.PlayUIClick();
                 onComplete?.Invoke();
                 return;
@@ -230,18 +230,18 @@ namespace WordDrop
                         Tile glowTile = grid.GetTile(cell.x, cell.y);
                         if (glowTile != null)
                         {
-                            glowTile.SetPrimedGlow(Tile.PRIMED_GLOW, playFlash: true, fuseRemaining: fuse);
+                            glowTile.SetPrimedGlow(RulesEngine.PrimedGlowForCell(new Vector2Int(glowTile.Col, glowTile.Row)), playFlash: true, fuseRemaining: fuse);
                             GameParticles.Instance?.PlayPrimed(glowTile.transform.position);
                         }
                     }
                 }
                 GameAudio.Instance?.PlayTilePrimed();
-                Debug.Log($"[JesterHat] Shuffle formed + primed {primedByShuffle.Count} word(s)!");
+                WDLog.Log($"[JesterHat] Shuffle formed + primed {primedByShuffle.Count} word(s)!");
             }
 
             yield return new WaitForSeconds(0.30f);
 
-            Debug.Log($"[JesterHat] Shuffled {n} tiles board-wide (primed/wild/stone preserved)");
+            WDLog.Log($"[JesterHat] Shuffled {n} tiles board-wide (primed/wild/stone preserved)");
             onComplete?.Invoke();
         }
     }

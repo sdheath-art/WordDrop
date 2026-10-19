@@ -94,8 +94,15 @@ namespace WordDrop
             Instance = this;
         }
 
+        /// <summary>2026-09-08 Spencer: MASTER OFF for the whole word-hint system while
+        /// the swap pivot is being felt out — the marching-ants outline, the idle jam hint
+        /// and the lantern trace all read through here. Set true to bring them back;
+        /// the per-user settings toggle still works underneath.</summary>
+        public static bool HINTS_DISABLED = true;
+
         public static bool IsEnabled()
         {
+            if (HINTS_DISABLED) return false;
             // Default ON; user can disable in settings.
             return PlayerPrefs.GetInt(PREF_KEY, 1) != 0;
         }

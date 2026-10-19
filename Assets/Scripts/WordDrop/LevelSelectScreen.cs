@@ -60,7 +60,7 @@ namespace WordDrop
                     _availableLevels.Add(id);
             }
             _availableLevels.Sort();
-            Debug.Log($"[LevelSelectScreen] Scanned {_availableLevels.Count} level JSONs: "
+            WDLog.Log($"[LevelSelectScreen] Scanned {_availableLevels.Count} level JSONs: "
                 + string.Join(",", _availableLevels));
         }
 

@@ -78,7 +78,7 @@ namespace WordDrop
                     new Rect(0, 0, flareTex.width, flareTex.height),
                     new Vector2(0.5f, 0.5f), 100f);
                 _sprite = _flareSprite; // for prewarm pool default
-                Debug.Log($"[SparkleSpray] Loaded flare.png {flareTex.width}×{flareTex.height}");
+                WDLog.Log($"[SparkleSpray] Loaded flare.png {flareTex.width}×{flareTex.height}");
             }
 
             // Hovl Point1 (32×32) — small soft dot, supplemental "twinkle" particle.
@@ -88,7 +88,7 @@ namespace WordDrop
                 _pointSprite = Sprite.Create(pointTex,
                     new Rect(0, 0, pointTex.width, pointTex.height),
                     new Vector2(0.5f, 0.5f), 100f);
-                Debug.Log($"[SparkleSpray] Loaded point1.png {pointTex.width}×{pointTex.height}");
+                WDLog.Log($"[SparkleSpray] Loaded point1.png {pointTex.width}×{pointTex.height}");
             }
 
             // Fallback if neither loaded — keep the system functional with a generic blob.

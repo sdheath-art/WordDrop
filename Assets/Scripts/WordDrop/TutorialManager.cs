@@ -234,7 +234,7 @@ namespace WordDrop
                 return;
             }
 
-//             Debug.Log("[TutorialManager] === TUTORIAL BEGIN ===");
+//             WDLog.Log("[TutorialManager] === TUTORIAL BEGIN ===");
 
             // Level 1 target: explode 4 words. Taught as gated charge→explode cycles.
             _cycleIndex = 0;
@@ -324,7 +324,7 @@ namespace WordDrop
                 HandManager.Instance.SetInteractable(true);
 
             _transitioning = false;
-//             Debug.Log($"[TutorialManager] Cycle {cycleIndex} charge ready — drop {cyc.Drop1} at col 2 → {cyc.Charge}.");
+//             WDLog.Log($"[TutorialManager] Cycle {cycleIndex} charge ready — drop {cyc.Drop1} at col 2 → {cyc.Charge}.");
         }
 
         /// <summary>Loops the hand-point hint dragging from a hand card up into a board column,
@@ -393,7 +393,7 @@ namespace WordDrop
                 HandManager.Instance.SetInteractable(true);
 
             _transitioning = false;
-//             Debug.Log("[TutorialManager] Step 2 ready — waiting for D drop at column 2 to form DOG.");
+//             WDLog.Log("[TutorialManager] Step 2 ready — waiting for D drop at column 2 to form DOG.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -473,7 +473,7 @@ namespace WordDrop
                 HandManager.Instance.SetInteractable(true);
 
             _transitioning = false;
-//             Debug.Log($"[TutorialManager] Cycle {cycleIndex} explode ready — drop Drop2 at col 4 → Blast → detonation.");
+//             WDLog.Log($"[TutorialManager] Cycle {cycleIndex} explode ready — drop Drop2 at col 4 → Blast → detonation.");
         }
 
         // ══════════════════════════════════════════════════════════════════════════
@@ -505,7 +505,7 @@ namespace WordDrop
             if (_step != TutorialStep.WaitForDrop) return;
             if (_transitioning) return;
 
-//             Debug.Log($"[TutorialManager] Tile dropped during step 1: '{evt.Letter}' at col {evt.Col}");
+//             WDLog.Log($"[TutorialManager] Tile dropped during step 1: '{evt.Letter}' at col {evt.Col}");
 
             // Step 1 complete — they learned to drop
             _step = TutorialStep.WaitForWord;
@@ -556,7 +556,7 @@ namespace WordDrop
                 HUDManager.Instance?.SetObjective(_levelObjective);
                 HUDManager.Instance?.PulseObjective();
             }
-//             Debug.Log($"[TutorialManager] Cycle {_cycleIndex} blast — exploded {_wordsExploded}/{GOAL_WORDS}.");
+//             WDLog.Log($"[TutorialManager] Cycle {_cycleIndex} blast — exploded {_wordsExploded}/{GOAL_WORDS}.");
 
             // Let the explosion read.
             yield return new WaitForSeconds(1.3f);
@@ -606,12 +606,12 @@ namespace WordDrop
             DimShuffle(false);
             TutorialSpotlight.Hide();   // never leave the dim stuck on screen (skip / end / abort)
 
-//             Debug.Log("[TutorialManager] === TUTORIAL END ===");
+//             WDLog.Log("[TutorialManager] === TUTORIAL END ===");
         }
 
         private void StartNormalGame()
         {
-//             Debug.Log("[TutorialManager] Starting normal game after tutorial.");
+//             WDLog.Log("[TutorialManager] Starting normal game after tutorial.");
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Playing);
         }
@@ -690,7 +690,7 @@ namespace WordDrop
             }
             HandManager.OnBoardSwapDone -= OnGatedBoardSwap;
             HandManager.OnBoardSwapDone += OnGatedBoardSwap;
-            Debug.Log($"[TutorialGate] BEGIN edit-gated level — {script.Length} guided edits.");
+            WDLog.Log($"[TutorialGate] BEGIN edit-gated level — {script.Length} guided edits.");
             SetupEditGateStep(0);
         }
 
@@ -742,7 +742,7 @@ namespace WordDrop
             _editAdvancing = false;
             if (_editPointerCo != null) StopCoroutine(_editPointerCo);
             _editPointerCo = StartCoroutine(EditPointerRoutine(e));
-            Debug.Log($"[TutorialGate] edit step {i}: tile ({e.Col},{e.Row}) → '{e.Letter}'.");
+            WDLog.Log($"[TutorialGate] edit step {i}: tile ({e.Col},{e.Row}) → '{e.Letter}'.");
             try
             {
                 if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
@@ -829,7 +829,7 @@ namespace WordDrop
                     if (phase == 0)
                     {
                         Vector3 tileW = grid.CellToWorld(e.Col, e.Row); // computed live — grid is laid out by now
-                        Debug.Log($"[EditPointerDiag] ShowTap on tile ({e.Col},{e.Row}) worldY={tileW.y:0.00} (readyWait={readyWait:0.00}s).");
+                        WDLog.Log($"[EditPointerDiag] ShowTap on tile ({e.Col},{e.Row}) worldY={tileW.y:0.00} (readyWait={readyWait:0.00}s).");
                         TutorialSpotlight.ShowTap(tileW + corner);
                         shownPhase = 0;
                     }
@@ -909,7 +909,7 @@ namespace WordDrop
             TutorialSpotlight.Hide();
             HintManager.Instance?.ClearForcedHint();
             if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
-            Debug.Log("[TutorialGate] edit-gated level complete — coaching released.");
+            WDLog.Log("[TutorialGate] edit-gated level complete — coaching released.");
         }
 
         private void BeginGatedLevel(GateDrop[] script)
@@ -923,7 +923,7 @@ namespace WordDrop
                 RulesEngine.Instance.OnTileDropped -= OnGatedTileDropped;
                 RulesEngine.Instance.OnTileDropped += OnGatedTileDropped;
             }
-            Debug.Log($"[TutorialGate] BEGIN gated level — {script.Length} guided drops.");
+            WDLog.Log($"[TutorialGate] BEGIN gated level — {script.Length} guided drops.");
             SetupGateStep(0);
         }
 
@@ -966,7 +966,7 @@ namespace WordDrop
 
             if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
             _gateAdvancing = false;
-            Debug.Log($"[TutorialGate] step {i}: drop '{drop.Letter}' → col {drop.Col} ({(drop.Charge ? "charge" : "explode")}).");
+            WDLog.Log($"[TutorialGate] step {i}: drop '{drop.Letter}' → col {drop.Col} ({(drop.Charge ? "charge" : "explode")}).");
         }
 
         private void OnGatedTileDropped(TileDroppedEvent evt)
@@ -1033,7 +1033,7 @@ namespace WordDrop
             TutorialSpotlight.Hide();
             HintManager.Instance?.ClearForcedHint();
             if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
-//             Debug.Log("[TutorialGate] gated level complete — coaching released.");
+//             WDLog.Log("[TutorialGate] gated level complete — coaching released.");
         }
 
         /// <summary>End any active gated-level coaching (hand-pointer, input gate, forced hint) RIGHT NOW.
@@ -1043,12 +1043,12 @@ namespace WordDrop
         {
             if (_gateScript != null)
             {
-                Debug.Log("[TutorialGate] CancelActiveCoaching — clearing a stale gate from a previous level.");
+                WDLog.Log("[TutorialGate] CancelActiveCoaching — clearing a stale gate from a previous level.");
                 EndGatedLevel();
             }
             if (_editScript != null)
             {
-                Debug.Log("[TutorialGate] CancelActiveCoaching — clearing a stale EDIT gate.");
+                WDLog.Log("[TutorialGate] CancelActiveCoaching — clearing a stale EDIT gate.");
                 EndGatedEditLevel();
             }
         }
@@ -1160,6 +1160,9 @@ namespace WordDrop
         // Cache the rounded-rect textures: CreateSolidRoundedRect builds an ~890x270 texture with per-pixel
         // corners — far too costly to regenerate on every beat (it was hitching the letter-collection fly-up).
         // Generate once, reuse forever. 2026-07-08 Spencer.
+        // Coach bubble draws above the board's cluster outline (128) / payout badge (130).
+        private const int COACH_ORDER = 140;
+
         private static Sprite s_panelBorderSprite;
         private static Sprite s_panelFillSprite;
 
@@ -1222,12 +1225,12 @@ namespace WordDrop
         private System.Collections.IEnumerator NearTopOutRoutine()
         {
             if (SurvivalManager.Instance != null) SurvivalManager.Instance.SetOverlayPaused(true);
-            var topRows = new List<Vector2Int>();
             int rows = RulesEngine.ROWS;
-            for (int r = System.Math.Max(0, rows - 2); r < rows; r++)
-                for (int c = 0; c < RulesEngine.COLS; c++)
-                    topRows.Add(new Vector2Int(c, r));
-            TutorialSpotlight.SpotlightCells(topRows, topRows, -1); // dim all, spotlight the top danger rows
+            // Dim everything EXCEPT the top two rows — the danger zone reads as the one lit strip.
+            // 2026-09-22 Spencer. Was SpotlightCells, which lit the TILES in those rows and laid a
+            // flat blue slab behind them; the rows are empty, so it lit nothing and the slab was
+            // authored against the old board.
+            TutorialSpotlight.ShowExceptRows(System.Math.Max(0, rows - 2), rows - 1);
             ShowInstruction("The board's almost full! Clear words fast or you'll top out.", 3.5f); // bubble low, below the top rows
             ShowTapToSkip();
             yield return null;
@@ -1253,7 +1256,7 @@ namespace WordDrop
             if (PrimeDecayShown) return;
             if (!PrimeDecayIntroPending)
             {
-                if (!PrimeDecayDiagLogged) { PrimeDecayDiagLogged = true; Debug.Log($"[PrimeDecay] warning-color tile seen at {cell} but NOT armed (PrimeDecayIntroPending=false). Is this L7?"); }
+                if (!PrimeDecayDiagLogged) { PrimeDecayDiagLogged = true; WDLog.Log($"[PrimeDecay] warning-color tile seen at {cell} but NOT armed (PrimeDecayIntroPending=false). Is this L7?"); }
                 return;
             }
             if (Instance == null) return;
@@ -1262,11 +1265,11 @@ namespace WordDrop
             var words = rules.PrimedRegistry.GetPrimedWordsContaining(cell);
             if (words == null || words.Count == 0 || words[0].Cells == null || words[0].Cells.Count == 0)
             {
-                if (!PrimeDecayDiagLogged) { PrimeDecayDiagLogged = true; Debug.Log($"[PrimeDecay] armed + warning tile at {cell}, but registry lookup found no word (words={(words==null?"null":words.Count.ToString())})."); }
+                if (!PrimeDecayDiagLogged) { PrimeDecayDiagLogged = true; WDLog.Log($"[PrimeDecay] armed + warning tile at {cell}, but registry lookup found no word (words={(words==null?"null":words.Count.ToString())})."); }
                 return;
             }
             PrimeDecayShown = true;
-            Debug.Log($"[PrimeDecay] FIRING beat — word of {words[0].Cells.Count} cells (trigger cell {cell}).");
+            WDLog.Log($"[PrimeDecay] FIRING beat — word of {words[0].Cells.Count} cells (trigger cell {cell}).");
             Instance.ShowPrimeDecayIntro(new List<Vector2Int>(words[0].Cells));
         }
         public void ShowPrimeDecayIntro(List<Vector2Int> wordCells)
@@ -1311,7 +1314,9 @@ namespace WordDrop
             if (s_panelBorderSprite == null) s_panelBorderSprite = TileRenderer.CreateSolidRoundedRect(890, 270, 74, Color.white);
             bsr.sprite = s_panelBorderSprite;
             bsr.color = PANEL_BORDER;
-            bsr.sortingOrder = 48;
+            // 2026-09-10 Spencer: above the cluster outline (128) and payout badge (130).
+            // At 48/49/50 a payout number drew straight through the coaching message.
+            bsr.sortingOrder = COACH_ORDER;
 
             // Cream fill, inset ~16px so the blue reads as a border rim.
             var fill = new GameObject("Fill");
@@ -1321,7 +1326,7 @@ namespace WordDrop
             if (s_panelFillSprite == null) s_panelFillSprite = TileRenderer.CreateSolidRoundedRect(858, 238, 58, Color.white);
             fsr.sprite = s_panelFillSprite;
             fsr.color = PANEL_FILL;
-            fsr.sortingOrder = 49;
+            fsr.sortingOrder = COACH_ORDER + 1;
 
             // Bold blue text, wrapped, centred in the card.
             var textGO = new GameObject("Text");
@@ -1334,7 +1339,7 @@ namespace WordDrop
             _instructionText.fontSize       = 4.4f;
             _instructionText.color          = PANEL_TEXT;
             _instructionText.alignment      = TMPro.TextAlignmentOptions.Center;
-            _instructionText.sortingOrder   = 50;
+            _instructionText.sortingOrder   = COACH_ORDER + 2;
             _instructionText.rectTransform.sizeDelta = new Vector2(7.6f, 2.4f);
             _instructionText.enableWordWrapping = true;
             _instructionText.overflowMode   = TMPro.TextOverflowModes.Overflow;
@@ -1430,7 +1435,7 @@ namespace WordDrop
 
         private void OnSkipClicked()
         {
-//             Debug.Log("[TutorialManager] Tutorial skipped by player.");
+//             WDLog.Log("[TutorialManager] Tutorial skipped by player.");
             _skipForSession = true;
             PlayerPrefs.SetInt("tutorial_complete", 1);
             PlayerPrefs.Save();
@@ -1638,7 +1643,7 @@ namespace WordDrop
             HighScoreManager.ResetAll();
             PlayerPrefs.Save();
             _skipForSession = false;
-//             Debug.Log("[TutorialManager] Tutorial reset (+ high scores cleared) — will run on next game.");
+//             WDLog.Log("[TutorialManager] Tutorial reset (+ high scores cleared) — will run on next game.");
         }
     }
 }

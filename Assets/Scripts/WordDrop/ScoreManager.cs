@@ -61,7 +61,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-//             Debug.Log("[ScoreManager] Awake");
+//             WDLog.Log("[ScoreManager] Awake");
         }
 
         // ── Combo API ─────────────────────────────────────────────────────────────
@@ -80,14 +80,14 @@ namespace WordDrop
             }
 
             TurnsUntilComboExpires--;
-//             Debug.Log($"[ScoreManager] AdvancePlayerTurn — " +
+//             WDLog.Log($"[ScoreManager] AdvancePlayerTurn — " +
                       // $"TurnsUntilComboExpires={TurnsUntilComboExpires} ComboCount={ComboCount}");
 
             if (TurnsUntilComboExpires == 0 && ComboCount > 0)
             {
                 int oldCombo = ComboCount;
                 ComboCount = 0;
-//                 Debug.Log($"[ScoreManager] Combo EXPIRED — was {oldCombo} → reset to 0. " +
+//                 WDLog.Log($"[ScoreManager] Combo EXPIRED — was {oldCombo} → reset to 0. " +
                           // $"No word scored for 2 consecutive turns.");
                 NotifyHUDCombo();
             }
@@ -111,7 +111,7 @@ namespace WordDrop
         {
             if (!isPlayer)
             {
-//                 Debug.Log("[ScoreManager] RecordWordScored(AI) — player combo unchanged.");
+//                 WDLog.Log("[ScoreManager] RecordWordScored(AI) — player combo unchanged.");
                 return;
             }
 
@@ -122,7 +122,7 @@ namespace WordDrop
             TurnsUntilComboExpires = 2;
 
             float mult = GetComboMultiplier();
-//             Debug.Log($"[ScoreManager] RecordWordScored(Player) — " +
+//             WDLog.Log($"[ScoreManager] RecordWordScored(Player) — " +
                       // $"ComboCount={ComboCount}  multiplier=×{mult:F1}  " +
                       // $"expiresIn={TurnsUntilComboExpires} turns");
 
@@ -158,11 +158,84 @@ namespace WordDrop
 
         // ── Score API ─────────────────────────────────────────────────────────────
 
+        // ── FLY-UP SCORE BANK (2026-09-09 Spencer) ──────────────────────────────────
+        // "the score should be running up when the words hit the number total right?"
+        // Yes — the counter has to jump on IMPACT, not run on its own clock while letters
+        // happen to be in the air. The blast DEPOSITS its points here instead of awarding
+        // them; each letter that lands WITHDRAWS an equal share, so the number climbs in
+        // step with the hits.
+        // Flush() exists because the letters do not always fly — reduced motion, no
+        // objective, suppressed fly-ups — and the player must never silently lose points
+        // because an animation was skipped. Anything undelivered is paid out at the end.
+        private int _flyPending;
+        private int _flyRemaining;
+
+        private int _flyBurstTotal;   // whole burst, for sizing the ONE finale
+        private float _flyActivityAt;  // last deposit or landing, unscaled
+
+        // Safety net ONLY. Points must never depend on an animation having played — the
+        // letters do not always fly (reduced motion, suppressed fly-ups, no objective).
+        // Time-driven rather than tied to the resolution ending, because the resolution
+        // finishes while the letters are still in the air. 2026-09-09 Spencer.
+        private const float FLY_FLUSH_TIMEOUT = 1.6f;
+
+        private void Update()
+        {
+            if (_flyPending > 0 && Time.unscaledTime - _flyActivityAt > FLY_FLUSH_TIMEOUT)
+                FlushFlyScore();
+        }
+
+        public void DepositFlyScore(int pts)
+        {
+            if (pts <= 0) return;
+            WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} DEPOSIT {pts} (pending was {_flyPending}, remaining={_flyRemaining})");
+            _flyPending    += pts;
+            _flyBurstTotal += pts;
+            _flyActivityAt  = Time.unscaledTime;
+        }
+
+        /// <summary>Called once by the fly-up when it knows how many letters will land.</summary>
+        public void SetFlyLetterCount(int n)
+        {
+            // ACCUMULATE. A chain fires several fly-ups and the later ones register while
+            // earlier letters are still in the air; overwriting the count made the shares
+            // divide by the wrong number. 2026-09-09 Spencer.
+            _flyRemaining = Mathf.Max(0, _flyRemaining) + Mathf.Max(0, n);
+        }
+
+        /// <summary>One letter landed — pay its share of the bank.</summary>
+        public void AwardOneFlyShare()
+        {
+            WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} AWARD share (pending={_flyPending}, remaining={_flyRemaining})");
+            if (_flyPending <= 0) { _flyRemaining = Mathf.Max(0, _flyRemaining - 1); return; }
+            int share = _flyRemaining > 1 ? Mathf.CeilToInt(_flyPending / (float)_flyRemaining) : _flyPending;
+            share = Mathf.Min(share, _flyPending);
+            _flyPending   -= share;
+            _flyRemaining  = Mathf.Max(0, _flyRemaining - 1);
+            _flyActivityAt = Time.unscaledTime;
+            AddPlayerScore(share);
+            // Last letter of the burst — fire the finale ONCE, sized by the whole burst
+            // rather than by this one share.
+            if (_flyPending <= 0 || _flyRemaining <= 0)
+            {
+                HUDManager.Instance?.PlayScoreSlam(_flyBurstTotal);
+                _flyBurstTotal = 0;
+            }
+        }
+
+        /// <summary>Pay out anything the landings did not deliver. Safe to call every turn.</summary>
+        public void FlushFlyScore()
+        {
+            if (_flyPending > 0) WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} TIMEOUT-FLUSH {_flyPending} — the 1.6s backstop paid this, not the landings");
+            if (_flyPending > 0) { int r = _flyPending; _flyPending = 0; AddPlayerScore(r); }
+            _flyRemaining = 0; _flyBurstTotal = 0;
+        }
+
         /// <summary>Adds points to the player's running total.</summary>
         public void AddPlayerScore(int pts)
         {
             PlayerScore += pts;
-//             Debug.Log($"[ScoreManager] AddPlayerScore({pts}) → PlayerScore={PlayerScore}");
+//             WDLog.Log($"[ScoreManager] AddPlayerScore({pts}) → PlayerScore={PlayerScore}");
 
             if (HUDManager.Instance != null)
                 HUDManager.Instance.SetScore(PlayerScore);
@@ -178,7 +251,7 @@ namespace WordDrop
             // first thing to re-evaluate the target. Hooking the check here
             // covers EVERY score-add path, including future ones.
             if (pts > 0
-                && SurvivalManager.IsSurvivalMode
+                && (SurvivalManager.IsSurvivalMode || SurvivalManager.ScoreRunMode)
                 && SurvivalManager.Instance != null)
             {
                 SurvivalManager.Instance.CheckStageClear();
@@ -189,7 +262,7 @@ namespace WordDrop
         public void AddAIScore(int pts)
         {
             AIScore += pts;
-//             Debug.Log($"[ScoreManager] AddAIScore({pts}) → AIScore={AIScore}");
+//             WDLog.Log($"[ScoreManager] AddAIScore({pts}) → AIScore={AIScore}");
         }
 
         /// <summary>
@@ -211,7 +284,7 @@ namespace WordDrop
             if (HUDManager.Instance != null)
                 HUDManager.Instance.SetScore(0);
 
-//             Debug.Log("[ScoreManager] Scores reset — PlayerScore=0, AIScore=0, Combo=0");
+//             WDLog.Log("[ScoreManager] Scores reset — PlayerScore=0, AIScore=0, Combo=0");
         }
 
         // ── Legacy per-round API stubs ────────────────────────────────────────────

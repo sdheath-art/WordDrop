@@ -41,7 +41,21 @@ namespace WordDrop
         private Material _baseMat;
 
         /// <summary>Clone the pre-configured ParticleUnlit material with a different texture.</summary>
-        private Material CloneMat(Texture2D tex)
+        /// <summary>Clone the base particle material onto a texture.
+        ///
+        /// 2026-09-08 Spencer. EVERY particle material used to be forced to alpha blending
+        /// ("Ensure alpha blending works for transparent textures"). That was almost certainly
+        /// a workaround for the black fringe caused by alphaIsTransparency being OFF on all but
+        /// one of the ~60 particle textures — the import settings are fixed now, so the
+        /// workaround is no longer needed and was costing every spark and glow its luminosity.
+        ///
+        /// LIGHT adds to what is behind it (SrcAlpha One): sparks, glows, flares, flashes.
+        /// Overlapping ones get brighter, and they can cross into bloom.
+        /// MATTER covers what is behind it (SrcAlpha OneMinusSrcAlpha): smoke, dust, confetti,
+        /// debris — additive smoke reads as glowing gas, and additive confetti stops looking
+        /// like paper. So this is a choice per material, not one global setting.
+        /// </summary>
+        private Material CloneMat(Texture2D tex, bool additive = false)
         {
             if (_baseMat == null)
             {
@@ -55,9 +69,10 @@ namespace WordDrop
             if (tex == null) return _baseMat;
             var mat = new Material(_baseMat);
             mat.mainTexture = tex;
-            // Ensure alpha blending works for transparent textures
             mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            mat.SetInt("_DstBlend", additive
+                ? (int)UnityEngine.Rendering.BlendMode.One                 // light — accumulates
+                : (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);  // matter — occludes
             return mat;
         }
 
@@ -81,15 +96,15 @@ namespace WordDrop
             var fallback = softTex;
 
             // All materials clone from the pre-configured ParticleUnlit in Resources
-            var starMat = CloneMat(starTex ?? fallback);
-            var flareMat = CloneMat(flareTex ?? fallback);
-            var flashMat = CloneMat(flashTex ?? fallback);
-            var glowMat = CloneMat(glowTex ?? fallback);
-            var sparkMat = CloneMat(sparkTex ?? fallback);
-            var smokeMat = CloneMat(smokeTex ?? fallback);
-            var confettiMat = CloneMat(heartTex ?? fallback);
+            var starMat = CloneMat(starTex ?? fallback, additive: true);      // sparkle stars — light
+            var flareMat = CloneMat(flareTex ?? fallback, additive: true);    // flare — light
+            var flashMat = CloneMat(flashTex ?? fallback, additive: true);    // blast flash — light
+            var glowMat = CloneMat(glowTex ?? fallback, additive: true);      // glow — light
+            var sparkMat = CloneMat(sparkTex ?? fallback, additive: true);    // chain sparks — light
+            var smokeMat = CloneMat(smokeTex ?? fallback);                    // smoke/dust — MATTER, stays alpha
+            var confettiMat = CloneMat(heartTex ?? fallback);                 // confetti — MATTER, stays alpha
 
-//             Debug.Log($"[GameParticles] Loaded textures: star_hc={starTex != null} flare_hc={flareTex != null} " +
+//             WDLog.Log($"[GameParticles] Loaded textures: star_hc={starTex != null} flare_hc={flareTex != null} " +
                        // $"flashfree2={flashTex != null} glowfree1={glowTex != null} smokefree1={smokeTex != null}");
 
             _sparkleSystem = BuildSparkles(starMat);
@@ -98,7 +113,7 @@ namespace WordDrop
             _dustSystem = BuildDust(smokeMat);
             _glowSystem = BuildGlow(glowMat);
             _chainSystem = BuildChain(sparkMat, flashMat);
-            _shimmerSystem = BuildShimmer(CloneMat(starTex ?? fallback));
+            _shimmerSystem = BuildShimmer(CloneMat(starTex ?? fallback, additive: true)); // shimmer — light
         }
 
         // ── Sparkles: gold stars that twinkle outward ───────────────────

@@ -40,7 +40,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
-//             Debug.Log("[RisingRowManager] Awake — Enabled=" + Enabled +
+//             WDLog.Log("[RisingRowManager] Awake — Enabled=" + Enabled +
                       // " TurnInterval=" + TurnInterval);
         }
 
@@ -86,7 +86,7 @@ namespace WordDrop
             bool overflow = rules.HasAnyTileInTopRow();
             if (overflow)
             {
-//                 Debug.Log("[RisingRowManager] Board overflow! Tiles in top row would be pushed off.");
+//                 WDLog.Log("[RisingRowManager] Board overflow! Tiles in top row would be pushed off.");
                 onComplete?.Invoke(true); // overflow = true
                 yield break;
             }
@@ -115,7 +115,7 @@ namespace WordDrop
             if (crushedCells.Count > 0)
             {
                 grid.RemoveTiles(crushedCells);
-//                 Debug.Log($"[RisingRowManager] Crushed {crushedCells.Count} tiles off the top row.");
+//                 WDLog.Log($"[RisingRowManager] Crushed {crushedCells.Count} tiles off the top row.");
             }
 
             // 2b. Shift bonus cells up before filling new row
@@ -130,6 +130,12 @@ namespace WordDrop
             // 4. Update primed word cell positions (shift all cells up by 1 row)
             if (rules.PrimedRegistry != null && shiftMoves.Count > 0)
                 rules.PrimedRegistry.UpdateCellPositions(shiftMoves);
+                // Then drop anything whose cells no longer hold its letters. A word left with
+                // STALE coordinates looks adjacent to whatever now occupies them — and
+                // FindConnectedGroup is a flood-fill, so one stale word silently welds two
+                // unrelated clusters together and tapping one detonates the other across the
+                // board. Validating here closes that off. 2026-09-09 Spencer.
+                rules.ValidatePrimedWords();
 
             // 5. Remap scored keys to post-shift positions FIRST (y+1),
             //    THEN register bottom-row words as scored so they don't auto-prime.
@@ -151,9 +157,12 @@ namespace WordDrop
             yield return StartCoroutine(grid.AnimateRiseRow(rules, shiftMoves, newLetters));
 
             // 9. Refresh bonus cell visual overlays
+            // A rise moves every tile; nothing in AnimateRiseRow carries the ICE state across,
+            // so reconcile frost against the data here or the two drift apart. 2026-10-19.
+            grid.ReconcileFrozenVisuals(rules);
             grid.RefreshBonusCellOverlays();
 
-//             Debug.Log("[RisingRowManager] Rising row complete. New bottom row: " +
+//             WDLog.Log("[RisingRowManager] Rising row complete. New bottom row: " +
 //                       new string(newLetters));
 
             onComplete?.Invoke(false); // no overflow

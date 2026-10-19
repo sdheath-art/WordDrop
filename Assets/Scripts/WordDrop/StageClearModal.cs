@@ -143,7 +143,14 @@ namespace WordDrop
         // — gives the player a beat to see the last explosion's tail before
         // the modal flies in.
         private float _explosionsClearedAt = -1f;
-        private const float POST_EXPLOSION_BEAT = 0.45f;
+        // 2026-09-10 Spencer: "it goes to the well done page so quickly i'm not sure the
+        // check mark animation is even firing". The celebration (bing + checkmark drop + spark
+        // burst) fires the instant the score target is crossed, and the modal was landing on
+        // top of it. 0.45 -> 1.25 leaves the celebration visible before the screen changes.
+        // 0.45 was too short to see the celebration; 1.25 (2026-09-10) was a "massive delay"
+        // and bought nothing, because the checkmark was being hidden every frame anyway. With
+        // that fixed, 0.80 covers the tick's 0.45s pop plus a breath, without the dead air.
+        private const float POST_EXPLOSION_BEAT = 0.80f;
         private float _flyUpWaitStartedAt = -1f;         // when we started holding for fly-ups-to-target
         private const float FLY_UP_MAX_WAIT = 3f;        // safety cap so a dropped fly-up callback can't hang the modal
 
@@ -186,9 +193,26 @@ namespace WordDrop
             // null-guard means we'll try again on first HandleStageCleared call
             // via the late-bind path below.
             BuildUI();
-            if (_canvas != null) _canvas.gameObject.SetActive(false);
+            SetCanvasVisible(false);
 
             TrySubscribe();
+        }
+
+        /// <summary>Show/hide WITHOUT SetActive on the canvas root.
+        ///
+        /// SetActive tears down and rebuilds the entire canvas — layout, batching and mesh
+        /// generation for every element and every TextMeshPro string — which is a single-frame
+        /// spike every time the modal appears. Disabling the Canvas COMPONENT stops it
+        /// rendering while leaving the hierarchy and its built batches intact, so showing it
+        /// again costs almost nothing. The raycaster goes with it so a hidden modal cannot
+        /// swallow taps. 2026-09-09 Spencer — the "well done" screen frame drop.</summary>
+        private void SetCanvasVisible(bool visible)
+        {
+            if (_canvas == null) return;
+            if (!_canvas.gameObject.activeSelf) _canvas.gameObject.SetActive(true);
+            if (_canvas.enabled != visible) _canvas.enabled = visible;
+            var gr = _canvas.GetComponent<UnityEngine.UI.GraphicRaycaster>();
+            if (gr != null && gr.enabled != visible) gr.enabled = visible;
         }
 
         private void TrySubscribe()
@@ -367,7 +391,7 @@ namespace WordDrop
             // shows here twice, the event was enqueued twice (SurvivalManager); if it shows
             // once per "[Stage] CLEARED" the modal isn't the doubler. queueRemaining helps
             // spot a stale leftover enqueue.
-            Debug.Log($"[StageModalTrace] SHOW stage {ctx.ClearedStage} (queueRemaining={_pendingQueue.Count})");
+            WDLog.Log($"[StageModalTrace] SHOW stage {ctx.ClearedStage} (queueRemaining={_pendingQueue.Count})");
             Show(ctx);
         }
 
@@ -487,7 +511,7 @@ namespace WordDrop
             KillAllEntranceTweens();
             ResetEntranceState();
 
-            _canvas.gameObject.SetActive(true);
+            SetCanvasVisible(true);
 
             // Kick off the choreographed entrance.
             AnimateEntrance(ctx);
@@ -1107,7 +1131,7 @@ namespace WordDrop
             Sprite twinkle = LoadTwinkleSprite();
             Sprite halo = LoadGlowStarSprite(); // soft_circle — the soft glow BEHIND each glint (Candy-Crush 2-layer sparkle)
             if (flare == null && twinkle == null) { Debug.LogWarning("[StageClear] SpawnStarSparkles: no flare/twinkle sprite — no sparkles."); return; }
-            Debug.Log($"[StageClear] SpawnStarSparkles firing (flare={(flare!=null)} twinkle={(twinkle!=null)} halo={(LoadGlowStarSprite()!=null)})");
+            WDLog.Log($"[StageClear] SpawnStarSparkles firing (flare={(flare!=null)} twinkle={(twinkle!=null)} halo={(LoadGlowStarSprite()!=null)})");
             Material addMat = LoadAdditiveGlowMaterial();
             const int COUNT = 24;
             int behindStar = _heroStarRect.GetSiblingIndex(); // insert sparkles here → render BEHIND the star
@@ -1711,6 +1735,19 @@ namespace WordDrop
 
         private void OnContinuePressed()
         {
+            // DIAGNOSTIC 2026-10-19: does the tap even REACH the modal? The clear-then-freeze
+            // report showed the modal SHOWING and taps landing in SwipeWordInput instead, with
+            // no dismiss. This line separates "the tap never arrived" from "it arrived and the
+            // dismiss chain stalled" — two completely different fixes.
+            WDLog.Log($"[StageModalTrace] CONTINUE pressed (dismissing={_isDismissing}, timeScale={Time.timeScale})");
+            // SAFETY NET: a hitstop/meltdown that was interrupted by the stage clear can leave
+            // timeScale at 0. Nothing downstream of here wants a frozen clock, and a stuck 0
+            // silently breaks every scaled tween and coroutine in the dismiss chain.
+            if (Time.timeScale < 0.01f)
+            {
+                Debug.LogWarning("[StageClear] timeScale was 0 at dismiss — restoring to 1.");
+                Time.timeScale = 1f;
+            }
             // Stop the idle pulse before dismiss so it doesn't fight over scale.
             // The press-squash that used to run here was killed mid-flight by
             // PopOut's descendant DOKill — leaving the button at a frozen
@@ -1776,16 +1813,24 @@ namespace WordDrop
                 _panel.transform.DOKill();
                 if (_overlayImage != null) _overlayImage.DOKill();
                 const float FADE = 0.28f;
-                if (_dimOutImage != null) { _dimOutImage.transform.SetAsLastSibling(); _dimOutImage.DOKill(); _dimOutImage.DOFade(0.5f, FADE).SetEase(Ease.InQuad); }
+                // ── .SetUpdate(true) IS LOAD-BEARING. 2026-10-19 ─────────────────────
+                // Without it these tweens run on SCALED time, and the detonation that cleared
+                // the stage may have left Time.timeScale at 0 (WordDropFX hitstop sets it to 0;
+                // MeltdownManager does too). A scaled tween then never advances, OnComplete
+                // never fires, FinalizeDismiss never runs — the modal sits there forever and
+                // the run cannot progress. Exactly the freeze Spencer hit: debug_log shows
+                // "[StageModalTrace] CONTINUE pressed" and then NOTHING.
+                // The map-flow branch above already had SetUpdate(true); this branch did not.
+                if (_dimOutImage != null) { _dimOutImage.transform.SetAsLastSibling(); _dimOutImage.DOKill(); _dimOutImage.DOFade(0.5f, FADE).SetEase(Ease.InQuad).SetUpdate(true); }
                 Tween t = null;
-                if (_overlayImage != null) t = _overlayImage.DOFade(0f, FADE).SetEase(Ease.InQuad);
-                if (_panelGroup != null) { var pt = _panelGroup.DOFade(0f, FADE).SetEase(Ease.InQuad); if (t == null) t = pt; }
+                if (_overlayImage != null) t = _overlayImage.DOFade(0f, FADE).SetEase(Ease.InQuad).SetUpdate(true);
+                if (_panelGroup != null) { var pt = _panelGroup.DOFade(0f, FADE).SetEase(Ease.InQuad).SetUpdate(true); if (t == null) t = pt; }
                 if (t != null) t.OnComplete(FinalizeDismiss);
                 else FinalizeDismiss();
             }
             else if (_canvas != null)
             {
-                _canvas.gameObject.SetActive(false);
+                SetCanvasVisible(false);
                 FinalizeDismiss();
             }
             else
@@ -1796,7 +1841,7 @@ namespace WordDrop
 
         private void FinalizeDismiss()
         {
-            if (_canvas != null) _canvas.gameObject.SetActive(false);
+            SetCanvasVisible(false);
             _isPresenting = false;
 
             // If another stage-clear is queued, leave overlay pause + victory
@@ -2378,25 +2423,25 @@ namespace WordDrop
         private void DumpWellDoneValues()
         {
             var t = _titleFace;
-            if (t == null) { Debug.Log("[WellDone] no letters to dump."); return; }
+            if (t == null) { WDLog.Log("[WellDone] no letters to dump."); return; }
             string Hex(Color c) => $"#{Mathf.RoundToInt(c.r * 255):X2}{Mathf.RoundToInt(c.g * 255):X2}{Mathf.RoundToInt(c.b * 255):X2}{Mathf.RoundToInt(c.a * 255):X2}";
-            Debug.Log("===== WELL DONE DUMP (press V) =====");
-            Debug.Log($"FACE | color={Hex(t.color)} fontSize={t.fontSize}");
-            Debug.Log("===== END WELL DONE DUMP =====");
+            WDLog.Log("===== WELL DONE DUMP (press V) =====");
+            WDLog.Log($"FACE | color={Hex(t.color)} fontSize={t.fontSize}");
+            WDLog.Log("===== END WELL DONE DUMP =====");
         }
 
         private void DumpLevelHeaderValues()
         {
-            Debug.Log("===== LEVEL HEADER DUMP (press K) =====");
+            WDLog.Log("===== LEVEL HEADER DUMP (press K) =====");
             DumpLevelLayer("FACE  ", _levelHeaderTMP);
             DumpLevelLayer("RIM   ", _levelHeaderOutline);
             DumpLevelLayer("SHADOW", _levelHeaderShadow);
-            Debug.Log("===== END LEVEL HEADER DUMP =====");
+            WDLog.Log("===== END LEVEL HEADER DUMP =====");
         }
 
         private static void DumpLevelLayer(string tag, TextMeshProUGUI tmp)
         {
-            if (tmp == null) { Debug.Log($"{tag} | <null>"); return; }
+            if (tmp == null) { WDLog.Log($"{tag} | <null>"); return; }
             var m = tmp.fontMaterial;
             string Hex(Color c) => $"#{Mathf.RoundToInt(c.r * 255):X2}{Mathf.RoundToInt(c.g * 255):X2}{Mathf.RoundToInt(c.b * 255):X2}{Mathf.RoundToInt(c.a * 255):X2}";
             float GF(int id) => m.HasProperty(id) ? m.GetFloat(id) : 0f;
@@ -2406,9 +2451,9 @@ namespace WordDrop
             string grad = tmp.enableVertexGradient
                 ? $"gradient ON top={Hex(tmp.colorGradient.topLeft)} bottom={Hex(tmp.colorGradient.bottomLeft)}"
                 : "gradient off";
-            Debug.Log($"{tag} | fontSize={tmp.fontSize:F1} | FaceColor={faceC} FaceDilate={GF(ShaderUtilities.ID_FaceDilate):F3} Softness={GF(ShaderUtilities.ID_OutlineSoftness):F3} | OutlineColor={olC} OutlineWidth={GF(ShaderUtilities.ID_OutlineWidth):F3} | offsetMin={rt.offsetMin} offsetMax={rt.offsetMax} | {grad}");
+            WDLog.Log($"{tag} | fontSize={tmp.fontSize:F1} | FaceColor={faceC} FaceDilate={GF(ShaderUtilities.ID_FaceDilate):F3} Softness={GF(ShaderUtilities.ID_OutlineSoftness):F3} | OutlineColor={olC} OutlineWidth={GF(ShaderUtilities.ID_OutlineWidth):F3} | offsetMin={rt.offsetMin} offsetMax={rt.offsetMax} | {grad}");
             if (m.IsKeywordEnabled("UNDERLAY_ON"))
-                Debug.Log($"{tag} |   underlay ON: color={Hex(m.GetColor("_UnderlayColor"))} offX={m.GetFloat("_UnderlayOffsetX"):F2} offY={m.GetFloat("_UnderlayOffsetY"):F2} dilate={m.GetFloat("_UnderlayDilate"):F3} softness={m.GetFloat("_UnderlaySoftness"):F3}");
+                WDLog.Log($"{tag} |   underlay ON: color={Hex(m.GetColor("_UnderlayColor"))} offX={m.GetFloat("_UnderlayOffsetX"):F2} offY={m.GetFloat("_UnderlayOffsetY"):F2} dilate={m.GetFloat("_UnderlayDilate"):F3} softness={m.GetFloat("_UnderlaySoftness"):F3}");
         }
 #endif
 

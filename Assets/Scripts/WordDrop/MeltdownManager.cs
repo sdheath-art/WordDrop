@@ -202,10 +202,10 @@ namespace WordDrop
             // A/B with the rest of the explosion stack off.
             if (!WordDropFX.FX_MeltdownIntroFlash)
             {
-                Debug.Log("[FX] MeltdownIntroFlash: SKIPPED");
+                WDLog.Log("[FX] MeltdownIntroFlash: SKIPPED");
                 return null;
             }
-            Debug.Log("[FX] MeltdownIntroFlash: FIRED");
+            WDLog.Log("[FX] MeltdownIntroFlash: FIRED");
 
             // Phase 11g — duck the music for the meltdown so the explosion
             // payoff isn't fighting the BGM at full volume.
@@ -218,7 +218,7 @@ namespace WordDrop
             // tile reads as the whole cluster getting consumed.
 
             Color titleColor = GetTitleColor(title);
-//             Debug.Log($"[Meltdown] Intro: \"{title}\" (depth={chainDepth}, triggers={triggerCount}, detBonus={detonationBonus}, lastTurn={isLastTurn})");
+//             WDLog.Log($"[Meltdown] Intro: \"{title}\" (depth={chainDepth}, triggers={triggerCount}, detBonus={detonationBonus}, lastTurn={isLastTurn})");
             return StartCoroutine(IntroCoroutine(title, titleColor, chainDepth));
         }
 
@@ -229,7 +229,7 @@ namespace WordDrop
         public Coroutine TryMeltdownOutro()
         {
             if (!_isPlaying || _outroRunning) return null;
-//             Debug.Log("[Meltdown] Outro: fading out.");
+//             WDLog.Log("[Meltdown] Outro: fading out.");
             return StartCoroutine(OutroCoroutine());
         }
 
@@ -248,7 +248,7 @@ namespace WordDrop
             if (title == null) return null;
 
             Color titleColor = GetTitleColor(title);
-//             Debug.Log($"[Meltdown] Full: \"{title}\" (depth={chainDepth}, triggers={triggerCount})");
+//             WDLog.Log($"[Meltdown] Full: \"{title}\" (depth={chainDepth}, triggers={triggerCount})");
             return StartCoroutine(FullSequenceCoroutine(title, titleColor, chainDepth));
         }
 

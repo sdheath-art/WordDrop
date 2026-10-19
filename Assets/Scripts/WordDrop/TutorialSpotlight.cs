@@ -34,6 +34,7 @@ namespace WordDrop
         private Canvas _scrimCanvas;   // ScreenSpaceCamera full-screen scrim (board bumped above it)
         private Canvas _overlayCanvas; // ScreenSpaceOverlay: HUD dim strip + cursor
         private Image  _hudDim;
+        private Image  _scrimBelow, _scrimLeft, _scrimRight;  // the 3 extra rects for ShowExceptRows
         private Image  _scrimImage; // the world-scrim rect — clipped to the board top so it doesn't overlap the HUD dim
         private Transform _cursor;          // hand_point is a WORLD-space sprite (same space as the board)
         private SpriteRenderer _cursorSR;
@@ -134,12 +135,14 @@ namespace WordDrop
             {
                 grid.SetBoardBackgroundSortingOrder(active ? BOARD_BG_ORDER : 0);
                 Tile.AimModeTileOrder = active ? TILE_ORDER : 0;
-                int tileOrder = active ? TILE_ORDER : 5;
+                // Lift the board above the scrim WITHOUT flattening the row bands — a flat
+                // order made stacked tiles sort arbitrarily (spotlighted C drew behind the U
+                // below it). Band is TILE_ORDER..TILE_ORDER+30, clear of FX (60). 2026-09-10.
                 for (int c = 0; c < RulesEngine.COLS; c++)
                     for (int r = 0; r < RulesEngine.ROWS; r++)
                     {
                         var t = grid.GetTile(c, r);
-                        if (t != null) t.SetSortingOrder(tileOrder);
+                        if (t != null) t.ReassertSortingOrder();
                     }
             }
             _boardBumped = active;
@@ -148,6 +151,94 @@ namespace WordDrop
         /// <summary>Selective focus for a tutorial beat: dim EVERYTHING (world scrim + HUD dim), then raise ONLY
         /// the given board cells above the scrim. The board panel + all other tiles stay dimmed — unlike
         /// ShowBoardFocus which bumps the whole board bright. 2026-07-08 Spencer (mockup-driven).</summary>
+
+        /// <summary>Dim EVERYTHING except a horizontal band of board rows — the near-top-out
+        /// warning. 2026-09-22 Spencer: "tint everything on screen except the top two rows just
+        /// to show that the player is dangerously close to topping out."
+        ///
+        /// WHY NOT SpotlightCells: that path lights the chosen TILES by pushing them above the
+        /// scrim and lays a flat blue slab behind them (ShowFocusPanel, board-slot blue #4A70AD
+        /// and the old TILE_CORNER_FRAC radius). Both were authored against the pre-2026-09 board
+        /// and neither matches the authored panel now — and the danger rows are EMPTY, so there
+        /// are no tiles up there to light. What is wanted is the board itself showing through.
+        ///
+        /// So this CUTS A HOLE instead: four rects around the band rather than one full-screen
+        /// rect. The board panel, its sockets and any tiles in the band all read normally with no
+        /// sort-order games and no slab — they are simply not covered.</summary>
+        public static void ShowExceptRows(int rowFrom, int rowTo)
+        {
+            var inst = Ensure();
+            var grid = GridManager.Instance;
+            var cam  = Camera.main;
+            if (grid == null || cam == null) { SpotlightCells(null, null, -1); return; }
+
+            if (inst._scrimCanvas != null)
+            {
+                if (inst._scrimCanvas.worldCamera == null) inst._scrimCanvas.worldCamera = Camera.main;
+                inst._scrimCanvas.enabled = true;
+            }
+            if (inst._overlayCanvas != null) inst._overlayCanvas.enabled = true;
+            inst.PositionHudDim();
+            if (inst._hudDim != null) inst._hudDim.gameObject.SetActive(true);
+
+            // Every tile back to its BASE order, so an FX bump cannot punch a bright tile through
+            // the dim. The band's tiles sit at base order too — they read because nothing covers
+            // them, not because they were raised.
+            Tile.SpotlightActive = true;
+            inst.ApplyCellSpotlight(null);
+            inst.HideFocusPanel();
+            DropPreview.OrderBoost = 0;
+
+            // Band bounds, in viewport. Rows are indexed from the FLOOR, so rowTo is the top one.
+            float half  = grid.RowPitch * 0.5f;
+            float yLo   = grid.CellToWorld(0, Mathf.Min(rowFrom, rowTo)).y - half;
+            float yHi   = grid.CellToWorld(0, Mathf.Max(rowFrom, rowTo)).y + half;
+            float bandB = Mathf.Clamp01(cam.WorldToViewportPoint(new Vector3(0f, yLo, 0f)).y);
+            float bandT = Mathf.Clamp01(cam.WorldToViewportPoint(new Vector3(0f, yHi, 0f)).y);
+            float bandL = Mathf.Clamp01(cam.WorldToViewportPoint(new Vector3(grid.GridLeft,  0f, 0f)).x);
+            float bandR = Mathf.Clamp01(cam.WorldToViewportPoint(new Vector3(grid.GridRight, 0f, 0f)).x);
+
+            float topVP = HUD_DIM_FALLBACK_TOP;
+            if (grid.BoardBackgroundWorldBounds.HasValue)
+                topVP = Mathf.Clamp01(cam.WorldToViewportPoint(grid.BoardBackgroundWorldBounds.Value.max).y);
+            bandT = Mathf.Min(bandT, topVP);
+
+            inst.EnsureExtraScrims();
+            SetAnchors(inst._scrimImage, new Vector2(0f,    bandT), new Vector2(1f,    topVP)); // above the band
+            SetAnchors(inst._scrimBelow, new Vector2(0f,    0f),    new Vector2(1f,    bandB)); // below it
+            SetAnchors(inst._scrimLeft,  new Vector2(0f,    bandB), new Vector2(bandL, bandT)); // beside it
+            SetAnchors(inst._scrimRight, new Vector2(bandR, bandB), new Vector2(1f,    bandT));
+            inst._scrimBelow.gameObject.SetActive(true);
+            inst._scrimLeft .gameObject.SetActive(true);
+            inst._scrimRight.gameObject.SetActive(true);
+            WDLog.Log($"[Spotlight] band rows {rowFrom}..{rowTo} clear; vp x {bandL:F3}-{bandR:F3} y {bandB:F3}-{bandT:F3}");
+        }
+
+        private void EnsureExtraScrims()
+        {
+            if (_scrimBelow != null) return;
+            var parent = _scrimImage.transform.parent;
+            _scrimBelow = MakeRect(parent, "ScrimBelow", DIM, Vector2.zero, Vector2.one, false);
+            _scrimLeft  = MakeRect(parent, "ScrimLeft",  DIM, Vector2.zero, Vector2.one, false);
+            _scrimRight = MakeRect(parent, "ScrimRight", DIM, Vector2.zero, Vector2.one, false);
+        }
+
+        private static void SetAnchors(Image img, Vector2 min, Vector2 max)
+        {
+            if (img == null) return;
+            var rt = img.rectTransform;
+            rt.anchorMin = min; rt.anchorMax = max;
+            rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
+        }
+
+        /// <summary>Put the three extra rects away so the next ordinary beat gets one full scrim.</summary>
+        private void ClearExtraScrims()
+        {
+            if (_scrimBelow != null) _scrimBelow.gameObject.SetActive(false);
+            if (_scrimLeft  != null) _scrimLeft .gameObject.SetActive(false);
+            if (_scrimRight != null) _scrimRight.gameObject.SetActive(false);
+        }
+
         public static void SpotlightCells(System.Collections.Generic.List<Vector2Int> cells)
             => SpotlightCells(cells, cells, TutorialManager.AllowedCardIndex);
 
@@ -163,6 +254,7 @@ namespace WordDrop
                 inst._scrimCanvas.enabled = true;
             }
             if (inst._overlayCanvas != null) inst._overlayCanvas.enabled = true;
+            inst.ClearExtraScrims();      // a normal beat wants ONE full-screen rect
             inst.PositionScrim();
             inst.PositionHudDim();
             if (inst._hudDim != null) inst._hudDim.gameObject.SetActive(true);
@@ -232,8 +324,16 @@ namespace WordDrop
         // glows — robust against the drag/refill systems that own the cards' own colours/orders. 2026-07-08.
         private SpriteRenderer[] _cardDimQuads;
         private static Sprite _cardDimSprite;
+        /// <summary>OFF since the 2026-09 swap pivot. These quads dimmed the UNUSED cards in
+        /// the tile holder so only the active one glowed — a drop-game idea. With the hand gone
+        /// there are no cards under them, so they rendered as four black blobs sitting over the
+        /// bottom of the board during any tutorial beat. Delete the guard below to restore the
+        /// behaviour if a card rack ever comes back. 2026-09-10 Spencer.</summary>
+        private const bool DIM_HAND_CARDS = false;
+
         private void DimHandCardsExcept(int brightIndex)
         {
+            if (!DIM_HAND_CARDS) { ClearHandCardDim(); return; }
             var hm = HandManager.Instance;
             if (hm == null) { ClearHandCardDim(); return; } // brightIndex < 0 => dim ALL cards (no active card)
             int n = PlayerHand.HAND_SIZE;
@@ -326,11 +426,12 @@ namespace WordDrop
             // DIAG 2026-07-10: tracking an intermittent case where the edit-tutorial hand_point vanishes on
             // level load — logs WHO cleared the spotlight so we can catch a Hide() that races the ShowTap.
             if (Instance._cursor != null && Instance._cursor.gameObject.activeSelf)
-                Debug.Log($"[SpotlightDiag] Hide() cleared an ACTIVE tap cursor.\n{System.Environment.StackTrace}");
+                WDLog.Log($"[SpotlightDiag] Hide() cleared an ACTIVE tap cursor.\n{System.Environment.StackTrace}");
             Tile.SpotlightActive = false;
             Instance.BumpBoard(false);
             Instance.ApplyCellSpotlight(null); // clear any per-tile tutorial spotlight
             Instance.HideFocusPanel();
+            Instance.ClearExtraScrims();
             Instance.ClearHandCardDim();
             HandManager.Instance?.SetNextTileDimmed(false);
             BoosterHUDSlot.Instance?.SetEditPanelBright(false); // revert the swap-panel spotlight

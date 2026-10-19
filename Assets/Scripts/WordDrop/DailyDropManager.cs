@@ -149,7 +149,7 @@ namespace WordDrop
             if (score > prevBest)
             {
                 PlayerPrefs.SetInt(scoreKey, score);
-//                 Debug.Log($"[DailyDropManager] New daily best: {score} (was {prevBest})");
+//                 WDLog.Log($"[DailyDropManager] New daily best: {score} (was {prevBest})");
             }
 
             // Submit to HighScoreManager for mode "daily"
@@ -163,7 +163,7 @@ namespace WordDrop
 
             PlayerPrefs.Save();
 
-//             Debug.Log($"[DailyDropManager] MarkPlayedToday: score={score} streak={GetStreak()} " +
+//             WDLog.Log($"[DailyDropManager] MarkPlayedToday: score={score} streak={GetStreak()} " +
                       // $"puzzle=#{GetPuzzleNumber()} newBest={isNewBest}");
 
             return isNewBest;

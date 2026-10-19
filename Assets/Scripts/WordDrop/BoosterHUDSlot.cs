@@ -54,7 +54,11 @@ namespace WordDrop
         // moved into the bottom bar now that boosters are smaller).
         //   7 × 135 + 6 × 26.34 = 1103.04 row span
         //   (1179 - 1103.04) / 2 = 37.98 left margin
-        private const float SLOT_SIZE   = 135f;
+        // 2026-09-11: 135 -> 198. MEASURED off Royal Match's bottom HUD (Spencer's reference):
+        // its booster buttons are 16.8% of screen width with 2.9% gaps, i.e. a 19.7% pitch.
+        // On this 1179px design width that is a 198px button and a 34px gap — WordDrop's were
+        // 135px, about 47% too small, which is why the icons read tiny.
+        private const float SLOT_SIZE   = 198f;
         private const float SLOT_STEP   = 135f + 26.34f;   // 161.34
         private const float SLOT_LEFT_X = 37.98f;
         private const float SLOT_TOP_Y  = 2270.31f;       // unchanged — keeps the "pops above bench" silhouette
@@ -137,10 +141,10 @@ namespace WordDrop
         {
             if (_lockSprite == null)
             {
-                _lockSprite = Resources.Load<Sprite>("Tiles/icon_lock");
+                _lockSprite = Resources.Load<Sprite>("Tiles/icon_lock_02");
                 if (_lockSprite == null) // PNG imported as a plain Texture (default) → build a Sprite
                 {
-                    var tex = Resources.Load<Texture2D>("Tiles/icon_lock");
+                    var tex = Resources.Load<Texture2D>("Tiles/icon_lock_02");
                     if (tex != null)
                         _lockSprite = Sprite.Create(
                             tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
@@ -187,7 +191,10 @@ namespace WordDrop
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_ROCK_CRUSHER,  PlaceholderChar = "S" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BRAMBLE_SWEEP, PlaceholderChar = "C" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BLOOMBURST,    PlaceholderChar = "B" },
-            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_WISPWHIRL,     PlaceholderChar = "J" },
+            // 2026-09-11 (Spencer): row cut to FOUR boosters + Settings. Wispwhirl parked as the
+            // 5th — it is the last-listed, nothing else depends on the count. Swap which one is
+            // commented out to change the four; BENCH_SLOT_COUNT below must match the row length.
+            // new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_WISPWHIRL,     PlaceholderChar = "J" },
             new SlotSpec { Type = SlotType.Settings,                                              PlaceholderChar = "⚙" },
         };
 
@@ -195,8 +202,10 @@ namespace WordDrop
         // Bench row now holds 6 slots (5 boosters + Settings) evenly spaced across the
         // SAME usable span the old 7-slot row used (left margin 37.98, span 1103.04),
         // so the bench backdrop still frames them.
-        private const int   BENCH_SLOT_COUNT = 6;
-        private const float BENCH_ROW_SPAN   = 1103.04f; // 1179 - 2*37.98
+        private const int   BENCH_SLOT_COUNT = 5;   // 2026-09-11: 4 boosters + Settings (was 5 + Settings)
+        // Margins tightened to match Royal Match too — its row spans 95% of the screen width
+        // (~2.5% either side) where WordDrop used 3.2%. 1179 - 2*29 = 1121.
+        private const float BENCH_ROW_SPAN   = 1121f;
         private const float SLOT_STEP_BENCH  = (BENCH_ROW_SPAN - BENCH_SLOT_COUNT * SLOT_SIZE) / (BENCH_SLOT_COUNT - 1) + SLOT_SIZE; // ≈193.61
         // 2026-06-24 (Spencer): Edit is a rounded-SQUARE TOOL attached UNDER the tile holder
         // panel's bottom edge, CENTRED (Bag cut for launch), distinct from the round consumable
@@ -330,8 +339,38 @@ namespace WordDrop
                 MatchController.Instance.OnSwapUsed -= OnSwapUsed_RefreshBadge;
         }
 
+        private static bool s_settingsPrewarmed;
+
+        /// <summary>Statics survive a play-mode exit when Reload Domain is off, so without this
+        /// the prewarm runs on the FIRST play of an editor session and never again — and the
+        /// hitch would look "fixed" once then come back. Same guard CaptureRig uses.</summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetPrewarmFlag() { s_settingsPrewarmed = false; }
+
+        private System.Collections.IEnumerator PrewarmSettingsModal()
+        {
+            if (s_settingsPrewarmed) yield break;
+            s_settingsPrewarmed = true;
+            // Unscaled: the board entry may be running on a paused/slowed timescale.
+            yield return new WaitForSecondsRealtime(2.0f);
+            if (SettingsModal.Instance == null)
+            {
+                var modalGO = new GameObject("SettingsModalRoot");
+                modalGO.AddComponent<SettingsModal>();
+                yield return null;              // let Awake run and set Instance
+            }
+            SettingsModal.Prewarm();
+        }
+
         private void Start()
         {
+            // Build the settings modal AHEAD of the first press. It costs ~33 GameObjects, a
+            // Canvas + CanvasScaler and a batch of TMP text, and paying for that on the frame the
+            // player taps is the "sticks the first time, fine afterwards" hitch. Deferred a couple
+            // of seconds so it lands after the board entry has settled rather than during it.
+            // 2026-09-28 Spencer.
+            StartCoroutine(PrewarmSettingsModal());
+
             if (BoosterManager.Instance != null)
             {
                 BoosterManager.Instance.OnStateChanged -= RefreshDisplay;
@@ -404,13 +443,13 @@ namespace WordDrop
             if (GridManager.Instance != null
                 && GridManager.Instance.WorldToCell(worldPos, out int col, out int row))
             {
-                Debug.Log($"[BoosterDbg] AimTap screen=({screenPos.x:0},{screenPos.y:0}) " +
+                WDLog.Log($"[BoosterDbg] AimTap screen=({screenPos.x:0},{screenPos.y:0}) " +
                           $"world=({worldPos.x:0.00},{worldPos.y:0.00}) → cell=({col},{row})");
                 BoosterManager.Instance.ResolveAim(col, row);
             }
             else
             {
-                Debug.Log($"[BoosterDbg] AimTap screen=({screenPos.x:0},{screenPos.y:0}) " +
+                WDLog.Log($"[BoosterDbg] AimTap screen=({screenPos.x:0},{screenPos.y:0}) " +
                           $"world=({worldPos.x:0.00},{worldPos.y:0.00}) → WorldToCell FAILED");
             }
         }
@@ -480,7 +519,11 @@ namespace WordDrop
             benchRT.anchoredPosition = PsdAnchoredCenter(BENCH_X, BENCH_Y, BENCH_W, BENCH_H);
             var benchImg = benchGO.GetComponent<Image>();
             benchImg.sprite = GetBenchSprite();
-            benchImg.color  = new Color(0.10f, 0.27f, 0.50f, 0.92f); // 2026-06-02: deep ocean blue (was garden-purple) — candy-palette chrome
+            // 2026-09-10 palette pass: was deep ocean blue (0.10,0.27,0.50) — a THIRD hue
+            // family alongside the cyan background and the plum board, so the bench read as a
+            // strip from another app. Deep teal keeps it clearly a shelf while belonging to the
+            // background's family. Revert = restore the line below.
+            benchImg.color  = new Color(0.08f, 0.38f, 0.48f, 0.93f); // deep teal — background family
             benchImg.raycastTarget = false;
 
             // Blue EXTENSION strip BELOW the bench (child → slides with it). When the bench pops UP and overshoots
@@ -562,9 +605,19 @@ namespace WordDrop
                     _slotImages[i].sprite = MenuUI.GetRoundedRectSprite(34);
                     _slotImages[i].type   = Image.Type.Sliced;
                 }
+                else if (spec.Type == SlotType.Settings)
+                {
+                    // Settings stays a CIRCLE so it reads as a different KIND of control, not a
+                    // fifth booster. Matches Spencer's concept. 2026-09-11.
+                    var c = Resources.Load<Sprite>("UI/booster_circle");
+                    _slotImages[i].sprite = c != null ? c : GetCircleSpriteBig();
+                }
                 else
                 {
-                    _slotImages[i].sprite = GetCircleSpriteBig();
+                    // Boosters are neon SQUIRCLES (Layer Lab GUI-Neon2, copied into Resources/UI).
+                    // Placeholder shapes — Spencer is making the real button art. 2026-09-11.
+                    var sq = Resources.Load<Sprite>("UI/booster_squircle");
+                    _slotImages[i].sprite = sq != null ? sq : GetCircleSpriteBig();
                 }
                 _slotImages[i].color  = SlotBaseColor(spec.Type);
 
@@ -733,7 +786,7 @@ namespace WordDrop
         {
             switch (type)
             {
-                case SlotType.Edit:     return new Color(0.10f, 0.27f, 0.50f, 0.95f); // navy panel (matches bench)
+                case SlotType.Edit:     return new Color(0.08f, 0.38f, 0.48f, 0.95f); // teal panel (matches bench)
                 case SlotType.TileBag:  return new Color(0.18f, 0.25f, 0.20f, 0.92f);
                 case SlotType.Settings: return new Color(0.20f, 0.18f, 0.22f, 0.92f);
                 default:                return new Color(0.18f, 0.12f, 0.28f, 0.92f);
@@ -1246,14 +1299,15 @@ namespace WordDrop
             if (grid != null)
             {
                 grid.SetBoardBackgroundSortingOrder(active ? AIM_BOARD_BG_ORDER : 0);
-                int tileOrder = active ? AIM_TILE_ORDER : 5;
                 Tile.AimModeTileOrder = active ? AIM_TILE_ORDER : 0;
+                // Same fix as the tutorial spotlight: lift, but keep the per-row bands so
+                // stacked tiles still occlude correctly in aim mode. 2026-09-10 Spencer.
                 for (int c = 0; c < RulesEngine.COLS; c++)
                 {
                     for (int r = 0; r < RulesEngine.ROWS; r++)
                     {
                         var tile = grid.GetTile(c, r);
-                        if (tile != null) tile.SetSortingOrder(tileOrder);
+                        if (tile != null) tile.ReassertSortingOrder();
                     }
                 }
             }
@@ -1818,7 +1872,7 @@ namespace WordDrop
             string slotName = spec.Type == SlotType.Booster
                 ? (BoosterManager.Instance?.GetBoosterById(spec.BoosterId)?.DisplayName ?? spec.BoosterId)
                 : spec.Type.ToString();
-            Debug.Log($"[BoosterHUD] '+' tapped on {slotName} — buy flow pending");
+            WDLog.Log($"[BoosterHUD] '+' tapped on {slotName} — buy flow pending");
         }
     }
 }

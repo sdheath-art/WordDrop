@@ -86,7 +86,7 @@ namespace WordDrop
             // no way to get a non-uniform stretch from an aspect mismatch.
             _handRT.sizeDelta = new Vector2(HAND_HEIGHT, HAND_HEIGHT);
             if (_img.sprite != null)
-                Debug.Log($"[TutorialHand] hand_point sprite {_img.sprite.rect.width}x{_img.sprite.rect.height}");
+                WDLog.Log($"[TutorialHand] hand_point sprite {_img.sprite.rect.width}x{_img.sprite.rect.height}");
 
             // Debug-only contact marker — a red dot at the exact point the fingertip should land,
             // so we can dial FingertipPivot precisely. Added after the hand → renders on top.
@@ -193,12 +193,12 @@ namespace WordDrop
             if (Input.GetKeyDown(KeyCode.O))   // toggle LENGTH seeding
             {
                 DroughtAssist.OpportunitySeeding = !DroughtAssist.OpportunitySeeding;
-                Debug.Log($"[Seeding] length {(DroughtAssist.OpportunitySeeding ? "ON" : "OFF")} | detonation {(DroughtAssist.DetonationSeeding ? "ON" : "OFF")}");
+                WDLog.Log($"[Seeding] length {(DroughtAssist.OpportunitySeeding ? "ON" : "OFF")} | detonation {(DroughtAssist.DetonationSeeding ? "ON" : "OFF")}");
             }
             if (Input.GetKeyDown(KeyCode.P))   // toggle DETONATION seeding (the 'easy/flow' helper)
             {
                 DroughtAssist.DetonationSeeding = !DroughtAssist.DetonationSeeding;
-                Debug.Log($"[Seeding] length {(DroughtAssist.OpportunitySeeding ? "ON" : "OFF")} | detonation {(DroughtAssist.DetonationSeeding ? "ON" : "OFF")}");
+                WDLog.Log($"[Seeding] length {(DroughtAssist.OpportunitySeeding ? "ON" : "OFF")} | detonation {(DroughtAssist.DetonationSeeding ? "ON" : "OFF")}");
             }
         }
     }

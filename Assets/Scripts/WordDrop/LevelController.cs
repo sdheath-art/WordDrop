@@ -138,7 +138,7 @@ namespace WordDrop
             // AFTER tiles are placed + auto-primed. Calling from here would target
             // null or stale tiles.
 
-            Debug.Log($"[LevelController] StartLevel id={data.levelId} " +
+            WDLog.Log($"[LevelController] StartLevel id={data.levelId} " +
                       $"name='{data.displayName}' target={data.target} moves={data.moveBudget}");
 
             AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_START,
@@ -246,18 +246,18 @@ namespace WordDrop
             if (amount <= 0) return false;
             if (runToken != RunToken)
             {
-                Debug.Log($"[LevelController] GrantExtraMoves rejected: stale runToken {runToken} vs {RunToken}");
+                WDLog.Log($"[LevelController] GrantExtraMoves rejected: stale runToken {runToken} vs {RunToken}");
                 return false;
             }
             if (!_failed)
             {
-                Debug.Log("[LevelController] GrantExtraMoves rejected: level not in failed state.");
+                WDLog.Log("[LevelController] GrantExtraMoves rejected: level not in failed state.");
                 return false;
             }
             if (_completed) return false;
             if (!LastFailIsRecoverable)
             {
-                Debug.Log("[LevelController] GrantExtraMoves rejected: last fail was non-recoverable (board full / rising-row overflow).");
+                WDLog.Log("[LevelController] GrantExtraMoves rejected: last fail was non-recoverable (board full / rising-row overflow).");
                 return false;
             }
             _failed = false;
@@ -266,7 +266,7 @@ namespace WordDrop
             MovesRemaining += amount;
             if (HandManager.Instance != null) HandManager.Instance.SetInteractable(true);
             if (HUDManager.Instance != null) HUDManager.Instance.SetLevelMoves(MovesRemaining);
-            Debug.Log($"[LevelController] GrantExtraMoves +{amount} (now {MovesRemaining})");
+            WDLog.Log($"[LevelController] GrantExtraMoves +{amount} (now {MovesRemaining})");
             return true;
         }
 
@@ -315,7 +315,7 @@ namespace WordDrop
             int stars = ComputeStars(CurrentScore, CurrentLevel.starThresholds);
             int movesUsed = CurrentLevel.moveBudget - MovesRemaining;
 
-            Debug.Log($"[LevelController] COMPLETE score={CurrentScore} target={CurrentLevel.target} " +
+            WDLog.Log($"[LevelController] COMPLETE score={CurrentScore} target={CurrentLevel.target} " +
                       $"stars={stars} movesUsed={movesUsed}");
 
             AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_COMPLETE,
@@ -323,6 +323,11 @@ namespace WordDrop
                 "score", CurrentScore,
                 "stars", stars,
                 "moves_used", movesUsed);
+
+            // The board is about to be covered by the Well Done screen. The cluster outline
+            // and its payout badges are world-space meshes that know nothing about the modal,
+            // so without this they hang over the transition. 2026-09-10 Spencer.
+            ClusterOutline.Instance?.Clear();
 
             OnLevelComplete?.Invoke(CurrentScore, stars);
         }
@@ -340,7 +345,7 @@ namespace WordDrop
             int shortfall = Mathf.Max(0, CurrentLevel.target - CurrentScore);
             int movesUsed = CurrentLevel.moveBudget - MovesRemaining;
 
-            Debug.Log($"[LevelController] FAIL score={CurrentScore} target={CurrentLevel.target} " +
+            WDLog.Log($"[LevelController] FAIL score={CurrentScore} target={CurrentLevel.target} " +
                       $"shortfall={shortfall}");
 
             AnalyticsManager.Log(LevelAnalyticsEvents.LEVEL_FAIL,

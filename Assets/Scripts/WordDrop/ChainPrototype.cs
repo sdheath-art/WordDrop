@@ -152,7 +152,7 @@ namespace WordDrop
         private void ArmWord()
         {
             if (_busy) return;
-            if (_links.Count >= MAX_LINKS) { Debug.Log("[ChainProto] Max links reached — pull the trigger or reset."); return; }
+            if (_links.Count >= MAX_LINKS) { WDLog.Log("[ChainProto] Max links reached — pull the trigger or reset."); return; }
 
             string word = WEB_WORDS[_links.Count % WEB_WORDS.Length];
             Vector3 c = CamCenter();
@@ -177,7 +177,7 @@ namespace WordDrop
             // Anticipation: each added link rings a touch higher (the web getting "hotter").
             GameAudio.Instance?.PlayTilePrimed();
             GameAudio.Instance?.PlayMatchLine(_links.Count - 1);
-            Debug.Log($"[ChainProto] Armed '{word}' — web now {_links.Count} link(s), {TotalTiles()} tiles.");
+            WDLog.Log($"[ChainProto] Armed '{word}' — web now {_links.Count} link(s), {TotalTiles()} tiles.");
         }
 
         // ── The payoff ────────────────────────────────────────────────────────────
@@ -195,7 +195,7 @@ namespace WordDrop
             Vector3 camBase = Camera.main != null ? Camera.main.transform.position : Vector3.zero;
             int comboTiles = 0;
 
-            Debug.Log($"[ChainProto] PULL TRIGGER — {totalLinks} links / {totalTiles} tiles.");
+            WDLog.Log($"[ChainProto] PULL TRIGGER — {totalLinks} links / {totalTiles} tiles.");
 
             for (int i = 0; i < _links.Count; i++)
             {

@@ -113,7 +113,7 @@ namespace WordDrop
             int[] ids = new int[layers.Length];
             for (int i = 0; i < layers.Length; i++) ids[i] = layers[i].id;
             _globalLight.targetSortingLayers = ids;
-//             Debug.Log($"[LightingSetup] Global light targeting {ids.Length} layers, first id={ids[0]}");
+//             WDLog.Log($"[LightingSetup] Global light targeting {ids.Length} layers, first id={ids[0]}");
         }
 
         private void SetupBloom()
@@ -168,7 +168,7 @@ namespace WordDrop
                 bloom.intensity.value = 0.20f;
             }
             bloom.scatter.value   = 0.30f;
-            Debug.Log($"[LightingSetup] Bloom configured (mobile={Application.isMobilePlatform}): threshold={bloom.threshold.value} intensity={bloom.intensity.value} scatter={bloom.scatter.value}");
+            WDLog.Log($"[LightingSetup] Bloom configured (mobile={Application.isMobilePlatform}): threshold={bloom.threshold.value} intensity={bloom.intensity.value} scatter={bloom.scatter.value}");
 
             // Tonemapping DISABLED 2026-04-18. Neutral mode was compressing
             // mid-to-bright values ~5-10% (BG blue 0.92 → 0.85, tile creams

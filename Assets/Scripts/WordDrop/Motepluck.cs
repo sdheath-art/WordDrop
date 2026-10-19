@@ -81,7 +81,7 @@ namespace WordDrop
                 rules.ClearCell(toRemove[i].x, toRemove[i].y);
             grid.RemoveTiles(toRemove);
 
-            Debug.Log($"[Motepluck L{Level}] Removed {toRemove.Count} tile(s) centered at ({col},{row})");
+            WDLog.Log($"[Motepluck L{Level}] Removed {toRemove.Count} tile(s) centered at ({col},{row})");
             GameAudio.Instance?.PlayUIClick();
             onComplete?.Invoke();
         }

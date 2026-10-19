@@ -33,6 +33,10 @@ namespace WordDrop
             public int OverlapFuseBonusGranted { get; set; } = 0; // total +turns from overlap extensions
             public int GlobalFuseResetCount { get; set; } = 0; // capped board-wide fuse resets
             public bool IsGold { get; set; } = false; // gold primed word — worth 3x on detonation
+            /// <summary>2026-09-03: the word contains a HIGH-VALUE letter (4+ points), so it
+            /// primes GOLD and its letters fly up gold. VISUAL ONLY — deliberately separate
+            /// from IsGold, which carries the score multiplier.</summary>
+            public bool HasHighValueLetter { get; set; } = false;
             public float CreatedAtTime { get; set; } // wall-clock time when primed (for idle expiry)
             public float MaxAgeSeconds { get; set; } = 30f; // how long this prime lives (longer words get more time)
             public bool  PrimedByEdit { get; set; } = false; // true if a swap/EDIT formed this word (not a drop). Lets swap-only objectives count "edit to prime, drop to trigger". 2026-07-10 Spencer.
@@ -66,6 +70,30 @@ namespace WordDrop
         /// Adds a new primed word to the registry.
         /// Returns the unique ID assigned to this primed word.
         /// </summary>
+        /// <summary>Does this word contain a high-value (gold) letter? DERIVED, never trusted.
+        ///
+        /// 2026-09-10 Spencer found this: of the seven places that register a primed word, FOUR
+        /// never passed hasHighValueLetter at all, so it defaulted to false. A word containing
+        /// X/J/Q/Z/K/V registered as ROSE — while the per-tile letter check and the cell-level
+        /// fallback both correctly said GOLD. That disagreement is the gold/rose flicker, and it
+        /// is the root cause of most of the gold bugs chased this session.
+        ///
+        /// Deriving it here means a caller CANNOT forget. The parameter still wins when passed
+        /// true, so a gold-bonus word with no high-value letter still reads gold.</summary>
+        private static bool DeriveHighValue(List<Vector2Int> cells)
+        {
+            if (cells == null) return false;
+            var re = RulesEngine.Instance;
+            if (re == null) return false;
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var c = re.GetCell(cells[i].x, cells[i].y);
+                if (c == null || c.IsWild) continue;
+                if (LetterData.GetPoints(c.Letter) >= Tile.HIGH_VALUE_POINTS) return true;
+            }
+            return false;
+        }
+
         public int AddPrimedWord(
             string word,
             List<Vector2Int> cells,
@@ -73,12 +101,27 @@ namespace WordDrop
             int primedOnTurn,
             int expiresOnTurn,
             int score = 0,
-            bool isGold = false)
+            bool isGold = false,
+            bool hasHighValueLetter = false)
         {
             if (string.IsNullOrEmpty(word))
             {
                 Debug.LogWarning("[PrimedWordRegistry] AddPrimedWord: word is null or empty.");
                 return -1;
+            }
+
+            // ── THE BRANCH GATE ─────────────────────────────────────────────────
+            // Placed HERE because five different call sites prime words; gating inside the
+            // registry covers all of them and cannot drift apart. Returns -1 (the existing
+            // "not primed" result) so callers need no changes.
+            if (RulesEngine.BranchPriming && _primedWords.Count > 0 && cells != null && cells.Count > 0)
+            {
+                bool cascade = RulesEngine.Instance != null && RulesEngine.Instance.InCascade;
+                if (!cascade && !TouchesExistingWeb(cells))
+                {
+                    WDLog.Log($"[Branch] '{word}' rejected — not connected to the primed web");
+                    return -1;
+                }
             }
 
             if (cells == null || cells.Count == 0)
@@ -108,17 +151,21 @@ namespace WordDrop
                 PrimedOnTurn  = primedOnTurn,
                 ExpiresOnTurn = expiresOnTurn,
                 IsGold        = isGold,
+                HasHighValueLetter = hasHighValueLetter || DeriveHighValue(cells),
                 CreatedAtTime = Time.time,
                 MaxAgeSeconds = maxAge,
                 // Captured at prime time: was this word formed by a swap/EDIT (vs a drop)? Drives the
                 // "edit-primed words count even if a drop triggers the pop" rule on swap-only levels. 2026-07-10.
                 PrimedByEdit  = RulesEngine.LastResolutionWasSwap,
             };
-            Debug.Log($"[PrimeDiag] +id{id} '{record.Word}' primedByEdit={record.PrimedByEdit} (lastResWasSwap={RulesEngine.LastResolutionWasSwap})");
+            WDLog.Log($"[PrimeDiag] +id{id} '{record.Word}' primedByEdit={record.PrimedByEdit} (lastResWasSwap={RulesEngine.LastResolutionWasSwap})");
+            // Light the outline of whatever cluster this word just joined. 2026-09-10 Spencer.
+            if (record.Cells != null && record.Cells.Count > 0)
+                ClusterOutline.Instance?.FlashCluster(record.Cells[0]);
 
             _primedWords.Add(record);
 
-//             Debug.Log($"[PrimedWordRegistry] Added: {record}  " +
+//             WDLog.Log($"[PrimedWordRegistry] Added: {record}  " +
                       // $"(registry size: {_primedWords.Count})");
 
             return id;
@@ -248,7 +295,7 @@ namespace WordDrop
                 {
                     string word = _primedWords[i].Word;
                     _primedWords.RemoveAt(i);
-//                     Debug.Log($"[PrimedWordRegistry] Removed id={id} ('{word}'). " +
+//                     WDLog.Log($"[PrimedWordRegistry] Removed id={id} ('{word}'). " +
                               // $"Registry size: {_primedWords.Count}");
                     return true;
                 }
@@ -282,7 +329,7 @@ namespace WordDrop
                 float age = now - pw.CreatedAtTime;
                 if (age >= pw.MaxAgeSeconds)
                 {
-//                     Debug.Log($"[PrimedWordRegistry] Time-expired '{pw.Word}' (id={pw.Id}, age={age:F1}s/{pw.MaxAgeSeconds:F0}s)");
+//                     WDLog.Log($"[PrimedWordRegistry] Time-expired '{pw.Word}' (id={pw.Id}, age={age:F1}s/{pw.MaxAgeSeconds:F0}s)");
                     if (expiredOut != null) expiredOut.Add(pw);
                     _primedWords.RemoveAt(i);
                     expired++;
@@ -294,6 +341,9 @@ namespace WordDrop
 
         public int ExpireOldWords(int currentTurn, List<PrimedWord> expiredOut = null)
         {
+            // 2026-09-03 ARMED-WEB: primed words stay on the board until the PLAYER
+            // taps them. Nothing ages out.
+            if (RulesEngine.ArmedWebMode) return 0;
             int expiredCount = 0;
 
             for (int i = _primedWords.Count - 1; i >= 0; i--)
@@ -301,7 +351,7 @@ namespace WordDrop
                 PrimedWord pw = _primedWords[i];
                 if (pw.ExpiresOnTurn <= currentTurn)
                 {
-//                     Debug.Log($"[PrimedWordRegistry] Expiring '{pw.Word}' (id={pw.Id}) — " +
+//                     WDLog.Log($"[PrimedWordRegistry] Expiring '{pw.Word}' (id={pw.Id}) — " +
                               // $"expiresOnTurn={pw.ExpiresOnTurn} <= currentTurn={currentTurn}");
                     if (expiredOut != null) expiredOut.Add(pw);
                     _primedWords.RemoveAt(i);
@@ -359,7 +409,7 @@ namespace WordDrop
 
                 if (stale)
                 {
-//                     Debug.Log($"[PrimedWordRegistry] Removing stale primed word " +
+//                     WDLog.Log($"[PrimedWordRegistry] Removing stale primed word " +
                               // $"'{pw.Word}' (id={pw.Id}) — cell(s) no longer occupied.");
                     _primedWords.RemoveAt(i);
                     removedCount++;
@@ -372,6 +422,31 @@ namespace WordDrop
         /// <summary>
         /// Returns a read-only snapshot of all currently primed words.
         /// </summary>
+        /// <summary>Does this candidate word touch the existing primed web — sharing a cell,
+        /// or orthogonally adjacent to one? Diagonals deliberately do NOT count: words read
+        /// across and down, so a diagonal touch is not a connection the player can see.</summary>
+        public bool TouchesExistingWeb(List<Vector2Int> cells)
+        {
+            var occupied = new HashSet<Vector2Int>();
+            for (int w = 0; w < _primedWords.Count; w++)
+            {
+                var pc = _primedWords[w].Cells;
+                if (pc == null) continue;
+                for (int i = 0; i < pc.Count; i++) occupied.Add(pc[i]);
+            }
+            if (occupied.Count == 0) return true;
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var c = cells[i];
+                if (occupied.Contains(c)) return true;                                   // intersects
+                if (occupied.Contains(new Vector2Int(c.x + 1, c.y))) return true;        // adjacent
+                if (occupied.Contains(new Vector2Int(c.x - 1, c.y))) return true;
+                if (occupied.Contains(new Vector2Int(c.x, c.y + 1))) return true;
+                if (occupied.Contains(new Vector2Int(c.x, c.y - 1))) return true;
+            }
+            return false;
+        }
+
         public int Count => _primedWords.Count;
 
         public List<PrimedWord> GetAllPrimedWords()
@@ -403,7 +478,7 @@ namespace WordDrop
             int count = _primedWords.Count;
             _primedWords.Clear();
             _nextId = 1;
-//             Debug.Log($"[PrimedWordRegistry] Cleared {count} primed word(s). ID counter reset.");
+//             WDLog.Log($"[PrimedWordRegistry] Cleared {count} primed word(s). ID counter reset.");
         }
 
         // Count property defined above (line 244)
@@ -412,7 +487,7 @@ namespace WordDrop
 
         public static void RunVerificationTests()
         {
-//             Debug.Log("[PrimedWordRegistry] ══ BEGIN VERIFICATION TESTS ══");
+//             WDLog.Log("[PrimedWordRegistry] ══ BEGIN VERIFICATION TESTS ══");
 
             var registry = new PrimedWordRegistry();
 
@@ -427,19 +502,19 @@ namespace WordDrop
             int id1 = registry.AddPrimedWord("CAT", cells, ownerPlayer: 0, primedOnTurn: 1, expiresOnTurn: 5);
             var found1 = registry.GetPrimedWordsContaining(new Vector2Int(1, 0));
             bool test1Pass = found1.Count == 1 && found1[0].Word == "CAT" && found1[0].Id == id1;
-//             Debug.Log($"[PrimedWordRegistry] Test 1 — query cell in 'CAT': " +
+//             WDLog.Log($"[PrimedWordRegistry] Test 1 — query cell in 'CAT': " +
                       // $"{(test1Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 2: Query cell NOT in any word
             var found2 = registry.GetPrimedWordsContaining(new Vector2Int(5, 3));
             bool test2Pass = found2.Count == 0;
-//             Debug.Log($"[PrimedWordRegistry] Test 2 — query empty cell: " +
+//             WDLog.Log($"[PrimedWordRegistry] Test 2 — query empty cell: " +
                       // $"{(test2Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 3: Expiry
             int expiredCount = registry.ExpireOldWords(currentTurn: 6);
             bool test3Pass = expiredCount == 1 && registry.Count == 0;
-//             Debug.Log($"[PrimedWordRegistry] Test 3 — expire: " +
+//             WDLog.Log($"[PrimedWordRegistry] Test 3 — expire: " +
                       // $"{(test3Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 4: Remove by ID
@@ -447,7 +522,7 @@ namespace WordDrop
             int id2 = registry.AddPrimedWord("IT", cells2, ownerPlayer: 1, primedOnTurn: 2, expiresOnTurn: 10);
             bool removed = registry.RemovePrimedWord(id2);
             bool test4Pass = removed && registry.Count == 0;
-//             Debug.Log($"[PrimedWordRegistry] Test 4 — remove by ID: " +
+//             WDLog.Log($"[PrimedWordRegistry] Test 4 — remove by ID: " +
                       // $"{(test4Pass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 5: GetAllPrimedWords returns copy
@@ -460,7 +535,7 @@ namespace WordDrop
             bool test5Pass = allWords.Count == 2;
             allWords.Clear();
             bool test5bPass = registry.Count == 2;
-//             Debug.Log($"[PrimedWordRegistry] Test 5 — snapshot copy: " +
+//             WDLog.Log($"[PrimedWordRegistry] Test 5 — snapshot copy: " +
                       // $"{(test5Pass && test5bPass ? "✓ PASS" : "✗ FAIL")}");
 
             // Test 6: RemoveStaleWords
@@ -471,13 +546,13 @@ namespace WordDrop
                 return !(c == 1 && r == 1);
             });
             bool test6Pass = staleRemoved == 1 && registry.Count == 1;
-//             Debug.Log($"[PrimedWordRegistry] Test 6 — remove stale (DOG): " +
+//             WDLog.Log($"[PrimedWordRegistry] Test 6 — remove stale (DOG): " +
                       // $"removed={staleRemoved} remaining={registry.Count} " +
                       // $"{(test6Pass ? "✓ PASS" : "✗ FAIL")}");
 
             bool allPassed = test1Pass && test2Pass && test3Pass && test4Pass
                           && test5Pass && test5bPass && test6Pass;
-//             Debug.Log($"[PrimedWordRegistry] ══ TESTS {(allPassed ? "ALL PASSED ✓" : "SOME FAILED ✗")} ══");
+//             WDLog.Log($"[PrimedWordRegistry] ══ TESTS {(allPassed ? "ALL PASSED ✓" : "SOME FAILED ✗")} ══");
 
             registry.Clear();
         }
