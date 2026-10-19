@@ -113,7 +113,16 @@ namespace WordDrop
         private const string MAP_FLOW_KEY = "map_flow_enabled";
         public static bool MapFlowEnabled
         {
-            get => PlayerPrefs.GetInt(MAP_FLOW_KEY, 0) == 1;
+            // DEFAULT ON since 2026-10-19. It shipped defaulting to 0, so the map between
+            // levels simply never appeared in normal play — the clear flow went straight to
+            // the level-intro modal, and the map was reachable only via the FX Test Menu's
+            // "Map-in-Loop" toggle. That is why putting art on the map changed nothing on
+            // screen. Spencer: "why is it not even going to the level map now".
+            //
+            // NOTE: this is the DEFAULT, used only when the pref has never been written. If
+            // the FX Test Menu toggle has ever been touched, the stored value wins — flip it
+            // there once to clear a stale OFF.
+            get => PlayerPrefs.GetInt(MAP_FLOW_KEY, 1) == 1;
             set { PlayerPrefs.SetInt(MAP_FLOW_KEY, value ? 1 : 0); PlayerPrefs.Save(); }
         }
 
