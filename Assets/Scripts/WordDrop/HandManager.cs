@@ -2050,6 +2050,14 @@ namespace WordDrop
                 return;
             }
 
+            // The level is already won — see the note in SwipeWordInput. The board stays up
+            // for a beat before the clear modal arrives; it must not be playable in that gap.
+            if (SurvivalManager.Instance != null && SurvivalManager.Instance.IsCurrentStageCleared)
+            {
+                WDLog.Log($"[TapBlocked] ({col},{row}) refused: level already cleared");
+                return;
+            }
+
             int rewritesLeft = MatchController.Instance.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
             if (rewritesLeft <= 0)
             {

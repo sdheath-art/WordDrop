@@ -97,6 +97,12 @@ namespace WordDrop
             var sm = SurvivalManager.Instance;
             if (sm != null && sm.IsOverlayPaused) { Cancel(); return; }
 
+            // THE LEVEL IS WON — STOP TAKING INPUT. 2026-10-19 Spencer: "you shouldn't be able
+            // to score more points". MEASURED: [Stage] CLEARED fires ~100 frames before the
+            // clear modal appears, so there was a ~1.7s window where a beaten level was still
+            // fully playable and still banking score. Nothing should land in that gap.
+            if (sm != null && sm.IsCurrentStageCleared) { Cancel(); return; }
+
             bool down = Input.GetMouseButtonDown(0);
             bool held = Input.GetMouseButton(0);
             bool up   = Input.GetMouseButtonUp(0);

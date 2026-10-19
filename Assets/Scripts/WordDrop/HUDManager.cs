@@ -102,12 +102,25 @@ namespace WordDrop
             }
 
             if (_shownAbsTarget <= 0) return shown.ToString("N0");
-            // `shown` is the ROLLING total the count-up animation drives, so convert it to
-            // this level's progress rather than reading CurrentStageScore directly — otherwise
-            // the number would jump instead of rolling.
+
+            // A LEVEL YOU HAVE BEATEN READS AS FINISHED. 2026-10-19 Spencer.
+            // AdvanceToNextStage resets _stageStartScore the moment the target is crossed, so
+            // CurrentStageScore drops to ~0 while the player is still looking at the level they
+            // just won — the counter appeared to reset mid-level and start climbing again. It
+            // should PIN at full until the next level actually begins. The clearing cascade can
+            // also keep scoring after the target is crossed; that score belongs to the level
+            // just cleared (SurvivalManager pins it there via _clearedThisResolution), and it
+            // must never read as progress toward the next one.
+            if (sm.IsOverlayPaused || sm.IsCurrentStageCleared)
+                return _shownAbsTarget.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
+
+            // `shown` is the ROLLING total the count-up animation drives, so convert it to this
+            // level's progress rather than reading CurrentStageScore directly — otherwise the
+            // number would jump instead of rolling. Clamped to the target so an overshoot on
+            // the clinching move cannot show more than 100% of a level.
             int baseline  = (ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : shown)
                             - sm.CurrentStageScore;
-            int inLevel   = Mathf.Max(0, shown - baseline);
+            int inLevel   = Mathf.Clamp(shown - baseline, 0, _shownAbsTarget);
             return inLevel.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
         }
 
