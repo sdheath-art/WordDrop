@@ -159,6 +159,25 @@ namespace WordDrop
                 // 3. INVISIBLE DATA — data with no tile. The player cannot see or play it.
                 if (cell != null && tile == null && (cell.Letter != '\0' || cell.IsWild))
                     ReportIntegrity($"INVISIBLE DATA ({c},{r}) '{cell.Letter}' — data with no tile");
+
+                // 4. MISPLACED TILE — the tile exists, the data exists, everything is wired
+                //    correctly, and it is simply DRAWN somewhere else. 2026-10-19: the recurring
+                //    "floating tile with blended letters" passes all three checks above because
+                //    all three ask about BOOKKEEPING. This asks about PIXELS. A tile sitting a
+                //    long way from its own cell looks like it is floating in mid-board, and two
+                //    tiles landing on the same spot is exactly what reads as one tile with
+                //    several letters stacked in it.
+                if (cell != null && tile != null && !tile.IsAnimating && grid != null)
+                {
+                    Vector3 want = grid.CellToWorld(c, r);
+                    Vector3 have = tile.transform.position;
+                    float   off  = Vector2.Distance(new Vector2(want.x, want.y),
+                                                    new Vector2(have.x, have.y));
+                    if (off > grid.CellSize * 0.5f)
+                        ReportIntegrity($"MISPLACED ({c},{r}) '{tile.Letter}' — drawn {off:F2} world units " +
+                                        $"({off / Mathf.Max(0.01f, grid.CellSize):F1} cells) from its own cell. " +
+                                        $"want {want} have {have}");
+                }
             }
         }
 
