@@ -84,6 +84,7 @@ namespace WordDrop
         private Button _tapButton;
         private Button _currentNodeButton; // the current level's node — tap to (re)open the play modal on a bare map
         private Image _bgTopImg;      // recolored per world
+        private bool  _hasMapArt;     // true once the painted map is in — suppresses the per-world tint
         private Image _bgBottomImg;   // recolored per world
         private Image _avatarFill;    // recolored per world
         private TextMeshProUGUI _worldTitle; // "WORLD n · NAME"
@@ -1134,6 +1135,31 @@ namespace WordDrop
             _bgBottomImg = BuildFullScreen("BGBottom", _theme.BgBottom);
             _bgTopImg    = BuildFullScreen("BGTop", new Color(_theme.BgTop.r, _theme.BgTop.g, _theme.BgTop.b, 0.85f)); // soft top wash
 
+            // ── PAINTED MAP ART (2026-10-19 Spencer) ─────────────────────────────────
+            // Spencer's level-map painting replaces the two flat colour washes. 2296x4194,
+            // aspect 0.547 — WIDER than the 1179x2556 phone (0.461), so it must be
+            // COVER-fitted or the path and castle squash. AspectRatioFitter in
+            // EnvelopeParent mode is the uGUI way to do that: it keeps the sprite's aspect
+            // and overflows the narrower axis rather than distorting.
+            //
+            // The top wash is switched off and the recolour in ApplyWorldTheme is skipped
+            // (see _hasMapArt) — those exist to tint a flat background per world, and they
+            // would tint the painting instead.
+            var mapArt = Resources.Load<Sprite>("UI/levelmap@2x");
+            if (mapArt != null && _bgBottomImg != null)
+            {
+                _hasMapArt = true;
+                _bgBottomImg.sprite          = mapArt;
+                _bgBottomImg.color           = Color.white;
+                _bgBottomImg.preserveAspect  = false;   // the fitter owns the aspect
+                var fitter = _bgBottomImg.gameObject.AddComponent<AspectRatioFitter>();
+                fitter.aspectMode  = AspectRatioFitter.AspectMode.EnvelopeParent;
+                fitter.aspectRatio = mapArt.rect.width / mapArt.rect.height;
+                if (_bgTopImg != null) _bgTopImg.gameObject.SetActive(false);
+                WDLog.Log($"[LevelMap] map art {mapArt.rect.width}x{mapArt.rect.height} " +
+                          $"(aspect {fitter.aspectRatio:F3}) — envelope-fitted");
+            }
+
             // Full-screen tap-to-enter button (transparent). Enabled only after the hop.
             var btnGO = new GameObject("TapToEnter");
             btnGO.transform.SetParent(canvasGO.transform, false);
@@ -1203,8 +1229,13 @@ namespace WordDrop
         private void ApplyWorldTheme(int level)
         {
             int world = (BatchStart(level) - 1) / VISIBLE_NODES; // 0-based
-            if (_bgBottomImg != null) _bgBottomImg.color = _theme.BgBottom;
-            if (_bgTopImg != null)    _bgTopImg.color    = new Color(_theme.BgTop.r, _theme.BgTop.g, _theme.BgTop.b, 0.85f);
+            // Skip the per-world tint when the painted map is in — those colours exist to
+            // shade a FLAT background and would wash the artwork. 2026-10-19.
+            if (!_hasMapArt)
+            {
+                if (_bgBottomImg != null) _bgBottomImg.color = _theme.BgBottom;
+                if (_bgTopImg != null)    _bgTopImg.color    = new Color(_theme.BgTop.r, _theme.BgTop.g, _theme.BgTop.b, 0.85f);
+            }
             if (_avatarFill != null)  _avatarFill.color  = _theme.Avatar;
             if (_worldTitle != null)
             {
