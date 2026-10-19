@@ -366,6 +366,42 @@ namespace WordDrop
         /// <summary>Back-compat alias — ice was the first mechanic this caught.</summary>
         public void ReconcileFrozenVisuals(RulesEngine rules) => ReconcileSpecialVisuals(rules);
 
+        /// <summary>Find Tile components that exist in the SCENE but are in neither the
+        /// _tiles[,] grid nor the pool — true orphans that NOTHING can see or clean up.
+        ///
+        /// 2026-10-19: a tile kept appearing FLOATING mid-board with its glyph blended. Five
+        /// diagnostics came back zero (double-Initialise, double pool-return, flag mismatch,
+        /// gravity collision, unregistered checkout), and so did the new BoardInvariants
+        /// floating/orphan checks — because EVERY one of those reads `_tiles[,]`. A GameObject
+        /// that was never in, or was dropped from, that array is invisible to all of them.
+        /// This is the only check that can see it, so it has to walk the scene.
+        ///
+        /// Debug-only and not cheap (FindObjectsByType); BoardInvariants calls it on its
+        /// 0.35s tick, only while the board is settled.</summary>
+        public int ReportSceneOrphanTiles()
+        {
+            var all = Object.FindObjectsByType<Tile>(FindObjectsSortMode.None);
+            if (all == null || all.Length == 0) return 0;
+
+            var known = new HashSet<Tile>();
+            for (int c = 0; c < RulesEngine.COLS; c++)
+            for (int r = 0; r < RulesEngine.ROWS; r++)
+                if (_tiles[c, r] != null) known.Add(_tiles[c, r]);
+            foreach (var pooled in _tilePool) if (pooled != null) known.Add(pooled);
+
+            int orphans = 0;
+            foreach (var t in all)
+            {
+                if (t == null || known.Contains(t)) continue;
+                if (!t.gameObject.activeInHierarchy) continue;   // parked/inactive is fine
+                orphans++;
+                Debug.LogError($"[Invariant] SCENE ORPHAN tile '{t.Letter}' at col={t.Col} row={t.Row} " +
+                               $"worldPos={t.transform.position} name='{t.gameObject.name}' — " +
+                               $"in the scene but in NEITHER _tiles[] NOR the pool. Nothing can clean it up.");
+            }
+            return orphans;
+        }
+
         private void ReturnTile(Tile tile)
         {
             if (tile == null) return;

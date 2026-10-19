@@ -48,6 +48,21 @@ namespace WordDrop
             if (MatchController.Instance != null && MatchController.Instance.IsProcessing) return;
             if (grid.BoardEntryInProgress) return;
 
+            // HEARTBEAT: zero [Invariant] lines is ambiguous — it could mean "no faults" or
+            // "this never ran". Say so once so the next log is readable. 2026-10-19.
+            if (!_saidAlive)
+            {
+                _saidAlive = true;
+                WDLog.Log($"[Invariant] integrity checker ALIVE (board settled, " +
+                          $"every {CHECK_INTERVAL:0.00}s) — silence from here means NO faults found.");
+            }
+
+            CheckBoardIntegrity(grid, rules);
+
+            // The only check that can see a tile missing from _tiles[] entirely — every other
+            // check reads that array, so a true scene orphan is invisible to them. 2026-10-19.
+            grid.ReportSceneOrphanTiles();
+
             var live = new HashSet<string>();
 
             for (int c = 0; c < RulesEngine.COLS; c++)
@@ -108,6 +123,50 @@ namespace WordDrop
         }
 
         private readonly HashSet<string> _goldSeen = new HashSet<string>();
+
+
+        /// <summary>Three structural faults the board must never show once it has settled.
+        /// Added 2026-10-19 after a tile appeared FLOATING mid-board with letters blended
+        /// together, and four separate diagnostics (double-Initialise, double pool-return,
+        /// flag mismatch, gravity collision) all came back with ZERO hits — meaning the fault
+        /// was structural and nothing was looking for it. This checker already existed but
+        /// only inspected gold art.
+        ///
+        /// Reports once per fault per cell per run, so a persistent fault does not spam.</summary>
+        private readonly HashSet<string> _integrityReported = new HashSet<string>();
+        private bool _saidAlive;
+
+        private void CheckBoardIntegrity(GridManager grid, RulesEngine rules)
+        {
+            for (int c = 0; c < RulesEngine.COLS; c++)
+            for (int r = 0; r < RulesEngine.ROWS; r++)
+            {
+                var cell = rules.GetCell(c, r);
+                var tile = grid.GetTile(c, r);
+
+                // 1. FLOATING DATA — a cell with empty space beneath it. Gravity should make
+                //    this impossible; if it happens the rules board itself is wrong.
+                if (cell != null && r > 0 && rules.GetCell(c, r - 1) == null
+                    && !cell.IsAnchored)                      // vaults legitimately float
+                    ReportIntegrity($"FLOATING ({c},{r}) '{cell.Letter}' — nothing beneath it");
+
+                // 2. ORPHAN VISUAL — a tile on screen with no data behind it. SyncToRulesState
+                //    cleans these, so one surviving means it is not in _tiles[] and nothing can
+                //    see it.
+                if (cell == null && tile != null)
+                    ReportIntegrity($"ORPHAN VISUAL ({c},{r}) '{tile.Letter}' — tile with no data cell");
+
+                // 3. INVISIBLE DATA — data with no tile. The player cannot see or play it.
+                if (cell != null && tile == null && (cell.Letter != '\0' || cell.IsWild))
+                    ReportIntegrity($"INVISIBLE DATA ({c},{r}) '{cell.Letter}' — data with no tile");
+            }
+        }
+
+        private void ReportIntegrity(string msg)
+        {
+            if (!_integrityReported.Add(msg)) return;   // once per distinct fault per run
+            Debug.LogError($"[Invariant] {msg}");
+        }
 
         private void CheckGoldArtAlways(GridManager grid, RulesEngine rules)
         {
