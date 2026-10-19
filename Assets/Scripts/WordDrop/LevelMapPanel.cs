@@ -1173,16 +1173,22 @@ namespace WordDrop
         /// different resolution, as long as the composition does not move.</summary>
         private static readonly Vector2[] MAP_NODE_UV =
         {
-            new Vector2(0.5277f, 0.8735f),  // 1  bottom disc
-            new Vector2(0.3598f, 0.7395f),  // 2
-            new Vector2(0.3286f, 0.6367f),  // 3
-            new Vector2(0.6119f, 0.5674f),  // 4
-            new Vector2(0.7990f, 0.4968f),  // 5
-            new Vector2(0.6169f, 0.4219f),  // 6
-            new Vector2(0.3661f, 0.3492f),  // 7
-            new Vector2(0.4662f, 0.2905f),  // 8
-            new Vector2(0.6187f, 0.2370f),  // 9  top disc
-            new Vector2(0.6320f, 0.1660f),  // 10 LIBRARY DOORWAY
+            // Re-measured 2026-10-19 for the SECOND map export (bg2, 1702x3698). The first
+            // artwork had a different path, so the old table did not transfer. Nine purple
+            // path discs detected as flat ellipses, ordered bottom-first; the tenth is the
+            // LIBRARY ARCH — the bookshelf opening in the castle facade. Note the castle DOME
+            // also reads as a purple ellipse and was excluded by shape (235x160, ratio 1.47,
+            // against ~1.8 for a real disc).
+            new Vector2(0.3951f, 0.8872f),  // 1  bottom disc
+            new Vector2(0.4104f, 0.7906f),  // 2
+            new Vector2(0.6428f, 0.7418f),  // 3
+            new Vector2(0.8443f, 0.6671f),  // 4  furthest right
+            new Vector2(0.6298f, 0.6041f),  // 5
+            new Vector2(0.3951f, 0.5446f),  // 6
+            new Vector2(0.4982f, 0.4965f),  // 7
+            new Vector2(0.7133f, 0.4620f),  // 8
+            new Vector2(0.5993f, 0.4129f),  // 9  top disc
+            new Vector2(0.6032f, 0.3418f),  // 10 LIBRARY ARCH
         };
 
         private System.Collections.IEnumerator VerifyMapFit()
