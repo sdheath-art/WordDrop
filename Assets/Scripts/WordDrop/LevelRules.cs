@@ -37,7 +37,7 @@ namespace WordDrop
 
         private static LevelRules Make(string name, int ice = 0, int minLen = 3, int cadence = 2,
                                        bool branch = false, bool fuse = false, bool gold = false,
-                                       int fillRows = 5, float density = 0.65f)
+                                       int fillRows = 5, float density = 0.92f)
             => new LevelRules {
                 Name = name, IceCount = ice, MinWordLength = minLen, RiseCadence = cadence,
                 BranchPriming = branch, FuseOn = fuse, GoldTiles = gold,
@@ -46,16 +46,16 @@ namespace WordDrop
         /// <summary>The authored opening. One named twist per stage — that is what makes a level
         /// feel designed instead of a number going up. Keep each stage to ONE new idea.</summary>
         private static readonly LevelRules[] TABLE = {
-            /* 1  */ Make("Welcome",      cadence:3, fillRows:4, density:0.55f),
-            /* 2  */ Make("Warm Up",      fillRows:4, density:0.60f),
+            /* 1  */ Make("Welcome",      cadence:3, fillRows:4, density:0.90f),
+            /* 2  */ Make("Warm Up",      fillRows:4, density:0.92f),
             /* 3  */ Make("Ice Breaker",  ice:8),
             /* 4  */ Make("Four Letter",  minLen:4),
-            /* 5  */ Make("Treasure",     gold:true, cadence:3, fillRows:6, density:0.75f),
+            /* 5  */ Make("Treasure",     gold:true, cadence:3, fillRows:6, density:0.95f),
             /* 6  */ Make("Quickening",   cadence:2),
             /* 7  */ Make("Branching",    branch:true, cadence:3),
             /* 8  */ Make("Deep Freeze",  ice:12, minLen:4),
             /* 9  */ Make("Thin Ice",     ice:6, cadence:2),
-            /* 10 */ Make("Tangle",       branch:true, cadence:1, fillRows:7, density:0.80f), // BOSS
+            /* 10 */ Make("Tangle",       branch:true, cadence:1, fillRows:7, density:0.96f), // BOSS
             /* 11 */ Make("Payday",       gold:true, ice:4, cadence:3),     // relief
             /* 12 */ Make("Burning Fuse", fuse:true),
             /* 13 */ Make("Hard Water",   ice:10, fuse:true),
@@ -144,6 +144,12 @@ namespace WordDrop
             if (isTransition && rules2 != null)
             {
                 rules2.SeedVaultBoard(r.FillRows, r.Density, 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
+                // SETTLE IT. SeedVaultBoard scatters at `density`, so at 0.65 a third of the
+                // cells are holes — including holes UNDER letters, which is the "massive gaps
+                // with no letters" and the floating single tiles. Gravity packs them into solid
+                // rows from the bottom, which is what a starting board should look like.
+                // 2026-10-19 Spencer.
+                rules2.ApplyGravityInDataPublic();
                 MatchController.Instance?.ResetTurnCounter();
                 GridManager.Instance?.RebuildFromRulesEngine(rules2);
                 WDLog.Log($"[LevelRules] fresh board for LEVEL {stage} — {r.FillRows} rows @ {r.Density:P0}");
@@ -158,7 +164,15 @@ namespace WordDrop
                 // SpawnFrozenTiles only picks from OCCUPIED cells, so a sparse board yields
                 // fewer than asked. The log reports both so a shortfall is visible rather than
                 // looking like the feature failed.
-                GridManager.Instance?.SyncToRulesState(RulesEngine.Instance);
+                // Reconcile, not plain sync: this is the ONE path that drives frost onto
+                // already-existing tiles, and a cell frozen in DATA but not showing frost is
+                // unselectable while looking perfectly normal (TryEnterRewriteMode and
+                // TryBoardSwap both refuse on cell.IsFrozen). 2026-10-19.
+                GridManager.Instance?.ReconcileSpecialVisuals(RulesEngine.Instance);
+                int dataFrozen = RulesEngine.Instance.CountFrozenCells();
+                if (dataFrozen != placed)
+                    Debug.LogWarning($"[LevelRules] ICE MISMATCH — spawned {placed} but board reports " +
+                                     $"{dataFrozen} frozen cells. Stale ice from a previous level?");
             }
 
             var sm = SurvivalManager.Instance;
