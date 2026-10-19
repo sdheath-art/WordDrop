@@ -316,7 +316,12 @@ namespace WordDrop
         public static float DIGIT_ADVANCE_FRAC = 172f / 308f;   // 160 -> 172: Spencer wanted a hair more air
         /// <summary>World height of one digit cell at the pop's base size. The pop then scales
         /// up, so this is the resting size, not the peak.</summary>
-        public static float DIGIT_CELL_WORLD   = 0.36f;   // 1.30 -> 0.65 -> 0.325 -> 0.36
+        public static float DIGIT_CELL_WORLD   = 0.40f;   // 1.30 -> 0.65 -> 0.325 -> 0.36 -> 0.40
+        // 2026-10-19 Spencer: "just a touch bigger". +11%, matching the size of his last
+        // step (0.325 -> 0.36) so the nudges stay on the same scale. The advance is a
+        // fraction of this, so the letter-spacing he tuned stays proportional and does not
+        // need re-tuning. In-game pops only — the level map's coin popups size themselves
+        // in canvas px (COIN_DIGIT_PX) and are unaffected.
 
         private static Dictionary<char, Sprite> s_digitSprites;
 
