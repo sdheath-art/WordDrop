@@ -2425,9 +2425,20 @@ namespace WordDrop
                 for (int i = 0; i < cl.Count; i++)
                 {
                     if (cl[i].cells == null || !cl[i].cells.Contains(cell)) continue;
-                    // Start from the badge itself so the corner number is what grows and lifts.
+                    // POP UNDER THE FINGER. 2026-10-19 Spencer: "you should probably center it
+                    // on wherever you press to pop the words". The anchor used to be the corner
+                    // BADGE so the number could grow out of it — but the badge is off
+                    // (SHOW_CORNER_BADGE = false), so it was launching from a corner with
+                    // nothing there. `cell` IS the tapped cell, and one tap makes exactly one
+                    // pop (note the break below), so there is nothing to collide with.
+                    // The anchor is still read for font size / badge index / ink — only the
+                    // POSITION comes from the tap.
                     if (ClusterOutline.Instance.TryGetBadgeAnchor(cell, out var anchor, out var fs, out var bi, out var bc))
-                        ClusterOutline.Instance.PopPayout(anchor, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc);
+                    {
+                        Vector3 tapAt = _grid.CellToWorld(cell.x, cell.y);
+                        tapAt.z = anchor.z;      // keep the badge's depth so sorting is unchanged
+                        ClusterOutline.Instance.PopPayout(tapAt, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc);
+                    }
                     break;
                 }
             }
