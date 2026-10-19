@@ -1330,6 +1330,11 @@ namespace WordDrop
             _worldTitle.raycastTarget = false;
             _worldTitle.enableWordWrapping = false;
             var wtf = GameFont.GetUITMP(); if (wtf != null) _worldTitle.font = wtf;
+            // Hidden on the painted map — "AREA 1 · GREEN HILLS" was laid over the castle and
+            // the top of the path. The artwork names the place on its own. Still built (and
+            // still recoloured by ApplyWorldTheme) so nothing downstream hits a null; it is
+            // just not shown. 2026-10-19 Spencer.
+            if (_hasMapArt) wtGO.SetActive(false);
 
             // (No "Tap to continue" text — the whole screen is still the tap-to-enter button. 2026-07-10 Spencer.)
 
