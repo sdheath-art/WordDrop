@@ -1058,8 +1058,12 @@ namespace WordDrop
             }
 
             // Connector paths first (behind nodes).
-            for (int i = 0; i < VISIBLE_NODES - 1; i++)
-                BuildPath(NodeAnchoredPos(i), NodeAnchoredPos(i + 1));
+            // The painted map already HAS a path — drawing connector segments over it would
+            // cut straight across the artwork's curves. Only draw them on the fallback
+            // zigzag layout, which has no path of its own. 2026-10-19.
+            if (!_hasMapArt)
+                for (int i = 0; i < VISIBLE_NODES - 1; i++)
+                    BuildPath(NodeAnchoredPos(i), NodeAnchoredPos(i + 1));
 
             // Nodes.
             for (int i = 0; i < VISIBLE_NODES; i++)
@@ -1089,8 +1093,45 @@ namespace WordDrop
         }
 
         // node index (0 = bottom / lowest level) → anchored position (bottom-to-top climb + gentle zigzag)
+        /// <summary>Where each node sits ON THE PAINTED MAP, as a fraction of the artwork
+        /// (0,0 = top-left). MEASURED off levelmap@2x.png by detecting the purple path discs:
+        /// nine flat ellipses (width/height 1.6-2.0, area >9000) running up the path, ordered
+        /// bottom-first so index 0 is level 1. The tenth is the LIBRARY DOORWAY at the top —
+        /// the arch with the bookshelves, found as the large warm-bright region inside the
+        /// castle band. 2026-10-19 Spencer: "place all the nodes above the purple nodes...
+        /// and then the final node on the library door".
+        ///
+        /// Stored normalised rather than in pixels so it survives the import downscale
+        /// (2296x4194 -> 2242x4096 at maxTextureSize 4096) and any future re-export at a
+        /// different resolution, as long as the composition does not move.</summary>
+        private static readonly Vector2[] MAP_NODE_UV =
+        {
+            new Vector2(0.5277f, 0.8735f),  // 1  bottom disc
+            new Vector2(0.3598f, 0.7395f),  // 2
+            new Vector2(0.3286f, 0.6367f),  // 3
+            new Vector2(0.6119f, 0.5674f),  // 4
+            new Vector2(0.7990f, 0.4968f),  // 5
+            new Vector2(0.6169f, 0.4219f),  // 6
+            new Vector2(0.3661f, 0.3492f),  // 7
+            new Vector2(0.4662f, 0.2905f),  // 8
+            new Vector2(0.6187f, 0.2370f),  // 9  top disc
+            new Vector2(0.6320f, 0.1660f),  // 10 LIBRARY DOORWAY
+        };
+
         private Vector2 NodeAnchoredPos(int idx)
         {
+            // On the painted map, follow the artwork. The background is ENVELOPE-fitted, so it
+            // is larger than the screen — a node's screen position has to be computed against
+            // the BACKGROUND's rect, not the canvas, or every node drifts toward centre by the
+            // amount of the overflow.
+            if (_hasMapArt && _bgBottomImg != null && idx >= 0 && idx < MAP_NODE_UV.Length)
+            {
+                Rect bg = _bgBottomImg.rectTransform.rect;
+                Vector2 uv = MAP_NODE_UV[idx];
+                return new Vector2((uv.x - 0.5f) * bg.width,
+                                   (0.5f - uv.y) * bg.height);   // uGUI +y is UP; uv +y is DOWN
+            }
+
             float y = (idx - (VISIBLE_NODES - 1) * 0.5f) * NODE_SPACING + STRIP_Y_OFFSET;
             float x = (idx % 2 == 0) ? -ZIGZAG_X : ZIGZAG_X;
             return new Vector2(x, y);
