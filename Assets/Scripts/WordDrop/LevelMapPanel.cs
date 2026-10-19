@@ -823,7 +823,22 @@ namespace WordDrop
             // from Spencer's Photoshop text stack (Assets/Resources/Digits), and the map's
             // coin popups were plain TMP text — two different number styles in one game.
             // Falls back to the TMP pair if the digit art is missing. 2026-10-19 Spencer.
-            const float COIN_DIGIT_PX = 64f;
+            // MATCH THE IN-GAME POPS. 2026-10-19 Spencer: "about the same size on the level
+            // map". The board pops are sized in WORLD units (ClusterOutline.DIGIT_CELL_WORLD)
+            // and these are in CANVAS px, so derive one from the other instead of hardcoding a
+            // number that drifts every time he tunes the other. The game camera is orthographic,
+            // so 1 world unit = canvasHeight / (2 * orthographicSize) px. At the shipped
+            // orthographicSize 10 on a 2556-tall canvas that is 127.8 px per unit, making the
+            // current 0.40 come out at ~51px — the hardcoded 64 had been reading noticeably
+            // LARGER than the in-game number it was supposed to match.
+            float coinDigitPx = 64f;                                  // fallback
+            var gameCam = Camera.main;
+            if (gameCam != null && gameCam.orthographic && gameCam.orthographicSize > 0.01f)
+            {
+                float canvasH = ((RectTransform)_canvas.transform).rect.height;
+                coinDigitPx = ClusterOutline.DIGIT_CELL_WORLD * (canvasH / (2f * gameCam.orthographicSize));
+            }
+            float COIN_DIGIT_PX = coinDigitPx;
             var shadowRT = new GameObject("Shadow", typeof(RectTransform)).GetComponent<RectTransform>();
             shadowRT.SetParent(rt, false);
             shadowRT.anchorMin = shadowRT.anchorMax = new Vector2(0.5f, 0.5f);
