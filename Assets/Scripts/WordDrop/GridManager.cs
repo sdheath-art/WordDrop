@@ -934,6 +934,34 @@ namespace WordDrop
             // middle of the screen), and leaked a full board's worth of objects per call.
             if (_gridRoot != null)
             {
+                // ── TILES ARE NOT CHILDREN OF _gridRoot ──────────────────────────────
+                // 2026-10-19 Spencer: "two boards were populating at once, one was
+                // underneath this one." Destroying the root takes the board panel, frame
+                // and cell grid with it, but TILES are parented elsewhere — so every tile
+                // from the PREVIOUS layout stayed alive in the scene, still sitting at
+                // coordinates computed for the old cell size and row count. The grid is
+                // genuinely built twice per run (measured in debug_log: 9x5 at frame 0,
+                // 9x11 at frame 38), so the menu board's tiles were still on screen
+                // underneath the survival board. The stray "floating tile with blended
+                // letters" was one of them, landing mid-board in the NEW layout.
+                //
+                // DESTROY rather than pool them: the cell size changes between layouts, so
+                // a recycled tile would carry a stale scale and position. The pool must go
+                // too — it holds tiles built for the old geometry.
+                int killed = 0;
+                for (int c = 0; c < COLS; c++)
+                for (int r = 0; r < ROWS; r++)
+                {
+                    if (_tiles[c, r] != null) { Destroy(_tiles[c, r].gameObject); _tiles[c, r] = null; killed++; }
+                    _cells[c, r] = null;
+                }
+                foreach (var pooled in _tilePool) if (pooled != null) { Destroy(pooled.gameObject); killed++; }
+                _tilePool.Clear();
+                _allTileObjects.Clear();
+                if (killed > 0)
+                    WDLog.Log($"[Grid] rebuild — destroyed {killed} tile(s) from the previous layout " +
+                              $"(they are not children of GridRoot, so Destroy(root) would have left them).");
+
                 Destroy(_gridRoot);
                 _gridRoot = null;
                 _specFrameGO = null; _specInnerGO = null; _specShadowGO = null; _gridBackgroundSR = null;

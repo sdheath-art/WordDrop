@@ -85,23 +85,30 @@ namespace WordDrop
             // the stage clears — before the StageClearModal has even shown — so reading the
             // target live made it jump under the player mid-celebration. Hold the old number
             // until the clear overlay is dismissed and the next stage is actually in play.
-            bool transitioning = sm.IsOverlayPaused;
-            if (_shownStageIdx != sm.CurrentStageIndex && !transitioning)
+            // PROGRESS WITHIN THIS LEVEL, not the running total. 2026-10-19 Spencer:
+            // "im starting off the next level with 1490 without doing anything." It was not a
+            // bug — the left number was PlayerScore (which carries across levels) and the right
+            // was the absolute total needed. That reads as starting a level part-finished. A
+            // level counter should start at zero, so show CurrentStageScore / CurrentStageTarget.
+            if (_shownStageIdx != sm.CurrentStageIndex && !sm.IsOverlayPaused)
             {
-                int total = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : shown;
-                _shownAbsTarget = total - sm.CurrentStageScore + delta;
+                _shownAbsTarget = delta;                 // this level's own target
                 _shownStageIdx  = sm.CurrentStageIndex;
             }
             else if (_shownStageIdx < 0)
             {
-                // First read of the run — nothing latched yet, so take it live.
-                int total = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : shown;
-                _shownAbsTarget = total - sm.CurrentStageScore + delta;
+                _shownAbsTarget = delta;
                 _shownStageIdx  = sm.CurrentStageIndex;
             }
 
             if (_shownAbsTarget <= 0) return shown.ToString("N0");
-            return shown.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
+            // `shown` is the ROLLING total the count-up animation drives, so convert it to
+            // this level's progress rather than reading CurrentStageScore directly — otherwise
+            // the number would jump instead of rolling.
+            int baseline  = (ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : shown)
+                            - sm.CurrentStageScore;
+            int inLevel   = Mathf.Max(0, shown - baseline);
+            return inLevel.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
         }
 
         /// <summary>Drop the latched stage target so the next read recomputes it. Call on run
