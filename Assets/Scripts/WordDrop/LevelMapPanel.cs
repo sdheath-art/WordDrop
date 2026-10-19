@@ -1127,6 +1127,37 @@ namespace WordDrop
             new Vector2(0.6320f, 0.1660f),  // 10 LIBRARY DOORWAY
         };
 
+        private System.Collections.IEnumerator VerifyMapFit()
+        {
+            yield return null;
+            yield return new WaitForEndOfFrame();
+            if (_bgBottomImg == null || _canvas == null) yield break;
+
+            Rect canvasRect = ((RectTransform)_canvas.transform).rect;
+            var   bgRT      = _bgBottomImg.rectTransform;
+            var   sp        = _bgBottomImg.sprite;
+            if (sp == null) yield break;
+
+            float artAspect = sp.rect.width / sp.rect.height;
+            float scrAspect = canvasRect.width / canvasRect.height;
+            Vector2 cover = artAspect > scrAspect
+                ? new Vector2(canvasRect.height * artAspect, canvasRect.height)
+                : new Vector2(canvasRect.width, canvasRect.width / artAspect);
+
+            bgRT.anchorMin = bgRT.anchorMax = new Vector2(0.5f, 0.5f);
+            bgRT.pivot = new Vector2(0.5f, 0.5f);
+            bgRT.anchoredPosition = Vector2.zero;
+            bgRT.sizeDelta = cover;
+            _mapArtSize = cover;
+            if (_nodesRoot != null) _nodesRoot.sizeDelta = cover;
+
+            WDLog.Log($"[LevelMap] AFTER LAYOUT — canvas {canvasRect.width:F0}x{canvasRect.height:F0}, " +
+                      $"scale {_canvas.scaleFactor:F3}, bg rect {bgRT.rect.width:F0}x{bgRT.rect.height:F0}, " +
+                      $"sizeDelta {bgRT.sizeDelta.x:F0}x{bgRT.sizeDelta.y:F0}, " +
+                      $"lossyScale {bgRT.lossyScale.x:F3}");
+            LayoutNodes(_windowStart);
+        }
+
         private Vector2 NodeAnchoredPos(int idx)
         {
             // On the painted map, follow the artwork. The background is ENVELOPE-fitted, so it
@@ -1231,6 +1262,11 @@ namespace WordDrop
                 WDLog.Log($"[LevelMap] map art {mapArt.rect.width}x{mapArt.rect.height} " +
                           $"(aspect {artAspect:F3}) cover-fitted to {cover.x:F0}x{cover.y:F0} " +
                           $"in a {canvasRect.width:F0}x{canvasRect.height:F0} canvas");
+                // Re-assert and REPORT after layout settles. A Canvas resolves its rect over
+                // the first frames, and anything that re-runs Stretch() on this image would
+                // silently undo the sizing above. Logging the rect we actually END UP with
+                // turns "it looks zoomed" into a number. 2026-10-19.
+                StartCoroutine(VerifyMapFit());
             }
 
             // Full-screen tap-to-enter button (transparent). Enabled only after the hop.
@@ -1334,8 +1370,15 @@ namespace WordDrop
             rt.sizeDelta = new Vector2(NODE_SIZE, NODE_SIZE);
             rt.anchoredPosition = pos;
 
-            BuildCircle(go.transform, NODE_SIZE + 10f, NODE_RIM); // white rim (behind)
-            BuildCircle(go.transform, NODE_SIZE, fill);           // colored fill (on top of rim)
+            // The painted map already DRAWS the discs, so a rim + fill would sit a flat UI
+            // circle on top of rendered artwork. Everything carrying INFORMATION — number,
+            // padlock, star/trophy, invisible tap target — stays; only decoration goes.
+            // 2026-10-19 Spencer.
+            if (!_hasMapArt)
+            {
+                BuildCircle(go.transform, NODE_SIZE + 10f, NODE_RIM); // white rim (behind)
+                BuildCircle(go.transform, NODE_SIZE, fill);           // colored fill (on top of rim)
+            }
 
             if (isLocked)
             {
@@ -1365,7 +1408,16 @@ namespace WordDrop
                 lbl.fontSize = 27f;
                 lbl.fontStyle = FontStyles.Bold;
                 lbl.alignment = TextAlignmentOptions.Center;
-                lbl.color = lum > 0.5f ? HUD_INK : Color.white;
+                // No fill behind it any more, so the fill-luminance rule does not apply.
+                // White with a dark outline reads on the purple discs AND the gold rims.
+                if (_hasMapArt)
+                {
+                    lbl.color = Color.white;
+                    lbl.fontSize = 30f;
+                    lbl.outlineWidth = 0.22f;
+                    lbl.outlineColor = new Color32(26, 18, 48, 255);
+                }
+                else lbl.color = lum > 0.5f ? HUD_INK : Color.white;
                 lbl.raycastTarget = false;
                 var uf = GameFont.GetUITMP(); if (uf != null) lbl.font = uf;
             }
