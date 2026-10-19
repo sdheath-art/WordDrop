@@ -84,7 +84,8 @@ namespace WordDrop
         private Button _tapButton;
         private Button _currentNodeButton; // the current level's node — tap to (re)open the play modal on a bare map
         private Image _bgTopImg;      // recolored per world
-        private bool  _hasMapArt;     // true once the painted map is in — suppresses the per-world tint
+        private bool    _hasMapArt;   // true once the painted map is in — suppresses the per-world tint
+        private Vector2 _mapArtSize;  // the cover-fitted size of the map art, in canvas units
         private Image _bgBottomImg;   // recolored per world
         private Image _avatarFill;    // recolored per world
         private TextMeshProUGUI _worldTitle; // "WORLD n · NAME"
@@ -1049,6 +1050,14 @@ namespace WordDrop
             _windowStart = BatchStart(centerLevel);
             _currentNodeButton = null; // nodes are destroyed + rebuilt below; BuildNode re-assigns for the current one
 
+            // Match the nodes container to the cover-fitted artwork. Its default is a fixed
+            // 540x960 box, which is fine for the zigzag layout but unrelated to where the
+            // painting's pixels land — and nodes placed on the art can sit outside it.
+            // Same centre, same scale, so node coordinates are unaffected; this just stops
+            // anything depending on children living inside their parent's rect. 2026-10-19.
+            if (_hasMapArt && _nodesRoot != null && _mapArtSize.x > 0f)
+                _nodesRoot.sizeDelta = _mapArtSize;
+
             // Clear old nodes/paths — but NOT the avatar (it lives under nodesRoot too).
             for (int i = _nodesRoot.childCount - 1; i >= 0; i--)
             {
@@ -1126,10 +1135,13 @@ namespace WordDrop
             // amount of the overflow.
             if (_hasMapArt && _bgBottomImg != null && idx >= 0 && idx < MAP_NODE_UV.Length)
             {
-                Rect bg = _bgBottomImg.rectTransform.rect;
+                // Use the ART's cover-fitted size, NOT _nodesRoot's rect — that is a fixed
+                // 540x960 box (see its construction) and has nothing to do with where the
+                // painting's pixels land. Both it and the background are centre-anchored and
+                // unscaled, so a canvas-space offset from centre IS a nodesRoot-local offset.
                 Vector2 uv = MAP_NODE_UV[idx];
-                return new Vector2((uv.x - 0.5f) * bg.width,
-                                   (0.5f - uv.y) * bg.height);   // uGUI +y is UP; uv +y is DOWN
+                return new Vector2((uv.x - 0.5f) * _mapArtSize.x,
+                                   (0.5f - uv.y) * _mapArtSize.y);   // uGUI +y is UP; uv +y is DOWN
             }
 
             float y = (idx - (VISIBLE_NODES - 1) * 0.5f) * NODE_SPACING + STRIP_Y_OFFSET;
@@ -1190,15 +1202,35 @@ namespace WordDrop
             if (mapArt != null && _bgBottomImg != null)
             {
                 _hasMapArt = true;
-                _bgBottomImg.sprite          = mapArt;
-                _bgBottomImg.color           = Color.white;
-                _bgBottomImg.preserveAspect  = false;   // the fitter owns the aspect
-                var fitter = _bgBottomImg.gameObject.AddComponent<AspectRatioFitter>();
-                fitter.aspectMode  = AspectRatioFitter.AspectMode.EnvelopeParent;
-                fitter.aspectRatio = mapArt.rect.width / mapArt.rect.height;
+                _bgBottomImg.sprite         = mapArt;
+                _bgBottomImg.color          = Color.white;
+                _bgBottomImg.preserveAspect = false;
                 if (_bgTopImg != null) _bgTopImg.gameObject.SetActive(false);
+
+                // COVER-FIT BY HAND, NOT WITH AspectRatioFitter. 2026-10-19 — the fitter was
+                // doing NOTHING: BuildFullScreen calls Stretch(), which sets anchorMin 0 /
+                // anchorMax 1, and AspectRatioFitter cannot drive a RectTransform with
+                // stretched anchors. The art was simply being stretched to the canvas, which
+                // squashed it (source 0.547 vs phone 0.461) and left a gap at the bottom.
+                // Centre-anchor it and size it explicitly so the maths is visible and the
+                // node placement below has a rect it can trust.
+                var bgRT = _bgBottomImg.rectTransform;
+                bgRT.anchorMin = bgRT.anchorMax = new Vector2(0.5f, 0.5f);
+                bgRT.pivot = new Vector2(0.5f, 0.5f);
+                bgRT.anchoredPosition = Vector2.zero;
+
+                Rect canvasRect = ((RectTransform)_canvas.transform).rect;
+                float artAspect = mapArt.rect.width / mapArt.rect.height;
+                float scrAspect = canvasRect.width / canvasRect.height;
+                Vector2 cover = artAspect > scrAspect
+                    ? new Vector2(canvasRect.height * artAspect, canvasRect.height) // match height, overflow width
+                    : new Vector2(canvasRect.width, canvasRect.width / artAspect);  // match width, overflow height
+                bgRT.sizeDelta = cover;
+                _mapArtSize = cover;
+
                 WDLog.Log($"[LevelMap] map art {mapArt.rect.width}x{mapArt.rect.height} " +
-                          $"(aspect {fitter.aspectRatio:F3}) — envelope-fitted");
+                          $"(aspect {artAspect:F3}) cover-fitted to {cover.x:F0}x{cover.y:F0} " +
+                          $"in a {canvasRect.width:F0}x{canvasRect.height:F0} canvas");
             }
 
             // Full-screen tap-to-enter button (transparent). Enabled only after the hop.
