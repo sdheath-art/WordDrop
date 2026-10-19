@@ -293,6 +293,14 @@ namespace WordDrop
                 tile = go.AddComponent<Tile>();
                 tile.Initialise(letter, col, row, cellSize, ownerIndex);
             }
+            // POSITION IT HERE, not only at the call sites. 2026-10-19: tiles were turning up
+            // at (0,0,0) — the grid origin, which is mid-board — because ResetForPool zeroes
+            // localPosition and a caller that forgets to place the tile leaves it there. That
+            // is the stray floating tile, and several landing on the same spot is what read as
+            // one tile with its letters blended. CheckoutTile already knows col/row, so it can
+            // guarantee a sane position; callers that set their own just overwrite this.
+            tile.transform.position = CellToWorld(col, row);
+
             // A level entry was requested before the grid existed — run it now, before this
             // tile (and every tile after it) is placed. 2026-09-10 Spencer.
             if (_boardEntryRequested && _gridRoot != null) PrepBoardEntry();
@@ -356,6 +364,38 @@ namespace WordDrop
                 if (t.IsEditRefill != c.IsEditRefill) { t.SetEditRefillVisual(c.IsEditRefill);fixes++; Report(col,row,t,"editfill", c.IsEditRefill); }
                 if (t.IsWildRefill != c.IsWildRefill) { t.SetWildRefillVisual(c.IsWildRefill);fixes++; Report(col,row,t,"wildfill", c.IsWildRefill); }
             }
+            // ── POSITION, NOT JUST FLAGS ─────────────────────────────────────────────
+            // 2026-10-19: the MISPLACED invariant finally named this. Two signatures, both
+            // from a rise that moved the DATA and left the VISUALS behind:
+            //   • "have (0,0,0)"            — a pooled tile checked out and never positioned.
+            //                                 ResetForPool zeroes localPosition, so it sits at
+            //                                 the grid origin. THIS is the floating mid-board
+            //                                 tile with letters apparently blended: several of
+            //                                 them stacked on the same spot.
+            //   • "have == the row BELOW's want" — including the per-row z (-0.02 where -0.03
+            //                                 was wanted). The tile holds its pre-rise slot.
+            // Snapping here is the same safety net the frost reconcile is: it logs every fix,
+            // so if this keeps firing the real repair belongs in AnimateRiseRow.
+            int moved = 0;
+            for (int col = 0; col < RulesEngine.COLS; col++)
+            for (int row = 0; row < RulesEngine.ROWS; row++)
+            {
+                Tile t = GetTile(col, row);
+                if (t == null || t.IsAnimating) continue;
+                if (rules.GetCell(col, row) == null) continue;
+
+                Vector3 want = CellToWorld(col, row);
+                Vector3 have = t.transform.position;
+                if (Vector2.Distance(new Vector2(want.x, want.y), new Vector2(have.x, have.y)) <= CellSize * 0.5f)
+                    continue;
+
+                t.transform.position = want;
+                moved++;
+                WDLog.Log($"[PosSync] ({col},{row}) '{t.Letter}' snapped from {have} to {want}");
+            }
+            if (moved > 0)
+                WDLog.Log($"[PosSync] repositioned {moved} tile(s) left behind by a board move");
+
             if (fixes > 0)
                 WDLog.Log($"[StateSync] corrected {fixes} tile/data mismatch(es) after a board change");
         }
