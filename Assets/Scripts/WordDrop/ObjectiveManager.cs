@@ -911,6 +911,14 @@ namespace WordDrop
 
         private void FireCompleteIfJust(bool wasComplete, bool deferToLand = false)
         {
+            // SCORE MODE: an objective is DECORATION (SurvivalManager says so in its own
+            // comment) — the stage clears on SCORE and nothing else. Firing the completion
+            // celebration here told the player "objective complete" for a goal that governs
+            // nothing, which is exactly what Spencer hit: levels announcing completion of
+            // targets from the previous iteration of the game. Suppress it entirely; the
+            // stage-clear modal is the real payoff. 2026-10-19.
+            if (SurvivalManager.ScoreRunMode) return;
+
             if (Active != null && !wasComplete && Active.IsComplete && !_firedComplete)
             {
                 _firedComplete = true;

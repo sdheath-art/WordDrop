@@ -452,6 +452,45 @@ namespace WordDrop
         public static LevelEntry Get(int levelIndex)
         {
             if (levelIndex < 1) levelIndex = 1;
+
+            // ════════════════════════════════════════════════════════════════════════
+            //  THE OLD AUTHORED LEVELS ARE RETIRED. 2026-10-19 Spencer.
+            //
+            //  "the levels currently are taking on the objectives from the previous
+            //   iterations of the game... some are not even doing row rises, others are
+            //   saying the objective is complete"
+            //
+            //  He is right, and it was measurable: of the 24 authored rows, 7 set
+            //  risesOff:true, 8 set a moveBudget, and between them they install 23
+            //  objectives — including 3 HeroWord levels (escort tiles to the BOTTOM, in a
+            //  game that no longer has dropping) and 3 Vault levels. All of it was written
+            //  for the drop game. In score mode the objective is decoration, but installing
+            //  one still fires its completion celebration, and risesOff still kills the rise.
+            //
+            //  Every non-tutorial level is now the ENDLESS shape — the same config L11 used
+            //  as the swap-pivot sandbox: rises ON, no move cap, no completable objective
+            //  (an unreachable word goal, which is how L11 already did it — the objective
+            //  exists only so ObjectiveManager has a non-null Active, which is what gates
+            //  its install loop). Everything that actually VARIES per level now comes from
+            //  LevelRules, which is score-mode native.
+            //
+            //  TUTORIAL levels (1..TUTORIAL_LEVELS) are untouched — hand-authored boards,
+            //  gated input, scripted steps. They still read from ENTRIES below.
+            // ════════════════════════════════════════════════════════════════════════
+            if (levelIndex > LevelMapPanel.TUTORIAL_LEVELS)
+            {
+                var rules = LevelRules.For(Mathf.Max(1, LevelMapPanel.RunLevel(levelIndex)));
+                return Entry(LevelMode.LongWord, DifficultyProfile.B_Normal,
+                    longMin: 2, longGoal: 999999,          // unreachable: never completes
+                    fuseOff: !rules.FuseOn,                 // LevelRules owns decay
+                    riseCadence: Mathf.Max(1, rules.RiseCadence),
+                    risesOff: false,                        // rises ALWAYS on
+                    moveBudget: 0,                          // no move cap — you play until you top out
+                    moveLimitTopOut: false,
+                    goalText: rules.Name,
+                    why: $"Generated level {LevelMapPanel.RunLevel(levelIndex)} '{rules.Name}' — score only.");
+            }
+
             if (levelIndex <= ENTRIES.Length)
                 return ENTRIES[levelIndex - 1];
 
