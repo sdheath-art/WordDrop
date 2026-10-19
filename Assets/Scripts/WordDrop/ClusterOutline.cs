@@ -316,6 +316,13 @@ namespace WordDrop
         public static float DIGIT_ADVANCE_FRAC = 172f / 308f;   // 160 -> 172: Spencer wanted a hair more air
         /// <summary>World height of one digit cell at the pop's base size. The pop then scales
         /// up, so this is the resting size, not the peak.</summary>
+        /// <summary>How much the payout pop SWELLS as it flies. The digits are laid out at
+        /// DIGIT_CELL_WORLD and then scaled to this, so the size the player actually SEES is
+        /// DIGIT_CELL_WORLD * POP_GROW. Public because the level map has to match that final
+        /// size, and comparing against the base size made the map digits look 1.8x too small.
+        /// 2026-10-19.</summary>
+        public const  float POP_GROW           = 1.8f;
+
         public static float DIGIT_CELL_WORLD   = 0.40f;   // 1.30 -> 0.65 -> 0.325 -> 0.36 -> 0.40
         // 2026-10-19 Spencer: "just a touch bigger". +11%, matching the size of his last
         // step (0.325 -> 0.36) so the nudges stay on the same scale. The advance is a
@@ -419,7 +426,7 @@ namespace WordDrop
         private void AnimatePopTransform(GameObject go, Vector3 at, float halfW, float halfH,
                                          System.Action<float> setAlpha)
         {
-            const float GROW = 1.8f;
+            const float GROW = POP_GROW;
             float rise = _lastCellSize * 0.95f;
             halfW *= GROW; halfH *= GROW;
 

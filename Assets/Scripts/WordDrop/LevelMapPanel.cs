@@ -836,7 +836,12 @@ namespace WordDrop
             if (gameCam != null && gameCam.orthographic && gameCam.orthographicSize > 0.01f)
             {
                 float canvasH = ((RectTransform)_canvas.transform).rect.height;
-                coinDigitPx = ClusterOutline.DIGIT_CELL_WORLD * (canvasH / (2f * gameCam.orthographicSize));
+                // × POP_GROW: the in-game pop lays its digits out at DIGIT_CELL_WORLD and then
+                // DOScale()s to POP_GROW, so what the player SEES is the product. The map pop
+                // scales 0 -> 1 and stops, so without this it ended up 1.8x too small — which
+                // is exactly how much too small it looked. 2026-10-19 Spencer.
+                coinDigitPx = ClusterOutline.DIGIT_CELL_WORLD * ClusterOutline.POP_GROW
+                              * (canvasH / (2f * gameCam.orthographicSize));
             }
             float COIN_DIGIT_PX = coinDigitPx;
             var shadowRT = new GameObject("Shadow", typeof(RectTransform)).GetComponent<RectTransform>();
