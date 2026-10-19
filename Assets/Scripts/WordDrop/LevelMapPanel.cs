@@ -1429,16 +1429,16 @@ namespace WordDrop
                 lbl.raycastTarget = false;
                 var uf = GameFont.GetUITMP(); if (uf != null) lbl.font = uf;
 
-                // ⚠️ OUTLINE *AFTER* THE FONT. 2026-10-19 — outlineWidth/outlineColor write to
-                // the TMP object's font MATERIAL, so setting them before a font is assigned
-                // throws ArgumentNullException ("source"). That exception aborted the map build
-                // part-way through, and the level map stopped opening at all. Guarded as well
-                // as reordered, since GetUITMP() can return null.
-                if (_hasMapArt && lbl.font != null)
-                {
-                    lbl.outlineWidth = 0.22f;
-                    lbl.outlineColor = new Color32(26, 18, 48, 255);
-                }
+                // ⚠️ NO TMP OUTLINE HERE. 2026-10-19 — outlineWidth goes through
+                // SetOutlineThickness, which writes to the font MATERIAL. On a TMP component
+                // created this same frame the material is not ready, and it throws
+                // NullReferenceException — which aborted the whole map build, so the level map
+                // never appeared at all. Reordering it after `lbl.font = uf` was NOT enough:
+                // a non-null font does not mean a ready material.
+                //
+                // The number is legible without it: white, bold, 30pt sits on a saturated
+                // purple disc. If it ever needs more separation, add a second TMP behind it
+                // as a shadow rather than touching the material.
             }
 
             // The CURRENT level's node is a tap target: on a bare map (after cancelling the play modal) tapping it
