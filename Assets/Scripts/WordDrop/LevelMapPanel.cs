@@ -1487,7 +1487,12 @@ namespace WordDrop
 
         private void BuildTopHud(Transform parent)
         {
-            BuildFullBleedBar(parent, "TopHud", HUD_PANEL, top: true, visibleH: TOP_HUD_H, radius: 30);
+            // The pink bar is skipped on the painted map so the artwork runs to the top of the
+            // screen. The PILLS below are separate children and are unaffected — hearts, coins
+            // and settings still sit in the same places, now floating on the art. TOP_HUD_H is
+            // still used for their vertical placement, so nothing moves. 2026-10-19 Spencer.
+            if (!_hasMapArt)
+                BuildFullBleedBar(parent, "TopHud", HUD_PANEL, top: true, visibleH: TOP_HUD_H, radius: 30);
 
             float bandY = -TOP_HUD_H * 0.5f; // vertical centre of the visible top band (below the screen top)
 
