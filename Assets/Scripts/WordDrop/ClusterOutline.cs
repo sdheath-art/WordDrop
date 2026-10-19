@@ -1156,7 +1156,20 @@ namespace WordDrop
             // rather than appearing somewhere else at full size. 2026-09-10 Spencer.
             Color badgeInk = InkFor(FaceAssetFor(grid, cells, tier));
             while (_anchorInk.Count < _anchors.Count) _anchorInk.Add(PAYOUT_STROKE_COLOR);
-            _anchors.Add((new List<Vector2Int>(cells), at, b.fontSize, i, b.color));
+            // POP FROM THE CENTRE OF THE CLUSTER, not its corner. 2026-10-19 Spencer.
+            // `at` above is the bottom-right-most cell plus a badge offset, chosen so the pop
+            // could grow OUT of the corner badge. That badge is switched off
+            // (SHOW_CORNER_BADGE = false), so the number was flying up from the corner of the
+            // blast for no visible reason. Every other match-3 puts the score at the middle of
+            // what just exploded, which is also where the eye already is.
+            //
+            // The BADGE keeps using `at`, so re-enabling it still anchors it in the corner.
+            Vector3 popAt = Vector3.zero;
+            for (int k = 0; k < cells.Count; k++) popAt += CellPos(grid, cells[k].x, cells[k].y);
+            popAt /= Mathf.Max(1, cells.Count);
+            popAt.z = at.z;                      // keep the badge's depth so sorting is unchanged
+
+            _anchors.Add((new List<Vector2Int>(cells), popAt, b.fontSize, i, b.color));
             _anchorInk.Add(badgeInk);
             // The number sits over a busy board of light tiles, so it gets BOTH a solid dark
             // plate behind it and its own dark outline. White-on-anything was disappearing.
