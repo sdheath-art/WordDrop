@@ -317,43 +317,54 @@ namespace WordDrop
             return tile;
         }
 
-        /// <summary>Make every tile's FROST match the rules data. 2026-10-19.
+        /// <summary>Make every tile's SPECIAL STATE match the rules data. 2026-10-19.
         ///
-        /// AnimateRiseRow contains ZERO references to IsFrozen and checks fresh tiles out of
-        /// the pool for the new bottom row, so after a rise nothing reconciled Tile.IsFrozen
-        /// against RulesCellData.IsFrozen. ShiftBoardUp moves the DATA cell objects (the frozen
-        /// flag travels with them correctly) but the VISUAL layer was never told, so the two
-        /// drifted apart and the drift compounded with every rise. That produced all three of
-        /// Spencer's symptoms at once:
-        ///   • a normal-looking tile that refuses to swap  (data says frozen, visual does not)
-        ///   • tiles "taking on ice properties" after a rise (visual frost on the wrong tile)
-        ///   • ice "completely disappearing" after a rise   (frost lost when a tile recycled)
+        /// WHY THIS IS GENERIC AND NOT ICE-ONLY. An audit of all eight special-cell flags found
+        /// the SAME two holes in every one of them:
+        ///   • `AnimateRiseRow` references NONE of them — it moves tiles and checks fresh ones
+        ///     out of the pool, but never carries special state across.
+        ///   • `ShiftBoardUp` moves the DATA cell OBJECTS correctly, so the flags travel fine in
+        ///     the data — the VISUAL layer was simply never told.
+        /// Ice was the first to be switched on, so ice was the first to show the damage: tiles
+        /// that refused to swap, tiles picking up frost they should not have, ice vanishing on a
+        /// rise. Stone, vaults, wild, gold and the refills would each fail identically the
+        /// moment they are enabled. Fixing it per-mechanic would mean finding this bug five
+        /// more times, so this reconciles ALL of them in one pass.
         ///
-        /// Cheap: one pass over the board comparing two bools. Logs every correction, so if
-        /// this keeps firing it means something upstream is still desyncing and the real fix
-        /// belongs there rather than in this safety net.</summary>
-        public void ReconcileFrozenVisuals(RulesEngine rules)
+        /// Costs one board walk comparing bools. A mechanic that is switched OFF has no cells
+        /// carrying its flag, so this is a no-op for it. Every correction is LOGGED: if a line
+        /// keeps appearing, something upstream is still desyncing and the real fix belongs
+        /// there — this is a safety net, not a licence to skip carrying state properly.</summary>
+        public void ReconcileSpecialVisuals(RulesEngine rules)
         {
             if (rules == null) return;
-            int fixedCount = 0;
+            int fixes = 0;
             for (int col = 0; col < RulesEngine.COLS; col++)
             for (int row = 0; row < RulesEngine.ROWS; row++)
             {
                 Tile t = GetTile(col, row);
                 if (t == null) continue;
-                var cell = rules.GetCell(col, row);
-                bool shouldBeFrozen = cell != null && cell.IsFrozen;
-                if (t.IsFrozen != shouldBeFrozen)
-                {
-                    t.SetFrozenVisual(shouldBeFrozen);
-                    fixedCount++;
-                    WDLog.Log($"[IceSync] ({col},{row}) '{t.Letter}' visual={!shouldBeFrozen} " +
-                              $"data={shouldBeFrozen} → corrected");
-                }
+                var c = rules.GetCell(col, row);
+                if (c == null) continue;
+
+                if (t.IsFrozen     != c.IsFrozen)     { t.SetFrozenVisual(c.IsFrozen);        fixes++; Report(col,row,t,"ice",      c.IsFrozen); }
+                if (t.IsStone      != c.IsStone)      { t.SetStoneVisual(c.IsStone);          fixes++; Report(col,row,t,"stone",    c.IsStone); }
+                if (t.IsAnchored   != c.IsAnchored)   { t.SetAnchored(c.IsAnchored);
+                                                        t.SetVaultVisual(c.IsAnchored);       fixes++; Report(col,row,t,"vault",    c.IsAnchored); }
+                if (t.IsWild       != c.IsWild)       { t.SetWild(c.IsWild);                  fixes++; Report(col,row,t,"wild",     c.IsWild); }
+                if (t.IsSwapRefill != c.IsSwapRefill) { t.SetSwapRefillVisual(c.IsSwapRefill);fixes++; Report(col,row,t,"swapfill", c.IsSwapRefill); }
+                if (t.IsEditRefill != c.IsEditRefill) { t.SetEditRefillVisual(c.IsEditRefill);fixes++; Report(col,row,t,"editfill", c.IsEditRefill); }
+                if (t.IsWildRefill != c.IsWildRefill) { t.SetWildRefillVisual(c.IsWildRefill);fixes++; Report(col,row,t,"wildfill", c.IsWildRefill); }
             }
-            if (fixedCount > 0)
-                WDLog.Log($"[IceSync] corrected {fixedCount} frost mismatch(es) after a board change");
+            if (fixes > 0)
+                WDLog.Log($"[StateSync] corrected {fixes} tile/data mismatch(es) after a board change");
         }
+
+        private static void Report(int col, int row, Tile t, string what, bool shouldBe)
+            => WDLog.Log($"[StateSync] ({col},{row}) '{t.Letter}' {what}: visual={!shouldBe} data={shouldBe} → corrected");
+
+        /// <summary>Back-compat alias — ice was the first mechanic this caught.</summary>
+        public void ReconcileFrozenVisuals(RulesEngine rules) => ReconcileSpecialVisuals(rules);
 
         private void ReturnTile(Tile tile)
         {
@@ -2384,6 +2395,14 @@ namespace WordDrop
             // BEFORE retracing, so the outline never traces a word that just died.
             RulesEngine.Instance?.ValidatePrimedWords();
             ClusterOutline.Instance?.Refresh();   // tiles moved — retrace the cluster outlines
+
+            // Gravity moves tiles and carries NO special state — measured: zero references to
+            // IsFrozen/IsStone/IsAnchored/IsWild/IsSwapRefill in this whole method. The rules
+            // data is fine (the cell OBJECTS move), but the visual layer is never told, so
+            // frost/stone/vault/wild/refill overlays end up on the wrong tiles after any
+            // detonation. Reconciling HERE rather than at the four call sites means every
+            // caller is covered, including future ones. 2026-10-19.
+            ReconcileSpecialVisuals(RulesEngine.Instance);
 }
 
         // ---------------------------------------------------------------------------
