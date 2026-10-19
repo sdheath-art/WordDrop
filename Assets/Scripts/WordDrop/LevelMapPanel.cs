@@ -110,7 +110,12 @@ namespace WordDrop
         // Phase 1 (2026-07-13): when true, the level-intro seam routes through the map (Candy-Crush loop:
         // completed → MAP → tap → play modal drops OVER the map → PLAY). PERSISTED so it survives a play-session
         // restart (lets us test boot → map). FX Test Menu toggles it.
-        private const string MAP_FLOW_KEY = "map_flow_enabled";
+        // KEY BUMPED TO _v2 ON 2026-10-19. Changing the DEFAULT was not enough: a default only
+        // applies when the key has never been written, and "map_flow_enabled" already held 0
+        // from an earlier debug toggle, so the map stayed off no matter what the default said.
+        // A new key has no stored value, so the new default (ON) actually takes effect, and the
+        // FX Test Menu toggle keeps working and persisting from here.
+        private const string MAP_FLOW_KEY = "map_flow_enabled_v2";
         public static bool MapFlowEnabled
         {
             // DEFAULT ON since 2026-10-19. It shipped defaulting to 0, so the map between
