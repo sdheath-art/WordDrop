@@ -818,8 +818,32 @@ namespace WordDrop
             var cg = go.GetComponent<CanvasGroup>();
 
             string txt = $"+{amount}";
-            MakePopupLabel(rt, txt, new Vector2(3f, -4f), new Color(0.15f, 0.09f, 0.02f, 1f)); // dark shadow (readability)
-            MakePopupLabel(rt, txt, Vector2.zero,          Color.white);                        // white main
+
+            // Use the SAME painted digit sprites as the in-game score pops. These were built
+            // from Spencer's Photoshop text stack (Assets/Resources/Digits), and the map's
+            // coin popups were plain TMP text — two different number styles in one game.
+            // Falls back to the TMP pair if the digit art is missing. 2026-10-19 Spencer.
+            const float COIN_DIGIT_PX = 64f;
+            var shadowRT = new GameObject("Shadow", typeof(RectTransform)).GetComponent<RectTransform>();
+            shadowRT.SetParent(rt, false);
+            shadowRT.anchorMin = shadowRT.anchorMax = new Vector2(0.5f, 0.5f);
+            shadowRT.anchoredPosition = new Vector2(3f, -4f);
+            bool sprites = ClusterOutline.BuildSpriteNumberUI(shadowRT, txt, COIN_DIGIT_PX,
+                                                              new Color(0.15f, 0.09f, 0.02f, 0.55f));
+            if (sprites)
+            {
+                var mainRT = new GameObject("Digits", typeof(RectTransform)).GetComponent<RectTransform>();
+                mainRT.SetParent(rt, false);
+                mainRT.anchorMin = mainRT.anchorMax = new Vector2(0.5f, 0.5f);
+                mainRT.anchoredPosition = Vector2.zero;
+                ClusterOutline.BuildSpriteNumberUI(mainRT, txt, COIN_DIGIT_PX, Color.white);
+            }
+            else
+            {
+                if (shadowRT != null) Destroy(shadowRT.gameObject);
+                MakePopupLabel(rt, txt, new Vector2(3f, -4f), new Color(0.15f, 0.09f, 0.02f, 1f)); // dark shadow
+                MakePopupLabel(rt, txt, Vector2.zero,          Color.white);                        // white main
+            }
 
             rt.localScale = Vector3.zero;
             float riseY = rt.position.y + Screen.height * 0.075f;                     // travels up more, then fades

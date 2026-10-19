@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using TMPro;
 using DG.Tweening;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace WordDrop
 {
@@ -333,6 +334,49 @@ namespace WordDrop
 
         /// <summary>Lay the number out as sprite children under `parent`, centred on its origin.
         /// Returns false if the art is missing, so the caller can fall back to TMP.</summary>
+        /// <summary>uGUI twin of BuildSpriteNumber — lays the SAME payout digit sprites into a
+        /// Canvas instead of the world. Lives here so DIGIT_ADVANCE_FRAC and DigitSprite stay
+        /// the single source of truth; the level map's coin popups were plain TMP text and
+        /// looked nothing like the in-game score pops. 2026-10-19 Spencer.
+        ///
+        /// `cellPx` is the digit HEIGHT in canvas units (the world version calls this
+        /// DIGIT_CELL_WORLD). Advance is a fraction of the HEIGHT, not the width — the cells
+        /// are 215x308, and measuring the advance against the width once made the gaps 43%
+        /// too wide. Returns false if the art is missing so the caller can fall back to text.</summary>
+        public static bool BuildSpriteNumberUI(RectTransform parent, string text, float cellPx, Color tint)
+        {
+            if (!PAYOUT_SPRITE_DIGITS || parent == null || string.IsNullOrEmpty(text)) return false;
+            if (DigitSprite('0') == null) return false;           // art not imported yet
+
+            float adv   = cellPx * DIGIT_ADVANCE_FRAC;
+            float total = adv * text.Length;
+            float x     = -total * 0.5f + adv * 0.5f;             // centre the run on the parent
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                var sp = DigitSprite(text[i]);
+                if (sp == null) { x += adv; continue; }
+
+                var g = new GameObject("d" + text[i], typeof(RectTransform), typeof(Image));
+                var rt = (RectTransform)g.transform;
+                rt.SetParent(parent, false);
+                rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.anchoredPosition = new Vector2(x, 0f);
+
+                // Keep the sprite's own aspect; only the HEIGHT is pinned to cellPx.
+                float aspect = sp.rect.height > 0.01f ? sp.rect.width / sp.rect.height : 1f;
+                rt.sizeDelta = new Vector2(cellPx * aspect, cellPx);
+
+                var img = g.GetComponent<Image>();
+                img.sprite = sp;
+                img.color = tint;
+                img.raycastTarget = false;
+                x += adv;
+            }
+            return true;
+        }
+
         private static bool BuildSpriteNumber(Transform parent, string text, int sortingOrder)
         {
             if (!PAYOUT_SPRITE_DIGITS) return false;
