@@ -402,10 +402,21 @@ namespace WordDrop
         /// d=0: 1.0x, d=1: 2.0x, d=2: 4.0x, d=3: 7.0x, d=4: 11.0x
         /// Much punchier than the old linear 1.0/1.5/2.0/2.5 — chains should feel explosive.
         /// </summary>
+        /// <summary>Ceiling on the per-word chain multiplier in instant-pop mode. See TriangularChainMultiplier.</summary>
+        public static float INSTANT_POP_CHAIN_MAX = 3f;
+
         public static float TriangularChainMultiplier(int chainDepth)
         {
             // DEEP CHAIN buff extends how far the triangular multiplier keeps climbing.
             int d = Mathf.Min(Mathf.Max(chainDepth, 0), RunBuffs.ChainDepthCap(CHAIN_DEPTH_SCALE_CAP));
+            // INSTANT POP: a gentle climb (x2, x2.5, then x3 max) instead of the triangular x2, x4, x7.
+            // The triangle was built for a web the player BUILT on purpose. With instant pop, falling
+            // letters on a dense board form a dozen crossing words by accident — measured 2026-10-20:
+            // ONE swap on LEVEL 5 made a 12-word web, ten words paid x7, 4,644 points, level won in one
+            // move (target 2,100). The first word still pays x2, so a single word is worth exactly what
+            // it was and the level targets keep their meaning; luck just stops winning levels.
+            if (HandManager.InstantPopMode)
+                return d <= 0 ? 1f : Mathf.Min(2f + 0.5f * (d - 1), INSTANT_POP_CHAIN_MAX);
             return 1f + (d * d + d) / 2f;
         }
 
@@ -1921,6 +1932,92 @@ namespace WordDrop
             return pool[SurvivalRng.Range(0, pool.Length)];
         }
 
+        /// <summary>Chance a rising row carries a planted near-word (instant-pop mode).</summary>
+        public static float PLANT_CHANCE      = 1.0f;   // 0.6 -> 1.0 2026-10-20: Spencer "RNG seems to be a thing" — whether a
+                                                          // level passed hinged on how many plants happened to appear
+        /// <summary>Near-words planted into a FRESH level board (so there is something to hunt from move 1).</summary>
+        public static int   PLANTS_ON_FRESH_BOARD = 2;
+
+        /// <summary>Plant up to <paramref name="count"/> near-words into the lowest full rows of the current board
+        /// (one per row). Called on a fresh level board before it is rebuilt on screen.</summary>
+        public void PlantNearWordsOnBoard(int count)
+        {
+            int planted = 0;
+            for (int r = 0; r < ROWS && planted < count; r++)
+            {
+                var row = new char[COLS];
+                for (int c = 0; c < COLS; c++)
+                {
+                    var cell = _board[c, r];
+                    row[c] = (cell == null || cell.IsStone || cell.IsFrozen || cell.Letter == '\0') ? '\0' : cell.Letter;
+                }
+                var before = (char[])row.Clone();
+                TryPlantNearWord(row);
+                bool changed = false;
+                for (int c = 0; c < COLS; c++)
+                    if (row[c] != before[c] && _board[c, r] != null) { _board[c, r].Letter = row[c]; changed = true; }
+                if (changed) planted++;
+            }
+            WDLog.Log($"[Plant] fresh board: {planted} near-word(s) planted");
+        }
+        /// <summary>Of planted words, the share that are 5 letters (the rest are 4).</summary>
+        public static float PLANT_FIVE_SHARE  = 0.35f;
+        private static List<string> s_plant4, s_plant5;
+
+        /// <summary>Writes a common 4-5 letter word into the row with two neighbouring letters swapped,
+        /// so ONE horizontal drag completes it. Words come from Resources/plant_words.txt (the
+        /// common-words sweep intersected with the core dictionary — recognisable, never obscure).
+        /// The scrambled form is checked not to be a word itself, either direction, so it can't pop
+        /// on its own.</summary>
+        private void TryPlantNearWord(char[] row)
+        {
+            if (s_plant4 == null)
+            {
+                s_plant4 = new List<string>(); s_plant5 = new List<string>();
+                var ta = Resources.Load<TextAsset>("plant_words");
+                if (ta != null)
+                    foreach (var raw in ta.text.Split('\n'))
+                    {
+                        string w = raw.Trim().ToUpperInvariant();
+                        if (w.Length == 4) s_plant4.Add(w); else if (w.Length == 5) s_plant5.Add(w);
+                    }
+                WDLog.Log($"[Plant] word list: {s_plant4.Count} four-letter, {s_plant5.Count} five-letter");
+            }
+            for (int attempt = 0; attempt < 6; attempt++)
+            {
+                bool five = SurvivalRng.Value < PLANT_FIVE_SHARE && s_plant5.Count > 0;
+                var pool = five ? s_plant5 : s_plant4;
+                if (pool.Count == 0) return;
+                string word = pool[Mathf.Clamp((int)(SurvivalRng.Value * pool.Count), 0, pool.Count - 1)];
+                int len = word.Length;
+
+                // A run of real letter slots (no stone, no tall-column gap) long enough for the word.
+                var starts = new List<int>();
+                for (int c = 0; c + len <= COLS; c++)
+                {
+                    bool ok = true;
+                    for (int k = 0; k < len; k++) { char ch = row[c + k]; if (ch == '\0' || ch == '#') { ok = false; break; } }
+                    if (ok) starts.Add(c);
+                }
+                if (starts.Count == 0) return;
+                int start = starts[Mathf.Clamp((int)(SurvivalRng.Value * starts.Count), 0, starts.Count - 1)];
+
+                // Swap one neighbouring pair (different letters) and make sure the result is NOT a word.
+                int i = Mathf.Clamp((int)(SurvivalRng.Value * (len - 1)), 0, len - 2);
+                if (word[i] == word[i + 1]) continue;
+                char[] sc = word.ToCharArray();
+                char t = sc[i]; sc[i] = sc[i + 1]; sc[i + 1] = t;
+                string scrambled = new string(sc);
+                char[] rv = scrambled.ToCharArray(); System.Array.Reverse(rv);
+                if (WordDictionary.IsValidWord(scrambled) || WordDictionary.IsValidWord(new string(rv))) continue;
+
+                for (int k = 0; k < len; k++) row[start + k] = sc[k];
+                StageStats.RecordPlanted(word);
+                WDLog.Log($"[Plant] '{word}' planted as '{scrambled}' at cols {start}-{start + len - 1} (swap {i}<->{i + 1})");
+                return;
+            }
+        }
+
         public char[] FillBottomRow(TileBag bag)
         {
             char[] letters = new char[COLS];
@@ -2035,6 +2132,13 @@ namespace WordDrop
 
 //                 WDLog.Log($"[RulesEngine] FillBottomRow — {new string(letters)}");
             }
+
+            // INSTANT POP: plant a 4-5 letter word ONE SWAP from complete. 2026-10-20 Spencer: "we should
+            // just seed more 4 letter and 5 letter word opportunities". The candidate scorer above only
+            // values 3-letter words and one-letter-away pairs (a drop-game rule), so it has been steering
+            // every row toward 3s — measured: 76 of 83 words in his run were 3 letters.
+            if (HandManager.InstantPopMode && SurvivalManager.IsSurvivalMode && SurvivalRng.Value < PLANT_CHANCE)
+                TryPlantNearWord(letters);
 
             // Commit to board — skip empty columns (gaps from tall-column relief)
             for (int col = 0; col < COLS; col++)
@@ -2423,6 +2527,9 @@ namespace WordDrop
         /// points but still count toward the length multiplier — the wild "earned"
         /// the length, just not the tile value.
         /// </summary>
+        /// <summary>Instant-pop length multipliers for 3, 4, 5, 6, 7+ letters. See CalculateWordScore.</summary>
+        public static float[] INSTANT_LEN_MULT = { 0.4f, 1.5f, 3f, 5f, 8f };
+
         public static int CalculateWordScore(string word, List<int> wildIndices)
         {
             if (string.IsNullOrEmpty(word)) return 0;
@@ -2451,6 +2558,20 @@ namespace WordDrop
                 default: multiplier = word.Length >= 7
                     ? (isSurvival ? 7.0f : 6.0f)
                     : 1.0f; break;
+            }
+
+            // INSTANT POP: short words keep you alive, long words win levels. 2026-10-20 Spencer
+            // ("sounds good"). Measured in his 11:07 run: 26 of 30 words on normal levels were 3
+            // letters and nearly every swap made one — see, swap, pop, no thought. The 4+-only level
+            // was the first where he PLANNED (9 of 17 swaps were setup). So 3-letter words still pop
+            // (they clear space) but pay little; each extra letter pays a lot more. Letter points
+            // already grow with length, so 3 -> 4 letters is roughly 5x the score.
+            if (HandManager.InstantPopMode)
+            {
+                int n = word.Length;
+                multiplier = n <= 3 ? INSTANT_LEN_MULT[0]
+                           : n >= 7 ? INSTANT_LEN_MULT[4]
+                           : INSTANT_LEN_MULT[n - 3];
             }
 
             // Rare-letter premium (Survival-only, Phase 11+): words that
@@ -4473,6 +4594,25 @@ namespace WordDrop
             if (!ArmedWebMode) return false;
             var hits = _primedRegistry.GetPrimedWordsContaining(cell);
             if (hits == null || hits.Count == 0) return false;
+            // INSTANT POP: everything lit goes off TOGETHER, like simultaneous matches in a match-3.
+            // 2026-10-20 Spencer: "if a cascade ... creates two seperate clusters ... there is a long
+            // delayed pause before the second cluster detonates". Seeding only the tapped web made the
+            // second cluster wait out the first one's whole explode -> fall -> rescan (~1.6s, measured)
+            // while sitting lit on screen. Each seed still expands to its own web below.
+            // Short words (under INSTANT_POP_AUTO_MIN) are NOT swept in — they are waiting for the player
+            // to tap them or extend them; only the web of the one actually tapped/fired goes. 2026-10-20.
+            if (HandManager.InstantPopMode)
+            {
+                var all = _primedRegistry.GetAllPrimedWords();
+                if (all != null)
+                {
+                    var merged = new List<PrimedWordRegistry.PrimedWord>(hits);
+                    for (int i = 0; i < all.Count; i++)
+                        if (all[i].Word != null && all[i].Word.Length >= HandManager.INSTANT_POP_AUTO_MIN && !merged.Contains(all[i]))
+                            merged.Add(all[i]);
+                    hits = merged;
+                }
+            }
 
             LastResolutionWasSwap    = true;   // player-initiated, like a swap
             _stepPlayerIndex         = playerIndex;
@@ -5532,6 +5672,7 @@ namespace WordDrop
 //                 WDLog.Log($"[RulesEngine] DoExplode: '{pw.Word}' (id={pid}) exploded, +{bonus} pts " +
                           // $"(rescore={Mathf.RoundToInt(pw.Score * DETONATION_SCORE_MULTIPLIER)} base={BREAKER_BONUS} heat={heatBonus} chain={_stepChainDepth} x{chainMultiplier:F1})");
 
+                StageStats.RecordPopped(pw.Word);   // tuning stats (2026-10-20)
                 _primedRegistry.RemovePrimedWord(pid);
                 _stepJustPrimed.Remove(pid);
 

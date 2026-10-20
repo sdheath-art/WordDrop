@@ -33,6 +33,12 @@ namespace WordDrop
         // is the most likely thing to be misbehaving. 2026-09-09 Spencer.
         public static bool Enabled = true;
 
+        /// <summary>Draw the line around a cluster of lit words. OFF 2026-10-20 — Spencer: "can we remove the line
+        /// thats around the cluster of words? we dont need those". Only the LINE is hidden: everything else this
+        /// class does keeps running — the gold-cluster face, and the bookkeeping the payout number that pops on a
+        /// blast grows out of (switching Enabled off would have killed those too).</summary>
+        public static bool SHOW_OUTLINE_LINE = false;
+
         private const int   HALO_ORDER   = 128;    // IN FRONT of every tile, per the reference
         private const int   BADGE_ORDER  = 130;    // above tiles
         private const float THIN         = 0.035f; // single-word outline thickness (world units)
@@ -239,7 +245,7 @@ namespace WordDrop
                 _halo.Add(go);
             }
             var g = _halo[_haloUsed++];
-            var mr2 = g.GetComponent<MeshRenderer>(); if (mr2 != null) mr2.enabled = true;
+            var mr2 = g.GetComponent<MeshRenderer>(); if (mr2 != null) mr2.enabled = SHOW_OUTLINE_LINE;
             return g;
         }
         private Material _mat;

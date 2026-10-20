@@ -20,11 +20,16 @@ namespace WordDrop
         public static TutorialSpotlight Instance { get; private set; }
 
         // Matched to BoosterHUDSlot so the board cutout is identical.
-        private const int SCRIM_ORDER    = 9;  // between board tiles (5) and hand cards (10) so the WHOLE hand stays
-                                               // bright through drag without bumping it (which fought the drag). 2026-07-08
-        private const int SPOTLIGHT_TILE_ORDER = 12; // bright (>scrim 9) but BELOW the dragged card (20) so it never ducks
-        private const int BOARD_BG_ORDER = 17;
-        private const int TILE_ORDER     = 25;
+        // 2026-10-20: ALL RE-BASED ABOVE THE ROW BANDS. Since 2026-09-03 tiles sort by row
+        // (Tile.BaseSortingOrder = 5 + row*3, face..letter = up to 37 on the top row). These were still the
+        // pre-band values (scrim 9), so rows 0-1 dimmed and every row from 2 up drew OVER the scrim — Spencer's
+        // "the whole board should be dimmed besides those top two rows but the middle of the board isnt", and
+        // the dim on rows 0-1 reading as "blue writing" over the letters. Same cause as the invisible ice.
+        // The booster aim mode was re-based on 09-03 (AIM_TILE_ORDER 70); the tutorial spotlight was missed.
+        private const int SCRIM_ORDER    = 40;   // above every row band (max 37)
+        private const int SPOTLIGHT_TILE_ORDER = 42; // spotlit tiles: LiftedOrder adds row*3 -> 42..72, all above the scrim
+        private const int BOARD_BG_ORDER = 41;   // full-board spotlight: board panel above the scrim...
+        private const int TILE_ORDER     = 43;   // ...and its tiles above that (band 43..73)
         private const int OVERLAY_ORDER  = 150;  // HUD dim + cursor — above the HUD canvas (50)
         private static readonly Color DIM = new Color(0f, 0f, 0f, 0.84f);
         private const float CURSOR_PX     = 140f;
@@ -292,7 +297,7 @@ namespace WordDrop
                 go.transform.SetParent(transform, false);
                 _focusPanel = go.AddComponent<SpriteRenderer>();
                 _focusPanel.color = new Color(0.29f, 0.44f, 0.68f, 1f); // board-slot blue
-                _focusPanel.sortingOrder = SCRIM_ORDER + 1;             // above scrim (15), below tiles (25)
+                _focusPanel.sortingOrder = SCRIM_ORDER + 1;             // above the scrim, below spotlit tiles
             }
             // Author the rounded-rect at the ACTUAL pixel size (PPU 100) with a FIXED corner radius, so the
             // transform stays scale-1 and the corners never stretch into a pill. Regen only on size change.

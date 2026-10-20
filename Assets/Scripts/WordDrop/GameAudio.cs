@@ -808,11 +808,32 @@ namespace WordDrop
             int clampedStep = Mathf.Clamp(effectiveStep, 0, 8);
             // 2 semitones per chain step — matches PlayMatchLine
             float pitch = Mathf.Pow(2f, (clampedStep * 2) / 12f);
+
+            // CASCADE STACKING. 2026-10-20 Spencer: "when a bunch of words prime at the same time from a
+            // cascade they all fire a prime sound effect all at once and it sounds really loud and like its
+            // breaking the game". Log: SIX word_scored in ONE frame, pitched 1.00 -> 1.78 — written as a
+            // rising arpeggio but played as a chord. Now: notes in the same burst are SPACED
+            // WORD_SCORED_STAGGER apart so the scale actually plays, and capped at WORD_SCORED_MAX_NOTES so a
+            // dozen words can't pile a dozen voices on top of each other.
+            // Own burst clock — the shared _matchLineBurstStep is also advanced by PlayMatchLine, so it
+            // can't tell this sound's bursts apart.
+            if (now - _wordScoredBurstAt > MATCH_LINE_BURST_WINDOW) _wordScoredBurstNotes = 0;
+            _wordScoredBurstAt = now;
+            if (_wordScoredBurstNotes >= WORD_SCORED_MAX_NOTES) return;
+            float delay = _wordScoredBurstNotes * WORD_SCORED_STAGGER;
+            _wordScoredBurstNotes++;
             // 2026-05-29: volume reduced 0.8 → 0.55 — same anti-clipping
             // rationale as PlayMatchLine. word_scored stacks with matchline
             // pops during cascade chains.
-            Play(PickRandom(_wordScored, _wordScoredAlt), 0.55f, pitch);
+            var clip = PickRandom(_wordScored, _wordScoredAlt);
+            if (delay <= 0f) Play(clip, 0.55f, pitch);
+            else DG.Tweening.DOVirtual.DelayedCall(delay, () => { if (this != null) Play(clip, 0.55f, pitch); }, ignoreTimeScale: true);
         }
+
+        public static float WORD_SCORED_STAGGER   = 0.07f;  // seconds between notes in one cascade burst
+        public static int   WORD_SCORED_MAX_NOTES = 4;      // notes per burst; the rest are silent
+        private int _wordScoredBurstNotes;
+        private float _wordScoredBurstAt = -10f;
 
         // Combo pitch-ramp for priming: within a single chain (turn resolution), each connected word that primes
         // steps the pitch up a semitone, so a run of connected primes climbs a little scale. The ramp resets at the
@@ -1012,8 +1033,18 @@ namespace WordDrop
             Play(_chargeBack, 0.8f);
         }
 
+        /// <summary>Minimum gap between score ticks from ANY caller. 2026-10-20 Spencer: "a bunch of sfx all
+        /// firing at once". Log: score_tick was 213 of ~310 sounds — TWO counters (HUDManager.ScoreChase and the
+        /// count-up label) each ticked on their own clock (45ms / 40ms), ~45 ticks/s stacked on the pops. The
+        /// limit lives HERE so every counter, present or future, shares one tick stream.</summary>
+        public static float SCORE_TICK_MIN_GAP = 0.07f;
+        private float _lastScoreTickAt = -10f;
+
         public void PlayScoreTick(float pitch = 1f)
         {
+            float now = Time.unscaledTime;
+            if (now - _lastScoreTickAt < SCORE_TICK_MIN_GAP) return;
+            _lastScoreTickAt = now;
             // 0.55 mult lands at ~0.22 final at default master 0.4 — audible
             // alongside music and other SFX. Was 0.2 (final ~0.08) which read
             // as silent in playtest. PlayScoreImpact still uses 0.7 for the

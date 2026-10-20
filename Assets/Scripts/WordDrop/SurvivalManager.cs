@@ -350,6 +350,93 @@ namespace WordDrop
             ClusterOutline.Instance?.Refresh();
         }
 
+        // ── MOVE LIMIT (2026-10-20 Spencer: "ok lets try it") ──────────────────────────────────
+        // Each level: score the target within N moves (LevelRules.MovesFor). ONE way to lose — out of
+        // moves. A rise that would push tiles off the top no longer ends the run: the top row breaks
+        // off and costs OVERFLOW_MOVE_PENALTY moves, so a high board still hurts, through the one
+        // number the player watches. Switch: LevelRules.MoveLimitMode.
+        public static bool MoveLimitMode => LevelRules.MoveLimitMode && ScoreRunMode && !BlastMode;
+        public const int   OVERFLOW_MOVE_PENALTY = 3;
+        public const int   CONTINUE_EXTRA_MOVES  = 5;
+        private bool _moveLoseCheckRunning;
+
+        /// <summary>Fresh move count for a level that is starting now (called by LevelRules.Apply).</summary>
+        public void ResetStageMoves() { _currentStageMovesUsed = 0; StageStats.Reset(); }
+
+        /// <summary>GOLD LETTER = +1 MOVE (2026-10-20 Spencer). Called when a gold letter's fly-up lands on the
+        /// MOVES box. Can lift moves-left above the level's starting budget. No-op once the level is won.</summary>
+        public void GrantBonusMoves(int n, string why)
+        {
+            if (!MoveLimitMode || n <= 0 || AwaitingNextLevel || _isGameOver) return;
+            _currentStageMovesUsed -= n;   // may go negative = more than the starting budget
+            StageStats.GoldMoves += n;
+            WDLog.Log($"[MoveLimit] +{n} move(s) from {why} -> {CurrentStageMovesRemaining} left");
+        }
+
+        private void StartMoveLimitLoseCheck()
+        {
+            if (!_moveLoseCheckRunning && !_isGameOver) StartCoroutine(MoveLimitLoseCheck());
+        }
+
+        /// <summary>Out of moves -> wait for the last move's words to pop, cascade and LAND their points
+        /// (the target check runs on arrival), then lose only if the target still isn't met.</summary>
+        private IEnumerator MoveLimitLoseCheck()
+        {
+            _moveLoseCheckRunning = true;
+            yield return null;
+            float waited = 0f;
+            while (waited < 8f && ((MatchController.Instance != null && MatchController.Instance.IsProcessing)
+                                   || (ScoreManager.Instance != null && ScoreManager.Instance.FlyScorePending)
+                                   || (HUDManager.Instance != null && HUDManager.Instance.LettersInFlight)   // a gold letter may be bringing a move
+                                   || _isRisingRow))
+            { waited += Time.unscaledDeltaTime; yield return null; }
+            float settle = 0f;
+            while (settle < 0.3f) { settle += Time.unscaledDeltaTime; yield return null; }
+            _moveLoseCheckRunning = false;
+            if (AwaitingNextLevel || _isGameOver || CurrentStageMovesRemaining > 0) yield break;
+            WDLog.Log($"[MoveLimit] OUT OF MOVES — {CurrentStageScore}/{CurrentStageTarget}, level lost");
+            try
+            {
+                var kv = new System.Collections.Generic.List<object> {
+                    "stage", _currentStageIndex, "target", CurrentStageTarget, "score", CurrentStageScore,
+                    "moves_used", _currentStageMovesUsed, "moves_budget", CurrentStageMoveBudget,
+                    "continues_used", _continuesInRun };
+                kv.AddRange(StageStats.Fields());
+                AnalyticsManager.Log("stage_fail", kv.ToArray());
+                AnalyticsManager.FlushToDisk();
+            }
+            catch (System.Exception ex) { Debug.LogError($"[MoveLimit] analytics threw: {ex.Message}"); }
+            TriggerTopOut("Out Of Moves!");
+        }
+
+        /// <summary>The board was full when a row tried to rise: break off the top row and charge moves,
+        /// instead of ending the run.</summary>
+        private void ApplyOverflowPenalty()
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            var removed = new System.Collections.Generic.List<Vector2Int>();
+            if (rules != null)
+            {
+                int top = RulesEngine.ROWS - 1;
+                for (int c = 0; c < RulesEngine.COLS; c++)
+                    if (rules.GetCell(c, top) != null) { rules.ClearCell(c, top); removed.Add(new Vector2Int(c, top)); }
+            }
+            if (grid != null && removed.Count > 0) grid.RemoveTiles(removed);
+            rules?.ValidatePrimedWords();
+            ClusterOutline.Instance?.Refresh();
+            _currentStageMovesUsed = Mathf.Min(CurrentStageMoveBudget, _currentStageMovesUsed + OVERFLOW_MOVE_PENALTY);
+            StageStats.RecordOverflow();
+            try { AnalyticsManager.Log("overflow_penalty", "stage", _currentStageIndex, "moves_left", CurrentStageMovesRemaining); }
+            catch (System.Exception) { }
+            WDLog.Log($"[MoveLimit] BOARD FULL — top row ({removed.Count} tiles) broke off, -{OVERFLOW_MOVE_PENALTY} moves -> {CurrentStageMovesRemaining} left");
+            if (BonusPopup.Instance != null)
+                BonusPopup.Instance.Show($"BOARD FULL!  -{OVERFLOW_MOVE_PENALTY} MOVES", new Color(1f, 0.42f, 0.35f, 1f), Vector3.zero, 1.25f);
+            grid?.ShakeBoard(0.22f, 0.28f);
+            HapticsManager.Strong();
+            HUDManager.Instance?.FlashMovesPenalty();
+            if (CurrentStageMovesRemaining <= 0) StartMoveLimitLoseCheck();
+        }
+
         private int _stageStartRisesPending = 0;    // extra rises to fire post-stage-advance to hit minimum
         private bool _currentStageCleared = false;  // hit the target yet?
         // 2026-06-03 Spencer: once a stage clears mid-resolution, the rest of that
@@ -531,7 +618,7 @@ namespace WordDrop
         // 2026-07-09 Spencer.
         public static bool EditsCountAsMovesGlobalOverride = false;
         private bool _editsCountAsMoves = false;
-        public bool EditsCountAsMoves => _editsCountAsMoves || EditsCountAsMovesGlobalOverride;
+        public bool EditsCountAsMoves => _editsCountAsMoves || EditsCountAsMovesGlobalOverride || MoveLimitMode;   // move limit: every swap/swipe is a move, on every level
         public void SetEditsCountAsMoves(bool on) => _editsCountAsMoves = on;
         /// <summary>This level runs on a fixed move budget (authored/tutorial) instead of the rise/
         /// top-out clock → the MOVES HUD shows budget-remaining, not moves-to-top-out. 2026-06-25.</summary>
@@ -572,6 +659,17 @@ namespace WordDrop
 
         public static void MarkAwaitingNextLevel() => AwaitingNextLevel = true;
         public static void ClearAwaitingNextLevel() => AwaitingNextLevel = false;
+
+        /// <summary>Drop any rises queued against the previous level's board. AdvanceToNextStage measures
+        /// the OLD board at clear time; the new level reseeds its own, so those rows would arrive as a
+        /// surprise rise on a fresh board. Called by LevelRules.Apply when a level installs. 2026-10-20.</summary>
+        public void ClearRiseQueueForNewLevel()
+        {
+            if (_stageStartRisesPending > 0 || _riseScheduledPending)
+                WDLog.Log($"[RisePerMove] new level — dropping {_stageStartRisesPending} queued rise(s), scheduled={_riseScheduledPending}");
+            _stageStartRisesPending = 0;
+            _riseScheduledPending   = false;
+        }
         /// <summary>Current stage number (1, 2, 3, … unbounded).</summary>
         public int CurrentStageIndex => _currentStageIndex;
 
@@ -702,7 +800,13 @@ namespace WordDrop
             // and empties the budget counts as a CLEAR (clearedStageThisDrop), not a
             // fail. Only drops reach here, so edits stay free (per design). The MOVES HUD
             // already shows CurrentStageMovesRemaining for these levels (UsesStageMoveBudget).
-            if (_moveLimitTopOut && UsesStageMoveBudget
+            if (MoveLimitMode)
+            {
+                // Deferred: the move that spent the budget has not POPPED yet (instant pop fires after
+                // this), so judging now would fail a level its own last word was about to win.
+                if (CurrentStageMovesRemaining <= 0 && !clearedStageThisDrop) StartMoveLimitLoseCheck();
+            }
+            else if (_moveLimitTopOut && UsesStageMoveBudget
                 && !clearedStageThisDrop && CurrentStageMovesRemaining <= 0)
             {
                 WDLog.Log($"[MoveLimit] budget spent ({_currentStageMovesUsed}/{CurrentStageMoveBudget}), goal not met → top out.");
@@ -894,7 +998,11 @@ namespace WordDrop
                         "moves_used", clearedMoves,
                         "moves_budget", clearedBudget,
                         "rises_fired", clearedRises,
-                        "occupancy", Mathf.RoundToInt(occupancy * 100f));
+                        "occupancy", Mathf.RoundToInt(occupancy * 100f),
+                        "move_limit", MoveLimitMode ? 1 : 0,
+                        "words_3", StageStats.Len3, "words_4", StageStats.Len4, "words_5", StageStats.Len5,
+                        "words_6p", StageStats.Len6Plus, "plants_made", StageStats.PlantsMade,
+                        "plants_solved", StageStats.PlantsSolved, "overflows", StageStats.Overflows);
                 }
                 catch (System.Exception ex) { Debug.LogError($"[Stage] Analytics log threw: {ex.Message}"); }
 
@@ -1549,6 +1657,9 @@ namespace WordDrop
                 // StartCoroutine(ExecuteAutoDrop());
             }
 
+            // Won level: nothing below should queue or fire rises on the board being left behind. 2026-10-20.
+            if (AwaitingNextLevel) return;
+
             // Stage-start replenish: if AdvanceToNextStage found a sparse board,
             // fire extra rising rows to bring it up to the minimum. Consume
             // one pending rise per Update frame so animations complete between
@@ -1629,6 +1740,7 @@ namespace WordDrop
 
         public void StartSurvival()
         {
+            LevelRules.ResetForNewRun();   // a new run must not inherit the last run's stage memory (2026-10-20)
             _elapsedTime            = 0f;
             _autoDropTimer          = 0f;
             _movesSinceLastRise     = 0;
@@ -2062,6 +2174,18 @@ namespace WordDrop
 
         private IEnumerator ExecuteRisingRow()
         {
+            // LEVEL WON = NO MORE RISES. 2026-10-20 Spencer: "whenever you hit the scoring objective the
+            // level should probably not have row rises firing after this". Log: the winning swap had
+            // already SCHEDULED a rise; the points landed, the level cleared, and the rise fired 1.3s
+            // later on the won board, right before "Well Done". Five different triggers can start a rise
+            // (per-move, its deferred wait, stage-start queue, starved refill, clock) and none checked the
+            // won state, so the refusal lives HERE, at the one place they all end up.
+            if (AwaitingNextLevel)
+            {
+                WDLog.Log("[RisePerMove/Execute] blocked: level already won");
+                _riseScheduledPending = false;
+                yield break;
+            }
             _isRisingRow = true;
             _riseScheduledPending = false; // the queued rise is now executing — no longer "pending"
 
@@ -2121,6 +2245,13 @@ namespace WordDrop
                 overflowed = overflow;
             }));
 
+            if (overflowed && MoveLimitMode)
+            {
+                ApplyOverflowPenalty();
+                overflowed = false;
+                yield return StartCoroutine(RisingRowManager.Instance.RiseRow((overflow) => { overflowed = overflow; }));
+            }
+
             if (overflowed)
             {
                 TriggerTopOut();
@@ -2128,7 +2259,8 @@ namespace WordDrop
                 yield break;
             }
 
-            if (RulesEngine.Instance != null && ShouldTopOut(RulesEngine.Instance))
+            // Move-limit mode: a tile in the top row is fine — only the NEXT rise overflowing costs anything.
+            if (!MoveLimitMode && RulesEngine.Instance != null && ShouldTopOut(RulesEngine.Instance))
             {
                 TriggerTopOut();
                 _isRisingRow = false;
@@ -2143,7 +2275,9 @@ namespace WordDrop
                 TutorialManager.RisingIntroPending = false;
                 TutorialManager.Instance?.ShowRisingIntro();
             }
-            else if (!TutorialManager.NearTopOutShown && TutorialManager.Instance != null
+            // Move-limit mode: you can no longer top out (a full board costs moves instead), so the old
+            // "clear words fast or you'll top out" coaching is false — don't show it. 2026-10-20.
+            else if (!MoveLimitMode && !TutorialManager.NearTopOutShown && TutorialManager.Instance != null
                      && RulesEngine.Instance != null && RulesEngine.Instance.GetRisesUntilTopOut() <= 1)
             {
                 // First time the board crests into the danger zone (highest tile within 1 row of the top) —
@@ -2331,6 +2465,14 @@ namespace WordDrop
             {
                 _blastBudget += 2;
                 WDLog.Log($"[Blast] continue: +2 blasts -> {BlastsRemaining} left");
+                return default;
+            }
+            // Move limit: the rescue is MORE MOVES (the genre's "+5 moves"), not a cleared board.
+            if (MoveLimitMode)
+            {
+                _currentStageMovesUsed = Mathf.Max(0, _currentStageMovesUsed - CONTINUE_EXTRA_MOVES);
+                _continuesInRun++;
+                WDLog.Log($"[MoveLimit] continue: +{CONTINUE_EXTRA_MOVES} moves -> {CurrentStageMovesRemaining} left, continues_used={_continuesInRun}");
                 return default;
             }
             // 1) Clear top 3 rows of tiles (highest row indices in the board).

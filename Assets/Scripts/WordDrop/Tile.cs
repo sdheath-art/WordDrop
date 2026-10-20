@@ -1033,6 +1033,10 @@ namespace WordDrop
         // reads as a tile TYPE rather than a momentary state.
         // Set false to go back to the glow.
         public const  bool  EDIT_SELECT_RIM = true;
+        /// <summary>Selected tile LIFTS (scale up + gentle breathe) instead of drawing a rim/glow. 2026-10-20.</summary>
+        public static bool  SELECT_LIFT       = true;
+        public static float SELECT_LIFT_SCALE = 1.08f;   // tap-select (one tile); was 1.12 — neighbours collided
+        public static float SWIPE_LIFT_SCALE  = 1.04f;   // each letter in a swipe trace (neighbours, so smaller)
         /// <summary>Face tint while a board swap is ANIMATING. Every channel stays at or below
         /// 1.0, so this MULTIPLIES against the tile sprite and keeps the bevel and contour — the
         /// exact detail the old HDR glow (EDIT_GLINT_HIGH + bloom) was washing out. Solid cyan,
@@ -4295,6 +4299,10 @@ namespace WordDrop
         /// instead of swapping to the old separate green sprite. 2026-06-10.</summary>
         public static Sprite NormalSprite => s_spriteNormal;
 
+        /// <summary>The authored GOLD tile face (gold_tile2) — what a gold word wears when armed. Used by the
+        /// gold letter fly-up so the flying tile is gold, not the green armed face. 2026-10-20.</summary>
+        public static Sprite GoldPrimedSprite => s_spritePrimedGold ?? s_spriteHighValue ?? PrimedSprite;
+
         /// <summary>
         /// Public accessor for the green "scored" tile sprite — used by
         /// WordDropFX to force the green texture under fragments so the
@@ -4413,6 +4421,40 @@ namespace WordDrop
         ///   • SetEditSelected(false) restored a hard-coded white instead of the tile's state.
         /// SetRewriteTargetSprite(false) already had the correct priority logic; it just was not
         /// shared. Anything that ends a temporary visual must call THIS, never assume white.</summary>
+        // ── SWIPE FEEDBACK (2026-10-20, Spencer: "whatever you think is best") ──────────────────────
+        // While a swipe traces a REAL word, its tiles wear the armed (about-to-pop) face — the "let go now"
+        // signal from word games. A swipe released on a non-word shakes "no" instead of just clicking.
+        private bool _swipePreview;
+        private Color _swipePrevLetterColor;
+        public void SetSwipeValidPreview(bool on)
+        {
+            if (_spriteRenderer == null) return;
+            if (on)
+            {
+                if (_hasPrimedGlow) return;   // already lit — leave it alone
+                _swipePreview = true;
+                bool gold = IsGoldLetter && s_spritePrimedGold != null;
+                _spriteRenderer.sprite = gold ? s_spritePrimedGold : (s_spriteGold ?? s_spriteNormal);
+                _spriteRenderer.color  = NeutralisePrimedTint(gold ? ARMED_GOLD_REST : ARMED_ROSE_REST, gold);
+                // White letters, same as an armed word (ARMED_LETTER_WHITE). 2026-10-20 Spencer: "when you swipe to
+                // create a word can the text also turn white?" Restored on release — BEFORE the word arms, so the
+                // armed path saves the real ink, not this preview white.
+                if (_letterTMP != null && !_isWild) { _swipePrevLetterColor = _letterTMP.color; _letterTMP.color = Color.white; }
+            }
+            else if (_swipePreview)
+            {
+                _swipePreview = false;
+                RestoreRestingFaceAndTint();
+                if (_letterTMP != null && !_isWild) _letterTMP.color = _swipePrevLetterColor;
+            }
+        }
+
+        public void ShakeNo()
+        {
+            MarkAnimating(0.32f);   // keep the position checkers off it while it shakes
+            transform.DOPunchPosition(new Vector3(0.07f, 0f, 0f), 0.28f, 14, 0.6f);
+        }
+
         private void RestoreRestingFaceAndTint()
         {
             if (_spriteRenderer == null) return;
@@ -4473,7 +4515,7 @@ namespace WordDrop
         /// (which read as a glitch). Fully self-contained: start with true,
         /// clear with false.
         /// </summary>
-        public void SetEditSelected(bool active, bool popOnExit = false)
+        public void SetEditSelected(bool active, bool popOnExit = false, float liftScale = -1f)
         {
             if (active)
             {
@@ -4488,6 +4530,29 @@ namespace WordDrop
                 // "Button push" tactile feedback on tap — a quick scale-DOWN press that springs back to rest
                 // (was a scale-UP pop). 2026-07-10 Spencer.
                 ButtonPushScale();
+
+                // MATCH-3 SELECT (2026-10-20 Spencer: "we want to be as similar to a match 3 game as possible").
+                // The piece itself reacts — it lifts and gently breathes — with NO line round it and no glow.
+                // Candy Crush / Royal Match style; the outline frame is the older Bejeweled look.
+                if (SELECT_LIFT)
+                {
+                    // 2026-10-20 Spencer: "when it scales up there isnt enough padding between letters". Tiles sit
+                    // close together, so a 12% lift on neighbours (a swiped word) made them collide. Swipe traces
+                    // pass a small liftScale; a single tap-selected tile lifts a bit more AND draws above its
+                    // neighbours so any overlap reads as "on top", not as a pile-up.
+                    float s = liftScale > 0f ? liftScale : SELECT_LIFT_SCALE;
+                    transform.DOKill();
+                    if (liftScale <= 0f) SetSortingOrder(BaseSortingOrder + ROW_ORDER_STRIDE * 2);   // over the row above too
+                    Vector3 lifted = _editBaseScale * s;
+                    float breathe = Mathf.Min(0.03f, (s - 1f) * 0.5f);
+                    transform.DOScale(lifted, 0.12f).SetEase(Ease.OutBack, 2.2f).OnComplete(() =>
+                    {
+                        if (this == null || !_editSelected || breathe <= 0.001f) return;
+                        transform.DOScale(_editBaseScale * (s - breathe), 0.55f)
+                            .SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
+                    });
+                    return;
+                }
 
                 // 2026-06-03 Spencer: selection reads as an HDR cyan glow on the tile
                 // itself (glow-only, like the hint) — NO cyan sprite swap, NO halo.
@@ -4544,6 +4609,7 @@ namespace WordDrop
                 // pop used to early-return here and leave the tile stuck inflated.
                 transform.DOKill();
                 transform.localScale = rest;
+                if (SELECT_LIFT && wasSelected) ReassertSortingOrder();   // undo the tap-select draw-on-top
                 // Kill the glint pulse + restore white only when we were actually
                 // selected, so we don't stomp a special-tile tint on a stray cleanup
                 // call. (ResetVisuals also covers this, but keep it self-contained.)
@@ -4647,6 +4713,9 @@ namespace WordDrop
         public void HoldEditGlow()
         {
             _editGlowPulse?.Kill(); _editGlowPulse = null;
+            // Match-3 select (SELECT_LIFT): swapping pieces carry no outline/tint — Candy Crush style.
+            // 2026-10-20 Spencer: "i think we follow the way candy crush is for this".
+            if (SELECT_LIFT) return;
             if (EDIT_SELECT_RIM)
             {
                 // Rim mode: hold the outline through the exchange instead of washing the face.

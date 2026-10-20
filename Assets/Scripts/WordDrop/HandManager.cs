@@ -2409,12 +2409,34 @@ namespace WordDrop
         // Switch off = the armed-web game exactly as before.
         public static bool InstantPopMode = true;
 
+        /// <summary>Instant pop: only GOLD tiles (gold high-value letters + gold bonus cells) glow and fly up
+        /// to the HUD, on every blast — instead of every letter, and only when the leftover decoration
+        /// objective happened to count the word. 2026-10-20 Spencer: "we used to have an animation where
+        /// the letters glow and then fly up ... re-add that just for Gold letters". The gold flight carries
+        /// the blast's points (each landing pays a share); blasts with no gold pay out as before.</summary>
+        public static bool FLY_UP_GOLD_ONLY = true;
+        public static bool GoldFlyUpActive => InstantPopMode && FLY_UP_GOLD_ONLY;
+
+        /// <summary>Gold letters fly to the MOVES box and each one is worth +1 move (2026-10-20 Spencer: "what do you
+        /// think about these letters awarding an extra move"). The blast's POINTS then pay straight away (no fly
+        /// share) — the gold letters carry a move, not the score. Needs the move limit on.</summary>
+        public static bool GOLD_GIVES_MOVE = true;
+        public static bool GoldToMovesActive => GoldFlyUpActive && GOLD_GIVES_MOVE && SurvivalManager.MoveLimitMode;
+        public static void OnGoldLetterLanded() => SurvivalManager.Instance?.GrantBonusMoves(1, "gold letter");
+        public static bool IsGoldFlyTile(Tile t) => t != null && (t.IsGoldLetter || t.IsGoldBonus);
+
         /// <summary>Fire the next armed word, if any. Called at the end of a swap, a swipe and a
         /// detonation, in the same frame processing ends, so a queued rise cannot slip in between
         /// a word forming and it popping.</summary>
         /// <summary>How long a word shows in its green/gold before it pops, so the player can see
         /// WHICH word it was. 2026-10-20 Spencer: "its not really clear what words are popping off".</summary>
         public static float INSTANT_POP_HOLD = 0.35f;
+
+        /// <summary>Only words this long pop BY THEMSELVES. Shorter ones light up and wait: tap to
+        /// cash one in, or extend it and the longer word pops (taking the short one with it, both
+        /// paid). 2026-10-20 Spencer: "because its autodetonate a 3 word is automatically going to
+        /// explode blocking you from making it a longer word". 3 = everything auto-pops (old way).</summary>
+        public static int INSTANT_POP_AUTO_MIN = 3;   // 2026-10-20: back to 3 — Spencer: "i dont like having to tap to explode the 3 letter words". Longer words now come from PLANTED near-words (RulesEngine.TryPlantNearWord) instead.
         private bool _autoPopPending;
 
         private void MaybeAutoPop()
@@ -2424,7 +2446,8 @@ namespace WordDrop
             if (reg == null) return;
             var all = reg.GetAllPrimedWords();
             for (int i = 0; i < all.Count; i++)
-                if (all[i].Cells != null && all[i].Cells.Count > 0)
+                if (all[i].Cells != null && all[i].Cells.Count > 0
+                    && (all[i].Word == null || all[i].Word.Length >= INSTANT_POP_AUTO_MIN))   // short words wait for a tap
                 {
                     WDLog.Log($"[InstantPop] '{all[i].Word}' pops ({all.Count} armed)");
                     StartCoroutine(AutoPopAfterHold(all[i].Cells[0]));
@@ -3001,6 +3024,10 @@ case RulesEngine.ResolutionPhase.Complete:
                 // the other (lifted + swells), the other dips under. Replaces the old shake-in-place,
                 // which was the EDIT animation and read as "a letter changed", not "two tiles moved".
                 float dur = SWAP_SLIDE_DUR;
+                // Settle any tap-select LIFT first (Tile.SELECT_LIFT) — a breathing selected tile would fight
+                // the slide's scale and its base scale would be captured mid-breath.
+                tile1.SetEditSelected(false);
+                tile2.SetEditSelected(false);
                 tile1.MarkAnimating(dur + 0.1f);          // keep sync/invariant snappers off them mid-slide
                 tile2.MarkAnimating(dur + 0.1f);
                 tile1.LiftForFx(dur + 0.05f);             // the moved tile travels on top
@@ -5673,9 +5700,12 @@ case RulesEngine.ResolutionPhase.Complete:
                 WDLog.Log($"[ChainFX] STAGGER combo(4-part): stages={pops.Count} dying={dying.Count} chain={chainDepth}");
 
                 var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
-                bool flyUpGoal = HUDManager.Instance != null && (flyObj is LongWordObjective || flyObj is ComboObjective)
-                    && (ObjectiveManager.Instance == null || ObjectiveManager.Instance.CurrentExplosionCounts); // no fly-up if it won't count (drop on a swap-only level)
-                int flyMinLen = flyObj is LongWordObjective lwFly ? lwFly.MinLen : 0;
+                bool goldFly   = GoldFlyUpActive;
+                bool flyUpGoal = HUDManager.Instance != null
+                    && (goldFly
+                        || ((flyObj is LongWordObjective || flyObj is ComboObjective)
+                            && (ObjectiveManager.Instance == null || ObjectiveManager.Instance.CurrentExplosionCounts))); // no fly-up if it won't count (drop on a swap-only level)
+                int flyMinLen = goldFly ? 0 : (flyObj is LongWordObjective lwFly ? lwFly.MinLen : 0);
 
                 int popCount = pops.Count;
                 for (int g = 0; g < popCount; g++)
@@ -5696,9 +5726,10 @@ case RulesEngine.ResolutionPhase.Complete:
 
                     // FLY-UP — this WORD's full letters travel up to the target, ramping per word (finale
                     // biggest). Shared letters (E in FINE+YES) fly in each stage they belong to. 2026-07-06.
-                    if (flyUpGoal && g < flyGroups.Count && stageCells[g].Count >= flyMinLen)
+                    if (flyUpGoal && g < flyGroups.Count && stageCells[g].Count >= flyMinLen
+                        && (!goldFly || flyGroups[g].Exists(IsGoldFlyTile)))
                     {
-                        var flyTiles = flyGroups[g];
+                        var flyTiles = goldFly ? flyGroups[g].FindAll(IsGoldFlyTile) : flyGroups[g];   // instant pop: gold only
                         // Crescendo: an ACCELERATING ramp (t^1.6 across the chain) so the build still reads, but
                         // GENTLER — the letters don't balloon during chains. ~1.05× (first) → ~1.35× (last).
                         // Toned down from 1.2→1.9 per Spencer 2026-07-27 (was ballooning on combos).
@@ -5710,7 +5741,8 @@ case RulesEngine.ResolutionPhase.Complete:
                         // swept it up. That backstop had quietly become the delivery mechanism
                         // for every combo, which is the delay before the score moved.
                         // 2026-09-10 Spencer.
-                        ScoreManager.Instance?.SetFlyLetterCount(flyTiles.Count);
+                        bool goldToMoves = goldFly && GoldToMovesActive;
+                        if (!goldToMoves) ScoreManager.Instance?.SetFlyLetterCount(flyTiles.Count);
                         for (int i = 0; i < flyTiles.Count; i++)
                         {
                             bool lastLetter = (i == flyTiles.Count - 1);
@@ -5728,7 +5760,10 @@ case RulesEngine.ResolutionPhase.Complete:
                             // The TRIGGER word (stage 0, e.g. YES) keeps the ORIGINAL magenta; only the chained
                             // words (comboStep >= 1) ramp in hue via s_comboFlyRamp. 2026-07-27.
                             HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter,
-                                popIcon, () => ScoreManager.Instance?.AwardOneFlyShare(), i * 0.07f, false, popPeak, sortBase, comboStep: g, armedColor: flyTiles[i].DetonationColor);
+                                popIcon && !goldToMoves,
+                                goldToMoves ? (System.Action)OnGoldLetterLanded : () => ScoreManager.Instance?.AwardOneFlyShare(),
+                                i * 0.07f, false, popPeak, sortBase, comboStep: g, armedColor: flyTiles[i].DetonationColor,
+                                toMoves: goldToMoves);
                         }
                     }
 

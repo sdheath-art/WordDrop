@@ -183,8 +183,25 @@ namespace WordDrop
         // finishes while the letters are still in the air. 2026-09-09 Spencer.
         private const float FLY_FLUSH_TIMEOUT = 1.6f;
 
+        /// <summary>A blast whose points have NO letters flying to deliver them pays after this short beat
+        /// instead of waiting out FLY_FLUSH_TIMEOUT. 2026-10-20 Spencer: "the ding and checkmark for the
+        /// passing of the level ... should happen immediately when the last word you needed to make pops".
+        /// Log: last word popped, nothing flew (gold-only fly-ups), points sat in the bank 1.6s, a row ROSE
+        /// in that gap, then the level registered as won. The beat only lets a fly-up that is about to
+        /// register (same resolution, a few frames later) claim the points first.</summary>
+        private const float FLY_NO_LETTERS_GRACE = 0.15f;
+
         private void Update()
         {
+            if (_flyPending > 0 && _flyRemaining <= 0 && Time.unscaledTime - _flyActivityAt > FLY_NO_LETTERS_GRACE)
+            {
+                int pts = _flyPending, burst = _flyBurstTotal;
+                WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} NO-FLY PAY {pts} — no letters in flight, paid now");
+                _flyPending = 0; _flyBurstTotal = 0;
+                AddPlayerScore(pts);
+                HUDManager.Instance?.PlayScoreSlam(burst > 0 ? burst : pts);
+                return;
+            }
             if (_flyPending > 0 && Time.unscaledTime - _flyActivityAt > FLY_FLUSH_TIMEOUT)
                 FlushFlyScore();
         }

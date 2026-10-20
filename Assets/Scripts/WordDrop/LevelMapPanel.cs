@@ -176,6 +176,17 @@ namespace WordDrop
         /// (its play modal). 2026-07-13 Spencer.</summary>
         public void PresentWorldComplete(int bossLevel, int nextLevel, System.Action onIntro)
         {
+            // HOME MODE: there is no map to walk, so the world-complete flow (which waits for the avatar
+            // to land on the boss node) can never finish — Show(..., null) left the home button with
+            // nothing to open, labelled with the BOSS level, and the game paused for good. Found by the
+            // 2026-10-20 audit; it would have soft-locked every run at LEVEL 10/20/30. A boss clear now
+            // takes the normal route: home -> LEVEL N -> card -> play.
+            if (HomeMode)
+            {
+                WDLog.Log($"[LevelMap] boss level {RunLevel(bossLevel)} cleared — home mode, normal route to {RunLevel(nextLevel)}");
+                PresentThenIntro(nextLevel, onIntro);
+                return;
+            }
             SurvivalManager.Instance?.SetOverlayPaused(true);
             _worldCompleteFlow  = true;
             _worldCompleteBoss  = bossLevel;

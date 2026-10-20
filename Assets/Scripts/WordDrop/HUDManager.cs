@@ -225,6 +225,71 @@ namespace WordDrop
         // bubble loops behind it (same "pop" language as tier-1 explosions) only when
         // imminent. Created in BuildHUD, refreshed each frame in Update().
         private TextMeshProUGUI _topOutNumText;
+        private RectTransform   _movesPanelInner;
+        private TextMeshProUGUI _riseSubText;      // move-limit mode: small "rise in N" under the MOVES number
+
+        /// <summary>Move-limit mode: lay the MOVES box out as a big moves-left number over a small
+        /// "rise in N" line. Built lazily the first time the HUD needs it. 2026-10-20.</summary>
+        private void EnsureRiseSubText()
+        {
+            if (_riseSubText != null || _movesPanelInner == null || _topOutNumText == null) return;
+            var go = new GameObject("RiseSubText", typeof(RectTransform), typeof(TextMeshProUGUI));
+            go.transform.SetParent(_movesPanelInner, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = new Vector2(0f, 0f); rt.anchorMax = new Vector2(1f, 0.30f);
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+            _riseSubText = go.GetComponent<TextMeshProUGUI>();
+            _riseSubText.font = _topOutNumText.font;
+            _riseSubText.alignment = TMPro.TextAlignmentOptions.Center;
+            _riseSubText.enableAutoSizing = true; _riseSubText.fontSizeMin = 6f; _riseSubText.fontSizeMax = 11f;
+            _riseSubText.color = new Color(1f, 1f, 1f, 0.85f);
+            _riseSubText.raycastTarget = false;
+            // Number keeps the top 70%.
+            var nrt = _topOutNumText.rectTransform;
+            nrt.anchorMin = new Vector2(0f, 0.26f); nrt.anchorMax = Vector2.one;
+            nrt.offsetMin = nrt.offsetMax = Vector2.zero;
+        }
+
+        /// <summary>A gold letter landed on the MOVES box: gold flash + punch on the number, a sparkle burst, a
+        /// rising "+1 MOVE", and a chime. 2026-10-20.</summary>
+        /// <summary>True while any letter is still flying to the HUD (e.g. a gold letter about to grant a move).</summary>
+        public bool LettersInFlight => _flyToTargetInFlight > 0;
+
+        public void PlayMovesGained(int n)
+        {
+            if (_topOutNumText == null) return;
+            _topOutDisplay = int.MaxValue;               // the moves readout only counts DOWN unless re-seeded
+            _topOutNumText.color = new Color(1f, 0.84f, 0.25f);
+            AnimateScorePop(_topOutNumText.rectTransform);
+            if (_movesPanelInner != null) SpawnSlotSparkleBurst(_movesPanelInner, Vector2.zero);
+            GameAudio.Instance?.PlayScorePowerup();
+            HapticsManager.Light();
+
+            var go = new GameObject("MovesGainedLabel", typeof(RectTransform), typeof(TextMeshProUGUI));
+            go.transform.SetParent(_movesPanelInner != null ? _movesPanelInner : _topOutNumText.transform.parent, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(120f, 30f);
+            rt.anchoredPosition = new Vector2(0f, 6f);
+            var t = go.GetComponent<TextMeshProUGUI>();
+            t.font = _topOutNumText.font; t.fontSize = 16f; t.alignment = TextAlignmentOptions.Center;
+            t.text = n == 1 ? "+1 MOVE" : $"+{n} MOVES";
+            t.color = new Color(1f, 0.86f, 0.3f, 1f);
+            t.outlineWidth = 0.25f; t.outlineColor = new Color32(70, 40, 0, 255);
+            t.raycastTarget = false;
+            var seq = DOTween.Sequence().SetUpdate(true);
+            seq.Append(rt.DOAnchorPosY(46f, 0.9f).SetEase(Ease.OutCubic));
+            seq.Join(t.DOFade(0f, 0.9f).SetEase(Ease.InQuad).SetDelay(0.35f));
+            seq.OnComplete(() => { if (go != null) Destroy(go); });
+        }
+
+        /// <summary>Red punch on the MOVES number when the board-full penalty takes moves.</summary>
+        public void FlashMovesPenalty()
+        {
+            if (_topOutNumText == null) return;
+            _topOutNumText.color = new Color(1f, 0.3f, 0.25f);
+            AnimateScorePop(_topOutNumText.rectTransform);
+        }
         private Image           _topOutBubble;
         private Coroutine       _topOutBubbleLoop;
         private int             _topOutLastShown = int.MinValue;
@@ -374,8 +439,16 @@ namespace WordDrop
             DOVirtual.DelayedCall(BOARD_ENTRY_DELAY, () =>
             {
                 DOTween.Kill("levelEntrySlide");
+                int   perfFrame = -1;          // TEMP 2026-10-20 [EntryPerf] — strip once the entry jank is diagnosed
+                float perfLastT = 1f;
                 DOTween.To(() => 1f, t =>
                 {
+                    if (ENTRY_PERF_LOG && Time.frameCount != perfFrame)
+                    {
+                        perfFrame = Time.frameCount;
+                        WDLog.Log($"[EntryPerf] f{Time.frameCount} dt={Time.unscaledDeltaTime * 1000f:F1}ms norm={t:F3} step={(perfLastT - t):F3} offX={GridManager.Instance?.BoardSlideOffsetX:F2}");
+                        perfLastT = t;
+                    }
                     GridManager.Instance?.SetEntrySlideNorm(t);
                     HandManager.Instance?.SetEntrySlideNorm(t);
                     BoosterHUDSlot.Instance?.SetSwapSlideNorm(t);
@@ -390,6 +463,9 @@ namespace WordDrop
             }).SetUpdate(true);
         }
 
+        /// <summary>TEMP 2026-10-20: per-frame timing of the board entry slide, to tell a frame hitch from a too-fast
+        /// tween. Strip (or set false) once diagnosed.</summary>
+        public static bool ENTRY_PERF_LOG = true;
         private const float BOARD_ENTRY_DELAY = 0.06f; // board fires a beat AFTER the top/bottom have started
 
         /// <summary>Level-EXIT: reverse of AnimateLevelEntryIn — the board + tile holder + SWAPS slide OUT to the right
@@ -837,6 +913,7 @@ namespace WordDrop
 
             // MOVES (right) — reparent the existing moves-to-top-out counter into the panel.
             _movesPanel = BuildHudPanel(barGO.transform, "MovesPanel", 0.67f, 0.98f, "MOVES", out var mvInner);
+            _movesPanelInner = mvInner as RectTransform;
             _movesPanelLabel = _movesPanel.transform.Find("MovesPanelLabel")?.GetComponent<TextMeshProUGUI>();
             if (_topOutNumText != null)
             {
@@ -1706,17 +1783,28 @@ namespace WordDrop
         /// flight. Flip to true to bring the flight back.</summary>
         public static bool FLY_LETTERS_ENABLED = false;
 
-        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0, Color? armedColor = null)
+        /// <summary>Multiplier on the HDR gold glow for a flying gold letter — higher = more bloom.</summary>
+        public static float GOLD_FLY_GLOW_BOOST = 1.5f;
+        /// <summary>Gold fly-up size at the end of the flight (1 = tile size) and at the moment of landing.</summary>
+        public static float GOLD_FLY_END_SCALE  = 1.0f;
+        public static float GOLD_FLY_SUCK_SCALE = 0.75f;
+
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0, Color? armedColor = null, bool toMoves = false)
         {
-            if (!FLY_LETTERS_ENABLED) { onLand?.Invoke(); return; }
+            // Gold-only fly-up (HandManager.FLY_UP_GOLD_ONLY) is its own permission: both callers already pass
+            // ONLY gold tiles in that mode, so the master switch Spencer turned off on 2026-09-10 (all letters)
+            // stays off for everything else. 2026-10-20: without this the gold J in JURY "landed" the same
+            // frame it launched — the switch skipped the flight and paid instantly.
+            if (!FLY_LETTERS_ENABLED && !HandManager.GoldFlyUpActive) { onLand?.Invoke(); return; }
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { onLand?.Invoke(); return; }
             if (!COMBO_FLY_RAMP) { cascadeGreen = false; comboStep = 0; }
-            Vector3 target = GetObjectiveIconScreenPos();
+            Vector3 target = toMoves && _topOutNumText != null ? _topOutNumText.rectTransform.position : GetObjectiveIconScreenPos();
             _flyToTargetInFlight++;
             System.Action onArrive = () =>
             {
                 _flyToTargetInFlight = Mathf.Max(0, _flyToTargetInFlight - 1);
                 onLand?.Invoke();
+                if (toMoves) { PlayMovesGained(1); return; }   // gold letter -> MOVES box celebration, not the score icon
                 GameAudio.Instance?.PlayLine2();
                 // Pop the shared icon only ONCE per word — the caller passes popIcon=true for the LAST letter.
                 // Popping per letter stacks overlapping DOPunchRotation tweens that interrupt each other and can
@@ -1734,6 +1822,20 @@ namespace WordDrop
             // CASCADE fly-ups use the scored-GREEN look; the opening (regular) detonation keeps the original
             // HiddenWord-style PINK. cascadeGreen is set by the caller from the detonation's chain depth
             // (>0 = a post-gravity cascade word). 2026-07-06 Spencer.
+            // GOLD LETTER FLY-UP: authored gold face, white tint (the art carries the colour), and an HDR gold
+            // glow on the ADDITIVE glow material. The flying tile is a WORLD-SPACE sprite, so this gets real
+            // URP bloom, not the fake overlay-UI kind. 2026-10-20 Spencer: "the letter was green. i need it to
+            // be gold and glow with an additive effect". It was green because it inherited the ARMED colour.
+            if (HandManager.GoldFlyUpActive)
+            {
+                Color g = Tile.PRIMED_GOLD_GLOW * GOLD_FLY_GLOW_BOOST; g.a = 1f;
+                // FULL SIZE the whole way. The shared flight shrinks to 50% then collapses to 16% on landing (a
+                // coin-into-counter "suck"), which on a gold REWARD read as the letter shrinking away. 2026-10-20
+                // Spencer: "when the letter flies up to the top it is usually smaller too".
+                StartCoroutine(FlyTileCoroutine(startWorld, Tile.GoldPrimedSprite, Color.white, g,
+                    letter, target, onArrive, startDelay, popPeak, sortBase, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE));
+                return;
+            }
             if (cascadeGreen)
                 StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Tile.SCORED_TINT,
                     Tile.SCORED_GLOW_HDR, letter, target, onArrive, startDelay, popPeak, sortBase));
@@ -2085,7 +2187,8 @@ namespace WordDrop
         private const float FLY_SUCK_SCALE  = 0.16f;
 
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
-            Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200)
+            Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200,
+            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE)
         {
             var cam = Camera.main;
             if (cam == null) { onArrive?.Invoke(); yield break; }
@@ -2202,8 +2305,8 @@ namespace WordDrop
                 // Normal flight scale, then the terminal "suck in" collapse across the
                 // landing window only. Previously the shrink was spread over the ENTIRE
                 // flight, so the tile was already tiny long before it arrived.
-                float flightScale = Mathf.Lerp(baseScale, baseScale * FLY_END_SCALE, e);
-                go.transform.localScale = Vector3.one * flightScale * Mathf.Lerp(FLY_SUCK_SCALE, 1f, land);
+                float flightScale = Mathf.Lerp(baseScale, baseScale * endScale, e);
+                go.transform.localScale = Vector3.one * flightScale * Mathf.Lerp(suckScale, 1f, land);
 
                 if (nearHud)
                 {
@@ -2795,6 +2898,8 @@ namespace WordDrop
                 int left = _topOutDisplay;
                 if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
                 if (left != _topOutLastShown) { _topOutLastShown = left; _topOutNumText.text = left.ToString(); }
+                if (SurvivalManager.MoveLimitMode)
+                    _topOutNumText.color = Color.Lerp(_topOutNumText.color, left <= 3 ? new Color(1f, 0.42f, 0.35f) : Color.white, Time.unscaledDeltaTime * 6f);
                 if (left <= TOPOUT_DANGER_THRESHOLD) ShowTopOutBubble();
                 else HideTopOutBubble();
                 return;
@@ -3729,6 +3834,20 @@ namespace WordDrop
             // the score count-up fighting the score pop. The rise countdown WINS in a score
             // run because it is the actionable number; the top-out estimate is suppressed.
             int untilRise = sm.MovesUntilRise;
+            // MOVE LIMIT: the big number is MOVES LEFT (RefreshTopOutDanger's stage-budget branch owns it);
+            // the rise countdown drops to a small sub-line underneath. 2026-10-20.
+            if (SurvivalManager.MoveLimitMode)
+            {
+                EnsureRiseSubText();
+                if (_riseSubText != null)
+                {
+                    string sub = untilRise >= 0 ? (untilRise <= 1 ? "rise next move" : $"rise in {untilRise}") : "";
+                    if (_riseSubText.text != sub) _riseSubText.text = sub;
+                    _riseSubText.color = untilRise >= 0 && untilRise <= 1 ? new Color(1f, 0.55f, 0.45f) : new Color(1f, 1f, 1f, 0.85f);
+                }
+                untilRise = -1;   // stand the big rise countdown down below
+            }
+            else if (_riseSubText != null && _riseSubText.text != "") _riseSubText.text = "";
             _riseCountdownOwnsLabel = untilRise >= 0;
             if (_topOutNumText != null && untilRise >= 0)
             {

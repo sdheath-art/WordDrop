@@ -71,6 +71,15 @@ namespace WordDrop
         /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
         /// of blasts and rows do NOT rise from moves; false = the rising-row game exactly as before.
         /// See SurvivalManager.BlastMode for the rules.</summary>
+        /// <summary>MOVE LIMIT switch (2026-10-20). Each level: score the target within MovesFor(stage) moves.
+        /// See SurvivalManager.MoveLimitMode. false = unlimited moves, rising-row top-out as before.</summary>
+        public static bool MoveLimitMode = true;
+        /// <summary>Moves per level. 2026-10-20 pass 2: 18 was too tight — Spencer's first LEVEL 1 under the limit
+        /// failed at 1,097/1,200 (91%) with 18+1 moves at ~58 pts/move; the first level must be a win. 24 lets
+        /// that pace clear L1 with ~4-5 spare; +1 every 3 levels while targets grow x1.15, so the points-per-move
+        /// demand climbs ~12%/level (L1 50, L3 67, L5 84, L8 123). TUNE FROM tools/balance_report.py.</summary>
+        public static int MovesFor(int stage) => 24 + (Mathf.Max(1, stage) - 1) / 3;
+
         public static bool BlastLimitMode = false;   // 2026-10-20 Spencer tried it: "meh ... at least with the row rising there was some pressure and it introduces new letters"
         /// <summary>Blasts per level. One number for every level while the idea is being felt —
         /// per-level tuning comes after we know whether it is fun.</summary>
@@ -102,14 +111,19 @@ namespace WordDrop
         /// stage cannot stack ice on top of ice. The rule switches are idempotent and can
         /// safely re-apply; seeding is not.</summary>
         private static int s_icedStage  = -1;
-        /// <summary>Last stage this ran for. -1 means "no stage yet this run", which is how we
-        /// tell a STAGE TRANSITION (reseed a fresh board) from the FIRST install of a run (leave
-        /// the board alone — MatchController already built it through OpeningSeed, including the
-        /// first-word guarantee, and stomping it would throw that away).</summary>
+        /// <summary>Last stage this ran for (-1 = none yet this run). Any change of stage — INCLUDING the
+        /// first install of a run since 2026-10-20 — gets a fresh LevelRules board; a repeated install of
+        /// the same stage does not. (The first level used to keep OpeningSeed's sparse board; see Apply.)</summary>
         private static int s_lastStage  = -1;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStatics() { s_icedStage = -1; s_lastStage = -1; }
+
+        /// <summary>Forget the previous run. Called by SurvivalManager.StartSurvival. These statics used to
+        /// reset only on domain reload, so Play Again carried the last run's stage: a stage-11 restart
+        /// after dying at 13 counted as a TRANSITION (double board), and a stage already iced last run had
+        /// its ice silently skipped. Found by the 2026-10-20 audit.</summary>
+        public static void ResetForNewRun() => ResetStatics();
 
         /// <summary>Push this stage's rules into the engine. Called at the end of
         /// ObjectiveManager.InstallLevel, once per stage.</summary>
@@ -152,7 +166,9 @@ namespace WordDrop
 
             sb.Append(BlastLimitMode
                 ? $"Score <b>{target:N0} points</b> in <b>{BlastsPerLevel} blasts</b>."
-                : $"Score <b>{target:N0} points</b>");
+                : MoveLimitMode
+                    ? $"Score <b>{target:N0} points</b> in <b>{MovesFor(stage)} moves</b>."
+                    : $"Score <b>{target:N0} points</b>");
 
             // ── what is different about THIS level ───────────────────────────────
             // Each line names the rule AND what to do about it. "4+ letters only" alone
@@ -190,7 +206,9 @@ namespace WordDrop
                     : "\n\n<b>Swap</b> any two tiles, or <b>swipe</b> across a word you spot.");
                 if (HandManager.InstantPopMode)
                     sb.Append("\n\nEvery word you make <b>pops</b> and scores. Letters fall — " +
-                              "<b>new words they make pop too.</b>");
+                              "<b>new words they make pop too.</b>" +
+                              "\n\n<b>Longer words score far more.</b> Watch the new rows for a word " +
+                              "that is <b>one swap</b> from complete.");
                 else
                 {
                     sb.Append("\n\nThe word <b>stays lit on the board</b> instead of vanishing.");
@@ -198,7 +216,10 @@ namespace WordDrop
                               "Lit words that touch go off together, and each one in the chain is worth more " +
                               "than the last.");
                 }
-                if (BlastLimitMode)
+                if (MoveLimitMode)
+                    sb.Append("\n\nNew rows push up every few moves. <b>If the board is full, the top row " +
+                              $"breaks off and costs you {SurvivalManager.OVERFLOW_MOVE_PENALTY} moves.</b>");
+                else if (BlastLimitMode)
                     sb.Append("\n\nEach blast uses one of your blasts — <b>a bigger web is worth far more</b>, " +
                               "so build before you fire.");
                 else
@@ -234,6 +255,13 @@ namespace WordDrop
             // The next level is now genuinely starting — release the lock that has been
             // holding input and pinning the HUD since the previous level's target was met.
             SurvivalManager.ClearAwaitingNextLevel();
+            SurvivalManager.Instance?.ClearRiseQueueForNewLevel();
+            if (MoveLimitMode && SurvivalManager.Instance != null)
+            {
+                SurvivalManager.Instance.SetStageMoveBudgetOverride(MovesFor(stage));
+                SurvivalManager.Instance.SetMoveLimitTopOut(true);
+                SurvivalManager.Instance.ResetStageMoves();
+            }
             if (BlastLimitMode)
             {
                 SurvivalManager.Instance?.ResetBlasts(BlastsPerLevel);
@@ -257,7 +285,12 @@ namespace WordDrop
             // desyncs. RebuildFromRulesEngine (not SyncToRulesState) because a full rebuild also
             // wipes stale per-tile visual state like leftover primed glow.
             var rules2 = RulesEngine.Instance;
-            bool isTransition = s_lastStage >= 0 && s_lastStage != internalStage;
+            // 2026-10-20: LEVEL 1 gets a fresh board too. It used to keep OpeningSeed's board — built for the
+            // old 6-column grid, 17 tiles = 17% full, just under the Starved line (18%) — so the empty-board
+            // check queued two refill rows the moment Play was pressed and they rose as soon as the board slid
+            // in. Spencer: "upon entry to level one why it immediately did a row rise". Built while the home
+            // screen still covers the board, same as every transition reseed.
+            bool isTransition = s_lastStage != internalStage;
             if (isTransition && rules2 != null)
             {
                 rules2.SeedVaultBoard(r.FillRows, r.Density, 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
@@ -267,6 +300,8 @@ namespace WordDrop
                 // rows from the bottom, which is what a starting board should look like.
                 // 2026-10-19 Spencer.
                 rules2.ApplyGravityInDataPublic();
+                // Something to hunt from move 1 — not only once a row has risen. 2026-10-20 (RNG pass).
+                if (HandManager.InstantPopMode) rules2.PlantNearWordsOnBoard(RulesEngine.PLANTS_ON_FRESH_BOARD);
                 MatchController.Instance?.ResetTurnCounter();
                 GridManager.Instance?.RebuildFromRulesEngine(rules2);
                 WDLog.Log($"[LevelRules] fresh board for LEVEL {stage} — {r.FillRows} rows @ {r.Density:P0}");
@@ -303,5 +338,28 @@ namespace WordDrop
                       $"minLen {r.MinWordLength}, cadence {r.RiseCadence}, " +
                       $"branch {r.BranchPriming}, fuse {r.FuseOn}, gold {r.GoldTiles}");
         }
+    }
+
+    /// <summary>Per-level play stats for TUNING (2026-10-20 Spencer: "if i just play through over and over will we
+    /// be able to dial the numbers a bit better?"). Attached to the stage_clear / stage_fail analytics events,
+    /// which persist per session under Application Support/.../WordDrop/analytics. Reset when a level installs.</summary>
+    public static class StageStats
+    {
+        public static int Len3, Len4, Len5, Len6Plus, PlantsMade, PlantsSolved, Overflows, GoldMoves;
+        private static readonly System.Collections.Generic.HashSet<string> s_planted = new System.Collections.Generic.HashSet<string>();
+        public static void Reset() { Len3 = Len4 = Len5 = Len6Plus = PlantsMade = PlantsSolved = Overflows = GoldMoves = 0; s_planted.Clear(); }
+        public static void RecordPlanted(string word) { if (string.IsNullOrEmpty(word)) return; PlantsMade++; s_planted.Add(word.ToUpperInvariant()); }
+        public static void RecordOverflow() => Overflows++;
+        public static void RecordPopped(string word)
+        {
+            if (string.IsNullOrEmpty(word)) return;
+            int n = word.Length;
+            if (n <= 3) Len3++; else if (n == 4) Len4++; else if (n == 5) Len5++; else Len6Plus++;
+            if (s_planted.Remove(word.ToUpperInvariant())) PlantsSolved++;
+        }
+        /// <summary>Key/value pairs to append to an analytics event.</summary>
+        public static object[] Fields() => new object[] {
+            "words_3", Len3, "words_4", Len4, "words_5", Len5, "words_6p", Len6Plus,
+            "plants_made", PlantsMade, "plants_solved", PlantsSolved, "overflows", Overflows, "gold_moves", GoldMoves };
     }
 }

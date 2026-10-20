@@ -1024,10 +1024,12 @@ namespace WordDrop
             // detonated word's letters to fly up to the target. LongWord gates on its MinLen; Combo takes
             // any qualifying word. 2026-07-06 Spencer.
             var flyObj = ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
+            bool goldOnly  = HandManager.GoldFlyUpActive;
             bool flyUpGoal = HUDManager.Instance != null && !suppressFlyUp
-                && (ObjectiveManager.Instance == null || ObjectiveManager.Instance.CurrentExplosionCounts) // no fly-up if it won't count (drop on a swap-only level)
-                && ((flyObj is LongWordObjective lwObj && wordLength >= lwObj.MinLen)
-                    || flyObj is ComboObjective);
+                && (goldOnly
+                    || ((ObjectiveManager.Instance == null || ObjectiveManager.Instance.CurrentExplosionCounts) // no fly-up if it won't count (drop on a swap-only level)
+                        && ((flyObj is LongWordObjective lwObj && wordLength >= lwObj.MinLen)
+                            || flyObj is ComboObjective)));
             if (flyUpGoal)
             {
                 // Collect valid tiles first so we can pop the icon EXACTLY ONCE (on the last landing) —
@@ -1045,7 +1047,8 @@ namespace WordDrop
                     // SIP/RUT/HUH cluster): those can lack the sticky scored flag but are still glowing-primed at
                     // detonation, so WasInScoredWord alone dropped them. Stones ('#') / swept junk are neither →
                     // stay filtered out. char.IsLetter guards stray '#'/'?'/'\0'. 2026-07-06 Spencer.
-                    bool isWordTile = (ft.WasInScoredWord || ft.HasPermanentGlow) && char.IsLetter(ft.Letter);
+                    bool isWordTile = (ft.WasInScoredWord || ft.HasPermanentGlow) && char.IsLetter(ft.Letter)
+                                      && (!goldOnly || HandManager.IsGoldFlyTile(ft));   // instant pop: gold only
                     _flyDbg.Append($"{ft.Letter}(s{(ft.WasInScoredWord ? 1 : 0)}g{(ft.HasPermanentGlow ? 1 : 0)}{(isWordTile ? "→fly" : "")}) ");
                     if (isWordTile) flyTiles.Add(ft);
                 }
@@ -1055,7 +1058,8 @@ namespace WordDrop
                 float popPeak = 1.28f + Mathf.Min(chainStep * 0.10f, 0.37f);
                 // Tell the bank how many landings to split the blast across, so each
                 // impact pays an equal share and the counter climbs WITH the letters.
-                ScoreManager.Instance?.SetFlyLetterCount(flyTiles.Count);
+                bool goldToMoves = goldOnly && HandManager.GoldToMovesActive;
+                if (flyTiles.Count > 0 && !goldToMoves) ScoreManager.Instance?.SetFlyLetterCount(flyTiles.Count);
                 for (int i = 0; i < flyTiles.Count; i++)
                 {
                     bool last = (i == flyTiles.Count - 1);
@@ -1065,13 +1069,15 @@ namespace WordDrop
                     // the objective. Previously only the last letter had a callback at all,
                     // which is why nothing could tick per landing. 2026-09-09 Spencer.
                     bool isLast = last;
-                    System.Action landCb = () =>
+                    System.Action landCb = goldToMoves
+                        ? (System.Action)HandManager.OnGoldLetterLanded      // gold letter = +1 move; points already paid
+                        : () =>
                     {
                         ScoreManager.Instance?.AwardOneFlyShare();
                         if (isLast) ObjectiveManager.Instance?.NotifyObjectiveFlyUpsLanded();
                     };
                     // Own 4-slot sorting band per letter (+4) so a letter never bleeds onto a neighbour tile.
-                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, landCb, i * 0.07f, cascade, popPeak, 200 + (flyTiles.Count - 1 - i) * 4, comboStep: comboStagger ? chainStep : 0, armedColor: flyTiles[i].DetonationColor);
+                    HUDManager.Instance.FlyLetterToTarget(flyTiles[i].transform.position, flyTiles[i].Letter, last, landCb, i * 0.07f, cascade, popPeak, 200 + (flyTiles.Count - 1 - i) * 4, comboStep: comboStagger ? chainStep : 0, armedColor: flyTiles[i].DetonationColor, toMoves: goldToMoves);
                 }
             }
 

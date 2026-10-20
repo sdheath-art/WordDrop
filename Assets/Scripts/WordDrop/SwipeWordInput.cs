@@ -191,6 +191,11 @@ namespace WordDrop
                 // selection outline the instant you clicked a tile. 2026-10-19 Spencer.
                 Highlight(grid, true);
                 _didHighlight = true;
+                // Real word under the finger? Light it in the about-to-pop face so the player knows to let go.
+                string _rej;
+                bool valid = _path.Count >= RulesEngine.SWIPE_MIN_LENGTH && RulesEngine.Instance != null
+                             && RulesEngine.Instance.BuildExplicitMatch(_path, out _rej) != null;
+                for (int i = 0; i < _path.Count; i++) grid.GetTile(_path[i].x, _path[i].y)?.SetSwipeValidPreview(valid);
                 IsSwiping = true;
                 if (!_abortedSwapSelection)
                 {
@@ -212,7 +217,12 @@ namespace WordDrop
         private void Highlight(GridManager grid, bool on)
         {
             for (int i = 0; i < _path.Count; i++)
-                grid.GetTile(_path[i].x, _path[i].y)?.SetEditSelected(on);
+            {
+                var t = grid.GetTile(_path[i].x, _path[i].y);
+                if (t == null) continue;
+                if (on) t.SetEditSelected(true, false, Tile.SWIPE_LIFT_SCALE); else t.SetEditSelected(false);
+                if (!on) t.SetSwipeValidPreview(false);
+            }
         }
 
         /// <summary>Clear ONLY a trace this component actually lit. Never touches a tile that
@@ -265,6 +275,9 @@ namespace WordDrop
             {
                 WDLog.Log($"[Swipe] rejected ({reject}) — {_path.Count} cells");
                 GameAudio.Instance?.PlayButtonClick();
+                // Not a word: the traced letters shake "no" (2026-10-20) — a refusal the player can SEE.
+                var g = GridManager.Instance;
+                if (g != null) for (int i = 0; i < _path.Count; i++) g.GetTile(_path[i].x, _path[i].y)?.ShakeNo();
                 return;
             }
 

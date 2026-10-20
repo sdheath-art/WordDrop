@@ -880,7 +880,7 @@ namespace WordDrop
                         _editPanelSlot.AddComponent<UnityEngine.UI.GraphicRaycaster>();
                 }
                 _editPanelSpotlightCanvas.overrideSorting = true;
-                _editPanelSpotlightCanvas.sortingOrder = 12; // above the tutorial scrim (9)
+                _editPanelSpotlightCanvas.sortingOrder = 45; // above the tutorial scrim (40 since the 2026-10-20 re-base)
                 _editPanelSpotlightCanvas.enabled = true;
             }
             else if (_editPanelSpotlightCanvas != null)
