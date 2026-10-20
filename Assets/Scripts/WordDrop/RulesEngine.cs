@@ -759,6 +759,20 @@ namespace WordDrop
         /// deliberate player claim should be allowed through.</summary>
         public bool IsRiseSeededKey(string key) => _riseSeededKeys.Contains(key);
 
+        /// <summary>Should a DELIBERATE player claim of this word be refused?
+        ///
+        /// Only when it was genuinely SCORED. A key that is in _scoredWordKeys purely because
+        /// RegisterWordsAtRow(0) seeded it — i.e. the word arrived pre-formed in a risen row and
+        /// was marked so it would not AUTO-prime — must still be claimable by hand.
+        ///
+        /// 2026-10-19: this exemption existed only in BuildExplicitMatch (the swipe path). All
+        /// FOUR swap sites checked IsScoredKey raw, so swapping to form a word that happened to
+        /// already exist in a risen row did nothing at all, silently. Rises fire every two
+        /// moves, so the lower rows are full of such words — which is why it read as "it's not
+        /// priming words that are made when swapped". One helper now, so the two verbs cannot
+        /// drift apart again.</summary>
+        public bool IsClaimBlocked(string key) => IsScoredKey(key) && !IsRiseSeededKey(key);
+
         /// <summary>Consume the rise-seeding exemption once a player actually claims it.</summary>
         public void ClearRiseSeededKey(string key) => _riseSeededKeys.Remove(key);
 
@@ -2216,7 +2230,7 @@ namespace WordDrop
             // already scored collides with the existing key and is refused here with no extra
             // rule — e.g. swiping TAC across the letters a CAT already used.
             string mkey = word + "|" + match.CellKey;
-            if (IsScoredKey(mkey) && !IsRiseSeededKey(mkey))
+            if (IsClaimBlocked(mkey))
             { reject = "already claimed"; return null; }
             return match;
         }

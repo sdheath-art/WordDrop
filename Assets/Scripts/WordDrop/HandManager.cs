@@ -2915,7 +2915,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 for (int i = 0; i < swapWords.Count; i++)
                 {
                     string key = swapWords[i].Word + "|" + swapWords[i].CellKey;
-                    if (!rules.IsScoredKey(key)) allNew.Add(swapWords[i]);
+                    if (!rules.IsClaimBlocked(key)) allNew.Add(swapWords[i]);
                 }
 
             if (allNew.Count > 0)
@@ -3186,13 +3186,13 @@ case RulesEngine.ResolutionPhase.Complete:
                 for (int i = 0; i < words1.Count; i++)
                 {
                     string key = words1[i].Word + "|" + words1[i].CellKey;
-                    if (!rules.IsScoredKey(key)) { createsWord = true; break; }
+                    if (!rules.IsClaimBlocked(key)) { createsWord = true; break; }
                 }
             if (!createsWord && words2 != null)
                 for (int i = 0; i < words2.Count; i++)
                 {
                     string key = words2[i].Word + "|" + words2[i].CellKey;
-                    if (!rules.IsScoredKey(key)) { createsWord = true; break; }
+                    if (!rules.IsClaimBlocked(key)) { createsWord = true; break; }
                 }
 
             if (!createsWord)
@@ -3270,7 +3270,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 for (int i = 0; i < swapWords.Count; i++)
                 {
                     string key = swapWords[i].Word + "|" + swapWords[i].CellKey;
-                    if (!rules.IsScoredKey(key)) allNew.Add(swapWords[i]);
+                    if (!rules.IsClaimBlocked(key)) allNew.Add(swapWords[i]);
                 }
 
             // Score and prime new words — attributed to HUMAN player
