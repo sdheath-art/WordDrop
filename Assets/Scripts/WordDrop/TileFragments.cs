@@ -98,7 +98,7 @@ namespace WordDrop
             GameObject go = new GameObject("TileFrag");
             go.transform.SetParent(transform, false);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sortingOrder = 31; // above flipbook (30), above tiles (5)
+            sr.sortingOrder = 47; // above flipbook (30), above tiles (5)  // was 31; re-based above the row bands (tiles reach 37) 2026-10-20
             // Path B: render tile content visible inside debris-shard mask.
             sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
 

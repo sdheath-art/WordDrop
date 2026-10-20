@@ -452,7 +452,7 @@ namespace WordDrop
                     GridManager.Instance?.SetEntrySlideNorm(t);
                     HandManager.Instance?.SetEntrySlideNorm(t);
                     BoosterHUDSlot.Instance?.SetSwapSlideNorm(t);
-                }, 0f, 0.28f).SetEase(Ease.OutBack, 1.6f).SetId("levelEntrySlide").SetUpdate(true)
+                }, 0f, ENTRY_SLIDE_DUR).SetEase(Ease.OutBack, ENTRY_SLIDE_OVERSHOOT).SetId("levelEntrySlide").SetUpdate(true)
                  .OnComplete(() =>
                  {
                      GridManager.Instance?.EndEntrySlide();
@@ -466,6 +466,11 @@ namespace WordDrop
         /// <summary>TEMP 2026-10-20: per-frame timing of the board entry slide, to tell a frame hitch from a too-fast
         /// tween. Strip (or set false) once diagnosed.</summary>
         public static bool ENTRY_PERF_LOG = true;
+        /// <summary>Board entry slide. MEASURED 2026-10-20 ([EntryPerf], steady 60fps — no hitch): at 0.28s / OutBack 1.6
+        /// the board crossed 25% of 12 world units on its FIRST frame, finished in ~10 frames and overshot by 1.08 units
+        /// (more than a cell) — read as "catching"/janky. 0.5s / 0.8 ≈ a cell per frame at peak, ~half-cell bump.</summary>
+        public static float ENTRY_SLIDE_DUR       = 0.5f;
+        public static float ENTRY_SLIDE_OVERSHOOT = 0.8f;
         private const float BOARD_ENTRY_DELAY = 0.06f; // board fires a beat AFTER the top/bottom have started
 
         /// <summary>Level-EXIT: reverse of AnimateLevelEntryIn — the board + tile holder + SWAPS slide OUT to the right

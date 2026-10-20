@@ -80,6 +80,20 @@ namespace WordDrop
         /// demand climbs ~12%/level (L1 50, L3 67, L5 84, L8 123). TUNE FROM tools/balance_report.py.</summary>
         public static int MovesFor(int stage) => 24 + (Mathf.Max(1, stage) - 1) / 3;
 
+        // ── 4+ LETTER LEVELS (2026-10-20 tuning, Spencer "sure") ──────────────────────────────────────────
+        // Measured: LEVEL 4 ("4+ Letters Only") 0/4 clears, every loss ~91%, 2-3 board-full penalties per try —
+        // 3-letter words don't pop there, so the board fills and the -3 penalties ate 6-9 moves. The rule should
+        // be the challenge, not the penalties stacked on it: such levels rise one move slower and get extra moves.
+        public const int MIN4_EXTRA_MOVES = 4;
+        public const int MIN4_EXTRA_CADENCE = 1;
+        public static int MovesForRules(int stage, LevelRules r) => MovesFor(stage) + (r.MinWordLength >= 4 ? MIN4_EXTRA_MOVES : 0);
+        public static int CadenceForRules(LevelRules r) => Mathf.Max(1, r.RiseCadence) + (r.MinWordLength >= 4 ? MIN4_EXTRA_CADENCE : 0);
+
+        /// <summary>Cap on fresh-board fill density. 2026-10-20: at 0.90-0.96 the opening board was packed with
+        /// accidental words, so the first moves cascaded LEVEL 1 to a win in 2-4 moves (CASE->ROB->ETA, 288).
+        /// 0.80 keeps cascades common but less automatic.</summary>
+        public static float FRESH_BOARD_DENSITY_CAP = 0.80f;
+
         public static bool BlastLimitMode = false;   // 2026-10-20 Spencer tried it: "meh ... at least with the row rising there was some pressure and it introduces new letters"
         /// <summary>Blasts per level. One number for every level while the idea is being felt —
         /// per-level tuning comes after we know whether it is fun.</summary>
@@ -167,7 +181,7 @@ namespace WordDrop
             sb.Append(BlastLimitMode
                 ? $"Score <b>{target:N0} points</b> in <b>{BlastsPerLevel} blasts</b>."
                 : MoveLimitMode
-                    ? $"Score <b>{target:N0} points</b> in <b>{MovesFor(stage)} moves</b>."
+                    ? $"Score <b>{target:N0} points</b> in <b>{MovesForRules(stage, r)} moves</b>."
                     : $"Score <b>{target:N0} points</b>");
 
             // ── what is different about THIS level ───────────────────────────────
@@ -192,7 +206,7 @@ namespace WordDrop
             // unusual — it reads as a special condition when it is just Tuesday. Only the
             // relentless setting earns a warning line; the fact that rows rise AT ALL is
             // taught once, below, to players who have never seen it.
-            if (r.RiseCadence <= 1 && !BlastLimitMode)   // no move-rises in blast mode
+            if (CadenceForRules(r) <= 1 && !BlastLimitMode)   // no move-rises in blast mode
                 sb.Append("\n\nA new row pushes up <b>every single move</b>. Keep the board low.");
 
             // ── how the game works, for someone who has never played ─────────────
@@ -258,7 +272,7 @@ namespace WordDrop
             SurvivalManager.Instance?.ClearRiseQueueForNewLevel();
             if (MoveLimitMode && SurvivalManager.Instance != null)
             {
-                SurvivalManager.Instance.SetStageMoveBudgetOverride(MovesFor(stage));
+                SurvivalManager.Instance.SetStageMoveBudgetOverride(MovesForRules(stage, r));
                 SurvivalManager.Instance.SetMoveLimitTopOut(true);
                 SurvivalManager.Instance.ResetStageMoves();
             }
@@ -271,7 +285,7 @@ namespace WordDrop
             RulesEngine.BranchPriming   = r.BranchPriming;
             RulesEngine.FuseDisabled    = !r.FuseOn;      // field is inverted: Disabled == no decay
             RulesEngine.GoldTilesEnabled = r.GoldTiles;
-            SurvivalManager.SetRiseCadenceOverride(Mathf.Max(1, r.RiseCadence));
+            SurvivalManager.SetRiseCadenceOverride(CadenceForRules(r));
 
             // ── FRESH BOARD ON EVERY NEW LEVEL ───────────────────────────────────────
             // Spencer: "a brand new starting board with a different configuration of starting
@@ -293,7 +307,7 @@ namespace WordDrop
             bool isTransition = s_lastStage != internalStage;
             if (isTransition && rules2 != null)
             {
-                rules2.SeedVaultBoard(r.FillRows, r.Density, 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
+                rules2.SeedVaultBoard(r.FillRows, Mathf.Min(r.Density, FRESH_BOARD_DENSITY_CAP), 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
                 // SETTLE IT. SeedVaultBoard scatters at `density`, so at 0.65 a third of the
                 // cells are holes — including holes UNDER letters, which is the "massive gaps
                 // with no letters" and the floating single tiles. Gravity packs them into solid
@@ -304,7 +318,7 @@ namespace WordDrop
                 if (HandManager.InstantPopMode) rules2.PlantNearWordsOnBoard(RulesEngine.PLANTS_ON_FRESH_BOARD);
                 MatchController.Instance?.ResetTurnCounter();
                 GridManager.Instance?.RebuildFromRulesEngine(rules2);
-                WDLog.Log($"[LevelRules] fresh board for LEVEL {stage} — {r.FillRows} rows @ {r.Density:P0}");
+                WDLog.Log($"[LevelRules] fresh board for LEVEL {stage} — {r.FillRows} rows @ {Mathf.Min(r.Density, FRESH_BOARD_DENSITY_CAP):P0}");
             }
             s_lastStage = internalStage;
 
@@ -335,7 +349,7 @@ namespace WordDrop
                       $"TARGET {(sm != null ? sm.CurrentStageTarget : -1)} " +
                       $"(score so far {(sm != null ? sm.CurrentStageScore : -1)}), " +
                       $"ice {placed}/{r.IceCount}, " +
-                      $"minLen {r.MinWordLength}, cadence {r.RiseCadence}, " +
+                      $"minLen {r.MinWordLength}, cadence {CadenceForRules(r)}, moves {MovesForRules(stage, r)}, " +
                       $"branch {r.BranchPriming}, fuse {r.FuseOn}, gold {r.GoldTiles}");
         }
     }

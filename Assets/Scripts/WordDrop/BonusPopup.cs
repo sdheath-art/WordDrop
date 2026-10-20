@@ -307,7 +307,7 @@ namespace WordDrop
             tmp.fontStyle = FontStyles.Normal;
             tmp.color = Color.white; // Start white — will flash to final color
             tmp.alignment = TextAlignmentOptions.Center;
-            tmp.sortingOrder = 30;
+            tmp.sortingOrder = 46;  // was 30; re-based above the row bands (tiles reach 37) 2026-10-20
             tmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
             tmp.enableWordWrapping = false;
             tmp.overflowMode = TextOverflowModes.Overflow;
@@ -333,7 +333,7 @@ namespace WordDrop
                 ghostTmp.fontStyle = FontStyles.Normal;
                 ghostTmp.color = new Color(color.r, color.g, color.b, 0.4f);
                 ghostTmp.alignment = TextAlignmentOptions.Center;
-                ghostTmp.sortingOrder = 29; // behind main text
+                ghostTmp.sortingOrder = 45; // behind main text  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
                 ghostTmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
                 ghostTmp.enableWordWrapping = false;
                 ghostTmp.overflowMode = TextOverflowModes.Overflow;

@@ -154,7 +154,7 @@ namespace WordDrop
 
             // Use default sprite renderer (white particle)
             var renderer = go.GetComponent<ParticleSystemRenderer>();
-            renderer.sortingOrder = 20; // above tiles
+            renderer.sortingOrder = 40; // above tiles  // was 20; re-based above the row bands (tiles reach 37) 2026-10-20
             if (_cachedSpriteMat == null) _cachedSpriteMat = new Material(Shader.Find("Sprites/Default"));
             renderer.sharedMaterial = _cachedSpriteMat;
         }
@@ -519,7 +519,7 @@ namespace WordDrop
             lr.sharedMaterial = _cachedSpriteMat;
             lr.startColor = color;
             lr.endColor = color;
-            lr.sortingOrder = 20;
+            lr.sortingOrder = 40;  // was 20; re-based above the row bands (tiles reach 37) 2026-10-20
             lr.useWorldSpace = true;
 
             // Fade out over 0.3s
@@ -978,6 +978,9 @@ namespace WordDrop
         // comboStagger: true ONLY on the staggered multi-word combo paths, where chainStep is a clean
         // 0-based per-word order (0 = trigger, 1,2,3… = chained words). Gates the combo colour escalation
         // so a single-word detonation — whose chainStep is an unrelated counter — never mis-tints. 2026-07-27.
+        /// <summary>Tiles in one blast step needed for the meltdown stack (wind-up + jerky shake + punch). Was 8.</summary>
+        public static int MELTDOWN_TILE_GATE = 5;
+
         public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false, bool suppressFlyUp = false, bool comboStagger = false)
         {
             if (tiles == null || tiles.Count == 0) return null;
@@ -1967,7 +1970,11 @@ namespace WordDrop
             // expect to see the meltdown VFX on. Counting tiles is the right
             // proxy for "is this detonation big enough to deserve the spell."
             bool _mmActive_dbg     = MeltdownManager.Instance != null && MeltdownManager.Instance.IsActive;
-            bool _tilesGate_dbg    = tileCount >= 8;
+            // 2026-10-20 Spencer: "one of the last explosions had this cool jerky screen shake ... sprinkle that in more
+            // often" — it was this meltdown stack (ABOARD, 9 tiles). At 8 tiles it fired 1 in 67 blasts in his run;
+            // 5 = every 5+ letter word (incl. solved planted words) or a decent cascade, ~1 in 6. Doubles as the payoff
+            // for the long words the scoring now pushes toward. 6 ≈ 4 per run if this is too often.
+            bool _tilesGate_dbg    = tileCount >= MELTDOWN_TILE_GATE;
             bool meltdownActive    = _mmActive_dbg || _tilesGate_dbg;
             WDLog.Log($"[Meltdown] gate={meltdownActive} (mmActive={_mmActive_dbg}, tilesGate={_tilesGate_dbg}) — tier={tier} chain={chainStep} tiles={tileCount}");
 

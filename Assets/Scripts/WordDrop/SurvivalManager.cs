@@ -234,7 +234,12 @@ namespace WordDrop
             set { PlayerPrefs.SetInt(PREF_TUTORIAL_DONE, value ? 1 : 0); PlayerPrefs.Save(); }
         }
         // The stage a fresh run starts on: level 1 the first time (tutorial), else the first real Area level.
-        private static int RunStartStage => TutorialDone ? (LevelMapPanel.TUTORIAL_LEVELS + 1) : 1;
+        // LEGACY_TUTORIAL_ENABLED (2026-10-20, Spencer: the old tutorial does NOT ship): the internal 1..10 tutorial was
+        // built for the DROP game — it coaches card drops while HandEnabled=false, so a fresh install started in a
+        // probable soft-lock (found by the 2026-10-20 audit; never seen because this Mac has TutorialDone=1). Every
+        // run now starts at LEVEL 1 (internal 11). Kept, switched off — flip true to bring the old flow back.
+        public static bool LEGACY_TUTORIAL_ENABLED = false;
+        private static int RunStartStage => (TutorialDone || !LEGACY_TUTORIAL_ENABLED) ? (LevelMapPanel.TUTORIAL_LEVELS + 1) : 1;
 
         // ── Stage chip target state ───────────────────────────────────────────────
         private int _currentStageIndex = 1;        // stage number (1, 2, 3, …)

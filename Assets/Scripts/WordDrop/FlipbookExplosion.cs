@@ -225,7 +225,7 @@ namespace WordDrop
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
             sr.material = _additiveMat;
             sr.sprite = _glowSpriteBubble;
-            sr.sortingOrder = 29;
+            sr.sortingOrder = 45;  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
             go.SetActive(false);
             return sr;
         }
@@ -286,7 +286,7 @@ namespace WordDrop
             go.transform.SetParent(transform, false);
             _bigBubbleSR = go.AddComponent<SpriteRenderer>();
             _bigBubbleSR.sprite = _glowSpriteBubble;
-            _bigBubbleSR.sortingOrder = 28; // just behind per-tile glows (29) → they spray on top
+            _bigBubbleSR.sortingOrder = 44; // just behind per-tile glows (29) → they spray on top  // was 28; re-based above the row bands (tiles reach 37) 2026-10-20
             // Iridescent thin-film shader → soap-bubble rainbow. Falls back to the
             // additive glow material if the shader is missing (no magenta).
             Shader sh = Resources.Load<Shader>("Shaders/IridescentBubble");
@@ -650,7 +650,7 @@ namespace WordDrop
             }
             sr.sprite = _squareGlowSprite != null ? _squareGlowSprite : _heatAuraSprite;
             sr.material = _additiveMat;
-            sr.sortingOrder = 28; // above tiles (5/6), below bubble (29) and fragments (31)
+            sr.sortingOrder = 44; // above tiles (5/6), below bubble (29) and fragments (31)  // was 28; re-based above the row bands (tiles reach 37) 2026-10-20
 
             // FIXED scale — does not animate. Sized close to one tile width so
             // the soft falloff extends just slightly past tile edges. Use the
@@ -714,7 +714,7 @@ namespace WordDrop
             // the bubble. The glow is a SEPARATE additive+HDR layer spawned just
             // behind it (below), so the bubble stays see-through with a glow wash
             // behind it — Spencer's CC reference.
-            sr.sortingOrder = 29;
+            sr.sortingOrder = 45;  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
 
             float cellSize = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.8f;
             // bubble@2x is loaded at ppu=200 → native sprite bounds ≈ 2.56 world
@@ -743,7 +743,7 @@ namespace WordDrop
             }
             glowSr.sprite = _vfxGlowSprite != null ? _vfxGlowSprite : _glowSpriteBubble;
             glowSr.material = _additiveMat;
-            glowSr.sortingOrder = 28; // behind the bubble (29)
+            glowSr.sortingOrder = 44; // behind the bubble (29)  // was 28; re-based above the row bands (tiles reach 37) 2026-10-20
             float glowStart = startScale * 1.25f, glowEnd = endScale * 1.25f;
             glowGO.transform.localScale = new Vector3(glowStart, glowStart, 1f);
             float bgHDR = WordDropFX.BubbleGlowHDR;
@@ -909,7 +909,7 @@ namespace WordDrop
             // SpriteMask above so visible pixels are clipped to the tile shape.
             SpriteRenderer sr = overlay.AddComponent<SpriteRenderer>();
             sr.sprite = _heatAuraSprite;
-            sr.sortingOrder = 10; // above tiles (5/6), below meltdown prefab (50)
+            sr.sortingOrder = 38; // above tiles (5/6), below meltdown prefab (50)  // was 10; re-based above the row bands (tiles reach 37) 2026-10-20
             // VisibleInsideMask = render only where the mask sprite has alpha.
             sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
 

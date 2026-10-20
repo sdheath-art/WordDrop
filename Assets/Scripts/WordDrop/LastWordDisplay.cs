@@ -63,7 +63,7 @@ namespace WordDrop
             _text.fontStyle = FontStyles.Normal;
             _text.color = new Color(1f, 1f, 1f, 0f); // start invisible
             _text.alignment = TextAlignmentOptions.Center;
-            _text.sortingOrder = 25;
+            _text.sortingOrder = 42;  // was 25; re-based above the row bands (tiles reach 37) 2026-10-20
             _text.rectTransform.sizeDelta = new Vector2(10f, 2f);
             _text.enableWordWrapping = false;
             _text.overflowMode = TextOverflowModes.Overflow;

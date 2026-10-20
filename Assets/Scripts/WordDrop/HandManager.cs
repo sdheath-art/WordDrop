@@ -2119,7 +2119,8 @@ namespace WordDrop
             }
 
             // One-time contextual hint for first rewrite (only after validation passes)
-            if (PlayerPrefs.GetInt("hint_rewrite", 0) == 0)
+            // Old EDIT-feature hint ("REPLACE A TILE") — wrong in the swap game, where selecting a tile starts a SWAP.
+            if (!InstantPopMode && PlayerPrefs.GetInt("hint_rewrite", 0) == 0)
             {
                 PlayerPrefs.SetInt("hint_rewrite", 1);
                 PlayerPrefs.Save();
