@@ -214,6 +214,15 @@ namespace WordDrop
             // them (same treatment an auto-drop gives a newly-formed word). Makes
             // the shuffle feel rewarding instead of purely random. Primes ALL words
             // for now — if that's too strong in playtest, cap the count here.
+            // RECONCILE AFTER THE SHUFFLE. 2026-10-19 — MEASURED: PlayShuffle at frame 35636,
+            // MISPLACED invariants at 35946, whole COLUMNS drawn three columns right of their
+            // own cells (want x 0.96, have x 3.84, y correct). This routine repositions tiles
+            // and reassigns their letters by hand and never checks the result against the rules
+            // board, so any slip in its permutation is permanent and invisible to every other
+            // system. Reconciling here makes the shuffle self-correcting whatever its mapping
+            // does, and logs ([PosSync]) if it had to fix anything.
+            GridManager.Instance?.ReconcileSpecialVisuals(rules);
+
             var primedByShuffle = rules.PrimeAllWordsOnBoard();
             if (primedByShuffle != null && primedByShuffle.Count > 0)
             {
