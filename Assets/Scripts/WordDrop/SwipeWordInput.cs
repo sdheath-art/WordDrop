@@ -229,6 +229,14 @@ namespace WordDrop
             var rules = RulesEngine.Instance;
             var hand  = HandManager.Instance;
             if (rules == null || hand == null) return;
+            // TWO CELLS = A SWAP (drag a tile onto its neighbour). Decided on release, so a word
+            // swipe passing through its 2nd cell is never mistaken for one. Two-letter words
+            // don't exist in this game, so nothing is lost. 2026-10-20 Spencer.
+            if (_path.Count == 2)
+            {
+                hand.CommitDragSwap(_path[0], _path[1]);
+                return;
+            }
             // Was a SILENT return — no log, no sound, no feedback of any kind. A refusal the
             // player cannot perceive reads as the feature being broken, which is exactly how it
             // landed. 2026-10-19.

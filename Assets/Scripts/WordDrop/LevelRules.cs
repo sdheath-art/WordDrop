@@ -68,6 +68,14 @@ namespace WordDrop
             /* 15 */ Make("Crucible — 4+ Letters",     minLen:4, fuse:true, cadence:1),  // BOSS
         };
 
+        /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
+        /// of blasts and rows do NOT rise from moves; false = the rising-row game exactly as before.
+        /// See SurvivalManager.BlastMode for the rules.</summary>
+        public static bool BlastLimitMode = false;   // 2026-10-20 Spencer tried it: "meh ... at least with the row rising there was some pressure and it introduces new letters"
+        /// <summary>Blasts per level. One number for every level while the idea is being felt —
+        /// per-level tuning comes after we know whether it is fun.</summary>
+        public static int  BlastsPerLevel = 5;
+
         public static LevelRules For(int stage)
         {
             if (stage < 1) stage = 1;
@@ -105,6 +113,101 @@ namespace WordDrop
 
         /// <summary>Push this stage's rules into the engine. Called at the end of
         /// ObjectiveManager.InstallLevel, once per stage.</summary>
+        /// <summary>True when THIS table is the one that seeds the board for a given stage, so
+        /// the older ObjectiveManager per-level reseed must stand down.
+        ///
+        /// 2026-10-20 — measured in a live log, one frame after CONTINUE was pressed on LEVEL 1:
+        ///     [Vault] SeedVaultBoard: startFillRows=5 density=0.65     <- ObjectiveManager
+        ///     [LevelTable] Install L12 ... Generated level 2 'Warm Up'
+        ///     [Vault] SeedVaultBoard: startFillRows=4 density=0.92     <- LevelRules
+        /// Two full board wipes and rebuilds back to back. LevelRules runs last so its board is
+        /// the one that survives, but the player still watches the first one get built and
+        /// animated in before it is thrown away — which is exactly the report "there was already
+        /// a board that was there before i entered the level and then another board animated over
+        /// top of it". One owner, decided in one place.</summary>
+        public static bool OwnsBoardSeed(int internalStage) =>
+            SurvivalManager.ScoreRunMode && !LevelMapPanel.IsTutorialLevel(internalStage);
+
+        /// <summary>The whole player-facing briefing for a level: the points target, then any
+        /// rule that makes THIS level different, then — for the first few levels — how the game
+        /// is actually played.
+        ///
+        /// 2026-10-20 Spencer: "take out the goals and just say how many points you need to pass
+        /// the level and any instructions as to what the certain conditions are". The modal used
+        /// to show a tile-cluster icon and the level's internal NAME ("Warm Up"), which tells a
+        /// new player nothing — it named the level instead of explaining it.
+        ///
+        /// Built HERE rather than in the modal because this file already owns every rule being
+        /// described. A rule added to the table above and not described below is a rule the
+        /// player has to discover by losing, so the two belong in one file. (That failure
+        /// already happened once: LEVEL 4's hidden 4-letter minimum read as "swaps do nothing".)
+        ///
+        /// The core-loop lines stop after LEVEL 3 — by then it is clutter above the PLAY button,
+        /// and the only thing worth saying is what is different about today.</summary>
+        public static string BriefingFor(int internalStage, int target)
+        {
+            int stage = Mathf.Max(1, LevelMapPanel.RunLevel(internalStage));
+            var r = For(stage);
+            var sb = new System.Text.StringBuilder();
+
+            sb.Append(BlastLimitMode
+                ? $"Score <b>{target:N0} points</b> in <b>{BlastsPerLevel} blasts</b>."
+                : $"Score <b>{target:N0} points</b>");
+
+            // ── what is different about THIS level ───────────────────────────────
+            // Each line names the rule AND what to do about it. "4+ letters only" alone
+            // leaves the player staring at a board; saying it refuses shorter words tells
+            // them why nothing is happening.
+            if (r.MinWordLength > 3)
+                sb.Append($"\n\nOnly words of <b>{r.MinWordLength} letters or more</b> count here — " +
+                          "shorter ones will not light up.");
+            if (r.IceCount > 0)
+                sb.Append($"\n\n<b>{r.IceCount} frozen tiles.</b> You cannot move them. Make a word " +
+                          $"THROUGH one and blow it up to melt it — worth <b>{RulesEngine.ICE_BOUNTY}</b> each.");
+            if (r.BranchPriming)
+                sb.Append("\n\nYour first word can be anywhere. After that, <b>every new word must " +
+                          "touch the ones you have already lit.</b>");
+            if (r.FuseOn)
+                sb.Append("\n\n<b>Lit words burn out</b> if you leave them too long. Set them off " +
+                          "before they go dark.");
+            if (r.GoldTiles)
+                sb.Append("\n\n<b>Gold tiles are worth double.</b> Work them into a word before you blow it up.");
+            // Cadence 2 is the DEFAULT, so stating it is noise on a level where nothing is
+            // unusual — it reads as a special condition when it is just Tuesday. Only the
+            // relentless setting earns a warning line; the fact that rows rise AT ALL is
+            // taught once, below, to players who have never seen it.
+            if (r.RiseCadence <= 1 && !BlastLimitMode)   // no move-rises in blast mode
+                sb.Append("\n\nA new row pushes up <b>every single move</b>. Keep the board low.");
+
+            // ── how the game works, for someone who has never played ─────────────
+            // Order matters: how to act, what that does, and THEN how points happen. The
+            // third line is the one most new players get wrong, and since 2026-10-20 it is
+            // literally the only way to score — making a word pays nothing on its own.
+            if (stage <= 3)
+            {
+                sb.Append(HandManager.AdjacentSwapsOnly
+                    ? "\n\n<b>Swap</b> two touching tiles, or <b>swipe</b> across a word you spot."
+                    : "\n\n<b>Swap</b> any two tiles, or <b>swipe</b> across a word you spot.");
+                if (HandManager.InstantPopMode)
+                    sb.Append("\n\nEvery word you make <b>pops</b> and scores. Letters fall — " +
+                              "<b>new words they make pop too.</b>");
+                else
+                {
+                    sb.Append("\n\nThe word <b>stays lit on the board</b> instead of vanishing.");
+                    sb.Append("\n\n<b>Tap a lit word to blow it up — that is the only way to score.</b> " +
+                              "Lit words that touch go off together, and each one in the chain is worth more " +
+                              "than the last.");
+                }
+                if (BlastLimitMode)
+                    sb.Append("\n\nEach blast uses one of your blasts — <b>a bigger web is worth far more</b>, " +
+                              "so build before you fire.");
+                else
+                    sb.Append("\n\nNew rows push up from the bottom as you play. Reach the top and the run ends.");
+            }
+
+            return sb.ToString();
+        }
+
         public static void Apply(int internalStage)
         {
             // ⚠️ INTERNAL STAGE != THE LEVEL THE PLAYER SEES. 2026-10-19 — Spencer started a run,
@@ -131,6 +234,11 @@ namespace WordDrop
             // The next level is now genuinely starting — release the lock that has been
             // holding input and pinning the HUD since the previous level's target was met.
             SurvivalManager.ClearAwaitingNextLevel();
+            if (BlastLimitMode)
+            {
+                SurvivalManager.Instance?.ResetBlasts(BlastsPerLevel);
+                SurvivalManager.SetBlastRefillOccupancy(r.FillRows * r.Density / RulesEngine.ROWS);
+            }
             RulesEngine.MIN_WORD_LENGTH = Mathf.Max(3, r.MinWordLength);
             RulesEngine.BranchPriming   = r.BranchPriming;
             RulesEngine.FuseDisabled    = !r.FuseOn;      // field is inverted: Disabled == no decay

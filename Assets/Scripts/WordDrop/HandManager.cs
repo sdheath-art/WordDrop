@@ -1306,7 +1306,8 @@ namespace WordDrop
                             // is invalid, CancelRewriteMode's normal cleanup handles it. 2026-07-10 Spencer.
                             if (boardTap.x >= 0 && boardTap.y >= 0 && swapGateOk
                                 && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow)
-                                && CanSelectForSwap(boardTap.x, boardTap.y))
+                                && CanSelectForSwap(boardTap.x, boardTap.y)
+                                && (!AdjacentSwapsOnly || IsAdjacent(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y)))
                                 _grid.GetTile(boardTap.x, boardTap.y)?.SetEditSelected(true);
                             if (boardTap.x >= 0 && boardTap.y >= 0
                                 && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow)
@@ -1318,7 +1319,14 @@ namespace WordDrop
                             }
                             else
                             {
+                                // Touching-only: a tap on a tile that isn't next to the selection
+                                // means "I meant this one" — move the selection there.
+                                bool reselect = AdjacentSwapsOnly && !gatedEdit
+                                    && boardTap.x >= 0 && boardTap.y >= 0
+                                    && !IsAdjacent(_rewriteTargetCol, _rewriteTargetRow, boardTap.x, boardTap.y)
+                                    && !(boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow);
                                 CancelRewriteMode();
+                                if (reselect) TryEnterRewriteMode(boardTap.x, boardTap.y);
                             }
                         }
                         return;
@@ -2152,6 +2160,11 @@ namespace WordDrop
                       // $"letter='{cell.Letter}' — tap a hand card to replace it");
         }
 
+        /// <summary>Swaps only between tiles that TOUCH (up/down/left/right). 2026-10-20 Spencer, on
+        /// instant pop being "too easy": any-tile swaps meant a word could be built from anywhere.
+        /// Touching-only makes words come from spotting what is nearly there. false = any two tiles.</summary>
+        public static bool AdjacentSwapsOnly = true;
+
         private static bool IsAdjacent(int c1, int r1, int c2, int r2)
         {
             int dx = Mathf.Abs(c1 - c2);
@@ -2284,6 +2297,7 @@ namespace WordDrop
             var cell1 = rules.GetCell(col1, row1);
             var cell2 = rules.GetCell(col2, row2);
             if (cell1 == null || cell2 == null) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: empty cell"); return false; }
+            if (AdjacentSwapsOnly && !IsAdjacent(col1, row1, col2, row2)) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: not touching"); return false; }
 
             // Cannot swap special tiles
             if (cell1.IsStone || cell2.IsStone) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: stone"); return false; }
@@ -2387,6 +2401,52 @@ namespace WordDrop
 
         /// <summary>Player tapped a board cell. If it belongs to a primed word, detonate
         /// that word and every primed word connected to it. Returns true if it fired.</summary>
+        // ── INSTANT POP (2026-10-20 Spencer) ─────────────────────────────────────────────
+        // "rather than priming it for a payoff to just make it simple and if you prime a word
+        // those letters just pop". Any word that arms goes off straight away, through the SAME
+        // tap-detonation path (scoring, FX, gravity) — and words formed by the falling letters
+        // pop too, one after another, so cascades happen on their own. Rising rows untouched.
+        // Switch off = the armed-web game exactly as before.
+        public static bool InstantPopMode = true;
+
+        /// <summary>Fire the next armed word, if any. Called at the end of a swap, a swipe and a
+        /// detonation, in the same frame processing ends, so a queued rise cannot slip in between
+        /// a word forming and it popping.</summary>
+        /// <summary>How long a word shows in its green/gold before it pops, so the player can see
+        /// WHICH word it was. 2026-10-20 Spencer: "its not really clear what words are popping off".</summary>
+        public static float INSTANT_POP_HOLD = 0.35f;
+        private bool _autoPopPending;
+
+        private void MaybeAutoPop()
+        {
+            if (!InstantPopMode || _tapDetonating || _autoPopPending || SurvivalManager.AwaitingNextLevel) return;
+            var reg = RulesEngine.Instance != null ? RulesEngine.Instance.PrimedRegistry : null;
+            if (reg == null) return;
+            var all = reg.GetAllPrimedWords();
+            for (int i = 0; i < all.Count; i++)
+                if (all[i].Cells != null && all[i].Cells.Count > 0)
+                {
+                    WDLog.Log($"[InstantPop] '{all[i].Word}' pops ({all.Count} armed)");
+                    StartCoroutine(AutoPopAfterHold(all[i].Cells[0]));
+                    return;
+                }
+        }
+
+        /// <summary>Hold the lit word on screen, then fire it. Processing stays claimed for the
+        /// whole hold so no rise, swap or second pop can act on the board in between; it is
+        /// released and the detonation claims it again in the same frame.</summary>
+        private System.Collections.IEnumerator AutoPopAfterHold(Vector2Int cell)
+        {
+            _autoPopPending = true;
+            IsInteractable = false;
+            MatchController.Instance?.BeginProcessing();
+            float t = 0f;
+            while (t < INSTANT_POP_HOLD) { t += Time.deltaTime; yield return null; }
+            MatchController.Instance?.EndProcessing();
+            _autoPopPending = false;
+            if (!TryTapDetonate(cell)) IsInteractable = true;   // word vanished meanwhile — hand control back
+        }
+
         private bool TryTapDetonate(Vector2Int cell)
         {
             if (_tapDetonating) return false;
@@ -2462,6 +2522,15 @@ namespace WordDrop
             MatchController.Instance?.BeginProcessing();
             IsInteractable = false;
 
+            // Size of the web being fired, read BEFORE the blast consumes it — decides whether the
+            // board gets pushed down afterwards (SurvivalManager.WebDropRows). 2026-10-20.
+            int webWords = 0;
+            {
+                var clusters = rules.GetPrimedClusters();
+                for (int i = 0; i < clusters.Count; i++)
+                    if (clusters[i].cells != null && clusters[i].cells.Contains(cell)) { webWords = clusters[i].wordCount; break; }
+            }
+
             if (!rules.BeginTapDetonation(cell, MatchController.PLAYER_HUMAN))
             {
                 IsInteractable = true;
@@ -2469,6 +2538,7 @@ namespace WordDrop
                 _tapDetonating = false;
                 yield break;
             }
+            SurvivalManager.Instance?.NotifyBlastFired();   // blast-limit prototype: one web = one blast
 
             bool resolving = true;
             int  guard     = 0;
@@ -2699,9 +2769,17 @@ case RulesEngine.ResolutionPhase.Complete:
                 }
             }
 
+            // Big web -> push the board down. Inside the processing gate and awaited, so nothing
+            // (rise, swap, another tap) can act on the board while it falls.
+            int dropRows = SurvivalManager.WebDropRows(webWords);
+            if (dropRows > 0 && SurvivalManager.Instance != null)
+                yield return StartCoroutine(SurvivalManager.Instance.DropBoardRows(dropRows, webWords));
+
             IsInteractable = true;
             MatchController.Instance?.EndProcessing();
             _tapDetonating = false;
+            SurvivalManager.Instance?.NotifyBlastResolved();   // blast-limit: refill + out-of-blasts check
+            MaybeAutoPop();                                    // instant pop: words the fall made go next
         }
 
         /// <summary>Scores, primes and presents a set of freshly-detected words using the FULL
@@ -2835,6 +2913,43 @@ case RulesEngine.ResolutionPhase.Complete:
             return justPrimedIds;
         }
 
+        /// <summary>Match-3 style slide for a board swap (see BoardSwapTurnSequence). false = the old
+        /// shake-in-place. Duration/overshoot from the research: 0.18-0.25s, ease-out with a small
+        /// overshoot. 2026-10-20.</summary>
+        public static bool  MATCH3_SWAP_ANIM = true;
+        public static float SWAP_SLIDE_DUR   = 0.20f;
+        public static float SWAP_OVERSHOOT   = 1.2f;   // 1.70158 is the textbook "back"; softer reads better on tiles
+
+        private static float EaseOutBack(float k, float c1)
+        {
+            float c3 = c1 + 1f, x = k - 1f;
+            return 1f + c3 * x * x * x + c1 * x * x;
+        }
+
+        /// <summary>A refused drag-swap leans toward the neighbour and springs back, so "not allowed"
+        /// reads as a reaction instead of nothing. Pattern from match-3 convention.</summary>
+        private IEnumerator NudgeRefusedSwap(Vector2Int a, Vector2Int b)
+        {
+            var grid = GridManager.Instance;
+            Tile ta = grid != null ? grid.GetTile(a.x, a.y) : null;
+            if (ta == null) yield break;
+            const float dur = 0.22f;
+            ta.MarkAnimating(dur + 0.05f);
+            Vector3 from = ta.transform.position;
+            Vector3 dir  = (grid.CellToWorld(b.x, b.y) - grid.CellToWorld(a.x, a.y)) * 0.28f;
+            float t = 0f;
+            while (t < dur)
+            {
+                t += Time.deltaTime;
+                float k = Mathf.Clamp01(t / dur);
+                float lean = Mathf.Sin(k * Mathf.PI);                                // out and back
+                float shake = Mathf.Sin(k * Mathf.PI * 6f) * (1f - k) * 0.03f;       // small "no" on the way home
+                ta.transform.position = from + dir * lean + new Vector3(shake * grid.CellSize, 0f, 0f);
+                yield return null;
+            }
+            ta.transform.position = from;
+        }
+
         private IEnumerator BoardSwapTurnSequence(int col1, int row1, char newLetter1, int col2, int row2, char newLetter2)
         {
             if (JamHint.Instance != null) JamHint.Instance.ClearHint();
@@ -2861,6 +2976,14 @@ case RulesEngine.ResolutionPhase.Complete:
             float rotJitter = 10f;
             Vector3 restPos1 = tile1 != null ? tile1.transform.position : Vector3.zero;
             Vector3 restPos2 = tile2 != null ? tile2.transform.position : Vector3.zero;
+            if (MATCH3_SWAP_ANIM)
+            {
+                // Home = the CELL, not wherever the transform happens to be — a refused-swap nudge or
+                // a landing squish can still be moving a tile when the next swap starts. 2026-10-20.
+                Vector3 slide = new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+                restPos1 = grid.CellToWorld(col1, row1) + slide;
+                restPos2 = grid.CellToWorld(col2, row2) + slide;
+            }
 
             GameAudio.Instance?.PlayShuffle();
 
@@ -2870,7 +2993,41 @@ case RulesEngine.ResolutionPhase.Complete:
             if (tile1 != null) tile1.HoldEditGlow();
             if (tile2 != null) tile2.HoldEditGlow();
 
-            // Phase 1: shake both
+            if (MATCH3_SWAP_ANIM && tile1 != null && tile2 != null)
+            {
+                // ── MATCH-3 SLIDE (2026-10-20 Spencer: research what a match-3 swap looks like) ──
+                // Industry pattern: the two pieces physically trade places in ~0.18-0.25s on an
+                // ease-out with a slight overshoot, then land. The tile the player moved passes OVER
+                // the other (lifted + swells), the other dips under. Replaces the old shake-in-place,
+                // which was the EDIT animation and read as "a letter changed", not "two tiles moved".
+                float dur = SWAP_SLIDE_DUR;
+                tile1.MarkAnimating(dur + 0.1f);          // keep sync/invariant snappers off them mid-slide
+                tile2.MarkAnimating(dur + 0.1f);
+                tile1.LiftForFx(dur + 0.05f);             // the moved tile travels on top
+                Vector3 baseScale1 = tile1.transform.localScale, baseScale2 = tile2.transform.localScale;
+                float t = 0f;
+                while (t < dur)
+                {
+                    t += Time.deltaTime;
+                    float k = Mathf.Clamp01(t / dur);
+                    float e = EaseOutBack(k, SWAP_OVERSHOOT);
+                    float arc = Mathf.Sin(k * Mathf.PI);   // 0 -> 1 -> 0 across the move
+                    tile1.transform.position   = Vector3.LerpUnclamped(restPos1, restPos2, e);
+                    tile2.transform.position   = Vector3.LerpUnclamped(restPos2, restPos1, e);
+                    tile1.transform.localScale = baseScale1 * (1f + 0.12f * arc);
+                    tile2.transform.localScale = baseScale2 * (1f - 0.06f * arc);
+                    yield return null;
+                }
+                // Hand the letters over and put each tile back on its OWN cell in the same frame. On
+                // screen that is identical to the tiles having traded places (the face follows the
+                // letter), but the grid keeps its tile<->cell ownership — moving tile objects between
+                // cells is the desync landmine this codebase has paid for before.
+                tile1.transform.localScale = baseScale1;
+                tile2.transform.localScale = baseScale2;
+                elapsed = shakeDur;                       // skip the legacy shake below
+            }
+
+            // Phase 1: shake both (legacy — only when MATCH3_SWAP_ANIM is off)
             while (elapsed < shakeDur)
             {
                 elapsed += Time.deltaTime;
@@ -2978,19 +3135,15 @@ case RulesEngine.ResolutionPhase.Complete:
 
 //                 WDLog.Log($"[BoardSwap] triggeredPrimed={triggeredPrimed}, allNew={allNew.Count}, justPrimed={justPrimedIds.Count}, registry={registry.Count}");
 
-                // Apply base scores for the swap-created words
-                int swapBaseScore = 0;
-                for (int i = 0; i < allNew.Count; i++)
-                    swapBaseScore += allNew[i].Score;
-                if (swapBaseScore > 0 && ScoreManager.Instance != null)
-                {
-                    ScoreManager.Instance.AddScore(swapBaseScore, MatchController.PLAYER_HUMAN);
-                    // Phase 5.1 fix: board-swap scoring bypasses CompleteDropBookkeeping,
-                    // so LevelController.NotifyDrop never fires. Route the score delta through
-                    // NotifyScore (no move consumed) so target-cross completes the level.
-                    if (GameManager.IsLevelMode)
-                        LevelController.Instance?.NotifyScore(swapBaseScore);
-                }
+                // NO SCORE FOR MERELY FORMING A WORD (Spencer 2026-10-20).
+                // Arming used to pay allNew[i].Score here, on top of the detonation payout.
+                // That meant an armed word was already BANKED, so a rise eating your web cost
+                // you nothing you held — only something you might have had. Foregone gain is a
+                // far weaker pull than loss, which is why the web never felt like it was at
+                // risk. Payment now happens exclusively at detonation (PreviewGroupPayout /
+                // DoExplode), so every armed word is money ON THE TABLE and "fire now or arm
+                // one more" becomes the decision the turn is actually about.
+                // The lost base is folded into DETONATION_SCORE_MULTIPLIER — see the note there.
 
                 // If detonation triggered, run full step resolution
                 if (triggeredPrimed)
@@ -3135,6 +3288,7 @@ case RulesEngine.ResolutionPhase.Complete:
 
             IsInteractable = true;
             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
+            MaybeAutoPop();   // instant pop
         }
 
         private bool TryLegalSwap(int col1, int row1, int col2, int row2)
@@ -3562,6 +3716,23 @@ case RulesEngine.ResolutionPhase.Complete:
             CancelRewriteMode();
         }
 
+        /// <summary>DRAG-TO-SWAP (2026-10-20 Spencer: "in candy crush you swipe"). A drag from one tile
+        /// onto its neighbour swaps them — same rules, same sequence, same move cost as tap-tap,
+        /// because it goes through TryBoardSwap. SwipeWordInput decides on RELEASE: exactly 2 cells
+        /// = swap, 3+ = word swipe, so the two gestures never collide.</summary>
+        public bool CommitDragSwap(Vector2Int a, Vector2Int b)
+        {
+            CancelRewriteMode();
+            bool ok = TryBoardSwap(a.x, a.y, b.x, b.y);
+            WDLog.Log($"[DragSwap] ({a.x},{a.y})->({b.x},{b.y}) {(ok ? "swapped" : "refused")}");
+            if (!ok)
+            {
+                GameAudio.Instance?.PlayButtonClick();
+                if (MATCH3_SWAP_ANIM && IsAdjacent(a.x, a.y, b.x, b.y)) StartCoroutine(NudgeRefusedSwap(a, b));
+            }
+            return ok;
+        }
+
         /// <summary>Routes a player-SWIPED word through the exact pipeline a swap uses.
         /// Returns false if the word was refused by the registry's branch gate.
         ///
@@ -3602,12 +3773,9 @@ case RulesEngine.ResolutionPhase.Complete:
                 // Consume the rise-seeding exemption so the same word cannot be claimed twice.
                 rules.ClearRiseSeededKey(match.Word + "|" + match.CellKey);
 
-                if (match.Score > 0 && ScoreManager.Instance != null)
-                {
-                    ScoreManager.Instance.AddScore(match.Score, MatchController.PLAYER_HUMAN);
-                    if (GameManager.IsLevelMode)
-                        LevelController.Instance?.NotifyScore(match.Score);
-                }
+                // No score for arming — same rule as the swap path above. A swipe costs a
+                // move and pays NOTHING until you detonate what it armed, which is the point:
+                // claiming a word is now a commitment, not a withdrawal.
 
                 // Let the prime glow + particles get a frame before anything moves the board.
                 yield return null;
@@ -3628,6 +3796,7 @@ case RulesEngine.ResolutionPhase.Complete:
 
             if (MatchController.Instance != null) MatchController.Instance.EndProcessing();
             IsInteractable = true;
+            MaybeAutoPop();   // instant pop
         }
 
         private void CancelRewriteMode(bool keepGlow = false)

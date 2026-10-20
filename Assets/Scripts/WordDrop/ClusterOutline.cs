@@ -977,7 +977,12 @@ namespace WordDrop
             bool group = wordCount >= 2;
             // PAYOUT TIER -> every tile in this cluster. Draw() already knows the cluster's
             // payout and its cells, so this is the natural place. 2026-09-21.
-            int tier = Tile.TierForPayout(payout);
+            // INSTANT POP: no payout tiers — just green, or gold for a gold word (ArmedFace gives gold
+            // precedence). Tiers told you a held web was worth more; nothing is held now, so four
+            // colours only made it harder to see WHICH word was about to pop. 2026-10-20 Spencer:
+            // "one colour it turns to before popping or maybe two, one for gold and one for just
+            // standard words".
+            int tier = HandManager.InstantPopMode ? 0 : Tile.TierForPayout(payout);
             if (PAYOUT_TIER_LOG && payout > 0)
                 WDLog.Log($"[PayoutTier] payout={payout} words={wordCount} cells={cells.Count} -> tier {tier}");
             for (int ci = 0; ci < cells.Count; ci++)

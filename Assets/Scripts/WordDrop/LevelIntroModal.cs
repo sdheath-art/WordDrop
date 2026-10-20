@@ -91,20 +91,40 @@ namespace WordDrop
             _isDismissing = false;
 
             if (_titleText != null) _titleText.text = $"LEVEL {LevelMapPanel.DisplayNum(levelNum)}"; // run level (tutorial 1..10)
-            if (_descText  != null) _descText.text  = obj.IntroDescription; // verbose, instructive (not the terse HUD Title)
+
+            // 2026-10-20 Spencer: on a scored run the card shows the POINTS TARGET and the rules
+            // of this level, not an objective icon and the level's internal name. The name told a
+            // new player nothing — "Warm Up" is a label, not an instruction. Tutorial levels keep
+            // their hand-authored objective text, which is genuinely instructive and gated to
+            // specific actions. Same ownership gate as the board seed, so the two cannot disagree
+            // about who is driving a level.
+            bool scoreBrief = LevelRules.OwnsBoardSeed(levelNum);
+            if (_descText != null)
+            {
+                _descText.text = scoreBrief
+                    ? LevelRules.BriefingFor(levelNum,
+                        SurvivalManager.Instance != null ? SurvivalManager.Instance.CurrentStageTarget : 0)
+                    : obj.IntroDescription; // verbose, instructive (not the terse HUD Title)
+            }
 
             // Layout per objective type: HiddenWord centers the row of blanks across the top of the card
             // with the description CENTERED underneath; every other mode keeps icon-left / text-right.
             bool hidden = obj.Icon == Objective.HudIcon.HiddenWord;
-            ApplyContentLayout(hidden);
+            ApplyContentLayout(hidden, scoreBrief);
 
-            // Rebuild the objective icon fresh each time.
+            // Rebuild the objective icon fresh each time. The score briefing has no icon — it is
+            // all text, filling the card — so skip the build entirely rather than building one
+            // into a hidden holder.
             if (_iconHolder != null)
             {
                 for (int i = _iconHolder.transform.childCount - 1; i >= 0; i--)
                     Destroy(_iconHolder.transform.GetChild(i).gameObject);
-                float iconSize = hidden ? 84f : 78f;
-                ObjectiveIconBuilder.Build(obj.Icon, _iconHolder.transform, iconSize, obj.RemainingCount, obj.IconWord);
+                _iconHolder.SetActive(!scoreBrief);
+                if (!scoreBrief)
+                {
+                    float iconSize = hidden ? 84f : 78f;
+                    ObjectiveIconBuilder.Build(obj.Icon, _iconHolder.transform, iconSize, obj.RemainingCount, obj.IconWord);
+                }
             }
 
             if (SurvivalManager.Instance != null) SurvivalManager.Instance.SetOverlayPaused(true);
@@ -173,7 +193,7 @@ namespace WordDrop
         /// <summary>Positions the icon holder + description for the current mode. HiddenWord: blanks row
         /// centered across the top, description centered underneath. Otherwise: icon left, text right
         /// (the original layout). 2026-06-17 Spencer.</summary>
-        private void ApplyContentLayout(bool hidden)
+        private void ApplyContentLayout(bool hidden, bool scoreBrief = false)
         {
             if (_iconHolder != null && _iconHolder.transform is RectTransform iRT)
             {
@@ -189,15 +209,35 @@ namespace WordDrop
                     dRT.anchorMin = new Vector2(0.07f, 0.30f); dRT.anchorMax = new Vector2(0.93f, 0.485f);
                     _descText.alignment = TextAnchor.UpperCenter;
                 }
+                else if (scoreBrief)
+                {
+                    // No icon and no GOAL label, so the briefing gets the whole card body.
+                    // Top-anchored, not middle: the text is several lines on early levels and
+                    // one line later, and growing DOWNWARD from a fixed top keeps the target
+                    // line in the same place on every level instead of sliding about.
+                    dRT.anchorMin = new Vector2(0.09f, 0.30f); dRT.anchorMax = new Vector2(0.91f, 0.80f);
+                    _descText.alignment = TextAnchor.UpperCenter;
+                }
                 else
                 {
                     dRT.anchorMin = new Vector2(0.46f, 0.32f); dRT.anchorMax = new Vector2(0.95f, 0.665f);
                     _descText.alignment = TextAnchor.MiddleLeft;
                 }
                 dRT.offsetMin = Vector2.zero; dRT.offsetMax = Vector2.zero;
+                // Smaller on the briefing: it carries real sentences, where 30pt wrapped to a
+                // wall of text. The objective layouts keep their original size.
+                _descText.fontSize = scoreBrief ? 23 : 30;
+                // The briefing body must NOT be bold throughout, or the <b> emphasis on the
+                // target and on each rule keyword has nothing to stand out against. The
+                // objective layouts keep their all-bold styling.
+                _descText.fontStyle       = scoreBrief ? FontStyle.Normal : FontStyle.Bold;
+                _descText.supportRichText = true;
+                _descText.lineSpacing     = scoreBrief ? 1.15f : 1f;
             }
-            // GOAL subtitle sits just above the description in each layout.
-            if (_goalText != null)
+            // GOAL subtitle sits just above the description in each layout — and is GONE on the
+            // score briefing, which states the target in words instead. 2026-10-20 Spencer.
+            if (_goalText != null) _goalText.gameObject.SetActive(!scoreBrief);
+            if (_goalText != null && !scoreBrief)
             {
                 var gRT = _goalText.rectTransform;
                 if (hidden)

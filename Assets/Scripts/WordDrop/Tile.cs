@@ -932,7 +932,32 @@ namespace WordDrop
         public char  Letter      { get; private set; }
         public int   Col         { get; private set; }
         public int   Row         { get; private set; }
-        public bool  IsAnimating { get; private set; }
+        /// <summary>True while this tile's position is owned by an animation. Everything that
+        /// snaps tiles to their cells (BoardInvariants' MISPLACED repair, GridManager's sync
+        /// drift fix) must respect it, or it teleports a tile that is legitimately in flight.
+        ///
+        /// Two channels, because the flag has two kinds of owner:
+        ///  • the FLAG — set/cleared by Tile's own animation methods, which always finish,
+        ///  • the DEADLINE — for callers that drive this tile's transform from OUTSIDE Tile
+        ///    (GridManager.AnimateRiseRow tweens transform.DOMove directly). A deadline rather
+        ///    than an OnComplete on purpose: those tweens are routinely DOKill'd by gravity, by
+        ///    SnapAllTilesToCells and by a level change, and a flag cleared in OnComplete would
+        ///    be stranded TRUE forever — blinding every integrity check on this tile for the
+        ///    rest of the run. A deadline cannot be stranded. (Same rule as the stage-clear
+        ///    pause: never hang state restoration on a callback that can be cancelled.)
+        /// 2026-10-20.</summary>
+        public bool IsAnimating
+        {
+            get => _isAnimatingFlag || Time.unscaledTime < _animatingUntil;
+            private set => _isAnimatingFlag = value;
+        }
+        private bool  _isAnimatingFlag;
+        private float _animatingUntil;
+
+        /// <summary>Claim this tile's position for <paramref name="seconds"/> on behalf of an
+        /// externally-driven tween. Extends an existing claim, never shortens one.</summary>
+        public void MarkAnimating(float seconds)
+            => _animatingUntil = Mathf.Max(_animatingUntil, Time.unscaledTime + seconds);
 
         // Phase C — real wild state. Uncommitted wilds (IsWild && Letter=='\0')
         // render a ★ glyph; committed wilds show the resolved letter in a wild
@@ -1317,7 +1342,14 @@ namespace WordDrop
             _isDropTargetVisual = false; // clear escort-object flag on pool reuse
             _isAnchored = false; // clear Break-Rocks anchor on pool reuse
             _vaultRequiredLen = 0; // clear chest-tier tint on pool reuse
-            if (_isFrozen) SetFrozenVisual(false); // ICE: clear frost overlay on pool reuse
+            // ICE: clear frost overlay on pool reuse. Drop the defrost claim FIRST — a tile
+            // being recycled has no business still animating a melt, and while that claim stood
+            // SetFrozenVisual(false) returned early and handed the next user of this tile a
+            // stale _isFrozen with a half-melted overlay. That was the "ice disappears on a row
+            // rise" bug's way into the pool. 2026-10-20.
+            _defrostingUntil = 0f;
+            if (_defrostRoutine != null) { StopCoroutine(_defrostRoutine); _defrostRoutine = null; }
+            if (_isFrozen) SetFrozenVisual(false);
             if (_isWild) SetWild(false); // also hides the iridescent overlay
             if (_iridGO != null) _iridGO.SetActive(false); // belt-and-suspenders for pool reuse
             if (_isSwapRefill) SetSwapRefillVisual(false);
@@ -2567,7 +2599,56 @@ namespace WordDrop
         // overlay just sits on/off; nothing else has to know about it. The tile is otherwise a
         // normal letter tile (NOT a stone — it matches in words).
         public bool IsFrozen => _isFrozen;
+
+        /// <summary>Is the frost actually VISIBLE, as opposed to merely flagged? A tile can claim
+        /// IsFrozen while showing no ice at all — the overlay deactivated, scaled to nothing by an
+        /// interrupted melt, or faded to zero alpha.
+        ///
+        /// 2026-10-20: ReconcileSpecialVisuals compared tile.IsFrozen against cell.IsFrozen, and
+        /// when both said TRUE it concluded all was well and moved on — while the player looked at
+        /// a tile with no ice on it that still refused to swap. The same blind spot that hid the
+        /// floating-tile bug: every check asked about BOOKKEEPING, and the fault was in PIXELS.
+        /// Anything reconciling frost must ask this too, not just compare the flags.</summary>
+        public bool FrostVisualHealthy
+        {
+            get
+            {
+                if (!_isFrozen) return true;                       // nothing to show
+                if (_defrosting) return true;                      // the melt legitimately owns it
+                if (_frostGO == null || !_frostGO.activeSelf) return false;
+                if (_frostSR == null || _frostSR.sprite == null) return false;
+                if (_frostSR.color.a < 0.05f) return false;        // faded out by an interrupted melt
+                if (_spriteRenderer != null && _frostSR.sortingOrder < _spriteRenderer.sortingOrder + 2)
+                    return false;                                  // drawn UNDER its own tile face (2026-10-20)
+                var ls = _frostGO.transform.localScale;
+                return ls.x > 0.01f && ls.y > 0.01f;               // shrunk to nothing by one
+            }
+        }
+
+        /// <summary>Re-assert the frost from scratch — overlay active, at rest scale/position, at
+        /// full tint. Safe to call on a tile that already looks right.</summary>
+        public void RepairFrostVisual()
+        {
+            if (!_isFrozen) return;
+            _defrostingUntil = 0f;      // an interrupted melt must not block the repair
+            SetFrozenVisual(true);
+        }
         private static readonly Color FROST_TINT = new Color(0.62f, 0.84f, 0.97f, 0.62f); // icy light-blue, translucent
+
+        private static readonly Vector3 FROST_REST_LOCAL_POS = new Vector3(0f, 0f, -0.13f);
+
+        /// <summary>The overlay's correct local scale, derived from the sprite exactly as
+        /// EnsureFrostOverlay derives it — so the restore in SetFrozenVisual and the build
+        /// cannot disagree about what "rest" means.</summary>
+        private Vector3 FrostRestScale()
+        {
+            float displaySize = _cellSize * TILE_DISPLAY_RATIO;
+            float restX   = Mathf.Max(0.01f, _restScale.x);
+            float fNative = (_frostSR != null && _frostSR.sprite != null && _frostSR.sprite.bounds.size.x > 0f)
+                ? _frostSR.sprite.bounds.size.x : 1f;
+            float fs = (displaySize * 0.92f) / (fNative * restX);
+            return new Vector3(fs, fs, 1f);
+        }
 
         private void EnsureFrostOverlay()
         {
@@ -2581,16 +2662,11 @@ namespace WordDrop
             _frostSR = _frostGO.AddComponent<SpriteRenderer>();
             _frostSR.sprite = s_frostSprite;
             _frostSR.color  = FROST_TINT;
-            _frostSR.sortingOrder = 10; // above face(5)/gloss(6)/letter(7)/badge(8-9)
+            SyncFrostOrder();   // rides the tile's own row band — see SyncFrostOrder
             _frostGO.tag = "Untagged"; // skip 2D-light conversion (stays unlit)
 
             // Size the sheet to roughly cover the tile face (same counter-scale formula as the gloss).
-            float displaySize = _cellSize * TILE_DISPLAY_RATIO;
-            float restX = Mathf.Max(0.01f, _restScale.x);
-            float fNative = (_frostSR.sprite != null && _frostSR.sprite.bounds.size.x > 0f)
-                ? _frostSR.sprite.bounds.size.x : 1f;
-            float fs = (displaySize * 0.92f) / (fNative * restX);
-            _frostGO.transform.localScale = new Vector3(fs, fs, 1f);
+            _frostGO.transform.localScale = FrostRestScale();   // one formula, shared with the re-freeze restore
 
             // Assign the diagonal specular-sweep material + a per-tile phase so a row of ice
             // doesn't sweep in lockstep. The shine animates on the GPU (_Time.y) — no per-frame C#.
@@ -2608,7 +2684,23 @@ namespace WordDrop
 
         private Coroutine _frostShiverRoutine; // fallback CPU glint loop (only if the sheen shader is unavailable)
         private Coroutine _defrostRoutine;     // thaw flash → shatter
-        private bool      _defrosting;         // guards against a sync clearing the frost mid-defrost
+        /// <summary>True only while the defrost animation genuinely owns the frost overlay.
+        ///
+        /// 2026-10-20 — THIS IS THE "ICE DISAPPEARS ON A ROW RISE" BUG. It used to be a plain
+        /// bool set at the top of DefrostCoroutine and cleared at the very bottom. Unity does
+        /// NOT unwind a coroutine that is stopped, pooled or disabled, so any rise that recycled
+        /// a mid-thaw tile stranded it TRUE — permanently. From then on:
+        ///   • SetFrozenVisual(false) hit its `if (!active && _defrosting) return` guard and
+        ///     left _isFrozen TRUE, even from ResetForPool,
+        ///   • the frost overlay stayed parked at the END of the melt — scale ~0, alpha 0,
+        ///   • and ReconcileSpecialVisuals compares BOOLS, so tile(frozen) == cell(frozen),
+        ///     everything "agreed", and nothing ever repaired the invisible overlay.
+        /// Result: a tile that is still frozen for gameplay (refuses swaps) with no ice on it.
+        ///
+        /// A DEADLINE instead of a flag, for the same reason Tile.IsAnimating uses one: it is
+        /// the only form that cannot be stranded by a cancelled coroutine.</summary>
+        private bool _defrosting => Time.unscaledTime < _defrostingUntil;
+        private float _defrostingUntil;   // guards against a sync clearing the frost mid-defrost
         private bool      _frostHasSheen;      // true once the GPU sheen material is assigned
 
         private static Material s_frostSheenMat;
@@ -2646,7 +2738,20 @@ namespace WordDrop
             if (active)
             {
                 EnsureFrostOverlay();
-                if (_frostGO != null) { _frostGO.SetActive(true); _frostSR.color = FROST_TINT; }
+                if (_frostGO != null)
+                {
+                    _frostGO.SetActive(true);
+                    SyncFrostOrder();   // re-freeze on a tile that has changed rows since — see SyncFrostOrder
+                    // RESTORE THE REST TRANSFORM. 2026-10-20: a tile recycled part-way through
+                    // the melt kept the overlay's shrunken scale and dropped position, so the
+                    // next freeze re-activated a frost that was scaled to nothing — active,
+                    // flagged frozen, and invisible. Setting the colour alone was not enough:
+                    // the melt animates scale and position too, and whatever it last wrote is
+                    // still there.
+                    _frostGO.transform.localScale    = FrostRestScale();
+                    _frostGO.transform.localPosition = FROST_REST_LOCAL_POS;
+                    if (_frostSR != null) _frostSR.color = FROST_TINT;
+                }
                 // The sheen shader self-animates on the GPU. Only if it's unavailable do we fall back
                 // to a lightweight CPU glint (a gentle brightness pulse — NO movement; moving the frost
                 // over a static letter read as the tile distorting).
@@ -2721,7 +2826,8 @@ namespace WordDrop
 
         private System.Collections.IEnumerator DefrostCoroutine()
         {
-            _defrosting = true;
+            // Claim the overlay for the length of the animation + a small margin. Self-expiring.
+            _defrostingUntil = Time.unscaledTime + (0.10f + 0.42f) * 1.25f;
             if (_frostShiverRoutine != null) { StopCoroutine(_frostShiverRoutine); _frostShiverRoutine = null; }
 
             // 1) Quick bright "crack" flash — brighten the frost toward white-blue.
@@ -2763,7 +2869,7 @@ namespace WordDrop
 
             // Restore the overlay's rest transform (so a pooled tile freezes clean next time) + clear.
             if (_frostGO != null) { _frostGO.transform.localScale = s0; _frostGO.transform.localPosition = p0; }
-            _defrosting = false;
+            _defrostingUntil = 0f;      // release the claim before the clear, or the guard eats it
             SetFrozenVisual(false);
             _defrostRoutine = null;
         }
@@ -3706,6 +3812,22 @@ namespace WordDrop
             if (_bloomGlowSR != null) _bloomGlowSR.sortingOrder = order + 1;  // additive glow, above the face (below the letter)
             if (_letterTMP != null) _letterTMP.sortingOrder = order + 2; // letter crisp ABOVE both
             if (_pointTMP != null) _pointTMP.sortingOrder = order + 2;
+            SyncFrostOrder();
+        }
+
+        /// <summary>ICE MUST RIDE ITS TILE'S SORTING BAND. 2026-10-20 Spencer: "ice on tiles is
+        /// dissapearing when a row rises sometimes". The frost was created at a FIXED order 10 — right
+        /// when every tile sat at 5, wrong since 2026-09-03 gave each row its own band
+        /// (5 + row*3). From row 2 up the tile's own face (11+) drew OVER its ice: the tile stayed
+        /// frozen (still refused swaps) but the ice was invisible. A rise pushing an ice tile from
+        /// row 1 to row 2 is exactly "disappears on a rise". Frost sits at the letter's order
+        /// (face+2) and wins the tie on Z (-0.13, in front of the letter), and stays below the next
+        /// row's face (face+3), so the overlap between rows is still right.</summary>
+        private void SyncFrostOrder()
+        {
+            if (_frostSR == null) return;
+            int face = _spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder;
+            _frostSR.sortingOrder = face + 2;
         }
 
         /// <summary>Brief color flash to highlight a scored word tile.</summary>

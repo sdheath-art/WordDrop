@@ -168,6 +168,10 @@ namespace WordDrop
         // objective, suppressed fly-ups — and the player must never silently lose points
         // because an animation was skipped. Anything undelivered is paid out at the end.
         private int _flyPending;
+        /// <summary>Points deposited by a blast that have not landed on the counter yet. The
+        /// blast-limit lose check waits on this, or the last blast could lose a level its own
+        /// points were about to win. 2026-10-20.</summary>
+        public bool FlyScorePending => _flyPending > 0;
         private int _flyRemaining;
 
         private int _flyBurstTotal;   // whole burst, for sizing the ONE finale

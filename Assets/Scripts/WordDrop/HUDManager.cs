@@ -2753,6 +2753,18 @@ namespace WordDrop
                 return;
             }
 
+            // Blast-limit prototype: the counter shows BLASTS LEFT. Same widget, third repurpose.
+            // The label is set in RefreshStageBar ("BLASTS"). 2026-10-20.
+            if (SurvivalManager.BlastMode)
+            {
+                int left = sm.BlastsRemaining;
+                if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
+                if (left != _topOutLastShown) { _topOutLastShown = left; _topOutNumText.text = left.ToString(); }
+                _topOutNumText.color = left <= 1 ? new Color(1f, 0.42f, 0.35f) : Color.white;
+                if (left <= 1) ShowTopOutBubble(); else HideTopOutBubble();
+                return;
+            }
+
             // Vault levels: rises are OFF — the counter shows MOVES LEFT (the move cap) instead of
             // the rise countdown. Same widget, repurposed. 2026-06-09.
             if (sm.IsMoveCapLevel)
@@ -3733,7 +3745,7 @@ namespace WordDrop
             }
             if (_movesPanelLabel != null)
             {
-                string want = untilRise >= 0 ? "RISE IN" : "MOVES";
+                string want = SurvivalManager.BlastMode ? "BLASTS" : untilRise >= 0 ? "RISE IN" : "MOVES";
                 if (_movesPanelLabel.text != want) _movesPanelLabel.text = want;
             }
 

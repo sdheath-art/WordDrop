@@ -163,7 +163,22 @@ namespace WordDrop
         //   Scaled:       MULTIPLIER=0.5, BONUS=1  (rewards big-word primes)
         //   Full double:  MULTIPLIER=1.0, BONUS=0  (maximum detonation reward)
         //   Hybrid:       MULTIPLIER=0.5, BONUS=2  (scaled + flat floor)
-        public const float DETONATION_SCORE_MULTIPLIER = 1.5f; // 1.5x primed word's score on detonation
+        // 2026-10-20 Spencer: 1.5 -> 2.0, paired with REMOVING the form-time base payment
+        // in HandManager (see the note at the old swapBaseScore site). Points are now earned
+        // ONLY by detonating.
+        //
+        // The multiplier is set so a single word armed and fired on the spot pays exactly what
+        // it used to, i.e. this is a redistribution, not a nerf:
+        //     before = Score + (1.5*Score + 2) * 2.0   = 4.0*Score + 4
+        //     after  =         (M  *Score + 2) * 2.0   = 2M *Score + 4   ->  M = 2.0
+        // (the 2.0 is TriangularChainMultiplier(1) — detonation sites evaluate at depth+1,
+        //  so even the opening boom is already 2x.)
+        //
+        // Multi-word webs come out AHEAD of the old numbers, because the part that used to be
+        // paid flat at form time now rides the triangular chain multiplier with everything
+        // else. That widens the gap between building a web and spamming three-letter words,
+        // which is the behaviour the change exists to reward.
+        public const float DETONATION_SCORE_MULTIPLIER = 2.0f; // 2x primed word's score on detonation
         // 2026-09-09 Spencer: 10 -> 2. "there are so many words in our dictionary that you can
         // basically always find a word" — and the flat bonuses meant it barely mattered WHICH
         // one. A flat +10 (plus +10 heat) dominates a 3-letter word's ~6 points, compressing a
@@ -2140,8 +2155,12 @@ namespace WordDrop
         /// 2026-09-09 by cutting BREAKER_BONUS 10 -> 2.
         ///
         /// MIN_WORD_LENGTH (3) is the engine-wide floor; this matches it deliberately, so
-        /// "it is a word in the dictionary" is the only rule a player has to learn.</summary>
-        public static int SWIPE_MIN_LENGTH = 3;
+        /// "it is a word in the dictionary" is the only rule a player has to learn.
+        ///
+        /// DERIVED, not a copy. 2026-10-20: this was its own `= 3`, so when LevelRules raised
+        /// MIN_WORD_LENGTH to 4 the swipe never heard — on '4+ Letters Only' a swiped 'PEE'
+        /// ARMED. Spencer: "3 letter words are still counting when i click and drag across".</summary>
+        public static int SWIPE_MIN_LENGTH => MIN_WORD_LENGTH;
 
         /// <summary>Whether a swipe may run diagonally. OFF — Spencer 2026-10-19: "you
         /// shouldn't be able to make diagonal words". Claude added 8 directions unprompted;
@@ -2186,7 +2205,11 @@ namespace WordDrop
                 if (cell == null) { reject = "empty cell"; return null; }
                 // Same exclusions TryBoardSwap applies — a swipe must not claim a tile a swap
                 // could not touch, or the two verbs disagree about what the board contains.
-                if (cell.IsStone || cell.IsFrozen || cell.IsWild) { reject = "blocked tile"; return null; }
+                // ICE IS THE EXCEPTION. 2026-10-20 Spencer: "ice should be inside the word to melt.
+                // detonating it thaws it". Ice can't MOVE, but its letter can be READ — the auto
+                // scanner already arms words across ice. Refusing it here meant a swipe could never
+                // thaw ice, the one thing ice asks you to do (FALSE over a frozen F, refused twice).
+                if (cell.IsStone || cell.IsWild) { reject = "blocked tile"; return null; }
                 if (cell.IsSwapRefill || cell.IsEditRefill || cell.IsWildRefill) { reject = "blocked tile"; return null; }
                 if (_primedRegistry != null
                     && _primedRegistry.GetPrimedWordsContaining(cells[i]).Count > 0)
@@ -4986,6 +5009,25 @@ namespace WordDrop
             }
         }
 
+        /// <summary>Does the connected web this word belongs to contain ANY gold word — a
+        /// gold-bonus word, or one carrying a high-value letter?
+        ///
+        /// Deliberately NOT cached. A flood fill over the primed registry sounds expensive until
+        /// you count it: a live web is a handful of words, so this is a few dozen set operations
+        /// on a refresh that is already walking every primed tile. A frame-keyed cache would buy
+        /// nothing measurable and would have to be invalidated on prime, unprime, detonation and
+        /// every rise that shifts cell positions — four chances to serve a stale colour, which is
+        /// precisely the bug class this repaint already exists to fix. 2026-10-20.</summary>
+        private bool ClusterHasGold(PrimedWordRegistry.PrimedWord pw)
+        {
+            if (_primedRegistry == null || pw == null) return false;
+            var group = _primedRegistry.FindConnectedGroup(new HashSet<int> { pw.Id }, null);
+            if (group == null) return false;
+            for (int i = 0; i < group.Count; i++)
+                if (group[i].IsGold || group[i].HasHighValueLetter) return true;
+            return false;
+        }
+
         private void RefreshPrimedWordTiles(PrimedWordRegistry.PrimedWord pw, int currentTurn, int heatOverride = -1, bool playFlash = false)
         {
             if (GridManager.Instance == null || pw == null || pw.Cells == null) return;
@@ -4995,7 +5037,15 @@ namespace WordDrop
             int fuseRemaining = Mathf.Max(0, pw.ExpiresOnTurn - currentTurn);
             // GOLD primed colour for gold-bonus words AND for words containing a
             // high-value letter (visual parity with the gold resting face).
-            bool goldLook = pw.IsGold || pw.HasHighValueLetter;
+            //
+            // 2026-10-20 Spencer: "when you have a cluster that contains a gold letter I think
+            // the WHOLE cluster should be gold." Gold used to spread only as far as a SHARED
+            // CELL, so a web of four words with one gold letter in it rendered as a gold patch
+            // welded to rose words — which reads as a rendering fault rather than a feature,
+            // because the player already thinks of the web as one object they are about to
+            // detonate as one object. Ask the whole connected GROUP, not just this word and the
+            // cells it overlaps.
+            bool goldLook = pw.IsGold || pw.HasHighValueLetter || ClusterHasGold(pw);
             Color glowColor = goldLook ? Tile.PRIMED_GOLD_GLOW : Tile.PRIMED_GLOW;
 
             for (int c = 0; c < pw.Cells.Count; c++)
@@ -5009,6 +5059,10 @@ namespace WordDrop
                 // last won — a rose word would stomp the gold another word had just set, and the
                 // tile flickered between the two. Ask the CELL whether any word on it is gold,
                 // not just the word being refreshed.
+                // With goldLook now derived from the whole cluster this is a subset of it —
+                // a word sharing a cell is by definition connected. Kept because a tile can
+                // also be shared with a word that is NOT in this registry pass yet (mid-prime),
+                // where the per-cell question still answers correctly and costs nothing.
                 bool cellGold = goldLook;
                 if (!cellGold)
                 {

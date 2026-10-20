@@ -169,7 +169,17 @@ namespace WordDrop
                 //    several letters stacked in it.
                 if (cell != null && tile != null && !tile.IsAnimating && grid != null)
                 {
-                    Vector3 want = grid.CellToWorld(c, r);
+                    // CellToWorld is the board's RESTING layout. While an entry/exit slide is
+                    // running the whole board is displaced, so the rest position is NOT where the
+                    // tile should be drawn — add the live offset or every tile reads as misplaced.
+                    // 2026-10-20: the entry slide was already excluded by the BoardEntryInProgress
+                    // guard above, but the EXIT slide deliberately leaves that flag false (see
+                    // GridManager.PrepBoardExit: "Leave _boardEntryPrepped FALSE"). So on every
+                    // stage clear all 22 tiles reported MISPLACED by 6.30 then 11.99 world units,
+                    // and the repair below teleported each one back onto a board that was busy
+                    // leaving the screen. Adding the offset fixes it WITHOUT blinding the checker
+                    // during the slide, which a flag-gate would have done.
+                    Vector3 want = grid.CellToWorld(c, r) + new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
                     Vector3 have = tile.transform.position;
                     float   off  = Vector2.Distance(new Vector2(want.x, want.y),
                                                     new Vector2(have.x, have.y));

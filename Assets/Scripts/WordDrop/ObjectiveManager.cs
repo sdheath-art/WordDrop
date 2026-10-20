@@ -496,7 +496,10 @@ namespace WordDrop
             // other modes (LongWord / HeroWord) would otherwise inherit the PREVIOUS level's DEPLETED
             // board → a barren start with almost no word possibilities (Spencer saw an L3 LongWord with
             // ~3 tiles). Reseed a fuller board here for those modes. 2026-06-15 Spencer.
-            else if (e.Mode != LevelMode.Vault && e.Mode != LevelMode.Ice)
+            // LevelRules owns the board on a scored run — see LevelRules.OwnsBoardSeed for the
+            // log that caught both systems seeding the same level one frame apart. 2026-10-20.
+            else if (e.Mode != LevelMode.Vault && e.Mode != LevelMode.Ice
+                     && !LevelRules.OwnsBoardSeed(levelIndex))
             {
                 var rules = RulesEngine.Instance;
                 if (rules != null)

@@ -104,6 +104,24 @@ namespace WordDrop
         private int  _worldCompleteNext;
         private System.Action _worldCompleteIntro;
         private bool _busy;
+
+        // ── HOME SCREEN (2026-10-20 Spencer) ────────────────────────────────────────
+        // "build a homescreen to take place of the level map ... in the center a play
+        // button ... level button should update the level number that you are about to
+        // enter and then the pop up menu for the level should be the next step."
+        //
+        // This is a MODE on the map panel, not a new class, on purpose. The panel already
+        // owns the background cover-fit, the hearts/coins pills, the settings gear, the
+        // overlay-pause handshake and the hand-off into LevelIntroModal. Re-implementing
+        // that next door would duplicate five systems that each took a session to get
+        // right. In home mode the node/avatar/hop machinery is simply SKIPPED — none of it
+        // is deleted, so flipping HomeMode off brings the walking map straight back.
+        public static bool HomeMode = true;
+        private RectTransform   _playBtnRT;
+        private TextMeshProUGUI _playBtnLabel;
+        private TextMeshProUGUI _playBtnShadow;
+        private RectTransform   _playFaceRT, _playRimRT, _playPanelRT;
+        private int             _homeLevel = 1;
         private bool _holdForIntro;       // true in the map-flow: keep the map UP while the play modal drops over it
         private int  _windowStart;        // level of node index 0
 
@@ -257,6 +275,16 @@ namespace WordDrop
             EnsureUI();
             _theme = ThemeForLevel(toLevel); // pick this batch's WORLD look before building the nodes
             ApplyWorldTheme(toLevel);        // recolor background + avatar + world title
+
+            // HOME SCREEN: no nodes, no avatar, no hop. Background + HUD + one big button
+            // carrying the level you are about to play. Pressing it opens the SAME
+            // LevelIntroModal a node tap used to, so the flow is home -> level card -> play.
+            if (HomeMode)
+            {
+                ShowHome(toLevel);
+                return;
+            }
+
             LayoutNodes(toLevel);
             RefreshHud(); // hearts/coins current for this showing
             GameAudio.Instance?.PlayLevelMapMusic(); // Skybound_Victory while the map is up
@@ -1007,6 +1035,353 @@ namespace WordDrop
             seq.InsertCallback(0.10f, () => GameAudio.Instance?.PlayPersonalBest());
         }
 
+
+        // ── HOME SCREEN ────────────────────────────────────────────────────────────
+
+        private void ShowHome(int toLevel)
+        {
+            _homeLevel = toLevel;
+            if (_nodesRoot != null) _nodesRoot.gameObject.SetActive(false);
+            if (_avatar    != null) _avatar.gameObject.SetActive(false);
+            if (_tapPrompt != null) _tapPrompt.alpha = 0f;
+            if (_worldTitle != null) _worldTitle.gameObject.SetActive(false);
+
+            EnsurePlayButton();
+            LayoutPlayButton();
+            // SECOND PASS NEXT FRAME. The anchors make the width right whenever the layout
+            // resolves, but the height is derived from that resolved width — so it has to be
+            // read after the layout system has run at least once.
+            StartCoroutine(LayoutPlayButtonDeferred());
+            string lvlText = $"LEVEL {DisplayNum(toLevel)}";
+            if (_playBtnLabel  != null) _playBtnLabel.text  = lvlText;
+            if (_playBtnShadow != null) _playBtnShadow.text = lvlText;   // twin must track it
+
+            RefreshHud();
+            GameAudio.Instance?.PlayLevelMapMusic();
+            _canvas.gameObject.SetActive(true);
+            _group.alpha = 0f;
+            _group.blocksRaycasts = true;
+
+            _group.DOKill();
+            _group.DOFade(1f, 0.30f).SetUpdate(true).OnComplete(() =>
+            {
+                // The button is the only thing to press, so it must not be live until the
+                // screen has actually arrived — a tap landing during the fade reads as the
+                // press being eaten. Same reason the map gated its node taps behind the fade.
+                //
+                // DO NOT CLEAR _busy HERE. 2026-10-20: it looked like a harmless "we're done
+                // presenting" flag, but IsShowing => _busy, and HUDManager.PlayLevelEntry uses
+                // IsShowing to decide whether to run the board entry itself or leave it to the
+                // panel's fade-out. Clearing it early made that guard miss, so the entrance
+                // played immediately AND again after the fade — Spencer saw the board slide in
+                // twice. _busy means "this panel owns the screen" and is released by FadeMapOut.
+                if (_playBtnRT != null)
+                {
+                    var b = _playBtnRT.GetComponent<Button>();
+                    if (b != null) b.interactable = true;
+                    PulsePlayButton();
+                }
+                RunHomeCoinCascade();
+            });
+        }
+
+        /// <summary>The big centre button. Layered to the reference Spencer supplied, MEASURED
+        /// off it rather than eyeballed (the plate there is 512x183 inside a 24px navy border,
+        /// i.e. 47.5% of screen width at ~2.4:1, corner radius ~17% of height):
+        ///   navy outer plate  ->  green face with a vertical gradient  ->  cream label.
+        /// The gradient is a real 1xN texture, not a flat fill: the reference runs #ADD761 at
+        /// the top to #478226 at the bottom with darker lips top and bottom, and a flat green
+        /// is the single thing that makes a button like this read as programmer art.</summary>
+        private void EnsurePlayButton()
+        {
+            if (_playBtnRT != null) return;
+
+            var go = new GameObject("PlayButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(_canvas.transform, false);
+            _playBtnRT = go.GetComponent<RectTransform>();
+            _playBtnRT.anchorMin = _playBtnRT.anchorMax = new Vector2(0.5f, 0.5f);
+            _playBtnRT.pivot     = new Vector2(0.5f, 0.5f);
+
+            LayoutPlayButton();
+
+            float h = PlayButtonSize().y;   // provisional; LayoutPlayButton re-applies on every show
+            var navy = go.GetComponent<Image>();
+            navy.sprite = MenuUI.GetRoundedRectSprite(Mathf.RoundToInt(h * NAVY_RADIUS));
+            navy.type   = Image.Type.Sliced;
+            navy.color  = new Color32(0x2F, 0x3C, 0x96, 0xFF);   // measured navy border
+
+            // Green face, inset by the measured border (24px on a 231px-tall button = 10.4%).
+            float border = h * BORDER_FRAC;
+            var faceGO = new GameObject("Face", typeof(RectTransform), typeof(Image));
+            faceGO.transform.SetParent(go.transform, false);
+            var fRT = _playFaceRT = faceGO.GetComponent<RectTransform>();
+            fRT.anchorMin = Vector2.zero; fRT.anchorMax = Vector2.one;
+            fRT.offsetMin = new Vector2(border, border);
+            fRT.offsetMax = new Vector2(-border, -border);
+            var fImg = faceGO.GetComponent<Image>();
+            int faceH = Mathf.Max(8, Mathf.RoundToInt(h - border * 2f));
+            fImg.sprite = BuildGreenSprite(faceH, RING_TOP, RING_MID, RING_BOT, lip: true, radiusFrac: RING_RADIUS);
+            fImg.type   = Image.Type.Sliced;
+            fImg.raycastTarget = false;
+
+            // INNER PANEL. Measured across the reference: a DARKER ring about 30px wide on a
+            // 512px plate (5.9% of its width), then a 2-3px bright rim, then a BRIGHTER inner
+            // panel. I had this inverted on the first pass from a slice that happened to land in
+            // the ring — the ring runs #87BD45 down to #39731E, the panel #BEE870 down to
+            // #478824, so the panel is the light one. Two plates, not one gradient: that split
+            // is what makes it read as a moulded button instead of a coloured rectangle.
+            float inset = faceH * RING_INSET;
+            var rimGO = new GameObject("Rim", typeof(RectTransform), typeof(Image));
+            rimGO.transform.SetParent(faceGO.transform, false);
+            var rRT = _playRimRT = rimGO.GetComponent<RectTransform>();
+            rRT.anchorMin = Vector2.zero; rRT.anchorMax = Vector2.one;
+            rRT.offsetMin = new Vector2(inset - faceH * 0.016f, inset - faceH * 0.016f);
+            rRT.offsetMax = new Vector2(-(inset - faceH * 0.016f), -(inset - faceH * 0.016f));
+            var rImg = rimGO.GetComponent<Image>();
+            rImg.sprite = MenuUI.GetRoundedRectSprite(Mathf.RoundToInt(faceH * RING_RADIUS));
+            rImg.type = Image.Type.Sliced;
+            rImg.color = new Color32(0xB7, 0xE4, 0x6D, 0xFF);   // the measured rim highlight
+            rImg.raycastTarget = false;
+
+            var panelGO = new GameObject("Panel", typeof(RectTransform), typeof(Image));
+            panelGO.transform.SetParent(faceGO.transform, false);
+            var pRT2 = _playPanelRT = panelGO.GetComponent<RectTransform>();
+            pRT2.anchorMin = Vector2.zero; pRT2.anchorMax = Vector2.one;
+            pRT2.offsetMin = new Vector2(inset, inset);
+            pRT2.offsetMax = new Vector2(-inset, -inset);
+            var pImg = panelGO.GetComponent<Image>();
+            pImg.sprite = BuildGreenSprite(Mathf.Max(8, Mathf.RoundToInt(faceH - inset * 2f)),
+                                           PANEL_TOP, PANEL_MID, PANEL_BOT, lip: false,
+                                           radiusFrac: PANEL_RADIUS * faceH / Mathf.Max(1f, faceH - inset * 2f));
+            pImg.type = Image.Type.Sliced;
+            pImg.raycastTarget = false;
+
+            // DARK TWIN UNDERNEATH, NOT A TMP OUTLINE. An outline writes to the label's
+            // fontMaterial, and that is precisely what threw a NullReference earlier today and
+            // stopped the level map opening at all — reordering it after the font assignment was
+            // not enough and it had to come out. A second label offset down a couple of pixels
+            // gets the same separation from the light top of the gradient and touches no
+            // material. 2026-10-20.
+            var shadow = BuildLabel(panelGO.transform, "LEVEL 1",
+                                    new Color32(0x2C, 0x4A, 0x12, 0xFF), h * 0.34f);
+            shadow.name = "LabelShadow";
+            var sRT = shadow.rectTransform;
+            sRT.anchorMin = Vector2.zero; sRT.anchorMax = Vector2.one;
+            sRT.offsetMin = new Vector2(0f, -h * 0.035f);
+            sRT.offsetMax = new Vector2(0f, -h * 0.035f);
+            _playBtnShadow = shadow;
+
+            _playBtnLabel = BuildLabel(panelGO.transform, "LEVEL 1",
+                                       new Color32(0xF7, 0xFA, 0xCF, 0xFF), h * 0.34f);
+            _playBtnLabel.alignment = TextAlignmentOptions.Center;
+            var lRT = _playBtnLabel.rectTransform;
+            lRT.anchorMin = Vector2.zero; lRT.anchorMax = Vector2.one;
+            lRT.offsetMin = Vector2.zero; lRT.offsetMax = Vector2.zero;
+
+            var btn = go.GetComponent<Button>();
+            btn.targetGraphic = navy;
+            btn.interactable  = false;      // armed once the screen has faded in
+            btn.onClick.AddListener(OnPlayPressed);
+        }
+
+        // ── BUTTON GEOMETRY, SOLVED AGAINST THE REFERENCE ──────────────────────────
+        // 2026-10-20. The first pass picked these by eye and the result read wrong: the inner
+        // panel looked like a rounded blob floating inside a blue frame. Measuring the
+        // reference gave the ring width at the straight edge (26px) and across the corner
+        // diagonal (40px) on a 231px button; a short search over candidate radii reproduces
+        // both to within 0.0007. The panel radius was the whole problem — eyeballed at 0.20 of
+        // the face height when it is really 0.026, nearly 8x too round, which is exactly what
+        // balloons the ring at the corners and detaches the panel from its frame.
+        const float NAVY_RADIUS  = 0.208f;   // of BUTTON height (was 0.170 by eye)
+        const float BORDER_FRAC  = 0.104f;   // of BUTTON height — this one was already right
+        const float RING_RADIUS  = 0.170f;   // of FACE height (was 0.200)
+        const float RING_INSET   = 0.145f;   // of FACE height (was 0.165)
+        // 0.026 is the strict nested solution (face radius minus the inset), which keeps the
+        // ring perfectly even but leaves the panel corners almost square. The reference's panel
+        // is visibly softer than that, so this is nudged up — the ring thickens a little at the
+        // corners, which is what the reference does too (26px of ring on the straight edge
+        // against 40px across the diagonal).
+        const float PANEL_RADIUS = 0.075f;   // of FACE height (was 0.200 by eye — the bug)
+
+        // MEASURED off the reference button, two separate vertical gradients.
+        static readonly Color32 RING_TOP  = new Color32(0x87, 0xBD, 0x45, 0xFF);
+        static readonly Color32 RING_MID  = new Color32(0x56, 0x95, 0x2A, 0xFF);
+        static readonly Color32 RING_BOT  = new Color32(0x39, 0x73, 0x1E, 0xFF);
+        static readonly Color32 PANEL_TOP = new Color32(0xBE, 0xE8, 0x70, 0xFF);
+        static readonly Color32 PANEL_MID = new Color32(0x90, 0xCB, 0x3F, 0xFF);
+        static readonly Color32 PANEL_BOT = new Color32(0x47, 0x88, 0x24, 0xFF);
+
+        /// <summary>Vertical gradient as a 1xN sliced sprite. Nine-slice borders keep the rounded
+        /// corners from stretching while the gradient spans the full height at any button size.
+        /// A flat fill is the single thing that makes a button like this read as programmer art,
+        /// so both plates get a real ramp.</summary>
+        private static Sprite BuildGreenSprite(int height, Color32 top, Color32 mid, Color32 bot, bool lip, float radiusFrac)
+        {
+            int r = Mathf.Max(1, Mathf.RoundToInt(height * radiusFrac));
+            var tex = new Texture2D(1, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            for (int y = 0; y < height; y++)
+            {
+                float t = 1f - (y / (float)(height - 1));   // texture y=0 is the BOTTOM
+                Color c = t < 0.5f ? Color.Lerp(bot, mid, t / 0.5f)
+                                   : Color.Lerp(mid, top, (t - 0.5f) / 0.5f);
+                if (lip && y >= height - 2) c = new Color32(0x36, 0x5A, 0x1A, 0xFF); // dark top lip
+                if (lip && y <= 1)          c = new Color32(0x33, 0x6C, 0x1B, 0xFF); // dark bottom lip
+                tex.SetPixel(0, y, c);
+            }
+            tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, 1, height), new Vector2(0.5f, 0.5f), 100f, 0,
+                                 SpriteMeshType.FullRect, new Vector4(0, r, 0, r));
+        }
+
+
+        /// <summary>The button's size, as a fraction of the CANVAS — never of Screen.*.
+        ///
+        /// 2026-10-20: the first version read ((RectTransform)_canvas.transform).rect at BUILD
+        /// time. The canvas is ScaleWithScreenSize against a 540x960 reference, and on the frame
+        /// the panel is created the scaler has not resolved yet, so that rect still reported raw
+        /// screen pixels (1179). 47.5% of 1179 = 560 UNITS in a ~443-unit-wide canvas — the
+        /// button came out wider than the screen, which is why it read as a full-width blue bar
+        /// with a green strip in it. This is the same first-frame trap documented for modals:
+        /// anything measured in the frame the UI is built is measured against an unresolved
+        /// layout. Re-applied on every ShowHome so it is correct even if the first read is not.</summary>
+        private const float PLAY_W_FRAC = 0.475f;   // of canvas width  — measured off the reference
+        private const float PLAY_ASPECT = 2.42f;    // w:h              — measured off the reference
+        private const float PLAY_Y_FRAC = 0.26f;    // below centre, as a fraction of canvas height
+
+        private Vector2 PlayButtonSize()
+        {
+            float w = _playBtnRT != null && _playBtnRT.rect.width > 1f
+                ? _playBtnRT.rect.width                                   // resolved by the anchors
+                : ((RectTransform)_canvas.transform).rect.width * PLAY_W_FRAC;
+            if (w <= 1f) w = 540f * PLAY_W_FRAC;                          // nothing resolved yet
+            return new Vector2(w, w / PLAY_ASPECT);
+        }
+
+        /// <summary>WIDTH COMES FROM ANCHORS, NOT FROM A MEASUREMENT. 2026-10-20, second attempt:
+        /// reading the canvas rect and deferring was still wrong, because ShowHome runs in the
+        /// same frame EnsureUI creates the canvas and the scaler has not resolved even by the
+        /// end of it — the button came out wider than the screen and sat off the bottom as a
+        /// navy band. Anchors are evaluated by the layout system whenever it resolves, so
+        /// pinning anchorMin/Max to 0.2625..0.7375 makes the width correct by construction at
+        /// any resolution, with no timing to get wrong. Only the HEIGHT needs a real number
+        /// (it is derived from the resolved width), and that is re-applied next frame.</summary>
+        private void LayoutPlayButton()
+        {
+            if (_playBtnRT == null) return;
+            float half = PLAY_W_FRAC * 0.5f;
+            _playBtnRT.anchorMin = new Vector2(0.5f - half, 0.5f);
+            _playBtnRT.anchorMax = new Vector2(0.5f + half, 0.5f);
+            _playBtnRT.pivot     = new Vector2(0.5f, 0.5f);
+
+            Rect cr = ((RectTransform)_canvas.transform).rect;
+            Vector2 size = PlayButtonSize();
+            _playBtnRT.sizeDelta = new Vector2(0f, size.y);    // x driven by the anchors
+            // CLAMP. If the canvas rect is still reporting raw screen pixels on this pass,
+            // -0.26 of 2556 is -664 units in a ~960-unit canvas and the button lands off the
+            // bottom edge — which is exactly what "now there is no button" looked like. The
+            // deferred pass corrects the number; this makes the WRONG number harmless rather
+            // than invisible, so a timing slip degrades to slightly-misplaced, never gone.
+            float ch   = cr.height > 1f ? cr.height : 960f;
+            float maxY = Mathf.Max(0f, ch * 0.5f - size.y * 0.75f);
+            _playBtnRT.anchoredPosition = new Vector2(0f, Mathf.Clamp(-ch * PLAY_Y_FRAC, -maxY, maxY));
+
+            // The children are inset by PIXEL offsets derived from the button's height, so a
+            // size change has to re-apply them — stretching the root alone would leave a border
+            // and inner panel sized for whatever height was guessed when the hierarchy was
+            // built. Fractions are the measured ones: 10.4% border, 16.5% ring.
+            float h = size.y;
+            float border = h * BORDER_FRAC;
+            float faceH  = Mathf.Max(8f, h - border * 2f);
+            float inset  = faceH * RING_INSET;
+
+            if (_playFaceRT != null)
+            {
+                _playFaceRT.offsetMin = new Vector2(border, border);
+                _playFaceRT.offsetMax = new Vector2(-border, -border);
+            }
+            if (_playRimRT != null)
+            {
+                _playRimRT.offsetMin = new Vector2(inset - faceH * 0.016f, inset - faceH * 0.016f);
+                _playRimRT.offsetMax = new Vector2(-(inset - faceH * 0.016f), -(inset - faceH * 0.016f));
+            }
+            if (_playPanelRT != null)
+            {
+                _playPanelRT.offsetMin = new Vector2(inset, inset);
+                _playPanelRT.offsetMax = new Vector2(-inset, -inset);
+            }
+            if (_playBtnLabel  != null) _playBtnLabel.fontSize  = h * 0.34f;
+            if (_playBtnShadow != null)
+            {
+                _playBtnShadow.fontSize = h * 0.34f;
+                _playBtnShadow.rectTransform.offsetMin = new Vector2(0f, -h * 0.035f);
+                _playBtnShadow.rectTransform.offsetMax = new Vector2(0f, -h * 0.035f);
+            }
+        }
+
+        /// <summary>Park the button at rest. 2026-10-20 Spencer: "just make the level button
+        /// stationary" — it used to breathe on a looping yoyo scale. It is the only control on
+        /// the screen, so it does not need motion to be found, and a permanent pulse under a
+        /// static background reads as the screen never settling.
+        /// Still kills any tween and resets the scale, so a press squash cannot strand it.</summary>
+
+        /// <summary>The level-clear coin payout, on the home screen. The map used to fly these
+        /// out of the star that had just dropped onto the cleared node; with the nodes gone that
+        /// source went with them, and the reward was being silently snapped into the balance.
+        ///
+        /// Source is BEHIND AND BELOW the Level button, not its face. By the time this screen
+        /// appears the button already reads the NEXT level, and coins pouring out of the forward
+        /// control reads as a preview of what you are about to win rather than a payout for what
+        /// you just did. Bursting from behind it keeps the eye where it already is — the button
+        /// is the only thing on screen — without the button looking like the source.
+        ///
+        /// The landing half already works: SpawnCoinCascade ticks the pill up per arrival,
+        /// punches it, and plays the land ping. RefreshHud shows `balance - pending` until then,
+        /// so the counter genuinely climbs instead of arriving at a number already correct.
+        /// 2026-10-20 Spencer: "i still want the animation of coins flying up to the top when
+        /// you finish a level."</summary>
+        private void RunHomeCoinCascade()
+        {
+            if (_pendingCoinReward <= 0 || _playBtnRT == null) return;
+            int reward = _pendingCoinReward;
+            _pendingCoinReward = 0;
+            _pendingCascadeLevel = -1;
+
+            Vector3 src = _playBtnRT.position + new Vector3(0f, -_playBtnRT.rect.height * 0.35f, 0f);
+            // Let the screen settle before the burst — firing it on the same frame the fade
+            // ends reads as the coins arriving before the home screen does.
+            DOVirtual.DelayedCall(COINS_FIRST_BEAT, () => SpawnCoinCascade(src, reward, null))
+                     .SetUpdate(true);
+        }
+
+
+        private System.Collections.IEnumerator LayoutPlayButtonDeferred()
+        {
+            yield return null;
+            yield return new WaitForEndOfFrame();
+            LayoutPlayButton();
+        }
+
+        private void PulsePlayButton()
+        {
+            if (_playBtnRT == null) return;
+            _playBtnRT.DOKill();
+            _playBtnRT.localScale = Vector3.one;
+        }
+
+        private void OnPlayPressed()
+        {
+            if (_playBtnRT != null)
+            {
+                var b = _playBtnRT.GetComponent<Button>();
+                if (b != null) b.interactable = false;   // one press only; re-armed on cancel
+                _playBtnRT.DOKill();
+                _playBtnRT.localScale = Vector3.one;
+                UIAnimations.ButtonPress(_playBtnRT);
+            }
+            GameAudio.Instance?.PlayMultiPopRelease();
+            ShowIntroOverMap();   // the SAME hand-off a node tap used: home -> level card -> play
+        }
+
         // Show the level's play modal OVER the map (auto on landing, and on a node re-tap after cancel). Keeps the
         // map up behind it; fades the map on PLAY, or returns to the bare map on cancel. 2026-07-13 Spencer.
         private void ShowIntroOverMap()
@@ -1026,10 +1401,21 @@ namespace WordDrop
             FadeMapOut();
         }
 
+        /// <summary>Back out of the level card -> the home screen is live again, so the button
+        /// has to become pressable. Without this the X on the level card left a dead screen.</summary>
+        private void RearmPlayButton()
+        {
+            if (_playBtnRT == null) return;
+            var b = _playBtnRT.GetComponent<Button>();
+            if (b != null) b.interactable = true;
+            PulsePlayButton();
+        }
+
         private void HandleIntroCancelled()
         {
             LevelIntroModal.OnPlayStarted -= HandleIntroPlayed;
             LevelIntroModal.OnCancelled   -= HandleIntroCancelled;
+            if (HomeMode) { _group.blocksRaycasts = true; RearmPlayButton(); return; }
             GoBareMap();
         }
 
@@ -1173,22 +1559,28 @@ namespace WordDrop
         /// different resolution, as long as the composition does not move.</summary>
         private static readonly Vector2[] MAP_NODE_UV =
         {
-            // Re-measured 2026-10-19 for the SECOND map export (bg2, 1702x3698). The first
-            // artwork had a different path, so the old table did not transfer. Nine purple
-            // path discs detected as flat ellipses, ordered bottom-first; the tenth is the
-            // LIBRARY ARCH — the bookshelf opening in the castle facade. Note the castle DOME
-            // also reads as a purple ellipse and was excluded by shape (235x160, ratio 1.47,
-            // against ~1.8 for a real disc).
-            new Vector2(0.3951f, 0.8872f),  // 1  bottom disc
-            new Vector2(0.4104f, 0.7906f),  // 2
-            new Vector2(0.6428f, 0.7418f),  // 3
-            new Vector2(0.8443f, 0.6671f),  // 4  furthest right
-            new Vector2(0.6298f, 0.6041f),  // 5
-            new Vector2(0.3951f, 0.5446f),  // 6
-            new Vector2(0.4982f, 0.4965f),  // 7
-            new Vector2(0.7133f, 0.4620f),  // 8
-            new Vector2(0.5993f, 0.4129f),  // 9  top disc
-            new Vector2(0.6032f, 0.3418f),  // 10 LIBRARY ARCH
+            // THIRD map export, 2026-10-20 (1704x3694). This artwork paints the nodes IN — ten
+            // numbered blue-and-gold ovals climbing a stone staircase to the observatory. So
+            // these are MEASURED off the painted ovals themselves (deep blue, ratio ~1.35,
+            // fill ~0.72; their pixel size recedes 199px -> 115px up the stairs, which is how
+            // sky and water were told apart from them), not off path markers as before.
+            //
+            // ⚠️ THE ARTWORK IS MISSING NODE 3. The painted numbering runs 1,2,4,5,6,7,8,9,10 —
+            // verified by cropping and reading each oval, and by sweeping the whole band between
+            // 2 and 4, which contains only open plaza. Slot 3 below is therefore NOT measured: it
+            // is the widest clear run of path between its neighbours (363px of bare paving), so
+            // the avatar still walks a sensible line. Re-measure it the moment the art has a
+            // real disc there.
+            new Vector2(0.5008f, 0.8639f),  // 1
+            new Vector2(0.5343f, 0.7529f),  // 2
+            new Vector2(0.5850f, 0.7270f),  // 3  ← INTERPOLATED, no disc in the art
+            new Vector2(0.6157f, 0.6963f),  // 4
+            new Vector2(0.5036f, 0.6477f),  // 5
+            new Vector2(0.6257f, 0.5946f),  // 6
+            new Vector2(0.5079f, 0.5486f),  // 7
+            new Vector2(0.5678f, 0.4897f),  // 8
+            new Vector2(0.4721f, 0.4497f),  // 9
+            new Vector2(0.5475f, 0.4170f),  // 10 top of the stairs, at the observatory doors
         };
 
         private System.Collections.IEnumerator VerifyMapFit()
@@ -1562,7 +1954,12 @@ namespace WordDrop
                 brt.anchorMin = brt.anchorMax = new Vector2(1f, 0.5f); // right edge of the pill
                 brt.pivot = new Vector2(0.5f, 0.5f);
                 brt.sizeDelta = new Vector2(52f, 52f);
-                brt.anchoredPosition = new Vector2(0f, -14f);          // sit at the bottom-right, half over the edge
+                // 2026-10-20 Spencer: "move the plus sign down so that it isnt fully
+                // obstructing the amount". At -14 the badge sat across the middle of the pill's
+                // right end and swallowed the last digit of a five-figure balance. Dropped to
+                // the bottom-right CORNER and nudged out, so it overlaps the pill's rounded
+                // edge rather than its text.
+                brt.anchoredPosition = new Vector2(8f, -26f);
                 var hit = badgeGO.AddComponent<Image>();               // transparent raycast target for the button
                 hit.color = new Color(0f, 0f, 0f, 0f); hit.raycastTarget = true;
                 var badgeBtn = badgeGO.AddComponent<Button>();

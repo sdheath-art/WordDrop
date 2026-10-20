@@ -356,6 +356,18 @@ namespace WordDrop
                 if (c == null) continue;
 
                 if (t.IsFrozen     != c.IsFrozen)     { t.SetFrozenVisual(c.IsFrozen);        fixes++; Report(col,row,t,"ice",      c.IsFrozen); }
+                // FLAGS AGREEING IS NOT THE SAME AS LOOKING RIGHT. 2026-10-20 — "the ice is
+                // completely disappearing in some cases on some letters when there is a row
+                // rise": a tile recycled mid-melt kept IsFrozen TRUE with its overlay scaled to
+                // nothing, so this comparison said "both true, nothing to do" while the player
+                // saw a locked tile with no ice on it. Ask the pixels as well as the bookkeeping.
+                else if (c.IsFrozen && !t.FrostVisualHealthy)
+                {
+                    t.RepairFrostVisual(); fixes++;
+                    Debug.LogWarning($"[IceRepair] ({col},{row}) '{t.Letter}' was flagged frozen with no " +
+                                     "visible frost — overlay re-asserted. If this keeps printing, something " +
+                                     "upstream is interrupting the defrost without releasing it.");
+                }
                 if (t.IsStone      != c.IsStone)      { t.SetStoneVisual(c.IsStone);          fixes++; Report(col,row,t,"stone",    c.IsStone); }
                 if (t.IsAnchored   != c.IsAnchored)   { t.SetAnchored(c.IsAnchored);
                                                         t.SetVaultVisual(c.IsAnchored);       fixes++; Report(col,row,t,"vault",    c.IsAnchored); }
@@ -573,8 +585,20 @@ namespace WordDrop
                 .OnComplete(() => { ApplyBoardEntryOffset(0f); _boardEntryPrepped = false; });
         }
 
+        /// <summary>How far the whole board is currently displaced from its rest position by an
+        /// entry/exit slide. ANYTHING that compares a tile's world position against CellToWorld
+        /// must add this — CellToWorld returns the board's RESTING layout and knows nothing about
+        /// the slide. 2026-10-20: BoardInvariants did not, so the moment the board slid out after
+        /// a stage clear every tile on it read as MISPLACED by up to 12 world units, and the
+        /// checker's repair then teleported each one back onto the departing board. That is the
+        /// "everything goes weird after level one" report — see the note on BoardSlideOffset's
+        /// use in BoardInvariants.</summary>
+        public float BoardSlideOffsetX => _boardSlideOffsetX;
+        private float _boardSlideOffsetX;
+
         private void ApplyBoardEntryOffset(float dx)
         {
+            _boardSlideOffsetX = dx;
             for (int i = 0; i < _boardEntryTfs.Count; i++)
                 if (_boardEntryTfs[i] != null)
                     _boardEntryTfs[i].position = _boardEntryRests[i] + new Vector3(dx, 0f, 0f);
@@ -2034,9 +2058,23 @@ namespace WordDrop
                     }
                     else if (rulesCell != null && visualTile != null)
                     {
-                        // Both exist — snap position and sync letter if mismatched
-                        Vector3 correctPos = CellToWorld(col, row);
-                        if (Vector3.Distance(visualTile.transform.position, correctPos) > 0.01f)
+                        // Both exist — snap position and sync letter if mismatched.
+                        //
+                        // 2026-10-20: this used a 0.01 threshold against a ~0.96 cell, i.e. 1% of
+                        // a cell, and did NOT skip tiles that were mid-tween. Measured in a live
+                        // log: 23 of 37 "pos drift" fixes printed an identical before and after —
+                        // it was snapping tiles that were already correct, every single sync.
+                        // Worse, a tile one hundredth of a cell into a gravity drop got TELEPORTED
+                        // to its destination, which is where the dropped frames and the stutter in
+                        // gravity/rise/swap animations come from. Two changes:
+                        //   • skip IsAnimating tiles — a tween is the legitimate owner of that
+                        //     position until it finishes (BoardInvariants already does this),
+                        //   • threshold at a quarter cell: large enough to ignore float noise and
+                        //     easing overshoot, small enough that a genuinely wrong tile (always
+                        //     out by a whole cell or more) is still caught.
+                        Vector3 correctPos = CellToWorld(col, row) + new Vector3(_boardSlideOffsetX, 0f, 0f);
+                        if (!visualTile.IsAnimating &&
+                            Vector3.Distance(visualTile.transform.position, correctPos) > CellSize * 0.25f)
                         {
                             Debug.LogWarning($"[BoosterDbg] Sync FIX ({col},{row}): pos drift " +
                                              $"({visualTile.transform.position.x:0.0},{visualTile.transform.position.y:0.0}) → " +
@@ -2581,6 +2619,14 @@ namespace WordDrop
                     if (dist > 0.01f)
                     {
                         float dur = RISE_DURATION;
+                        // Tell the tile its position is spoken for. 2026-10-20: this tween is
+                        // driven from OUT HERE, so Tile.IsAnimating stayed FALSE for the whole
+                        // rise — and one frame after a rise started, BoardInvariants logged every
+                        // tile on the board as MISPLACED by 0.71 units (data already shifted up a
+                        // row, tiles still travelling) and TELEPORTED each one to the top of its
+                        // rise. The rise animation was being destroyed a frame after it began.
+                        // Pad the claim past the OutBack overshoot's settle.
+                        tile.MarkAnimating(dur * 1.35f);
                         tile.transform.DOKill();
                         tile.transform.DOMove(targetPos, dur)
                             .SetEase(Ease.OutBack, 0.15f);

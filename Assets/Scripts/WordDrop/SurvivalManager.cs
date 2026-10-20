@@ -241,6 +241,115 @@ namespace WordDrop
         private int _stageStartScore = 0;           // PlayerScore snapshot at stage start
         private int _currentStageMovesUsed = 0;     // moves spent in current stage
         private int _risesInCurrentStage = 0;       // balance analytics — rises fired per stage
+        // ── BLAST-LIMIT PROTOTYPE (2026-10-20 Spencer: "i just feel its pretty boring and meh") ──
+        // Each level gives a fixed number of BLASTS (detonations). Swaps stay free. Rises from
+        // moves are OFF; after each blast the board is topped back up to the level's starting
+        // fill so it never drains. Out of blasts and short of the target = level lost.
+        // The point: "fire now or build bigger?" becomes a real decision, because a small web
+        // WASTES a blast. Switch: LevelRules.BlastLimitMode. Off = the rising-row game, untouched.
+        public static bool BlastMode => LevelRules.BlastLimitMode && ScoreRunMode;
+        private int   _blastBudget;
+        private int   _blastsUsed;
+        private bool  _blastLoseCheckRunning;
+        private static float s_blastRefillOcc = 0.33f;
+        public int  BlastsRemaining => Mathf.Max(0, _blastBudget - _blastsUsed);
+        public static void SetBlastRefillOccupancy(float occ) => s_blastRefillOcc = Mathf.Clamp(occ, 0.1f, 0.8f);
+        public void ResetBlasts(int budget)
+        {
+            _blastBudget = Mathf.Max(1, budget);
+            _blastsUsed  = 0;
+            WDLog.Log($"[Blast] level budget {_blastBudget} blasts");
+        }
+        /// <summary>Called once per player TAP-detonation, at the tap — a whole web is ONE blast.</summary>
+        public void NotifyBlastFired()
+        {
+            if (!BlastMode) return;
+            _blastsUsed++;
+            WDLog.Log($"[Blast] fired {_blastsUsed}/{_blastBudget} — {BlastsRemaining} left");
+        }
+        /// <summary>Called when a tap-detonation has fully resolved (gravity done).</summary>
+        public void NotifyBlastResolved()
+        {
+            if (!BlastMode || _isGameOver) return;
+            // Top the board back up to the level's starting fill. Uses the existing stage-start
+            // rise queue, which Update drains one row at a time once the board is still.
+            if (RulesEngine.Instance != null)
+            {
+                float occ  = RulesEngine.Instance.GetBoardOccupancy();
+                int   rows = Mathf.CeilToInt((s_blastRefillOcc - occ) * RulesEngine.ROWS);
+                if (rows > 0)
+                {
+                    _stageStartRisesPending = Mathf.Max(_stageStartRisesPending, Mathf.Clamp(rows, 1, 4));
+                    WDLog.Log($"[Blast] refill: occupancy {occ:P0} -> {_stageStartRisesPending} row(s) toward {s_blastRefillOcc:P0}");
+                }
+            }
+            if (BlastsRemaining <= 0 && !_blastLoseCheckRunning) StartCoroutine(BlastLoseCheck());
+        }
+        private IEnumerator BlastLoseCheck()
+        {
+            _blastLoseCheckRunning = true;
+            // Let the last blast's points finish landing, and any cascade finish, before judging —
+            // the target check runs on score ARRIVAL, not on the tap.
+            float waited = 0f;
+            while (waited < 4f && (ScoreManager.Instance != null && ScoreManager.Instance.FlyScorePending
+                                   || (MatchController.Instance != null && MatchController.Instance.IsProcessing)))
+            { waited += Time.unscaledDeltaTime; yield return null; }
+            yield return null;
+            _blastLoseCheckRunning = false;
+            if (AwaitingNextLevel || _isGameOver || BlastsRemaining > 0) yield break;
+            WDLog.Log($"[Blast] OUT OF BLASTS — {CurrentStageScore}/{CurrentStageTarget}, level lost");
+            TriggerTopOut("Out Of Blasts!");
+        }
+
+        // ── BIG WEBS PUSH THE BOARD DOWN (2026-10-20 Spencer, after the blast-limit test) ──
+        // Rising rows stay — they are the pressure AND the supply of new letters. What was missing
+        // is a reason to be greedy while the board climbs: a small blast and a big one did the same
+        // thing to the board. Now a big web also knocks out the bottom row(s), so the whole board
+        // drops. Holding becomes a bet: the board rises with every swap, and you are wagering the
+        // web gets big enough to buy that height back. Switch: WebDropEnabled.
+        public static bool WebDropEnabled = false;   // off while INSTANT POP is tested — one change at a time
+        public const int   WEB_DROP_1_ROW  = 4;   // words in the web for one row down
+        public const int   WEB_DROP_2_ROWS = 6;   // ...and for two
+        public static int WebDropRows(int webWords)
+            => !WebDropEnabled ? 0 : webWords >= WEB_DROP_2_ROWS ? 2 : webWords >= WEB_DROP_1_ROW ? 1 : 0;
+
+        /// <summary>Removes the bottom <paramref name="rows"/> rows and lets the board fall. Called by
+        /// the tap sequence AFTER its own resolution, inside its processing gate, and awaited — so no
+        /// rise or input can land mid-drop. Ice is spared (only a word melts ice); armed words that
+        /// lose letters are dropped by ValidatePrimedWords, same as any other wipe.</summary>
+        public IEnumerator DropBoardRows(int rows, int webWords)
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rows <= 0 || rules == null || grid == null) yield break;
+            var toRemove = new System.Collections.Generic.List<Vector2Int>();
+            for (int row = 0; row < Mathf.Min(rows, RulesEngine.ROWS); row++)
+                for (int col = 0; col < RulesEngine.COLS; col++)
+                {
+                    var c = rules.GetCell(col, row);
+                    if (c == null || c.IsFrozen || c.IsDropTarget || c.IsAnchored) continue;
+                    toRemove.Add(new Vector2Int(col, row));
+                }
+            WDLog.Log($"[WebDrop] {webWords}-word web -> board down {rows} row(s), {toRemove.Count} tiles removed");
+            if (toRemove.Count == 0) yield break;
+
+            if (BonusPopup.Instance != null)
+                BonusPopup.Instance.Show(rows >= 2 ? "BOARD DOWN x2!" : "BOARD DOWN!",
+                    new Color(0.45f, 0.95f, 1f, 1f), Vector3.zero, 1.2f);
+            grid.ShakeBoard(0.18f, 0.22f);
+            GameAudio.Instance?.PlayScorePowerup();
+            HapticsManager.Strong();
+
+            for (int i = 0; i < toRemove.Count; i++) rules.ClearCell(toRemove[i].x, toRemove[i].y);
+            grid.RemoveTiles(toRemove);
+            var moves = rules.ApplyGravityInDataPublic();
+            if (moves != null && moves.Count > 0)
+                yield return grid.StartCoroutine(grid.ApplyGravityFromEvents(moves));
+            rules.ValidatePrimedWords();
+            grid.SyncToRulesState(rules);
+            rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
+            ClusterOutline.Instance?.Refresh();
+        }
+
         private int _stageStartRisesPending = 0;    // extra rises to fire post-stage-advance to hit minimum
         private bool _currentStageCleared = false;  // hit the target yet?
         // 2026-06-03 Spencer: once a stage clears mid-resolution, the rest of that
@@ -553,7 +662,7 @@ namespace WordDrop
             // detonations, gravity), so we defer the rise via a wait-coroutine
             // until processing clears.
             WDLog.Log($"[RisePerMove] drop committed | toggle={RisePerMoveDebug} rising={_isRisingRow} autoDrop={_isAutoDropping} paused={_isOverlayPaused} clearedThisDrop={clearedStageThisDrop}");
-            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused && !clearedStageThisDrop && !ActiveRisesOff)
+            if (RisePerMoveDebug && !_isRisingRow && !_isAutoDropping && !_isOverlayPaused && !clearedStageThisDrop && !ActiveRisesOff && !BlastMode)
             {
                 // Onboarding ramp: stages 1-4 rise every 2 turns, stages 5+ every turn.
                 _turnsSinceLastTurnRise++;
@@ -911,6 +1020,13 @@ namespace WordDrop
         private bool IsBoardAnimating()
         {
             if (GridManager.Instance == null) return false;
+            // BOARD ENTRY counts as animating. 2026-10-20 Spencer: "there was already a populated board
+            // there and then another board animated over top of it". Log: PrepBoardEntry parked the board
+            // and a stage-start rise fired the SAME frame. The rise's new row was never in the park
+            // snapshot, so it sat at rest on screen (the "board already there"), and the slide-in then
+            // wrote every tracked tile back to its PRE-rise position — all 16 MISPLACED by exactly one
+            // row. The entry snapshot is only valid if nothing changes the board until the slide ends.
+            if (GridManager.Instance.BoardEntryInProgress) return true;
             for (int col = 0; col < RulesEngine.COLS; col++)
             for (int row = 0; row < RulesEngine.ROWS; row++)
             {
@@ -1137,7 +1253,7 @@ namespace WordDrop
         {
             get
             {
-                if (ActiveRisesOff || !RisePerMoveDebug) return -1;   // -1 = no rise pressure
+                if (ActiveRisesOff || !RisePerMoveDebug || BlastMode) return -1;   // -1 = no rise pressure
                 int per = TurnsPerRiseNow;            // same source as the rise itself
                 return Mathf.Max(0, per - _turnsSinceLastTurnRise);
             }
@@ -2102,7 +2218,7 @@ namespace WordDrop
         // TOP-OUT / GAME OVER
         // ══════════════════════════════════════════════════════════════════════════
 
-        private void TriggerTopOut()
+        private void TriggerTopOut(string announce = "Out Of Moves!")
         {
             if (_isGameOver) return;
             if (_continueOffered) return;  // Already mid-continue flow — don't re-fire
@@ -2145,7 +2261,7 @@ namespace WordDrop
 
             if (TopOutPanel.Instance != null)
             {
-                TopOutPanel.Instance.SetText("Out Of Moves!");
+                TopOutPanel.Instance.SetText(announce);
                 TopOutPanel.Instance.Show(ShowContinueOrFinalize);
             }
             else
@@ -2210,6 +2326,13 @@ namespace WordDrop
         /// Resets the top-out latch so play resumes.</summary>
         public MatchController.StageClearRefillSummary ApplyContinueRescue()
         {
+            // Blast-limit: the rescue is MORE BLASTS, not a cleared board — the board was never full.
+            if (BlastMode)
+            {
+                _blastBudget += 2;
+                WDLog.Log($"[Blast] continue: +2 blasts -> {BlastsRemaining} left");
+                return default;
+            }
             // 1) Clear top 3 rows of tiles (highest row indices in the board).
             var toRemove = new System.Collections.Generic.List<Vector2Int>();
             if (RulesEngine.Instance != null)
