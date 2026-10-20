@@ -25,7 +25,12 @@ namespace WordDrop
     /// </summary>
     public struct LevelRules
     {
-        public string Name;           // shown to the player — a level needs to be A LEVEL, not a number
+        /// <summary>Shown to the player. ⚠️ IF A LEVEL CHANGES A RULE, THE NAME MUST SAY SO.
+        /// 2026-10-19: level 4 set MIN_WORD_LENGTH = 4 and was called "Four Letter". Spencer
+        /// swapped, made three-letter words, and nothing primed — which is indistinguishable
+        /// from the game being broken. A rule the player cannot see is a bug no matter how
+        /// deliberate it is.</summary>
+        public string Name;
         public int    IceCount;       // frozen tiles seeded at stage start (each pays ICE_BOUNTY)
         public int    MinWordLength;  // 3 normally; 4 makes the board read completely differently
         public int    RiseCadence;    // moves per rise. 3 = gentle, 2 = normal, 1 = relentless
@@ -49,18 +54,18 @@ namespace WordDrop
             /* 1  */ Make("Welcome",      cadence:3, fillRows:4, density:0.90f),
             /* 2  */ Make("Warm Up",      fillRows:4, density:0.92f),
             /* 3  */ Make("Ice Breaker",  ice:8),
-            /* 4  */ Make("Four Letter",  minLen:4),
+            /* 4  */ Make("4+ Letters Only",  minLen:4),
             /* 5  */ Make("Treasure",     gold:true, cadence:3, fillRows:6, density:0.95f),
             /* 6  */ Make("Quickening",   cadence:2),
-            /* 7  */ Make("Branching",    branch:true, cadence:3),
-            /* 8  */ Make("Deep Freeze",  ice:12, minLen:4),
+            /* 7  */ Make("Branching — Connect to the Web",    branch:true, cadence:3),
+            /* 8  */ Make("Deep Freeze — 4+ Letters",  ice:12, minLen:4),
             /* 9  */ Make("Thin Ice",     ice:6, cadence:2),
-            /* 10 */ Make("Tangle",       branch:true, cadence:1, fillRows:7, density:0.96f), // BOSS
+            /* 10 */ Make("Tangle — Connect to the Web", branch:true, cadence:1, fillRows:7, density:0.96f), // BOSS
             /* 11 */ Make("Payday",       gold:true, ice:4, cadence:3),     // relief
-            /* 12 */ Make("Burning Fuse", fuse:true),
+            /* 12 */ Make("Burning Fuse — Words Expire", fuse:true),
             /* 13 */ Make("Hard Water",   ice:10, fuse:true),
-            /* 14 */ Make("Scarcity",     minLen:4, cadence:2),
-            /* 15 */ Make("Crucible",     minLen:4, fuse:true, cadence:1),  // BOSS
+            /* 14 */ Make("Scarcity — 4+ Letters",     minLen:4, cadence:2),
+            /* 15 */ Make("Crucible — 4+ Letters",     minLen:4, fuse:true, cadence:1),  // BOSS
         };
 
         public static LevelRules For(int stage)
@@ -78,9 +83,9 @@ namespace WordDrop
             {
                 case 0: r = Make("Breather",  ice: 2 + block,      cadence: 3, gold: true);                  break;
                 case 1: r = Make("Climb",     ice: 4 + block,      cadence: 2);                              break;
-                case 2: r = Make("Pressure",  ice: 6 + block,      cadence: 2, minLen: 4);                   break;
-                case 3: r = Make("Squeeze",   ice: 8 + block,      cadence: 2, fuse: true);                  break;
-                default:r = Make("Boss",      ice: 10 + block * 2, cadence: 1, minLen: 4, branch: true);     break;
+                case 2: r = Make("Pressure — 4+ Letters",  ice: 6 + block,      cadence: 2, minLen: 4);                   break;
+                case 3: r = Make("Squeeze — Words Expire",   ice: 8 + block,      cadence: 2, fuse: true);                  break;
+                default:r = Make("Boss — 4+ Letters, Connect",      ice: 10 + block * 2, cadence: 1, minLen: 4, branch: true);     break;
             }
             return r;
         }
@@ -180,6 +185,9 @@ namespace WordDrop
             }
 
             var sm = SurvivalManager.Instance;
+            if (r.MinWordLength > 3)
+                WDLog.Log($"[LevelRules] ⚠️ LEVEL {stage} refuses words under {r.MinWordLength} letters — " +
+                          $"if swaps 'do nothing' here, that is why. Name says so: '{r.Name}'");
             WDLog.Log($"[LevelRules] LEVEL {stage} (internal {internalStage}) '{r.Name}' — " +
                       $"TARGET {(sm != null ? sm.CurrentStageTarget : -1)} " +
                       $"(score so far {(sm != null ? sm.CurrentStageScore : -1)}), " +
