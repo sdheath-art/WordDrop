@@ -174,9 +174,28 @@ namespace WordDrop
                     float   off  = Vector2.Distance(new Vector2(want.x, want.y),
                                                     new Vector2(have.x, have.y));
                     if (off > grid.CellSize * 0.5f)
+                    {
                         ReportIntegrity($"MISPLACED ({c},{r}) '{tile.Letter}' — drawn {off:F2} world units " +
                                         $"({off / Mathf.Max(0.01f, grid.CellSize):F1} cells) from its own cell. " +
                                         $"want {want} have {have}");
+
+                        // ── AND REPAIR IT. 2026-10-19 ────────────────────────────────────
+                        // Five separate sources have produced a misplaced tile now: pooled
+                        // tiles left at the origin, risen tiles holding their old row, the
+                        // Wispwhirl shuffle, a grid rebuild, and now the board-entry slide.
+                        // Each was fixed where it occurred, and a sixth turned up each time.
+                        //
+                        // GridManager.ReconcileSpecialVisuals only runs after gravity, rises
+                        // and shuffles — at LEVEL ENTRY none of those have happened, so
+                        // [PosSync] reported 0 fixes while the whole board sat a row low.
+                        //
+                        // This checker already detects it correctly every single time, runs
+                        // every 0.35s, and only ever moves a tile to where ITS OWN DATA says
+                        // it belongs. Repairing here bounds the damage to a third of a second
+                        // whatever the cause. The ERROR above still names the cell, so the
+                        // real sources stay findable — this is a floor, not a cure.
+                        tile.transform.position = want;
+                    }
                 }
             }
         }
