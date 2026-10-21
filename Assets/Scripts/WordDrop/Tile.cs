@@ -920,7 +920,19 @@ namespace WordDrop
         /// rather than the quieter gravity one. False restores the old feel.</summary>
         public  const bool  GRAVITY_USES_LANDING_SQUISH = true;
         public  const bool  TILE_DROP_SHADOW   = false; // 2026-09-03: per-tile drop shadow off for the stacked/overlap board
-        private const float TILE_DISPLAY_RATIO = 1.0f;   // 2026-09-03: was 154/172 — tiles now butt up edge-to-edge (Toon Blast style), no gap // 2026-06-24 Spencer: a hair more spacing (numerator 158→154 → gap 14→18 PSD; board margin scales off the same). Numerator MUST match the hardcoded 154/172 in GridManager (halfGapPad + tileRadiusWorld) and HUDManager baseScale; denom = GridManager.PSD_CELL_PITCH.
+        // 2026-10-21 Spencer: "more padding in between letters, it just looks too cluttered" — Royal Match measured: 84 px
+        // pitch, ~73 px icons = 87% of the cell. Now a tunable (FX Test Menu cycles it; remembered in PlayerPrefs). The
+        // cell pitch does NOT change — only the tile inside it shrinks, so the board stays the same size.
+        public static readonly float[] TILE_RATIO_STEPS = { 1.0f, 0.92f, 0.88f, 0.84f };
+        public static float TILE_DISPLAY_RATIO_DEFAULT = 0.88f;
+        private static float s_tileRatio = -1f;
+        public static float TILE_DISPLAY_RATIO
+        {
+            get { if (s_tileRatio < 0f) s_tileRatio = PlayerPrefs.GetFloat("WD_TileRatio", TILE_DISPLAY_RATIO_DEFAULT); return s_tileRatio; }
+            set { s_tileRatio = value; PlayerPrefs.SetFloat("WD_TileRatio", value); PlayerPrefs.Save(); }
+        }
+        /// <summary>Re-apply the rest scale after TILE_DISPLAY_RATIO changes (FX Test Menu).</summary>
+        public void RefitRestScale() { if (_spriteRenderer != null && _spriteRenderer.sprite != null) RefitToSprite(_spriteRenderer.sprite); }
         /// <summary>Tile display size as a fraction of the cell pitch — so other systems (e.g. the
         /// drop-preview ghost) can size their tiles to MATCH the board tiles. 2026-06-16 Spencer.</summary>
         public static float DisplayRatio => TILE_DISPLAY_RATIO;
@@ -1324,6 +1336,8 @@ namespace WordDrop
 
         public void ResetForPool()
         {
+            SetSpecial(RulesEngine.SPECIAL_NONE);   // a recycled tile must not keep a special marker
+            IsRainGold = false;                     // nor a shower-gold flag
             StopAllCoroutines();
             _gravityCoroutine = null;
             _fallCoroutine = null;
@@ -1487,7 +1501,10 @@ namespace WordDrop
                           $"(want width==cell, height==1.2*cell)  spriteName={(sp!=null?sp.name:"NULL")}");
             }
 
-            float invScale = 1f / Mathf.Max(scale, 0.01f);
+            // Letters/points shrink WITH the tile (2026-10-21 Spencer: "the font needs to be just as much smaller too").
+            // Was 1/scale, which pinned the letter to a fixed world size whatever the tile size. Measured against the
+            // 100% tile, so a ratio change (and the live FX-menu refit) scales the letter by the same amount.
+            float invScale = TILE_DISPLAY_RATIO / Mathf.Max(scale, 0.01f);
 
             // ── Main letter — TextMeshPro with subtle grounding shadow ──
             GameObject letterGO = new GameObject("TileLetter");
@@ -2424,6 +2441,23 @@ namespace WordDrop
             if (active && _isDropTargetVisual) { SetDropTargetVisual(true); return; } // escort objects are NOT grey rocks
             _isStone = active;
             if (_spriteRenderer == null) return;
+            // FULL BOARD CRATE (2026-10-21): crates are plain (falling) stones drawn with Spencer's crate art.
+            if (active && SurvivalManager.FullBoardActive && GetCrateSprite() != null)
+            {
+                _spriteRenderer.sprite = s_crateSprite; _spriteRenderer.color = Color.white;
+                RefitToSprite(s_crateSprite); _isCrateArt = true;
+                if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
+                if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
+                if (_glossGO != null) _glossGO.SetActive(false);
+                if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
+                return;
+            }
+            if (!active && _isCrateArt)
+            {
+                _isCrateArt = false;
+                var face = RestingFaceFor(Letter);
+                if (face != null) { _spriteRenderer.sprite = face; RefitToSprite(face); }
+            }
             if (active)
             {
                 if (ROCK_SPRITE)
@@ -2881,8 +2915,21 @@ namespace WordDrop
         private static bool   s_vaultSpriteTried;
         private Coroutine     _vaultIdleRoutine;   // anticipation jiggle while rendered as a chest
 
+        // CRATE (2026-10-21 Spencer's placeholder, Resources/Blockers/crate.png): on the full board an anchored stone is a
+        // Royal-Match-style crate, not the old treasure chest.
+        private static Sprite s_crateSprite; private static bool s_crateTried;
+        private bool _isCrateArt;
+        private static Sprite GetCrateSprite()
+        {
+            if (s_crateTried) return s_crateSprite;
+            s_crateTried = true;
+            var tex = Resources.Load<Texture2D>("Blockers/crate");
+            if (tex != null) s_crateSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width);
+            return s_crateSprite;
+        }
         private static Sprite GetVaultSprite()
         {
+            if (SurvivalManager.FullBoardActive && GetCrateSprite() != null) return s_crateSprite;
             if (s_vaultSpriteTried) return s_vaultSprite;
             s_vaultSpriteTried = true;
             // Icon_ItemIcon_Treasure.Png is imported as a plain Texture (mistake #5) → the Sprite
@@ -2923,8 +2970,9 @@ namespace WordDrop
                 if (_glossGO != null) _glossGO.SetActive(false);
                 if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
                 // Treasure-chest "shaking in anticipation" idle (Vampire-Survivors feel).
-                if (_vaultIdleRoutine == null && gameObject.activeInHierarchy)
+                if (_vaultIdleRoutine == null && gameObject.activeInHierarchy && !SurvivalManager.FullBoardActive)   // crates sit still
                     _vaultIdleRoutine = StartCoroutine(VaultIdleShakeLoop());
+                if (_letterTMP != null && SurvivalManager.FullBoardActive) _letterTMP.gameObject.SetActive(false);   // a crate has no letter
             }
             else
             {
@@ -3128,6 +3176,7 @@ namespace WordDrop
             // so the cyan doesn't linger a frame over the magenta primed look. No-op for normal drop-primed tiles
             // (no edit glow active). 2026-07-10 Spencer.
             if (_editGlowPulse != null) { _editGlowPulse.Kill(); _editGlowPulse = null; }
+            if (SELECT_LIFT && _editSelected) ReassertSortingOrder();   // undo the tap-select draw-on-top (see FadeEditGlowOut)
             _editSelected = false;
             ClearBloomGlow();
             _heatLevel       = heatLevel;
@@ -3730,7 +3779,17 @@ namespace WordDrop
         /// flicker between magenta and gold — but it was also driving the FACE, so every letter
         /// in a word containing one gold tile rendered gold. That is why a 2-point A came out
         /// gold. Colour is a word decision; the face is a letter decision. 2026-09-10 Spencer.</summary>
-        public bool IsGoldLetter => LetterData.GetPoints(Letter) >= HIGH_VALUE_POINTS;
+        public bool IsGoldLetter => LetterData.GetPoints(Letter) >= HIGH_VALUE_POINTS || IsRainGold;
+
+        /// <summary>Shower reward letter (2026-10-21) — gold face + gold behaviour for an ordinary letter. Data lives on
+        /// RulesCellData.IsRainGold; this is the visual mirror.</summary>
+        public bool IsRainGold { get; private set; }
+        public void SetRainGold(bool on)
+        {
+            if (on == IsRainGold) return;
+            IsRainGold = on;
+            if (_spriteRenderer != null && !_hasPrimedGlow) { _spriteRenderer.sprite = RestingFaceFor(Letter); ApplyRestingColor(); }
+        }
 
         public void SnapRestScale()
         {
@@ -3817,6 +3876,7 @@ namespace WordDrop
             if (_letterTMP != null) _letterTMP.sortingOrder = order + 2; // letter crisp ABOVE both
             if (_pointTMP != null) _pointTMP.sortingOrder = order + 2;
             SyncFrostOrder();
+            SyncSpecialOrder();
         }
 
         /// <summary>ICE MUST RIDE ITS TILE'S SORTING BAND. 2026-10-20 Spencer: "ice on tiles is
@@ -3827,6 +3887,144 @@ namespace WordDrop
         /// row 1 to row 2 is exactly "disappears on a rise". Frost sits at the letter's order
         /// (face+2) and wins the tie on Z (-0.13, in front of the letter), and stays below the next
         /// row's face (face+3), so the overlap between rows is still right.</summary>
+        // ── SPECIAL TILE VISUAL (2026-10-21, PLACEHOLDER until Spencer paints rocket / bomb / disco art) ───────────
+        // A pulsing coloured ADDITIVE halo behind the tile (world-space -> real bloom) + a small corner pip showing the
+        // kind: horizontal bar = row rocket, vertical bar = column rocket, dot = bomb, ring+dot = disco.
+        public int SpecialKind { get; private set; }
+        private GameObject _specialHaloGO, _specialPipGO, _specialPip2GO;
+        private SpriteRenderer _specialHaloSR, _specialPipSR, _specialPip2SR;
+        private Tween _specialPulse;
+        private static Material s_specialHaloMat;
+        private static Sprite s_pipBarH, s_pipBarV, s_pipDot, s_pipRing;
+
+        // Spencer's placeholder icons (2026-10-21) — Resources/Specials/special_{rocket,bomb,disco}.png. Loaded as Texture2D
+        // and wrapped in a Sprite here (1 world unit wide) so the import settings / odd sizes (bomb is 515px) don't matter.
+        private static readonly System.Collections.Generic.Dictionary<string, Sprite> s_specialIcons = new System.Collections.Generic.Dictionary<string, Sprite>();
+        public static Sprite SpecialIcon(int kind)
+        {
+            string key = kind == RulesEngine.SPECIAL_BOMB ? "special_bomb" : kind == RulesEngine.SPECIAL_TNT ? "special_tnt" : kind == RulesEngine.SPECIAL_DISCO ? "special_disco"
+                       : (kind == RulesEngine.SPECIAL_ROCKET_H || kind == RulesEngine.SPECIAL_ROCKET_V) ? "special_rocket" : null;
+            if (key == null) return null;
+            if (s_specialIcons.TryGetValue(key, out var sp)) return sp;
+            var tex = Resources.Load<Texture2D>("Specials/" + key);
+            sp = tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width) : null;
+            s_specialIcons[key] = sp;
+            if (sp == null) WDLog.Log($"[Special] icon Specials/{key} MISSING — using placeholder pip");
+            return sp;
+        }
+        /// <summary>The rocket art's nose points up-right (45°); rotate it to point along its row or column.</summary>
+        public static float SpecialIconAngle(int kind) =>
+            kind == RulesEngine.SPECIAL_ROCKET_H ? -45f : kind == RulesEngine.SPECIAL_ROCKET_V ? 45f : 0f;
+        public static float SPECIAL_BADGE_SCALE = 0.55f;   // icon width as a fraction of the tile face
+
+        public static Color SpecialColor(int kind) =>
+              RulesEngine.IsBombLike(kind)       ? new Color(2.4f, 0.55f, 0.35f, 1f)   // hot red-orange
+            : kind == RulesEngine.SPECIAL_DISCO ? new Color(1.7f, 1.1f, 2.4f, 1f)    // violet-white
+            :                                     new Color(2.2f, 1.25f, 0.35f, 1f);  // rocket: orange-gold
+
+        public void SetSpecial(int kind, bool pop = false)
+        {
+            if (kind == SpecialKind && (kind == RulesEngine.SPECIAL_NONE || _specialHaloGO != null)) return;
+            SpecialKind = kind;
+            _specialPulse?.Kill(); _specialPulse = null;
+            if (kind == RulesEngine.SPECIAL_NONE)
+            {
+                if (_specialHaloGO != null) _specialHaloGO.SetActive(false);
+                if (_specialPipGO  != null) _specialPipGO.SetActive(false);
+                if (_specialPip2GO != null) _specialPip2GO.SetActive(false);
+                return;
+            }
+            if (s_pipBarH == null)
+            {
+                s_pipBarH = TileRenderer.CreateSolidRoundedRect(96, 34, 17, Color.white);
+                s_pipBarV = TileRenderer.CreateSolidRoundedRect(34, 96, 17, Color.white);
+                s_pipDot  = TileRenderer.CreateSolidRoundedRect(56, 56, 28, Color.white);
+                s_pipRing = TileRenderer.CreateRoundedRect(80, 80, 40, new Color(1f, 1f, 1f, 0f), Color.white, 9);
+            }
+            if (s_specialHaloMat == null)
+            {
+                Shader sh = Shader.Find("WordDrop/AdditiveSprite") ?? Resources.Load<Shader>("Shaders/AdditiveSprite");
+                if (sh != null) s_specialHaloMat = new Material(sh) { name = "SpecialHaloAdditive" };
+            }
+            Color col = SpecialColor(kind);
+            if (_specialHaloGO == null)
+            {
+                _specialHaloGO = new GameObject("SpecialHalo");
+                _specialHaloGO.transform.SetParent(transform, false);
+                _specialHaloGO.transform.localPosition = new Vector3(0f, 0f, 0.02f);
+                _specialHaloSR = _specialHaloGO.AddComponent<SpriteRenderer>();
+                _specialHaloSR.sprite = s_spriteNormal;
+                if (s_specialHaloMat != null) _specialHaloSR.sharedMaterial = s_specialHaloMat;
+                _specialPipGO = new GameObject("SpecialPip");
+                _specialPipGO.transform.SetParent(transform, false);
+                _specialPipSR = _specialPipGO.AddComponent<SpriteRenderer>();
+                _specialPip2GO = new GameObject("SpecialPip2");
+                _specialPip2GO.transform.SetParent(transform, false);
+                _specialPip2SR = _specialPip2GO.AddComponent<SpriteRenderer>();
+            }
+            _specialHaloGO.SetActive(true);
+            _specialHaloGO.transform.localScale = Vector3.one * 1.32f;
+            var mpb = new MaterialPropertyBlock();
+            _specialHaloSR.GetPropertyBlock(mpb);
+            mpb.SetColor("_Color", col);
+            _specialHaloSR.SetPropertyBlock(mpb);
+            _specialHaloSR.color = new Color(1f, 1f, 1f, 0.55f);
+            _specialPulse = _specialHaloSR.DOFade(0.95f, 0.55f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
+
+            // Corner pip (top-right of the face), normal blend, LDR version of the colour so it reads on white.
+            Color pipCol = new Color(Mathf.Clamp01(col.r * 0.5f), Mathf.Clamp01(col.g * 0.5f), Mathf.Clamp01(col.b * 0.5f), 1f);
+            float fx = (_spriteRenderer != null && _spriteRenderer.sprite != null) ? _spriteRenderer.sprite.bounds.extents.x : 0.5f;
+            Vector3 corner = new Vector3(fx * 0.62f, fx * 0.62f, -0.11f);
+            _specialPipGO.SetActive(true);
+            _specialPipGO.transform.localPosition = corner;
+            _specialPipGO.transform.localScale = Vector3.one * 0.55f;
+            _specialPipSR.color = pipCol;
+            _specialPipSR.sprite = kind == RulesEngine.SPECIAL_ROCKET_H ? s_pipBarH
+                                 : kind == RulesEngine.SPECIAL_ROCKET_V ? s_pipBarV : s_pipDot;
+            _specialPipGO.transform.localRotation = Quaternion.identity;
+            var icon = SpecialIcon(kind);
+            if (icon != null)
+            {
+                // Spencer's art as a corner STICKER: half the tile wide, overlapping the top-right edge, letter stays readable.
+                _specialPipSR.sprite = icon;
+                _specialPipSR.color  = Color.white;
+                _specialPipGO.transform.localPosition = new Vector3(fx * 0.58f, fx * 0.58f, -0.11f);
+                _specialPipGO.transform.localScale    = Vector3.one * (fx * 2f * SPECIAL_BADGE_SCALE);
+                _specialPipGO.transform.localRotation = Quaternion.Euler(0f, 0f, SpecialIconAngle(kind));
+                _specialPip2GO.SetActive(false);
+                SyncSpecialOrder();
+                if (pop) { transform.DOKill(); Vector3 r0 = CanonicalRestScale(); transform.localScale = r0 * 0.6f; transform.DOScale(r0, 0.32f).SetEase(Ease.OutBack, 2.4f); }
+                _specialPipGO.transform.DOKill();
+                _specialPipGO.transform.DOPunchRotation(new Vector3(0f, 0f, 14f), 0.5f, 6, 0.6f);
+                return;
+            }
+            bool disco = kind == RulesEngine.SPECIAL_DISCO;
+            _specialPip2GO.SetActive(disco);
+            if (disco)
+            {
+                _specialPip2GO.transform.localPosition = corner;
+                _specialPip2GO.transform.localScale = Vector3.one * 0.62f;
+                _specialPip2SR.sprite = s_pipRing; _specialPip2SR.color = pipCol;
+            }
+            SyncSpecialOrder();
+            if (pop)
+            {
+                transform.DOKill();
+                Vector3 rest = CanonicalRestScale();
+                transform.localScale = rest * 0.6f;
+                transform.DOScale(rest, 0.32f).SetEase(Ease.OutBack, 2.4f);
+            }
+        }
+
+        private void SyncSpecialOrder()
+        {
+            if (_specialHaloSR == null) return;
+            int face = _spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder;
+            _specialHaloSR.sortingOrder = face - 2;   // behind its own face, above the row below's face
+            if (_specialPipSR  != null) _specialPipSR.sortingOrder  = face + 2;
+            if (_specialPip2SR != null) _specialPip2SR.sortingOrder = face + 2;
+        }
+
         private void SyncFrostOrder()
         {
             if (_frostSR == null) return;
@@ -4680,6 +4878,10 @@ namespace WordDrop
         /// selected flag. 2026-07-10 Spencer.</summary>
         public void FadeEditGlowOut(float dur = 0.1f)
         {
+            // Committed swaps clear the selection HERE, never through SetEditSelected(false) — so the tap-select draw-on-top
+            // (+2 row bands) was never undone. BoardInvariants logged ~300 "a lift outlived its effect", mostly right after
+            // a swap that formed no word. 2026-10-21.
+            if (SELECT_LIFT && _editSelected) ReassertSortingOrder();
             _editSelected = false;
             // The rim is NOT part of the glow fade — it is a separate overlay, so it has to be
             // switched off explicitly here. This is the path a committed SWAP takes (the swap
@@ -5073,6 +5275,8 @@ namespace WordDrop
         private Sprite RestingFaceFor(char letter)
         {
             BuildSpriteCache();   // no-op once built
+            if (IsRainGold && LETTER_CATEGORY_TINTS && s_spriteHighValue != null && !_isStone && !_isGoldBonus && !_isVault)
+                return s_spriteHighValue;   // shower gold letter wears the K/Q gold face
             return RestingFaceForRaw(letter);
         }
 

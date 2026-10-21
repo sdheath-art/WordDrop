@@ -168,6 +168,7 @@ namespace WordDrop
             _bodyText.alignment = TextAlignmentOptions.Bottom;
 
             // Remaining-objective ICON holder — point-anchored just below the "So close" line.
+            _panelRTForHeart = panelRT;
             var iconHolderGO = new GameObject("ObjectiveIconHolder", typeof(RectTransform));
             iconHolderGO.transform.SetParent(panelRT, false);
             _objectiveIconHolder = iconHolderGO;
@@ -441,6 +442,7 @@ namespace WordDrop
                 if (_objectiveIconGO != null) { Destroy(_objectiveIconGO); _objectiveIconGO = null; }
 
                 bool showIcon = obj != null && !obj.IsComplete && obj.Icon != Objective.HudIcon.None;
+                if (SurvivalManager.MoveLimitMode) showIcon = false;   // move-limit runs: the heart break plays here instead
                 if (showIcon && _objectiveIconHolder != null)
                 {
                     _objectiveIconGO = ObjectiveIconBuilder.Build(
@@ -454,6 +456,14 @@ namespace WordDrop
                         : "Clear the top rows\nand refill resources";
                 }
                 if (_objectiveIconHolder != null) _objectiveIconHolder.SetActive(showIcon);
+                if (SurvivalManager.MoveLimitMode)
+                {
+                    var sm = SurvivalManager.Instance;
+                    int shortBy = sm != null ? Mathf.Max(0, sm.CurrentStageTarget - sm.CurrentStageScore) : 0;
+                    if (_bodyText != null)
+                        _bodyText.text = shortBy > 0 ? $"So close! Only {shortBy:N0} points to go" : "Out of moves!";
+                    PlayHeartBreak();
+                }
             }
 
             if (_continueLabel != null)
@@ -821,5 +831,79 @@ namespace WordDrop
             Hide();
             if (_survival != null) _survival.DeclineContinue();
         }
-    }
+    
+        // ── HEART BREAK (2026-10-21 Spencer: "when you hit the Continue? screen ... animate the heart breaking") ──────────
+        // Spencer's art: Resources/Hearts/heart_whole + heart_broken, plus the broken heart SPLIT ALONG ITS CRACK into
+        // heart_broken_left/right (made offline from his PNG) so the halves can genuinely fall apart.
+        private RectTransform _panelRTForHeart;
+        private GameObject _heartRoot;
+        private static Sprite LoadHeart(string name)
+        {
+            var tex = Resources.Load<Texture2D>("Hearts/" + name);
+            return tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f) : null;
+        }
+        private Image MakeHeartImage(Transform parent, string name, Sprite sp, float size)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f); rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(size, size);
+            var img = go.GetComponent<Image>(); img.sprite = sp; img.preserveAspect = true; img.raycastTarget = false;
+            return img;
+        }
+        public static float HEART_SIZE = 150f;
+        private void PlayHeartBreak()
+        {
+            if (_panelRTForHeart == null) return;
+            if (_heartRoot != null) Destroy(_heartRoot);
+            Sprite whole = LoadHeart("heart_whole"), broken = LoadHeart("heart_broken"),
+                   left = LoadHeart("heart_broken_left"), right = LoadHeart("heart_broken_right");
+            if (whole == null) return;
+            _heartRoot = new GameObject("HeartBreak", typeof(RectTransform));
+            _heartRoot.transform.SetParent(_panelRTForHeart, false);
+            var root = (RectTransform)_heartRoot.transform;
+            root.anchorMin = root.anchorMax = new Vector2(0.5f, 0.625f); root.sizeDelta = Vector2.zero;
+            var wImg = MakeHeartImage(root, "Whole", whole, HEART_SIZE);
+            var bImg = broken != null ? MakeHeartImage(root, "Broken", broken, HEART_SIZE) : null;
+            var lImg = left   != null ? MakeHeartImage(root, "Left",   left,   HEART_SIZE) : null;
+            var rImg = right  != null ? MakeHeartImage(root, "Right",  right,  HEART_SIZE) : null;
+            if (bImg != null) bImg.gameObject.SetActive(false);
+            if (lImg != null) lImg.gameObject.SetActive(false);
+            if (rImg != null) rImg.gameObject.SetActive(false);
+
+            var w = wImg.rectTransform;
+            w.localScale = Vector3.zero;
+            var seq = DOTween.Sequence().SetUpdate(true).SetTarget(_heartRoot);
+            seq.AppendInterval(0.2f);
+            seq.Append(w.DOScale(1.1f, 0.22f).SetEase(Ease.OutBack, 2.2f));            // pop in
+            seq.Append(w.DOScale(1f, 0.1f));
+            for (int i = 0; i < 2; i++)                                                  // two heartbeats
+            {
+                seq.Append(w.DOScale(1.12f, 0.11f).SetEase(Ease.OutQuad));
+                seq.Append(w.DOScale(1f, 0.16f).SetEase(Ease.InQuad));
+            }
+            seq.AppendInterval(0.1f);
+            seq.Append(w.DOShakeAnchorPos(0.32f, 9f, 28, 90f, false, true));            // strain
+            seq.AppendCallback(() =>                                                    // CRACK
+            {
+                GameAudio.Instance?.PlayDeepImpact();
+                HapticsManager.Strong();
+                wImg.gameObject.SetActive(false);
+                if (bImg != null) { bImg.gameObject.SetActive(true); bImg.rectTransform.localScale = Vector3.one * 1.12f; bImg.rectTransform.DOScale(1f, 0.14f).SetUpdate(true); }
+            });
+            seq.AppendInterval(0.32f);
+            seq.AppendCallback(() =>                                                    // FALL APART
+            {
+                if (lImg == null || rImg == null) return;
+                if (bImg != null) bImg.gameObject.SetActive(false);
+                lImg.gameObject.SetActive(true); rImg.gameObject.SetActive(true);
+                var l = lImg.rectTransform; var r = rImg.rectTransform;
+                l.DOAnchorPos(new Vector2(-HEART_SIZE * 0.12f, -HEART_SIZE * 0.08f), 0.5f).SetEase(Ease.OutCubic).SetUpdate(true);
+                r.DOAnchorPos(new Vector2( HEART_SIZE * 0.12f, -HEART_SIZE * 0.08f), 0.5f).SetEase(Ease.OutCubic).SetUpdate(true);
+                l.DOLocalRotate(new Vector3(0f, 0f,  13f), 0.5f).SetEase(Ease.OutBack, 1.6f).SetUpdate(true);
+                r.DOLocalRotate(new Vector3(0f, 0f, -13f), 0.5f).SetEase(Ease.OutBack, 1.6f).SetUpdate(true);
+            });
+        }
+}
 }

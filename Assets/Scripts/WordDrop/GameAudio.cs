@@ -1600,8 +1600,21 @@ namespace WordDrop
             Play(_asmr4 != null ? _asmr4 : PickRandom(_scorePowerupVariants), 0.9f);
         }
 
+        // RATE LIMIT (2026-10-21 Spencer: "ray gun stuttering" after a bonus). The bonus blast primed ~15 words in under a
+        // second and every one played this, twice in some frames. Now: at least POWERUP_MIN_GAP apart, and at most
+        // POWERUP_BURST_MAX inside a POWERUP_BURST_WINDOW — the rest of a burst is dropped, not queued.
+        public static float POWERUP_MIN_GAP      = 0.12f;
+        public static int   POWERUP_BURST_MAX    = 3;
+        public static float POWERUP_BURST_WINDOW = 0.8f;
+        private float _lastPowerupAt = -10f, _powerupBurstStart = -10f;
+        private int   _powerupBurstCount;
         public void PlayScorePowerup()
         {
+            float now = Time.unscaledTime;
+            if (now - _lastPowerupAt < POWERUP_MIN_GAP) return;
+            if (now - _powerupBurstStart > POWERUP_BURST_WINDOW) { _powerupBurstStart = now; _powerupBurstCount = 0; }
+            if (_powerupBurstCount >= POWERUP_BURST_MAX) return;
+            _powerupBurstCount++; _lastPowerupAt = now;
             Play(PickRandom(_scorePowerupVariants), 0.8f);
         }
 
@@ -1699,6 +1712,8 @@ namespace WordDrop
         private static float _lastBigPopTime = -10f;
         private const float BIG_POP_COOLDOWN = 0.30f; // ONE big_pop per cascade event, not per word-pop (was machine-gunning)
 
+        public static float MATCH_LINE_MIN_GAP = 0.07f;
+        private float _matchLineLastPlayed = -10f;
         public void PlayMatchLine(int cascadeStep = 0)
         {
             // Chord-climb pitch escalation. Uses MAX of (incoming cascadeStep,
@@ -1712,6 +1727,10 @@ namespace WordDrop
             //     pitch" perceptual bug.
             // Caps at 2× (octave = 12 semitones).
             float now = Time.unscaledTime;
+            // RATE LIMIT (2026-10-21): rocket/bomb tiles now pop as the blast reaches them, in small groups — a full bonus
+            // is ~40 groups in a second. Same "ray gun" risk as the power-up chime; at most one pop sound per MIN_GAP.
+            if (now - _matchLineLastPlayed < MATCH_LINE_MIN_GAP) return;
+            _matchLineLastPlayed = now;
             if (now - _matchLineBurstLastTime > MATCH_LINE_BURST_WINDOW)
                 _matchLineBurstStep = 0;
             else

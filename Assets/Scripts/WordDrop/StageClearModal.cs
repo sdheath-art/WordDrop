@@ -343,8 +343,9 @@ namespace WordDrop
             // HasActiveExplosions is kept as a secondary gate so the BEAT
             // covers the last explosion's visual tail even after IsProcessing
             // already cleared.
-            bool stillResolving = MatchController.Instance != null
-                                  && MatchController.Instance.IsProcessing;
+            bool stillResolving = (MatchController.Instance != null
+                                  && MatchController.Instance.IsProcessing)
+                                  || HandManager.BonusBlastHoldsModal;   // 2026-10-21: hold "Well Done" until the bonus blast ends (25s safety cap)
             if (stillResolving || WordDropFX.HasActiveExplosions)
             {
                 _explosionsClearedAt = -1f; // reset; will start timer when explosions truly settle
@@ -431,6 +432,7 @@ namespace WordDrop
             if (_canvas == null) return;
             _isDismissing = false;
             _isPresenting = true;
+            _shownAtUnscaled = Time.unscaledTime;   // Continue taps ignored for CONTINUE_LOCKOUT after this
 
             // 2026-05-30: kill any active background animations so the modal
             // is the focused element. Currently this means the hint-manager
@@ -478,7 +480,8 @@ namespace WordDrop
             // much it has added back."
             int editsDelta = Mathf.Max(0, summary.RewritesAfter - summary.RewritesBefore);
             int swapsDelta = Mathf.Max(0, summary.SwapsAfter   - summary.SwapsBefore);
-            int coinsDelta = Mathf.Max(0, ctx.CoinsEarned);
+            int coinsDelta = Mathf.Max(0, ctx.CoinsEarned) + Mathf.Max(0, SurvivalManager.PendingBonusCoins);   // + bonus blast coins
+            SurvivalManager.PendingBonusCoins = 0;
 
             if (_editChip != null) _editChip.SetActive(editsDelta > 0);
             if (_swapChip != null) _swapChip.SetActive(swapsDelta > 0);
@@ -1733,8 +1736,18 @@ namespace WordDrop
             press.Append(t.DOScale(1f, 0.08f).SetEase(Ease.OutQuad));
         }
 
+        /// <summary>Continue is ignored this long after the modal appears (2026-10-21: frantic end-of-level clicking pressed
+        /// Continue ~1s after Well Done showed, so the celebration flew past unseen).</summary>
+        public static float CONTINUE_LOCKOUT = 1.0f;
+        private float _shownAtUnscaled = -10f;
+
         private void OnContinuePressed()
         {
+            if (Time.unscaledTime - _shownAtUnscaled < CONTINUE_LOCKOUT)
+            {
+                WDLog.Log("[StageModalTrace] CONTINUE ignored — modal just appeared (lockout)");
+                return;
+            }
             // DIAGNOSTIC 2026-10-19: does the tap even REACH the modal? The clear-then-freeze
             // report showed the modal SHOWING and taps landing in SwipeWordInput instead, with
             // no dismiss. This line separates "the tap never arrived" from "it arrived and the

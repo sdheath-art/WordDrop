@@ -73,6 +73,10 @@ namespace WordDrop
 
         private string ScoreLabel(int shown)
         {
+            // CRATE LEVELS (full board): the panel tracks crates broken, not points.
+            var smC = SurvivalManager.Instance;
+            if (smC != null && RulesEngine.Instance != null && (LevelRules.CrateGoalFor(smC.CurrentStageIndex) || (SurvivalManager.AwaitingNextLevel && LevelRules.CrateGoal > 0 && SurvivalManager.FullBoardActive)))
+                return $"{Mathf.Max(0, LevelRules.CrateGoal - RulesEngine.Instance.CountCrateCells())}/{LevelRules.CrateGoal}";
             if (!SHOW_SCORE_TARGET) return shown.ToString("N0");
             var sm = SurvivalManager.Instance;
             if (!SurvivalManager.IsSurvivalMode || sm == null) return shown.ToString("N0");
@@ -90,7 +94,9 @@ namespace WordDrop
             // bug — the left number was PlayerScore (which carries across levels) and the right
             // was the absolute total needed. That reads as starting a level part-finished. A
             // level counter should start at zero, so show CurrentStageScore / CurrentStageTarget.
-            if (_shownStageIdx != sm.CurrentStageIndex && !sm.IsOverlayPaused)
+            // 2026-10-21: latch on AwaitingNextLevel (the cleared level's celebration), NOT IsOverlayPaused — the home
+            // screen and level card are overlays too, so the old 100% stayed latched straight into the next level.
+            if (_shownStageIdx != sm.CurrentStageIndex && !SurvivalManager.AwaitingNextLevel)
             {
                 _shownAbsTarget = delta;                 // this level's own target
                 _shownStageIdx  = sm.CurrentStageIndex;
@@ -111,7 +117,7 @@ namespace WordDrop
             // also keep scoring after the target is crossed; that score belongs to the level
             // just cleared (SurvivalManager pins it there via _clearedThisResolution), and it
             // must never read as progress toward the next one.
-            if (sm.IsOverlayPaused || SurvivalManager.AwaitingNextLevel)
+            if (SurvivalManager.AwaitingNextLevel)
                 return _shownAbsTarget.ToString("N0") + "/" + _shownAbsTarget.ToString("N0");
 
             // `shown` is the ROLLING total the count-up animation drives, so convert it to this
@@ -128,6 +134,24 @@ namespace WordDrop
         /// start/reset, or the previous run's target survives into the new one.</summary>
         public void ResetScoreTargetLatch() { _shownStageIdx = -1; _shownAbsTarget = 0; }
 
+        /// <summary>A new level has been installed: show 0 / new target NOW — no roll from the old value, no waiting for
+        /// the first score event to repaint. 2026-10-21 Spencer: "when you start a new level you start out with 100
+        /// percent of the points already in the HUD. it should zero out before it shows the HUD". Called by
+        /// LevelRules.Apply right after AwaitingNextLevel is released.</summary>
+        public void SnapScoreReadoutForNewLevel()
+        {
+            if (_scoreCountUp != null) { StopCoroutine(_scoreCountUp); _scoreCountUp = null; }
+            int total = ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : Mathf.RoundToInt(_scoreTarget);
+            _scoreTarget = total;
+            _scoreShown  = total;
+            ResetScoreTargetLatch();
+            if (_scorePanelNum != null)
+            {
+                if (!_rewardMode) _scorePanelNum.text = ScoreLabel(total);
+                _scorePanelNum.rectTransform.localScale = Vector3.one;
+            }
+        }
+
         private IEnumerator ScoreChase()
         {
             while (_scorePanelNum != null && _scoreShown < _scoreTarget - 0.5f)
@@ -141,7 +165,7 @@ namespace WordDrop
                 string label = ScoreLabel(shown);
                 if (_scorePanelNum.text != label)
                 {
-                    _scorePanelNum.text = label;
+                    if (!_rewardMode) _scorePanelNum.text = label;
                     // Punch and pitch ride the GAP, so a big burst is visibly and audibly
                     // louder while it is still catching up, and calms as it lands.
                     float mag = Mathf.Clamp01(gap / 400f);
@@ -162,7 +186,7 @@ namespace WordDrop
             _scoreShown = _scoreTarget;
             if (_scorePanelNum != null)
             {
-                _scorePanelNum.text = ScoreLabel(Mathf.RoundToInt(_scoreShown));
+                if (!_rewardMode) _scorePanelNum.text = ScoreLabel(Mathf.RoundToInt(_scoreShown));
                 _scorePanelNum.rectTransform.localScale = Vector3.one;
             }
             _scoreCountUp = null;
@@ -254,6 +278,16 @@ namespace WordDrop
         /// rising "+1 MOVE", and a chime. 2026-10-20.</summary>
         /// <summary>True while any letter is still flying to the HUD (e.g. a gold letter about to grant a move).</summary>
         public bool LettersInFlight => _flyToTargetInFlight > 0;
+
+        /// <summary>World position of the MOVES number (bonus-blast rockets launch from here).</summary>
+        public Vector3 GetMovesWorldPos(float z)
+        {
+            var cam = Camera.main;
+            if (cam == null || _topOutNumText == null) return Vector3.zero;
+            Vector3 sp = _topOutNumText.rectTransform.position;
+            Vector3 w = cam.ScreenToWorldPoint(new Vector3(sp.x, sp.y, Mathf.Abs(cam.transform.position.z)));
+            w.z = z; return w;
+        }
 
         public void PlayMovesGained(int n)
         {
@@ -466,6 +500,9 @@ namespace WordDrop
         /// <summary>TEMP 2026-10-20: per-frame timing of the board entry slide, to tell a frame hitch from a too-fast
         /// tween. Strip (or set false) once diagnosed.</summary>
         public static bool ENTRY_PERF_LOG = true;
+        /// <summary>Bonus blast: show this many moves instead of the live count (which already belongs to the NEXT level
+        /// once the target is hit). -1 = off. Cleared by LevelRules.Apply when the next level installs.</summary>
+        public static int MovesDisplayOverride = -1;
         /// <summary>Board entry slide. MEASURED 2026-10-20 ([EntryPerf], steady 60fps — no hitch): at 0.28s / OutBack 1.6
         /// the board crossed 25% of 12 world units on its FIRST frame, finished in ~10 frames and overshot by 1.08 units
         /// (more than a cell) — read as "catching"/janky. 0.5s / 0.8 ≈ a cell per frame at peak, ~half-cell bump.</summary>
@@ -1310,7 +1347,7 @@ namespace WordDrop
                 if (pts < _scoreShown)          // reset / new run — no roll, just land
                 {
                     _scoreShown = pts;
-                    _scorePanelNum.text = ScoreLabel(pts);
+                    if (!_rewardMode) _scorePanelNum.text = ScoreLabel(pts);
                     _scorePanelNum.rectTransform.localScale = Vector3.one;
                 }
                 else if (_scoreCountUp == null)
@@ -2085,7 +2122,8 @@ namespace WordDrop
             yield return WaitCache.Get(index * 0.02f); // slight gather stagger
 
             // ── Phase 2: GATHER — curved arc UP to the reward counter, accelerating in ──
-            Vector2 targetScreen = GetObjectiveIconScreenPos();
+            Vector2 targetScreen = (_rewardMode && _rewardCoinIcon != null && _rewardCoinIcon.gameObject.activeInHierarchy)
+                ? (Vector2)_rewardCoinIcon.rectTransform.position : GetObjectiveIconScreenPos();   // bonus coins land ON the coin icon
             float camDist = Mathf.Abs(cam.transform.position.z);
             Vector3 from = go != null ? go.transform.position : worldStart;
             Vector3 targetWorld = cam.ScreenToWorldPoint(new Vector3(targetScreen.x, targetScreen.y, camDist));
@@ -2151,8 +2189,119 @@ namespace WordDrop
             OnRewardCoinLanded(share);
         }
 
+        // ── BONUS-BLAST REWARD MODE (2026-10-21 Spencer: coins burst out of exploding letters and collect in the score
+        // panel, which switches to "REWARD" and counts the level's coins). Reuses the vault reward-coin flight. ──────────
+        private bool _rewardMode;
+        private int  _rewardShown;
+        private Image _rewardCoinIcon;
+        /// <summary>Coin icon on the left of the panel in REWARD mode, number shifted right. 2026-10-21 Spencer: "could you have
+        /// the coin icon though in the reward part of the hud?" Restored to the full-width SCORE layout on exit.</summary>
+        private void SetRewardLayout(bool reward)
+        {
+            if (_scorePanelNum == null) return;
+            var nrt = _scorePanelNum.rectTransform;
+            if (reward && _rewardCoinIcon == null)
+            {
+                var go = new GameObject("RewardCoinIcon", typeof(RectTransform), typeof(Image));
+                go.transform.SetParent(nrt.parent, false);
+                var rt = (RectTransform)go.transform;
+                rt.anchorMin = new Vector2(0.04f, 0.08f); rt.anchorMax = new Vector2(0.30f, 0.92f);
+                rt.offsetMin = rt.offsetMax = Vector2.zero;
+                _rewardCoinIcon = go.GetComponent<Image>();
+                _rewardCoinIcon.sprite = GetCoinSprite();
+                _rewardCoinIcon.preserveAspect = true;
+                _rewardCoinIcon.raycastTarget = false;
+                var mat = UIConfig.CoinIconMaterial;
+                if (mat != null && _rewardCoinIcon.sprite != null) _rewardCoinIcon.material = mat;
+            }
+            if (_rewardCoinIcon != null) _rewardCoinIcon.gameObject.SetActive(reward);
+            nrt.anchorMin = new Vector2(reward ? 0.30f : 0f, 0f);
+            nrt.anchorMax = Vector2.one;
+            nrt.offsetMin = nrt.offsetMax = Vector2.zero;
+        }
+
+        public void EnterRewardMode(int startCoins)
+        {
+            if (_scoreCountUp != null) { StopCoroutine(_scoreCountUp); _scoreCountUp = null; }
+            SetRewardLayout(true);
+            _rewardMode = true;
+            _rewardShown = Mathf.Max(0, startCoins);
+            if (_objectivePanelLabel != null) _objectivePanelLabel.text = "REWARD";
+            if (_scorePanelNum != null) { _scorePanelNum.text = _rewardShown.ToString("N0"); AnimateScorePop(_scorePanelNum.rectTransform); }
+        }
+        public void ExitRewardMode()
+        {
+            if (!_rewardMode) return;
+            _rewardMode = false;
+            SetRewardLayout(false);
+        }
+        /// <summary>Snap the REWARD readout to the true total (coins in flight may round differently).</summary>
+        public void SetRewardTotal(int total)
+        {
+            if (!_rewardMode) return;
+            _rewardShown = total;
+            if (_scorePanelNum != null) _scorePanelNum.text = _rewardShown.ToString("N0");
+        }
+        /// <summary>Coins burst out of tiles a bonus special destroyed and fly into the REWARD panel. The cells arrive in
+        /// sweep order (nearest the special first) and launch staggered, so they STREAM like the rocket's path instead
+        /// of all leaving on one frame. Visual coins are capped (BONUS_COIN_VISUAL_CAP); their shares still add up to
+        /// <paramref name="totalValue"/>.</summary>
+        public void SpawnBonusCoins(List<Vector3> worldStarts, int totalValue)
+        {
+            if (!_rewardMode || worldStarts == null || worldStarts.Count == 0 || totalValue <= 0) return;
+            if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { _rewardShown += totalValue; SetRewardTotal(_rewardShown); return; }
+            int n = Mathf.Min(worldStarts.Count, BONUS_COIN_VISUAL_CAP);
+            int per = totalValue / n, rem = totalValue - per * n;
+            var map = LevelMapPanel.Instance;
+            var hudCanvas = (_rewardCoinIcon != null && _rewardCoinIcon.canvas != null) ? _rewardCoinIcon.canvas.rootCanvas : null;
+            for (int i = 0; i < n; i++)
+            {
+                int src = (int)((float)i / n * worldStarts.Count);
+                int share = per + (i == n - 1 ? rem : 0);
+                if (map != null && hudCanvas != null && hudCanvas.renderMode == RenderMode.ScreenSpaceOverlay)
+                {
+                    // The HOME-SCREEN coin flight (2026-10-21 Spencer), on the HUD canvas, into the REWARD coin icon.
+                    Vector3 screen = Camera.main.WorldToScreenPoint(worldStarts[src]);
+                    var hudRoot = hudCanvas.transform;
+                    StartCoroutine(map.CoinFlyRoutine(hudRoot, screen, _rewardCoinIcon.rectTransform, share, i,
+                        (s, p) => { OnRewardCoinLanded(s); map.SpawnCoinHitFXOn(hudRoot, _rewardCoinIcon != null ? _rewardCoinIcon.rectTransform.position : p); }));
+                }
+                else StartCoroutine(DelayedRewardCoin(worldStarts[src], share, i, i * 0.035f));   // fallback: the old world-space coin
+            }
+        }
+        public static int BONUS_COIN_VISUAL_CAP = 14;
+        private System.Collections.IEnumerator DelayedRewardCoin(Vector3 at, int share, int index, float delay)
+        {
+            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+            yield return RewardCoinCoroutine(at, share, index);
+        }
+
         private void OnRewardCoinLanded(int share)
         {
+            if (_rewardMode)
+            {
+                _rewardShown += share;
+                if (_scorePanelNum != null)
+                {
+                    _scorePanelNum.text = _rewardShown.ToString("N0");
+                    _scorePanelNum.color = new Color(1f, 0.85f, 0.3f);
+                    _scorePanelNum.DOKill();
+                    _scorePanelNum.DOColor(new Color(0.16f, 0.16f, 0.28f, 1f), 0.35f).SetUpdate(true);
+                    _scorePanelNum.rectTransform.DOKill();
+                    _scorePanelNum.rectTransform.localScale = Vector3.one * 1.22f;
+                    _scorePanelNum.rectTransform.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2f).SetUpdate(true);
+                }
+                if (_rewardCoinIcon != null)
+                {
+                    var irt = _rewardCoinIcon.rectTransform;
+                    irt.DOKill(); irt.localScale = Vector3.one * 1.25f;
+                    irt.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+                    SpawnSlotSparkleBurst(irt, Vector2.zero);
+                }
+                else if (_objectiveIconHolder != null && _objectiveIconHolder.transform is RectTransform rrt) SpawnSlotSparkleBurst(rrt, Vector2.zero);
+                GameAudio.Instance?.PlayCoinLand();
+                return;
+            }
             var vault = ObjectiveManager.Instance?.Active as VaultObjective;
             int cap = vault != null ? vault.RewardCoins : int.MaxValue;
             _displayedReward = Mathf.Min(_displayedReward + share, cap);
@@ -2647,7 +2796,7 @@ namespace WordDrop
         public void SnapScoreToTarget()
         {
             _scoreShown = _scoreTarget;
-            if (_scorePanelNum != null) _scorePanelNum.text = ScoreLabel(Mathf.RoundToInt(_scoreShown));
+            if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(Mathf.RoundToInt(_scoreShown));
         }
 
         public void SetScore(int score)
@@ -2823,7 +2972,7 @@ namespace WordDrop
             if (_riseCountdownOwnsLabel) return;
             if (_topOutNumText == null) return;
 
-            bool survival = SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null;
+            bool survival = SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null;   // NOT gated on full board — this also draws MOVES LEFT (2026-10-21 regression)
             if (!survival)
             {
                 if (_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(false);
@@ -2857,6 +3006,24 @@ namespace WordDrop
                 if (_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(false);
                 ResetTopOutNumTransform();
                 _topOutDisplay = int.MaxValue; _topOutLastStrict = -1; // re-seed on resume
+                HideTopOutBubble();
+                return;
+            }
+
+            // BONUS BLAST countdown wins over everything below (2026-10-21 Spencer: "shouldnt the move counter count down as
+            // each rocket is placed?"). It only showed via the stage-budget branch, which the clear can leave unset — then
+            // the box fell through to another number. Explicit, unconditional, first.
+            if (MovesDisplayOverride >= 0)
+            {
+                if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
+                if (MovesDisplayOverride != _topOutLastShown)
+                {
+                    bool down = MovesDisplayOverride < _topOutLastShown;
+                    _topOutLastShown = MovesDisplayOverride;
+                    _topOutNumText.text = MovesDisplayOverride.ToString();
+                    if (down) AnimateScorePop(_topOutNumText.rectTransform);   // a visible tick as each rocket leaves
+                }
+                if (_movesPanelLabel != null && _movesPanelLabel.text != "MOVES") _movesPanelLabel.text = "MOVES";
                 HideTopOutBubble();
                 return;
             }
@@ -2899,7 +3066,8 @@ namespace WordDrop
             // (ticks down per move) instead of the meaningless rise/top-out countdown. 2026-06-25 Spencer.
             if (sm.UsesStageMoveBudget)
             {
-                _topOutDisplay = Mathf.Min(_topOutDisplay, sm.CurrentStageMovesRemaining);
+                int remainingShown = MovesDisplayOverride >= 0 ? MovesDisplayOverride : sm.CurrentStageMovesRemaining;
+                _topOutDisplay = Mathf.Min(_topOutDisplay, remainingShown);
                 int left = _topOutDisplay;
                 if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
                 if (left != _topOutLastShown) { _topOutLastShown = left; _topOutNumText.text = left.ToString(); }
@@ -3335,7 +3503,8 @@ namespace WordDrop
                 // Vault (reward) levels retitle the panel "REWARD"; everything else stays "TARGET".
                 if (_objectivePanelLabel != null)
                 {
-                    string want = ScoreHudMode ? "SCORE"
+                    string want = _rewardMode ? "REWARD"
+                                : ScoreHudMode ? (LevelRules.CrateGoal > 0 && SurvivalManager.FullBoardActive ? "CRATES" : "SCORE")
                                 : obj.Icon == Objective.HudIcon.Vault ? "REWARD" : "TARGET";
                     if (_objectivePanelLabel.text != want) _objectivePanelLabel.text = want;
                 }
@@ -3846,7 +4015,8 @@ namespace WordDrop
                 EnsureRiseSubText();
                 if (_riseSubText != null)
                 {
-                    string sub = untilRise >= 0 ? (untilRise <= 1 ? "rise next move" : $"rise in {untilRise}") : "";
+                    string verb = SurvivalManager.RAIN_MODE ? "rain" : "rise";   // regular rises are rows unless RAIN_MODE
+                    string sub = MovesDisplayOverride >= 0 ? "" : untilRise >= 0 ? (untilRise <= 1 ? $"{verb} next move" : $"{verb} in {untilRise}") : "";   // no "rise in" during the bonus
                     if (_riseSubText.text != sub) _riseSubText.text = sub;
                     _riseSubText.color = untilRise >= 0 && untilRise <= 1 ? new Color(1f, 0.55f, 0.45f) : new Color(1f, 1f, 1f, 0.85f);
                 }

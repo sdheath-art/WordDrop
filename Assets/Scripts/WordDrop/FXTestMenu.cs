@@ -290,6 +290,36 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            // ── SPECIAL TILE TESTS (2026-10-21 Spencer: "give me an opportunity to test each of the animations") ──
+            // Each puts that special on a tile near the middle of the board, shows it for a beat, then fires it through
+            // the REAL pipeline (rules clear + FX + gravity + cascades) — what you see is what play produces.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Rocket ↔ (row)", _btnStyle))   StartCoroutine(TestSpecial(RulesEngine.SPECIAL_ROCKET_H));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Rocket ↕ (column)", _btnStyle)) StartCoroutine(TestSpecial(RulesEngine.SPECIAL_ROCKET_V));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Bomb (3x3)", _btnStyle))           StartCoroutine(TestSpecial(RulesEngine.SPECIAL_BOMB));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Disco (same letter)", _btnStyle))  StartCoroutine(TestSpecial(RulesEngine.SPECIAL_DISCO));
+            innerY += BTN_H + GAP;
+
+            // ── BOARD MODE (2026-10-21 Spencer: "as long as we can easily go back to the whole row rise game") ──
+            // Remembered between sessions. Restarts the current level with the matching board.
+            string modeLabel = SurvivalManager.FullBoardEnabled ? "BOARD: FULL (Candy Crush) — tap for RISING ROWS" : "BOARD: RISING ROWS — tap for FULL";
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), modeLabel, _btnStyle)) SurvivalManager.Instance?.ToggleFullBoardAndRestart();
+            innerY += BTN_H + GAP;
+
+            // ── TILE SIZE (2026-10-21 Spencer: "more padding in between letters") — cycles 100/92/88/84% of the cell ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"TILE SIZE: {Tile.TILE_DISPLAY_RATIO:P0} of cell — tap to cycle", _btnStyle))
+            {
+                var steps = Tile.TILE_RATIO_STEPS; int i = 0;
+                for (int k = 0; k < steps.Length; k++) if (Mathf.Abs(steps[k] - Tile.TILE_DISPLAY_RATIO) < 0.005f) i = k;
+                Tile.TILE_DISPLAY_RATIO = steps[(i + 1) % steps.Length];
+                var g = GridManager.Instance;
+                if (g != null) for (int c = 0; c < RulesEngine.COLS; c++) for (int r = 0; r < RulesEngine.ROWS; r++) g.GetTile(c, r)?.RefitRestScale();
+                WDLog.Log($"[TileSize] ratio -> {Tile.TILE_DISPLAY_RATIO:F2}");
+            }
+            innerY += BTN_H + GAP;
+
             // ── SCORED FLASH VARIANTS (2026-09-10 Spencer) ─────────────────────────────
             // Five CALLERS all funnel into the same PlayWordScored, so buttons per caller
             // would look identical. What actually differs is the STATE of the word when it
@@ -1518,6 +1548,33 @@ namespace WordDrop
             _headerStyle = new GUIStyle(GUI.skin.label)  { fontSize = 18, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.7f, 0.9f, 1f) } };
             _tfStyle     = new GUIStyle(GUI.skin.textField) { fontSize = 20, alignment = TextAnchor.MiddleCenter };
         }
-    }
+    
+        private System.Collections.IEnumerator TestSpecial(int kind)
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || grid == null || HandManager.Instance == null) yield break;
+            // A tile near the middle: centre column, lowest few rows outward, skipping ice / armed / special tiles.
+            Vector2Int pick = new Vector2Int(-1, -1);
+            int mid = RulesEngine.COLS / 2;
+            for (int r = 1; r < RulesEngine.ROWS && pick.x < 0; r++)
+                for (int d = 0; d <= mid && pick.x < 0; d++)
+                    foreach (int c in new[] { mid - d, mid + d })
+                    {
+                        if (c < 0 || c >= RulesEngine.COLS || pick.x >= 0) continue;
+                        var cd = rules.GetCell(c, r);
+                        if (cd != null && !cd.IsFrozen && cd.SpecialKind == RulesEngine.SPECIAL_NONE
+                            && rules.PrimedRegistry.GetPrimedWordsContaining(new Vector2Int(c, r)).Count == 0)
+                            pick = new Vector2Int(c, r);
+                    }
+            if (pick.x < 0) { WDLog.Log("[Special] TEST: no free tile to place a special on"); yield break; }
+            // Record it automatically — a 2.4s burst covering the sticker pop AND the fire, so nobody has to time F9.
+            CaptureRig.Capture("special_" + RulesEngine.SpecialName(kind).ToLowerInvariant());
+            rules.GetCell(pick.x, pick.y).SpecialKind = kind;
+            grid.GetTile(pick.x, pick.y)?.SetSpecial(kind, pop: true);
+            WDLog.Log($"[Special] TEST placed {RulesEngine.SpecialName(kind)} at ({pick.x},{pick.y})");
+            yield return new WaitForSeconds(0.8f);   // see the sticker before it goes
+            if (!HandManager.Instance.FireSpecialAt(pick)) WDLog.Log("[Special] TEST fire refused (board busy?) — the special stays on the tile");
+        }
+}
 }
 #endif

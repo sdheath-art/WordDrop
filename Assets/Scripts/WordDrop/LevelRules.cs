@@ -39,32 +39,39 @@ namespace WordDrop
         public bool   GoldTiles;      // 2x score cells
         public int    FillRows;       // rows of letters on the FRESH board each level starts with
         public float  Density;        // how packed those rows are (0..1)
-
+        public int    Crates;         // FULL BOARD only: crates placed at start; when > 0 the GOAL is "break every crate" (2026-10-21)
+        /// <summary>Crates placed on the current level (0 = score goal). Set by Apply; full-board mode only.</summary>
+        public static int CrateGoal;
+        public static float FULL_CRATE_MULT = 2f;   // 2026-10-21: 10 crates fell in 3 moves — double them (first guess, retune)
+        /// <summary>The internal stage CrateGoal belongs to. The clear check runs again on the NEXT stage before that stage
+        /// installs — without this it saw "crate goal, 0 crates left" and cleared stage after stage (2026-10-21: L2 -> L34).</summary>
+        public static int CrateGoalStage = -1;
+        public static bool CrateGoalFor(int stage) => CrateGoal > 0 && CrateGoalStage == stage && SurvivalManager.FullBoardActive;
         private static LevelRules Make(string name, int ice = 0, int minLen = 3, int cadence = 2,
                                        bool branch = false, bool fuse = false, bool gold = false,
-                                       int fillRows = 5, float density = 0.92f)
+                                       int fillRows = 5, float density = 0.92f, int crates = 0)
             => new LevelRules {
                 Name = name, IceCount = ice, MinWordLength = minLen, RiseCadence = cadence,
                 BranchPriming = branch, FuseOn = fuse, GoldTiles = gold,
-                FillRows = fillRows, Density = density };
+                FillRows = fillRows, Density = density, Crates = crates };
 
         /// <summary>The authored opening. One named twist per stage — that is what makes a level
         /// feel designed instead of a number going up. Keep each stage to ONE new idea.</summary>
         private static readonly LevelRules[] TABLE = {
-            /* 1  */ Make("Welcome",      cadence:3, fillRows:4, density:0.90f),
-            /* 2  */ Make("Warm Up",      fillRows:4, density:0.92f),
+            /* 1  */ Make("Welcome",      cadence:3, fillRows:4, density:0.90f, crates:6),   // 2026-10-21 Spencer: "start off with the crate level" (x2 on the full board = 12)
+            /* 2  */ Make("Warm Up",      fillRows:4, density:0.92f, crates:10),
             /* 3  */ Make("Ice Breaker",  ice:8),
             /* 4  */ Make("4+ Letters Only",  minLen:4),
-            /* 5  */ Make("Treasure",     gold:true, cadence:3, fillRows:6, density:0.95f),
-            /* 6  */ Make("Quickening",   cadence:2),
+            /* 5  */ Make("Treasure",     gold:true, cadence:3, fillRows:6, density:0.95f, crates:12),
+            /* 6  */ Make("Quickening",   cadence:2, crates:14),
             /* 7  */ Make("Branching — Connect to the Web",    branch:true, cadence:3),
             /* 8  */ Make("Deep Freeze — 4+ Letters",  ice:12, minLen:4),
-            /* 9  */ Make("Thin Ice",     ice:6, cadence:2),
+            /* 9  */ Make("Thin Ice",     ice:6, cadence:2, crates:8),
             /* 10 */ Make("Tangle — Connect to the Web", branch:true, cadence:1, fillRows:7, density:0.96f), // BOSS
-            /* 11 */ Make("Payday",       gold:true, ice:4, cadence:3),     // relief
+            /* 11 */ Make("Payday",       gold:true, ice:4, cadence:3, crates:12),     // relief
             /* 12 */ Make("Burning Fuse — Words Expire", fuse:true),
             /* 13 */ Make("Hard Water",   ice:10, fuse:true),
-            /* 14 */ Make("Scarcity — 4+ Letters",     minLen:4, cadence:2),
+            /* 14 */ Make("Scarcity — 4+ Letters",     minLen:4, cadence:2, crates:16),
             /* 15 */ Make("Crucible — 4+ Letters",     minLen:4, fuse:true, cadence:1),  // BOSS
         };
 
@@ -79,6 +86,18 @@ namespace WordDrop
         /// that pace clear L1 with ~4-5 spare; +1 every 3 levels while targets grow x1.15, so the points-per-move
         /// demand climbs ~12%/level (L1 50, L3 67, L5 84, L8 123). TUNE FROM tools/balance_report.py.</summary>
         public static int MovesFor(int stage) => 24 + (Mathf.Max(1, stage) - 1) / 3;
+
+        /// <summary>Royal-Match-style base coins for clearing a level (2026-10-21): 10 normal, 20 hard, 30 boss.
+        /// Boss = every 5th level from 10 (the table's BOSS rows and the procedural slot-4 boss). Hard = a 4+ letter
+        /// minimum, heavy ice (8+), or a rise every move.</summary>
+        public static int BaseCoinsFor(int stage)
+        {
+            stage = Mathf.Max(1, stage);
+            if (stage >= 10 && stage % 5 == 0) return 30;
+            var r = For(stage);
+            if (r.MinWordLength >= 4 || r.IceCount >= 8 || r.RiseCadence <= 1) return 20;
+            return 10;
+        }
 
         // ── 4+ LETTER LEVELS (2026-10-20 tuning, Spencer "sure") ──────────────────────────────────────────
         // Measured: LEVEL 4 ("4+ Letters Only") 0/4 clears, every loss ~91%, 2-3 board-full penalties per try —
@@ -113,9 +132,9 @@ namespace WordDrop
             switch (slot)
             {
                 case 0: r = Make("Breather",  ice: 2 + block,      cadence: 3, gold: true);                  break;
-                case 1: r = Make("Climb",     ice: 4 + block,      cadence: 2);                              break;
+                case 1: r = Make("Climb",     ice: 4 + block,      cadence: 2, crates: 10 + block * 2);                              break;
                 case 2: r = Make("Pressure — 4+ Letters",  ice: 6 + block,      cadence: 2, minLen: 4);                   break;
-                case 3: r = Make("Squeeze — Words Expire",   ice: 8 + block,      cadence: 2, fuse: true);                  break;
+                case 3: r = Make("Squeeze — Words Expire",   ice: 8 + block,      cadence: 2, fuse: true, crates: 12 + block * 2);                  break;
                 default:r = Make("Boss — 4+ Letters, Connect",      ice: 10 + block * 2, cadence: 1, minLen: 4, branch: true);     break;
             }
             return r;
@@ -129,6 +148,8 @@ namespace WordDrop
         /// first install of a run since 2026-10-20 — gets a fresh LevelRules board; a repeated install of
         /// the same stage does not. (The first level used to keep OpeningSeed's sparse board; see Apply.)</summary>
         private static int s_lastStage  = -1;
+        /// <summary>Next Apply rebuilds the board even on the same stage (full-board / rising-row toggle).</summary>
+        public static void ForceFreshBoardOnNextApply() => s_lastStage = -1;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStatics() { s_icedStage = -1; s_lastStage = -1; }
@@ -191,6 +212,8 @@ namespace WordDrop
             if (r.MinWordLength > 3)
                 sb.Append($"\n\nOnly words of <b>{r.MinWordLength} letters or more</b> count here — " +
                           "shorter ones will not light up.");
+            if (r.Crates > 0 && SurvivalManager.FullBoardActive)
+                sb.Append($"\n\n<b>Break every crate!</b> Make words next to them — rockets and bombs smash them too.");
             if (r.IceCount > 0)
                 sb.Append($"\n\n<b>{r.IceCount} frozen tiles.</b> You cannot move them. Make a word " +
                           $"THROUGH one and blow it up to melt it — worth <b>{RulesEngine.ICE_BOUNTY}</b> each.");
@@ -269,6 +292,9 @@ namespace WordDrop
             // The next level is now genuinely starting — release the lock that has been
             // holding input and pinning the HUD since the previous level's target was met.
             SurvivalManager.ClearAwaitingNextLevel();
+            HUDManager.Instance?.ExitRewardMode();                // REWARD panel back to SCORE for the new level
+            HUDManager.Instance?.SnapScoreReadoutForNewLevel();   // 0 / new target before the HUD is seen (2026-10-21)
+            HUDManager.MovesDisplayOverride = -1;                 // bonus-blast moves display ends with the old level
             SurvivalManager.Instance?.ClearRiseQueueForNewLevel();
             if (MoveLimitMode && SurvivalManager.Instance != null)
             {
@@ -307,6 +333,32 @@ namespace WordDrop
             bool isTransition = s_lastStage != internalStage;
             if (isTransition && rules2 != null)
             {
+                CrateGoal = 0;
+                if (SurvivalManager.FullBoardActive)
+                {
+                    // FULL BOARD (2026-10-21): every cell filled, no word spelled by accident; then the usual plants,
+                    // then scrub anything the plants spelled with their neighbours.
+                    rules2.FillBoardNoWords();
+                    rules2.SnapshotForRain(out var before, out var _);
+                    rules2.PlantNearWordsOnBoard(RulesEngine.FULL_START_PLANTS, spreadRows: true);
+                    rules2.SnapshotForRain(out var after, out var _);
+                    var keep = new System.Collections.Generic.HashSet<Vector2Int>();
+                    for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++) if (before[x, y] != after[x, y]) keep.Add(new Vector2Int(x, y));
+                    int shortWords = rules2.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
+                    int crates = r.Crates > 0 ? rules2.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
+                    int tnt = rules2.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
+                    CrateGoal = crates; CrateGoalStage = internalStage;
+                    int scrubbed = rules2.ScrubAccidentalWords(keep);
+                    WDLog.Log($"[FullBoard] start structure: {shortWords} short word(s), {crates} crate(s) (goal), {tnt} TNT");
+                    HUDManager.Instance?.SnapScoreReadoutForNewLevel();   // redraw now the crate goal exists (it read 0/6000 — snapped before the crates)
+                    MatchController.Instance?.ResetTurnCounter();
+                    GridManager.Instance?.RebuildFromRulesEngine(rules2);
+                    var gm = GridManager.Instance;   // the rebuild doesn't paint specials — put the TNT on now, not a sync later
+                    if (gm != null) for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++)
+                    { var d = rules2.GetCell(x, y); if (d != null && d.SpecialKind != RulesEngine.SPECIAL_NONE) gm.GetTile(x, y)?.SetSpecial(d.SpecialKind); }
+                    WDLog.Log($"[FullBoard] fresh FULL board for LEVEL {stage} — {keep.Count} planted cell(s), {scrubbed} accidental word cell(s) redrawn");
+                }
+                else {
                 rules2.SeedVaultBoard(r.FillRows, Mathf.Min(r.Density, FRESH_BOARD_DENSITY_CAP), 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
                 // SETTLE IT. SeedVaultBoard scatters at `density`, so at 0.65 a third of the
                 // cells are holes — including holes UNDER letters, which is the "massive gaps
@@ -319,6 +371,7 @@ namespace WordDrop
                 MatchController.Instance?.ResetTurnCounter();
                 GridManager.Instance?.RebuildFromRulesEngine(rules2);
                 WDLog.Log($"[LevelRules] fresh board for LEVEL {stage} — {r.FillRows} rows @ {Mathf.Min(r.Density, FRESH_BOARD_DENSITY_CAP):P0}");
+                }
             }
             s_lastStage = internalStage;
 
@@ -359,9 +412,9 @@ namespace WordDrop
     /// which persist per session under Application Support/.../WordDrop/analytics. Reset when a level installs.</summary>
     public static class StageStats
     {
-        public static int Len3, Len4, Len5, Len6Plus, PlantsMade, PlantsSolved, Overflows, GoldMoves;
+        public static int Len3, Len4, Len5, Len6Plus, PlantsMade, PlantsSolved, Overflows, GoldMoves, SpecialsMade, SpecialsFired, Showers, Rains, SmartSeeds;
         private static readonly System.Collections.Generic.HashSet<string> s_planted = new System.Collections.Generic.HashSet<string>();
-        public static void Reset() { Len3 = Len4 = Len5 = Len6Plus = PlantsMade = PlantsSolved = Overflows = GoldMoves = 0; s_planted.Clear(); }
+        public static void Reset() { Len3 = Len4 = Len5 = Len6Plus = PlantsMade = PlantsSolved = Overflows = GoldMoves = SpecialsMade = SpecialsFired = Showers = Rains = SmartSeeds = 0; s_planted.Clear(); }
         public static void RecordPlanted(string word) { if (string.IsNullOrEmpty(word)) return; PlantsMade++; s_planted.Add(word.ToUpperInvariant()); }
         public static void RecordOverflow() => Overflows++;
         public static void RecordPopped(string word)
@@ -374,6 +427,7 @@ namespace WordDrop
         /// <summary>Key/value pairs to append to an analytics event.</summary>
         public static object[] Fields() => new object[] {
             "words_3", Len3, "words_4", Len4, "words_5", Len5, "words_6p", Len6Plus,
-            "plants_made", PlantsMade, "plants_solved", PlantsSolved, "overflows", Overflows, "gold_moves", GoldMoves };
+            "plants_made", PlantsMade, "plants_solved", PlantsSolved, "overflows", Overflows, "gold_moves", GoldMoves,
+            "specials_made", SpecialsMade, "specials_fired", SpecialsFired, "showers", Showers, "rains", Rains, "smart_seeds", SmartSeeds };
     }
 }

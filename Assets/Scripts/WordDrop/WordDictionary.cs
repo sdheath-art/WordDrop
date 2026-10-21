@@ -78,6 +78,24 @@ namespace WordDrop
             return _wordSet.Contains(word.ToUpper().Trim());
         }
 
+        // ── INTENTIONAL WORDS (2026-10-21 Spencer: "isnt LOIN a word" / HONK) ─────────────────────────────────────────
+        // dict_core was cut at a word-frequency line (zipf 3.0) and real words just under it fell off (LOIN 2.75, HONK 2.95).
+        // Resources/dict_intentional.txt = dict_extended words at zipf >= 2.5 that are standard dictionary words (or their
+        // plurals/-ed/-ing), minus names and crude/offensive words (~3,150). They count ONLY when the player makes the word
+        // on purpose — a swipe, or a swap whose word runs through the swapped tile — never when falling letters spell them.
+        private static HashSet<string> _intentionalSet;
+        public static bool IsIntentionalWord(string word)
+        {
+            if (IsValidWord(word)) return true;
+            if (_intentionalSet == null)
+            {
+                _intentionalSet = new HashSet<string>();
+                var ta = Resources.Load<TextAsset>("dict_intentional");
+                if (ta != null) foreach (var raw in ta.text.Split('\n')) { var t = raw.Trim().ToUpper(); if (t.Length >= 3) _intentionalSet.Add(t); }
+            }
+            return _intentionalSet.Contains(word.ToUpper().Trim());
+        }
+
         /// <summary>
         /// Returns a summary string for debug/HUD display.
         /// </summary>
@@ -110,9 +128,16 @@ namespace WordDrop
             for (int i = 0; i < lines.Length; i++)
             {
                 string w = lines[i].Trim().ToUpper();
-                if (w.Length >= 3 && w.Length <= 7)
+                if (w.Length >= 3 && w.Length <= 9)   // was <= 7 — silently dropped every longer word (BIRTHDAY, SATURDAY...) 2026-10-21
                     _wordSet.Add(w);
             }
+
+            // LONG WORDS (2026-10-21 Spencer: "isnt creation a word"). The dictionaries were built at 7 letters max.
+            // Resources/dict_long.txt = common 8-9 letter words (word-frequency zipf >= 3.0, standard dictionary, no names,
+            // offensive words removed) — ~5,400. Count everywhere, like core.
+            var longTa = Resources.Load<TextAsset>("dict_long");
+            if (longTa != null)
+                foreach (var raw in longTa.text.Split('\n')) { var w = raw.Trim().ToUpper(); if (w.Length >= 8 && w.Length <= 9) _wordSet.Add(w); }
 
             _wordCount = _wordSet.Count;
 //             WDLog.Log($"[WordDictionary] Loaded {_currentTier} tier: {_wordCount:N0} words " +

@@ -456,7 +456,20 @@ namespace WordDrop
         private int _biggestWordScore = 0;          // biggest single word for run debrief
 
         /// <summary>Target chip count for stage n. Placeholder curve — tune per retune spec.</summary>
+        /// <summary>FULL BOARD target scale (2026-10-21 Spencer: "you just pass the levels so quickly. sometimes i only make
+        /// one more and its done"). Measured: the full board averages ~590 points a move (TNT / crossing bombs 2-4k) vs
+        /// ~50-60 on the rising-row board the targets were tuned for — levels fell in 1-3 moves. x5 puts LEVEL 1 at ~10
+        /// average moves of 24. FIRST GUESS — retune from moves-to-clear.</summary>
+        public static float FULL_TARGET_MULT = 5f;
+
         public static int ComputeStageTarget(int stage)
+        {
+            int raw = ComputeStageTargetRaw(stage);
+            if (!FullBoardActive) return raw;
+            return (int)System.Math.Round(raw * FULL_TARGET_MULT / 50.0) * 50;
+        }
+
+        private static int ComputeStageTargetRaw(int stage)
         {
             if (stage <= 1) return STAGE_TARGET_BASE;
             // Exponential growth: target(n) = base * growth^(n-1)
@@ -598,7 +611,7 @@ namespace WordDrop
         // ── Vault-level rules (read from the active objective). ──
         private Objective ActiveObjective => ObjectiveManager.Instance != null ? ObjectiveManager.Instance.Active : null;
         /// <summary>The active level runs rises OFF (e.g. a vault level).</summary>
-        public bool ActiveRisesOff { get { var o = ActiveObjective; return o != null && o.RisesOff; } }
+        public bool ActiveRisesOff { get { if (FullBoardActive) return true; var o = ActiveObjective; return o != null && o.RisesOff; } }
         /// <summary>The active level uses a move budget instead of the rise clock (vault/loot levels).</summary>
         public bool IsMoveCapLevel { get { var o = ActiveObjective; return o != null && o.UsesMoveCap; } }
         // Per-level vault move budget override set by the level sequencer (LevelTable). < 0 = use the
@@ -722,6 +735,14 @@ namespace WordDrop
         public const int COIN_SCALAR      = 5;   // larger = flatter curve
         public const int COIN_FLOOR       = 10;
         public const int COIN_CAP_PER_STAGE = 60;
+        /// <summary>Move-limit mode: coins per move left over when the level is cleared (on top of LevelRules.BaseCoinsFor).</summary>
+        public static int COINS_PER_LEFTOVER_MOVE = 3;
+        public static bool BONUS_BLAST_ENABLED  = true;
+        public static int  BONUS_MAX_ROCKETS    = 10;
+        public static int  COINS_PER_BONUS_TILE = 1;
+        /// <summary>Coins the bonus blast has paid for the level just cleared (already in the wallet); the Well Done
+        /// modal adds it to its coin chip and clears it.</summary>
+        public static int  PendingBonusCoins;
 
         /// <summary>Fires when the player hits a stage's chip target. Carries cleared stage snapshot.</summary>
         public System.Action<StageClearContext> OnStageCleared;
@@ -922,7 +943,12 @@ namespace WordDrop
                     // DIAGNOSTIC 2026-10-19: say WHY a clear was refused. "It freezes after I
                     // finish the level" has twice turned out to be the target quietly not being
                     // met, and a silent `return` gives nothing to go on.
-                    if (CurrentStageScore < CurrentStageTarget)
+                    // CRATE GOAL (full board, 2026-10-21): the level is won when every crate is broken — score doesn't gate it.
+                    if (LevelRules.CrateGoalFor(_currentStageIndex) && RulesEngine.Instance != null)
+                    {
+                        if (RulesEngine.Instance.CountCrateCells() > 0) return;
+                    }
+                    else if (CurrentStageScore < CurrentStageTarget)
                     {
                         if (Time.frameCount % 120 == 0)
                             WDLog.Log($"[StageGate] NOT cleared — stage {_currentStageIndex} " +
@@ -952,6 +978,25 @@ namespace WordDrop
 
                 int overshoot = Mathf.Max(0, clearedScore - clearedTarget);
                 int coinsEarned = Mathf.Clamp(COIN_BASE + (overshoot / COIN_SCALAR), COIN_FLOOR, COIN_CAP_PER_STAGE);
+                // ROYAL-MATCH COINS (2026-10-21 Spencer: "the amount of coins should probably tie into how many moves are
+                // left over"). Royal Match: base 10 / 20 / 30 by difficulty, leftover moves pay on top. Step 1 is a flat
+                // per-move bonus; step 2 (planned) turns leftover moves into rockets that pay per tile destroyed.
+                int movesLeftAtClear = Mathf.Max(0, clearedBudget - clearedMoves);
+                if (MoveLimitMode)
+                    coinsEarned = LevelRules.BaseCoinsFor(LevelMapPanel.RunLevel(clearedStage)) + movesLeftAtClear * COINS_PER_LEFTOVER_MOVE;
+                // STEP 2 — BONUS BLAST (2026-10-21 Spencer "ok lets try it"): leftover moves become rockets (max
+                // BONUS_MAX_ROCKETS) that fire with any unused specials; every tile destroyed pays a coin. Replaces the flat
+                // per-move coins: the base pays now, the blast adds its coins as they land (PendingBonusCoins -> modal).
+                if (MoveLimitMode && BONUS_BLAST_ENABLED && HandManager.Instance != null)
+                {
+                    coinsEarned = LevelRules.BaseCoinsFor(LevelMapPanel.RunLevel(clearedStage));
+                    PendingBonusCoins = 0;
+                    int rockets = Mathf.Min(BONUS_MAX_ROCKETS, movesLeftAtClear);
+                    HUDManager.MovesDisplayOverride = movesLeftAtClear;   // the counter shows what is left, not the next level
+                    HandManager.Instance.BeginBonusBlast(rockets, movesLeftAtClear, coinsEarned);
+                }
+                WDLog.Log($"[Coins] LEVEL {LevelMapPanel.DisplayNum(clearedStage)} cleared: {coinsEarned} coins " +
+                          $"(base {LevelRules.BaseCoinsFor(LevelMapPanel.RunLevel(clearedStage))} + {movesLeftAtClear} moves left x {COINS_PER_LEFTOVER_MOVE})");
                 CoinWallet.Add(coinsEarned);
                 // Hand the reward to the map so its coins FLY from the just-cleared node's star into the coins pill
                 // (Royal-Match cascade) when the map shows. 2026-07-14 Spencer.
@@ -1007,7 +1052,10 @@ namespace WordDrop
                         "move_limit", MoveLimitMode ? 1 : 0,
                         "words_3", StageStats.Len3, "words_4", StageStats.Len4, "words_5", StageStats.Len5,
                         "words_6p", StageStats.Len6Plus, "plants_made", StageStats.PlantsMade,
-                        "plants_solved", StageStats.PlantsSolved, "overflows", StageStats.Overflows);
+                        "plants_solved", StageStats.PlantsSolved, "overflows", StageStats.Overflows,
+                        "gold_moves", StageStats.GoldMoves, "specials_made", StageStats.SpecialsMade,
+                        "specials_fired", StageStats.SpecialsFired, "showers", StageStats.Showers,
+                        "rains", StageStats.Rains, "smart_seeds", StageStats.SmartSeeds, "moves_left", movesLeftAtClear);
                 }
                 catch (System.Exception ex) { Debug.LogError($"[Stage] Analytics log threw: {ex.Message}"); }
 
@@ -1105,8 +1153,10 @@ namespace WordDrop
             // Board replenish: if the clear-that-ended-the-stage also cleared
             // most of the board, queue enough rises to bring it up to a
             // playable minimum. Fires in Update() over subsequent frames.
+            // 2026-10-21: NOT in score runs — LevelRules.Apply gives every level a fresh 4-row board, so this counted the
+            // OLD board and fired a rise the moment the new level slid in (Spencer: "a row rise precedes any move").
             int rows = CountPopulatedRows();
-            _stageStartRisesPending = Mathf.Max(0, STAGE_START_MIN_ROWS - rows);
+            _stageStartRisesPending = ScoreRunMode ? 0 : Mathf.Max(0, STAGE_START_MIN_ROWS - rows);
         }
 
         /// <summary>DEBUG/TEST: jump straight to a stage and install its level (objective + board) so a
@@ -1258,8 +1308,8 @@ namespace WordDrop
                 int tilesRemaining = RulesEngine.Instance.CountOccupied();
                 int totalCells = RulesEngine.COLS * RulesEngine.ROWS; // 63
 
-                // BOARD CLEAR: 5 or fewer tiles left AND we just blew up 12+
-                if (tilesRemaining <= 5 && cellsCleared >= 12)
+                // BOARD CLEAR: 5 or fewer tiles left AND we just blew up 12+  (never during the bonus blast — it pays coins, not score)
+                if (tilesRemaining <= 5 && cellsCleared >= 12 && !HandManager.BonusBlastRunning)
                 {
                     int clearBonus = 50;
                     if (ScoreManager.Instance != null)
@@ -1659,11 +1709,13 @@ namespace WordDrop
             {
                 _autoDropTimer = 0f;
                 // Auto-drops disabled — rising rows are the only pressure mechanic
-                // StartCoroutine(ExecuteAutoDrop());
+                // (ExecuteAutoDrop removed 2026-10-20 as dead code — restore from tag pre-cleanup-2026-10-20)
             }
 
             // Won level: nothing below should queue or fire rises on the board being left behind. 2026-10-20.
             if (AwaitingNextLevel) return;
+
+            if (FullBoardActive) UpdateFullBoardRefill();   // full-board mode: refill from the top; rises are off (ActiveRisesOff)
 
             // Stage-start replenish: if AdvanceToNextStage found a sparse board,
             // fire extra rising rows to bring it up to the minimum. Consume
@@ -1694,6 +1746,7 @@ namespace WordDrop
                 {
                     _stageStartRisesPending--;
                     NotifyRiseFired();
+                    _nextRiseIsRefill = true;   // board-empty / level-start top-up -> rain, not a row (2026-10-21)
                     StartCoroutine(ExecuteRisingRow());
                     // Last refill row — clean up any sub-pixel residue the stacked
                     // overshooting rises left behind, or it shows as dark seams.
@@ -1926,233 +1979,6 @@ namespace WordDrop
         }
 
         // ══════════════════════════════════════════════════════════════════════════
-        // AUTO-DROP
-        // ══════════════════════════════════════════════════════════════════════════
-
-        private IEnumerator ExecuteAutoDrop()
-        {
-            _isAutoDropping = true;
-
-            // If player is mid-drop, defer — timer will re-trigger next frame
-            if (MatchController.Instance != null && MatchController.Instance.IsProcessing)
-            {
-                _isAutoDropping = false;
-                yield break;
-            }
-
-            RulesEngine rules = RulesEngine.Instance;
-            GridManager grid  = GridManager.Instance;
-            MatchController mc = MatchController.Instance;
-
-            if (rules == null || grid == null || mc == null)
-            {
-                _isAutoDropping = false;
-                yield break;
-            }
-
-            // Pick column with mercy bias — weight by empty rows
-            int col = PickMercyColumn(rules);
-            if (col < 0)
-            {
-                // Board is full — skip this resource drop
-                _isAutoDropping = false;
-                yield break;
-            }
-
-            // Draw letter from bag
-            TileBag bag = mc.Bag;
-            if (bag == null) { _isAutoDropping = false; yield break; }
-            char letter = bag.DrawLetter();
-
-            // Begin drop in rules engine
-            int playerIdx = -1; // neutral / system drop
-            int targetRow = rules.GetLowestEmptyRow(col);
-            if (targetRow < 0)
-            {
-                _isAutoDropping = false;
-                yield break;
-            }
-
-            // Decide what to drop BEFORE placing on board
-            int editsLeft = mc.GetRewritesRemaining(MatchController.PLAYER_HUMAN);
-            int swapsLeft = mc.GetSwapsRemaining(MatchController.PLAYER_HUMAN);
-            bool needsHelp = editsLeft <= 0 || swapsLeft <= 0;
-
-            bool isGold = false;
-            bool isCyan = false;
-            bool isSwapRefill = false;
-            bool isEditRefill = false;
-            bool isWildRefill = false;
-
-            // Drought rebate: if player scored a word while at 0 edits, force this
-            // auto-drop to be an edit refill (skip-chance bypassed). Single-use.
-            if (_pendingEditDroughtRebate)
-            {
-                _pendingEditDroughtRebate = false;
-                isEditRefill = true;
-            }
-            else if (!needsHelp)
-            {
-                // Player is fine — skip most drops, only 20% chance of gold/wild
-                if (Random.value > 0.20f)
-                {
-                    _isAutoDropping = false;
-                    yield break; // no drop — nothing placed on board
-                }
-                // Rare drop: wild or gold (gold gated by the 2x kill-switch; if off, drops a plain letter)
-                if (Random.value < WILD_DROP_CHANCE)
-                    isWildRefill = true;
-                else if (RulesEngine.GoldTilesEnabled)
-                    isGold = true;
-            }
-            else if (editsLeft <= 0 && swapsLeft <= 0)
-            {
-                if (Random.value < 0.5f) isEditRefill = true;
-                else isSwapRefill = true;
-            }
-            else if (editsLeft <= 0)
-            {
-                isEditRefill = true;
-            }
-            else
-            {
-                isSwapRefill = true;
-            }
-
-            // Now place the tile on the board
-            rules.SetCell(col, targetRow, new RulesCellData
-            {
-                Letter = letter,
-                Col = col,
-                Row = targetRow,
-                PlayerIndex = -1, // neutral / system drop
-            });
-            _totalAutoDrops++;
-
-            // Phase 5 defense-in-depth: this auto-drop path is Survival-only, but if
-            // anything ever triggers it in Level mode, honor allowedMechanics.
-            if (isGold && !LevelController.IsMechanicAllowed("gold")) isGold = false;
-            if (isWildRefill && !LevelController.IsMechanicAllowed("wild")) isWildRefill = false;
-
-            if (isGold)
-                rules.SetBonusCell(col, targetRow, true);
-
-            // Mark refill on the cell data (collected when detonated)
-            var cellData = rules.GetCell(col, targetRow);
-            if (cellData != null)
-            {
-                if (isSwapRefill) cellData.IsSwapRefill = true;
-                if (isEditRefill) cellData.IsEditRefill = true;
-                if (isWildRefill) cellData.IsWildRefill = true;
-            }
-
-            // Visual: create tile and animate drop
-            Tile droppedTile = grid.CreateSingleTile(col, targetRow, letter);
-            if (droppedTile != null)
-            {
-                if (isGold) droppedTile.SetGoldBonus(true);
-                if (isSwapRefill) droppedTile.SetSwapRefillVisual(true);
-                if (isEditRefill) droppedTile.SetEditRefillVisual(true);
-                if (isWildRefill) droppedTile.SetWildRefillVisual(true);
-
-                Vector3 targetPos = droppedTile.transform.position;
-                float spawnY = grid.GridTop + grid.CellSize * 1.5f;
-                droppedTile.transform.position = new Vector3(targetPos.x, spawnY, targetPos.z);
-
-                float elapsed = 0f;
-                float duration = (spawnY - targetPos.y) / 38f;
-                while (elapsed < duration && droppedTile != null)
-                {
-                    elapsed += Time.deltaTime;
-                    float t = Mathf.Clamp01(elapsed / duration);
-                    droppedTile.transform.position = new Vector3(
-                        targetPos.x, Mathf.Lerp(spawnY, targetPos.y, t * t), targetPos.z);
-                    yield return null;
-                }
-                if (droppedTile != null)
-                {
-                    droppedTile.transform.position = targetPos;
-                    droppedTile.PlayLandingSquish();
-                    // 2026-06-01: PlayTileDrop removed — squish coroutine
-                    // already fires it via Tile.PlayLandSound. Mirrors the
-                    // HandManager:4074 fix for the same double-fire pattern.
-                }
-            }
-
-            // Scan for new words — skip if player started a drop during animation
-            if (mc.IsProcessing) { _isAutoDropping = false; yield break; }
-            var newWords = rules.DetectAndPrimeAtCell(col, targetRow);
-            if (newWords != null && newWords.Count > 0)
-            {
-	                foreach (var word in newWords)
-	                {
-	                    if (word.Cells == null) continue;
-	                    int fuse = rules.GetFuseLengthPublic(word.Word.Length);
-	                    foreach (var cell in word.Cells)
-	                    {
-	                        Tile tile = grid.GetTile(cell.x, cell.y);
-	                        if (tile != null)
-	                        {
-	                            tile.SetPrimedGlow(RulesEngine.PrimedGlowForCell(new Vector2Int(tile.Col, tile.Row)), playFlash: true, fuseRemaining: fuse);
-	                            GameParticles.Instance?.PlayPrimed(tile.transform.position);
-	                        }
-                    }
-                }
-                GameAudio.Instance?.PlayTilePrimed();
-            }
-
-            string bonusTag = isGold ? " [GOLD]" : isWildRefill ? " [WILD]" : isSwapRefill ? " [SWAP]" : isEditRefill ? " [EDIT]" : "";
-//             WDLog.Log($"[SurvivalManager] Auto-drop #{_totalAutoDrops}: '{letter}' → col={col} row={targetRow}{bonusTag}");
-
-            // Top-out check
-            if (ShouldTopOut(rules))
-            {
-                TriggerTopOut();
-                _isAutoDropping = false;
-                yield break;
-            }
-
-            _isAutoDropping = false;
-        }
-
-        /// <summary>
-        /// Picks a column with mercy bias — columns with more empty rows are weighted higher.
-        /// This prevents auto-drops from piling into nearly-full columns.
-        /// </summary>
-        private int PickMercyColumn(RulesEngine rules)
-        {
-            float totalWeight = 0f;
-            float[] weights = new float[RulesEngine.COLS];
-
-            for (int c = 0; c < RulesEngine.COLS; c++)
-            {
-                int emptyCount = 0;
-                for (int r = 0; r < RulesEngine.ROWS; r++)
-                {
-                    if (rules.GetCell(c, r) == null) emptyCount++;
-                }
-                if (emptyCount <= 0) continue; // skip full columns
-
-                // Mercy bias: weight = emptyCount^1.5 (strongly favors emptier columns)
-                weights[c] = Mathf.Pow(emptyCount, 1.5f);
-                totalWeight += weights[c];
-            }
-
-            if (totalWeight <= 0f) return -1; // all columns full
-
-            float roll = Random.value * totalWeight;
-            float cumulative = 0f;
-            for (int c = 0; c < RulesEngine.COLS; c++)
-            {
-                cumulative += weights[c];
-                if (roll <= cumulative) return c;
-            }
-
-            // Fallback (shouldn't reach here)
-            return -1;
-        }
-
-        // ══════════════════════════════════════════════════════════════════════════
         // RISING ROW
         // ══════════════════════════════════════════════════════════════════════════
 
@@ -2177,6 +2003,248 @@ namespace WordDrop
             yield return StartCoroutine(ExecuteRisingRow());
         }
 
+        // ── LETTER RAIN (2026-10-21 Spencer: "instead of a row rise ... a rain of letters ... could help us potentially seed
+        // possibilities better"). Replaces the rising row when RAIN_MODE is on: RAIN_COUNT letters fall onto the tops of
+        // columns (biased to the LOW ones) with the old drop animation. If a run of 4+ columns share a landing height, a
+        // planted near-word falls across them as a row. Every column full = the board-full penalty. Off = rising rows.
+        // 2026-10-21 Spencer: "i like row rising better. we could sprinkle in the rain" -> rows = the PRESSURE, rain = a GIFT.
+        // RAIN_MODE (every rise rains) is OFF; RAIN_FOR_REFILL OFF 2026-10-21 (Spencer: rows are the normal refill). Rain is ONLY a
+        // SHOWER reward after a big play (5+ letter word or a special firing), at most one per move.
+        public static bool RAIN_MODE   = false;
+        public static bool RAIN_FOR_REFILL = false;
+        public static bool RAIN_SHOWERS    = true;
+        public static int  SHOWER_COUNT    = 4;
+        private bool _nextRiseIsRefill;
+        private bool _showerRunning;
+
+        /// <summary>Queue a reward shower (called when a big play's whole chain has finished).</summary>
+        public void QueueShower()
+        {
+            if (!RAIN_SHOWERS || _showerRunning || AwaitingNextLevel || _isGameOver || HandManager.BonusBlastRunning) return;
+            // Full board: there is no room to rain into, so the reward rides on the NEXT refill as gold letters.
+            if (FullBoardActive) { RulesEngine.RefillGoldPending = SHOWER_GOLD; WDLog.Log("[FullBoard] big play -> next refill brings gold"); return; }
+            StartCoroutine(ShowerRoutine());
+        }
+        private IEnumerator ShowerRoutine()
+        {
+            _showerRunning = true;
+            float w = 0f;
+            while (w < 4f && ((MatchController.Instance != null && MatchController.Instance.IsProcessing) || _isRisingRow || IsBoardAnimating()))
+            { w += Time.unscaledDeltaTime; yield return null; }
+            if (!AwaitingNextLevel && !_isGameOver)
+            {
+                _isRisingRow = true;   // input waits for the letters to land, like a rise
+                WDLog.Log("[Rain] SHOWER — reward for a big play");
+                StageStats.Showers++;
+                BonusPopup.Instance?.Show("LETTER SHOWER!", new Color(0.55f, 0.85f, 1f, 1f), Vector3.zero, 1.1f);
+                yield return StartCoroutine(RainLetters(SHOWER_COUNT, shower: true));
+                _isRisingRow = false;
+            }
+            _showerRunning = false;
+        }
+        public static int  RAIN_COUNT  = 6;
+        public static float RAIN_STAGGER = 0.06f;
+        public static int  RAIN_SMART   = 2;   // smart (one-swap-from-a-word) letters per rain
+
+        // ── FULL BOARD MODE (2026-10-21 Spencer: "just like candy crush and royal match where letters are always fully
+        // stacked, then as you make words it cascades from above to fill the open space"). Every level starts brim-full;
+        // after a chain settles, every column is topped up from above with letters that spell nothing on their own (plus
+        // a couple of "one swap from a word" smart letters). Rising rows, topping out and the empty-board refill are OFF
+        // (ActiveRisesOff). Flip FULL_BOARD_MODE off to get the rising-row game back exactly as it was.
+        public static bool FULL_BOARD_MODE = true;   // default the first time; after that the FX Test Menu toggle (PlayerPrefs) wins
+        private static int s_fullBoardPref = -1;
+        public static bool FullBoardEnabled
+        {
+            get { if (s_fullBoardPref < 0) s_fullBoardPref = PlayerPrefs.GetInt("WD_FullBoard", FULL_BOARD_MODE ? 1 : 0); return s_fullBoardPref == 1; }
+            set { s_fullBoardPref = value ? 1 : 0; PlayerPrefs.SetInt("WD_FullBoard", s_fullBoardPref); PlayerPrefs.Save(); }
+        }
+        public static bool FullBoardActive => FullBoardEnabled && ScoreRunMode && HandManager.InstantPopMode;
+
+        /// <summary>FX Test Menu: flip full board <-> rising rows and restart the current level with the right board.</summary>
+        public void ToggleFullBoardAndRestart()
+        {
+            FullBoardEnabled = !FullBoardEnabled;
+            WDLog.Log($"[FullBoard] mode -> {(FullBoardEnabled ? "FULL BOARD" : "RISING ROWS")} (restarting stage {_currentStageIndex})");
+            LevelRules.ForceFreshBoardOnNextApply();
+            DebugJumpToStage(_currentStageIndex);
+        }
+        public static float FULL_REFILL_SETTLE  = 0.12f;  // board must be idle this long before topping up
+        private float _fullIdleFor;
+        private bool  _fullRefilling;
+
+        /// <summary>Top of each column's stack (one above the highest tile) — holes UNDER ice stay holes, like match-3 blockers.</summary>
+        private static int StackTop(RulesEngine rules, int c)
+        {
+            for (int r = RulesEngine.ROWS - 1; r >= 0; r--) { var d = rules.GetCell(c, r); if (d != null && d.Letter != '\0') return r + 1; }
+            return 0;
+        }
+
+        private void UpdateFullBoardRefill()
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || grid == null || _fullRefilling || _isRisingRow || _isGameOver || _isOverlayPaused) { _fullIdleFor = 0f; return; }
+            bool busy = (MatchController.Instance != null && MatchController.Instance.IsProcessing)
+                        || (HandManager.Instance != null && HandManager.Instance.IsResolvingChain)
+                        || HandManager.BonusBlastRunning || IsBoardAnimating();
+            bool gap = false;
+            for (int c = 0; c < RulesEngine.COLS && !gap; c++) if (StackTop(rules, c) < RulesEngine.ROWS) gap = true;
+            if (busy || !gap) { _fullIdleFor = 0f; return; }
+            _fullIdleFor += Time.unscaledDeltaTime;
+            if (_fullIdleFor < FULL_REFILL_SETTLE) return;
+            _fullIdleFor = 0f;
+            StartCoroutine(FullBoardRefill());
+        }
+
+        /// <summary>FALLBACK only — the refill normally happens inside gravity. This catches any gap left by a path that
+        /// cleared tiles without a gravity step.</summary>
+        private IEnumerator FullBoardRefill()
+        {
+            _fullRefilling = true; _isRisingRow = true;   // input waits for the letters to land, like a rise
+            WDLog.Log("[FullBoard] fallback refill (a gap survived without a gravity step)");
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            var anim = new List<Tile>();
+            if (rules.FillTopsInData() > 0) grid.SpawnRefillTiles(anim);
+            float w = 0f;
+            while (w < 2f && anim.Exists(t => t != null && t.IsAnimating)) { w += Time.unscaledDeltaTime; yield return null; }
+            GameAudio.Instance?.PlayTileDrop();
+            _isRisingRow = false; _fullRefilling = false;
+        }
+
+        public static int SHOWER_GOLD = 2;   // shower only: this many of the smart letters land GOLD (+1 move when popped)
+
+        private IEnumerator RainLetters(int count, bool shower = false)
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || grid == null) yield break;
+            int cols = RulesEngine.COLS, rows = RulesEngine.ROWS;
+            var heights = new int[cols];
+            for (int c = 0; c < cols; c++) heights[c] = rules.GetColumnHeight(c);
+
+            bool anyRoom = false; for (int c = 0; c < cols; c++) if (heights[c] < rows) anyRoom = true;
+            if (!anyRoom && MoveLimitMode)
+            {
+                ApplyOverflowPenalty();                                // top row breaks off, -3 moves
+                for (int c = 0; c < cols; c++) heights[c] = rules.GetColumnHeight(c);
+            }
+
+            // Plan the drops: (col, letter) in order.
+            var plan = new List<KeyValuePair<int, char>>();
+            var planned = new int[cols];
+            var goldIdx = new HashSet<int>();   // plan indices that land as shower gold
+            TileBag bag = MatchController.Instance != null ? MatchController.Instance.Bag : new TileBag();
+
+            // 1) Planted near-word across a run of equal landing heights (one swap from complete, as with rising rows).
+            if (HandManager.InstantPopMode && SurvivalRng.Value < RulesEngine.PLANT_CHANCE)
+            {
+                int bestStart = -1, bestLen = 0;
+                for (int c = 0; c < cols; )
+                {
+                    int e = c; while (e + 1 < cols && heights[e + 1] == heights[c]) e++;
+                    int len = e - c + 1;
+                    if (heights[c] < rows && len >= 4 && len > bestLen) { bestLen = len; bestStart = c; }
+                    c = e + 1;
+                }
+                if (bestStart >= 0)
+                {
+                    var rowChars = new char[cols];
+                    // '*' marks the free run (not a letter, not '#'/'\0', so the planter treats it as a usable slot); every slot the
+                    // planter overwrites is part of the word.
+                    for (int c = 0; c < cols; c++) rowChars[c] = (c >= bestStart && c < bestStart + bestLen) ? '*' : '\0';
+                    rules.TryPlantNearWord(rowChars);
+                    for (int c = bestStart; c < bestStart + bestLen; c++)
+                        if (rowChars[c] != '*') { plan.Add(new KeyValuePair<int, char>(c, rowChars[c])); planned[c]++; }
+                }
+            }
+
+            // 1b) SMART LANDING LETTERS: up to RAIN_SMART letters that make a common word ONE SWAP away with what is already
+            //     there. Searched on a virtual board that includes everything planned so far.
+            int smart = 0;
+            if (HandManager.InstantPopMode)
+            try
+            {
+                rules.SnapshotForRain(out var vg, out var vm);
+                // apply planned drops to the virtual board
+                var vh = (int[])heights.Clone();
+                foreach (var kv in plan) { if (vh[kv.Key] < rows) { vg[kv.Key, vh[kv.Key]] = kv.Value; vm[kv.Key, vh[kv.Key]] = true; vh[kv.Key]++; } }
+                var order = new List<int>(); for (int c = 0; c < cols; c++) order.Add(c);
+                for (int i = order.Count - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); int tmp = order[i]; order[i] = order[j]; order[j] = tmp; }
+                foreach (int c in order)
+                {
+                    if (smart >= RAIN_SMART || plan.Count >= count) break;
+                    if (vh[c] >= rows || planned[c] >= 2) continue;
+                    if (rules.FindSmartRainLetter(vg, vm, c, vh[c], out char L, out string w))
+                    {
+                        if (shower && smart < SHOWER_GOLD) goldIdx.Add(plan.Count);
+                        plan.Add(new KeyValuePair<int, char>(c, L)); planned[c]++; vh[c]++; smart++;
+                        WDLog.Log($"[Rain] smart '{L}' -> col {c} (one swap from '{w}')");
+                    }
+                }
+                // 1c) FALLBACK: nothing smart and no row plant — a scrambled 4-letter word stacked down the lowest column
+                //     with room (one vertical swap fixes it). Read top->bottom, so the LAST letter lands first.
+                if (smart == 0 && plan.Count == 0)
+                {
+                    int best = -1;
+                    for (int c = 0; c < cols; c++) if (heights[c] + 4 <= rows && (best < 0 || heights[c] < heights[best])) best = c;
+                    string scr = best >= 0 ? rules.PickScrambledPlant(4, out string pw) : null;
+                    if (scr != null)
+                    {
+                        for (int k = scr.Length - 1; k >= 0; k--) { plan.Add(new KeyValuePair<int, char>(best, scr[k])); planned[best]++; }
+                        WDLog.Log($"[Rain] column plant '{scr}' (top->bottom) in col {best}");
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // Seeding must never stop the rain itself (2026-10-21: an NRE here killed every rain, board emptied).
+                Debug.LogError($"[Rain] seeding failed, raining plain letters instead: {ex.Message}");
+            }
+
+            // 2) Fill up to RAIN_COUNT with bag letters, weighted to the lowest columns, max 2 per column.
+            int vowels = 0;
+            int guard = 0;
+            while (plan.Count < Mathf.Max(count, plan.Count) && guard++ < 60)
+            {
+                if (plan.Count >= count && plan.Count > 0) break;
+                float total = 0f; var w = new float[cols];
+                for (int c = 0; c < cols; c++)
+                {
+                    int h = heights[c] + planned[c];
+                    if (h >= rows || planned[c] >= 2) continue;
+                    w[c] = (rows - h) * (rows - h); total += w[c];
+                }
+                if (total <= 0f) break;
+                float pick = SurvivalRng.Value * total; int col = 0;
+                for (int c = 0; c < cols; c++) { pick -= w[c]; if (pick <= 0f && w[c] > 0f) { col = c; break; } col = c; }
+                char ch = bag.DrawLetter();
+                bool isV = "AEIOU".IndexOf(char.ToUpperInvariant(ch)) >= 0;
+                if (!isV && vowels < 2 && plan.Count >= 3) { ch = "AEIOU"[SurvivalRng.Range(0, 5)]; isV = true; }   // keep it spellable
+                if (isV) vowels++;
+                plan.Add(new KeyValuePair<int, char>(col, ch)); planned[col]++;
+            }
+
+            StageStats.Rains++; StageStats.SmartSeeds += smart;
+            WDLog.Log($"[Rain] {plan.Count} letter(s): " + string.Join(" ", plan.ConvertAll(p => $"{p.Value}@{p.Key}")));
+            GameAudio.Instance?.PlayWhooshFast();
+
+            // 3) Drop them: data first (so nothing can claim the slot), then the old fall animation, staggered like rain.
+            float longest = 0f;
+            for (int pi = 0; pi < plan.Count; pi++)
+            {
+                var kv = plan[pi];
+                int c = kv.Key;
+                int row = rules.GetColumnHeight(c);
+                if (row >= rows) continue;
+                bool gold = goldIdx.Contains(pi);
+                rules.SetCell(c, row, new RulesCellData { Letter = kv.Value, Col = c, Row = row, PlayerIndex = -1, IsRainGold = gold });
+                var t = grid.DropTileAndGetTile(c, kv.Value, TileOwner.Player);
+                if (t != null) { t.MarkAnimating(0.5f); if (gold) { t.SetRainGold(true); WDLog.Log($"[Rain] GOLD '{kv.Value}' -> col {c}"); } }
+                longest = 0.5f;
+                yield return new WaitForSeconds(RAIN_STAGGER);
+            }
+            if (longest > 0f) yield return new WaitForSeconds(longest);
+            GameAudio.Instance?.PlayTileDrop();
+        }
+
         private IEnumerator ExecuteRisingRow()
         {
             // LEVEL WON = NO MORE RISES. 2026-10-20 Spencer: "whenever you hit the scoring objective the
@@ -2199,6 +2267,14 @@ namespace WordDrop
             // disable explicitly or rows still creep up on a free-play level. 2026-06-25 Spencer.
             if (RisingRowManager.Instance == null || !RisingRowManager.Enabled)
             {
+                _isRisingRow = false;
+                yield break;
+            }
+
+            bool refill = _nextRiseIsRefill; _nextRiseIsRefill = false;
+            if (ScoreRunMode && (RAIN_MODE || (refill && RAIN_FOR_REFILL)))
+            {
+                yield return StartCoroutine(RainLetters(RAIN_COUNT));
                 _isRisingRow = false;
                 yield break;
             }

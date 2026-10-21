@@ -209,6 +209,7 @@ namespace WordDrop
         public void DepositFlyScore(int pts)
         {
             if (pts <= 0) return;
+            if (HandManager.BonusBlastRunning) return;   // bonus blast pays COINS only — its score must not leak into the next level
             WDLog.Log($"[ScoreLag] t={Time.unscaledTime:F2} DEPOSIT {pts} (pending was {_flyPending}, remaining={_flyRemaining})");
             _flyPending    += pts;
             _flyBurstTotal += pts;

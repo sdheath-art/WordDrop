@@ -978,8 +978,194 @@ namespace WordDrop
         // comboStagger: true ONLY on the staggered multi-word combo paths, where chainStep is a clean
         // 0-based per-word order (0 = trigger, 1,2,3… = chained words). Gates the combo colour escalation
         // so a single-word detonation — whose chainStep is an unrelated counter — never mis-tints. 2026-07-27.
+        // ── SPECIAL TILE FX (2026-10-21, placeholder art — motion first, Spencer's sprites later) ──────────────────
+        private static Material s_specialFxMat;
+        private static Sprite s_rocketSprite, s_ringSprite, s_beamSprite;
+        private Material SpecialFxMat()
+        {
+            if (s_specialFxMat == null)
+            {
+                Shader sh = Shader.Find("WordDrop/AdditiveSprite") ?? Resources.Load<Shader>("Shaders/AdditiveSprite");
+                if (sh != null) s_specialFxMat = new Material(sh) { name = "SpecialFxAdditive" };
+            }
+            return s_specialFxMat;
+        }
+        private SpriteRenderer MakeFxSprite(string name, Sprite sprite, Color hdr, int order)
+        {
+            var go = new GameObject(name);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = sprite;
+            var mat = SpecialFxMat();
+            if (mat != null)
+            {
+                sr.sharedMaterial = mat;
+                var mpb = new MaterialPropertyBlock(); sr.GetPropertyBlock(mpb); mpb.SetColor("_Color", hdr); sr.SetPropertyBlock(mpb);
+                sr.color = Color.white;
+            }
+            else sr.color = new Color(Mathf.Clamp01(hdr.r), Mathf.Clamp01(hdr.g), Mathf.Clamp01(hdr.b), 1f);
+            sr.sortingOrder = order;   // 48: above every tile row band (max 37), with the other board FX
+            return sr;
+        }
+
+        /// <summary>Fly a special's icon from <paramref name="from"/> to <paramref name="to"/> on a little arc, shrinking into the
+        /// tile — used by the bonus blast to launch rockets out of the MOVES counter. Destroys itself on arrival.</summary>
+        public Tween FlyIcon(int kind, Vector3 from, Vector3 to, float dur)
+        {
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
+            var sr = MakeIconSprite("BonusRocketFly", kind, cell * 0.9f, 60);
+            if (sr == null) return null;
+            sr.transform.position = from;
+            var go = sr.gameObject;
+            Vector3 mid = Vector3.Lerp(from, to, 0.5f) + new Vector3(0f, cell * 1.2f, 0f);
+            var seq = DOTween.Sequence();
+            seq.Append(DOTween.To(() => 0f, t =>
+            {
+                if (go == null) return;
+                float u = 1f - t;
+                go.transform.position = u * u * from + 2f * u * t * mid + t * t * to;
+            }, 1f, dur).SetEase(Ease.InOutQuad));
+            seq.Join(go.transform.DOScale(cell * 0.6f, dur).SetEase(Ease.InQuad));
+            seq.OnComplete(() => { if (go != null) Destroy(go); });
+            return seq;
+        }
+
+        private SpriteRenderer MakeIconSprite(string name, int kind, float worldSize, int order)
+        {
+            var icon = Tile.SpecialIcon(kind);
+            if (icon == null) return null;
+            var go = new GameObject(name);
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = icon; sr.sortingOrder = order;
+            go.transform.localScale = Vector3.one * worldSize;   // sprite is 1 unit wide
+            go.transform.rotation = Quaternion.Euler(0f, 0f, Tile.SpecialIconAngle(kind));
+            return sr;
+        }
+
+        /// <summary>Plays the fire animation for one special. Rocket: two glowing heads streak out both ways along the
+        /// row/column with a fading lane flash. Bomb: white flash + expanding shockwave ring. Disco: beams from the ball
+        /// to every tile it took. Visual only — the rules already cleared the cells.</summary>
+        public void PlaySpecialFire(RulesEngine.SpecialFire f)
+        {
+            var grid = GridManager.Instance;
+            if (grid == null) return;
+            if (s_rocketSprite == null)
+            {
+                s_rocketSprite = TileRenderer.CreateSolidRoundedRect(128, 44, 22, Color.white);
+                s_ringSprite   = TileRenderer.CreateRoundedRect(128, 128, 64, new Color(1f, 1f, 1f, 0f), Color.white, 10);
+                s_beamSprite   = TileRenderer.CreateSolidRoundedRect(64, 12, 6, Color.white);
+            }
+            float cell = grid.CellSize;
+            Vector3 origin = grid.CellToWorld(f.Cell.x, f.Cell.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f);
+            Color col = Tile.SpecialColor(f.Kind);
+            bool powered = !string.IsNullOrEmpty(f.Word) && f.Word.Length > 1;   // fired by a word the player made
+            // Powered rocket = a CROSS: play the streak along both axes (matches RulesEngine's row + column clear).
+            if (powered && (f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V))
+            {
+                var a = f; a.Word = null;
+                a.Kind = RulesEngine.SPECIAL_ROCKET_H; PlaySpecialFire(a);
+                a.Kind = RulesEngine.SPECIAL_ROCKET_V; PlaySpecialFire(a);
+                return;
+            }
+            float bombScale = (powered && RulesEngine.IsBombLike(f.Kind)) ? 1.7f : 1f;   // 5x5 vs 3x3
+
+            if (f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V)
+            {
+                bool h = f.Kind == RulesEngine.SPECIAL_ROCKET_H;
+                Vector3 axis = h ? Vector3.right : Vector3.up;
+                float reach = (h ? RulesEngine.COLS : RulesEngine.ROWS) * cell;
+                // lane flash along the whole line
+                var lane = MakeFxSprite("RocketLane", s_beamSprite, col * 0.8f, 47);
+                lane.transform.position = h ? new Vector3(grid.CellToWorld(RulesEngine.COLS / 2, f.Cell.y).x + grid.BoardSlideOffsetX, origin.y, origin.z)
+                                            : new Vector3(origin.x, grid.CellToWorld(f.Cell.x, RulesEngine.ROWS / 2).y, origin.z);
+                lane.transform.rotation = Quaternion.Euler(0f, 0f, h ? 0f : 90f);
+                float laneLen = reach / (s_beamSprite.bounds.size.x);
+                lane.transform.localScale = new Vector3(laneLen * 0.1f, cell / s_beamSprite.bounds.size.y * 0.55f, 1f);
+                lane.transform.DOScaleX(laneLen, 0.14f).SetEase(Ease.OutQuad);
+                lane.DOFade(0f, 0.38f).SetDelay(0.12f).OnComplete(() => { if (lane != null) Destroy(lane.gameObject); });
+                // two heads, one each way
+                for (int sgn = -1; sgn <= 1; sgn += 2)
+                {
+                    var head = MakeFxSprite("RocketGlow", s_rocketSprite, col * 1.4f, 48);
+                    head.transform.position = origin;
+                    head.transform.rotation = Quaternion.Euler(0f, 0f, h ? 0f : 90f);
+                    head.transform.localScale = Vector3.one * (cell / s_rocketSprite.bounds.size.x) * 0.9f;
+                    Vector3 to = origin + axis * sgn * reach;
+                    var hs = head;
+                    head.transform.DOMove(to, 0.32f).SetEase(Ease.InQuad);
+                    head.DOFade(0f, 0.12f).SetDelay(0.24f).OnComplete(() => { if (hs != null) Destroy(hs.gameObject); });
+                    // Spencer's rocket art rides the glow: nose along the travel direction (art points up-right).
+                    var art = MakeIconSprite("RocketArt", f.Kind, cell * 0.95f, 49);
+                    if (art != null)
+                    {
+                        float dirDeg = h ? (sgn > 0 ? 0f : 180f) : (sgn > 0 ? 90f : -90f);
+                        art.transform.rotation = Quaternion.Euler(0f, 0f, dirDeg - 45f);
+                        art.transform.position = origin;
+                        var a = art;
+                        art.transform.DOMove(to, 0.32f).SetEase(Ease.InQuad);
+                        art.DOFade(0f, 0.1f).SetDelay(0.26f).OnComplete(() => { if (a != null) Destroy(a.gameObject); });
+                    }
+                }
+                GridManager.Instance?.ShakeBoard(0.10f, 0.18f);
+            }
+            else if (RulesEngine.IsBombLike(f.Kind))
+            {
+                var bart = MakeIconSprite("BombArt", f.Kind, cell * 0.9f, 49);
+                if (bart != null)
+                {
+                    bart.transform.position = origin;
+                    var b0 = bart;
+                    bart.transform.DOScale(cell * 1.7f, 0.12f).SetEase(Ease.OutQuad);
+                    bart.DOFade(0f, 0.1f).SetDelay(0.1f).OnComplete(() => { if (b0 != null) Destroy(b0.gameObject); });
+                }
+                var flash = MakeFxSprite("BombFlash", Tile.NormalSprite, col * 1.6f, 48);
+                flash.transform.position = origin;
+                flash.transform.localScale = Vector3.one * 1.2f * bombScale;
+                flash.transform.DOScale(3.2f * bombScale, 0.22f).SetEase(Ease.OutQuad);
+                flash.DOFade(0f, 0.25f).OnComplete(() => { if (flash != null) Destroy(flash.gameObject); });
+                var ring = MakeFxSprite("BombRing", s_ringSprite, col * 1.3f, 48);
+                ring.transform.position = origin;
+                ring.transform.localScale = Vector3.one * (cell / s_ringSprite.bounds.size.x) * 0.6f;
+                ring.transform.DOScale(ring.transform.localScale * 5.5f * bombScale, 0.42f).SetEase(Ease.OutCubic);
+                ring.DOFade(0f, 0.42f).SetEase(Ease.InQuad).OnComplete(() => { if (ring != null) Destroy(ring.gameObject); });
+                GridManager.Instance?.ShakeBoard(0.20f * bombScale, 0.28f);
+            }
+            else if (f.Kind == RulesEngine.SPECIAL_DISCO && f.Cleared != null)
+            {
+                var dart = MakeIconSprite("DiscoArt", f.Kind, cell * 1.1f, 49);
+                if (dart != null)
+                {
+                    dart.transform.position = origin;
+                    var d0 = dart;
+                    dart.transform.DORotate(new Vector3(0f, 0f, 540f), 0.6f, RotateMode.FastBeyond360).SetEase(Ease.OutCubic);
+                    dart.transform.DOScale(cell * 1.5f, 0.3f).SetEase(Ease.OutBack);
+                    dart.DOFade(0f, 0.2f).SetDelay(0.5f).OnComplete(() => { if (d0 != null) Destroy(d0.gameObject); });
+                }
+                for (int i = 0; i < f.Cleared.Count; i++)
+                {
+                    Vector3 to = grid.CellToWorld(f.Cleared[i].x, f.Cleared[i].y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f);
+                    Vector3 d = to - origin;
+                    float len = d.magnitude;
+                    if (len < 0.01f) continue;
+                    var beam = MakeFxSprite("DiscoBeam", s_beamSprite, col * 1.2f, 47);
+                    beam.transform.position = origin + d * 0.5f;
+                    beam.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+                    beam.transform.localScale = new Vector3(len / s_beamSprite.bounds.size.x, 0.6f, 1f);
+                    var b = beam;
+                    beam.color = new Color(1f, 1f, 1f, 0f);
+                    beam.DOFade(1f, 0.05f).SetDelay(i * 0.03f);
+                    beam.DOFade(0f, 0.3f).SetDelay(0.18f + i * 0.03f).OnComplete(() => { if (b != null) Destroy(b.gameObject); });
+                }
+                GridManager.Instance?.ShakeBoard(0.16f, 0.30f);
+            }
+            GameAudio.Instance?.PlayScorePowerup();
+            HapticsManager.Strong();
+        }
+
         /// <summary>Tiles in one blast step needed for the meltdown stack (wind-up + jerky shake + punch). Was 8.</summary>
-        public static int MELTDOWN_TILE_GATE = 5;
+        // 2026-10-21: 5 -> 6. With 4+ letter words a plain 4-letter pop clears 5 tiles (word + 1 splash), so EVERY pop went
+        // down the meltdown path, which skips the expanding bubble (Spencer: "the pops are missing ... the expanding bubble").
+        // 6 = ordinary 4-letter pops get the bubble again; 5+ letter words and chains keep the meltdown + jerky shake.
+        public static int MELTDOWN_TILE_GATE = 6;
 
         public Coroutine PlayExplosion(List<Tile> tiles, int chainStep = 0, int wordLength = 3, bool wordFlash = true, bool cascade = false, bool suppressFlyUp = false, bool comboStagger = false)
         {
@@ -1050,7 +1236,7 @@ namespace WordDrop
                     // SIP/RUT/HUH cluster): those can lack the sticky scored flag but are still glowing-primed at
                     // detonation, so WasInScoredWord alone dropped them. Stones ('#') / swept junk are neither →
                     // stay filtered out. char.IsLetter guards stray '#'/'?'/'\0'. 2026-07-06 Spencer.
-                    bool isWordTile = (ft.WasInScoredWord || ft.HasPermanentGlow) && char.IsLetter(ft.Letter)
+                    bool isWordTile = (goldOnly ? HandManager.IsGoldFlyTile(ft) : (ft.WasInScoredWord || ft.HasPermanentGlow)) && char.IsLetter(ft.Letter)   // gold mode: ANY gold tile in the blast flies (2026-10-21)
                                       && (!goldOnly || HandManager.IsGoldFlyTile(ft));   // instant pop: gold only
                     _flyDbg.Append($"{ft.Letter}(s{(ft.WasInScoredWord ? 1 : 0)}g{(ft.HasPermanentGlow ? 1 : 0)}{(isWordTile ? "→fly" : "")}) ");
                     if (isWordTile) flyTiles.Add(ft);
@@ -2909,13 +3095,8 @@ namespace WordDrop
         // ═══════════════════════════════════════════════════════════════════════════
 
         // Tuning constants — expose as SerializeField when moving to UIConfig
-        private const float HITSTOP_LIGHT_DUR    = 0.04f;  // word scored
-        private const float HITSTOP_MEDIUM_DUR   = 0.07f;  // chain depth 1
-        private const float HITSTOP_HEAVY_DUR    = 0.12f;  // chain depth 2+
-        private const float HITSTOP_ULTRA_DUR    = 0.18f;  // meltdown
         private const float HITSTOP_SAFETY_MAX   = 0.5f;   // max freeze ever
 
-        private Coroutine _activeHitStop;
         private float _hitStopSafetyTimer;
 
         private void Update()
@@ -2935,34 +3116,6 @@ namespace WordDrop
             {
                 _hitStopSafetyTimer = 0f;
             }
-        }
-
-        /// <summary>
-        /// Freezes time briefly for dramatic impact.
-        /// chainStep: -1=none, 0=light, 1=medium, 2+=heavy, 3+=ultra (meltdown).
-        /// Safe: runs on this MonoBehaviour (DontDestroyOnLoad not needed — WordDropFX persists),
-        /// has safety net timer in Update().
-        /// </summary>
-        public void PlayHitStop(int chainStep)
-        {
-            if (chainStep < 0) return; // no hitstop for regular word scores
-
-            float duration;
-            if (chainStep >= 3) duration = HITSTOP_ULTRA_DUR;
-            else if (chainStep >= 2) duration = HITSTOP_HEAVY_DUR;
-            else if (chainStep >= 1) duration = HITSTOP_MEDIUM_DUR;
-            else duration = HITSTOP_LIGHT_DUR;
-
-            if (_activeHitStop != null) StopCoroutine(_activeHitStop);
-            _activeHitStop = StartCoroutine(HitStopCoroutine(duration));
-        }
-
-        private IEnumerator HitStopCoroutine(float duration)
-        {
-            Time.timeScale = 0f;
-            yield return new WaitForSecondsRealtime(duration);
-            Time.timeScale = 1f;
-            _activeHitStop = null;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════

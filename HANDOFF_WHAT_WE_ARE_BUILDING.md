@@ -1,3 +1,7 @@
+> ⚠️ **Updated 2026-10-20 evening:** the core loop below (words STAY armed, tap to detonate the web) was
+> REPLACED during the day by **instant pop + touching/drag swaps + a per-level move limit + gold letters = +1 move**.
+> See the END-OF-DAY section at the top of `HANDOFF_2026_10_20.md`. The meta-game / product-shape sections still stand.
+
 # WordDrop — what we're building and why
 
 Companion to `HANDOFF_2026_10_20.md`. That file is the technical state and the traps.

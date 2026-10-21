@@ -95,7 +95,7 @@ namespace WordDrop
         /// read completely differently — all the three-letter filler stops counting and the
         /// player has to actually look. One of the cheapest level modifiers available.</summary>
         public static int MIN_WORD_LENGTH = 3;
-        private const int MAX_WORD_LENGTH   = 7;
+        private const int MAX_WORD_LENGTH   = 9;   // 2026-10-21: was 7 — CREATION (8) could never count. 9 = board width.
 
         /// <summary>
         /// Phase 11+ rare-letter premium set. Any word in Survival containing
@@ -630,7 +630,7 @@ namespace WordDrop
             // Not in the registry yet (visuals can run before the word is registered):
             // fall back to the tile's own letter.
             var t = GridManager.Instance != null ? GridManager.Instance.GetTile(cell.x, cell.y) : null;
-            if (t != null && !t.IsWild && LetterData.GetPoints(t.Letter) >= Tile.HIGH_VALUE_POINTS)
+            if (t != null && !t.IsWild && t.IsGoldLetter)
                 return Tile.PRIMED_GOLD_GLOW;
             return Tile.PRIMED_GLOW;
         }
@@ -649,7 +649,7 @@ namespace WordDrop
                 if (cell.IsWild)  { dbg.Append("[wild]"); continue; }
                 int pts = LetterData.GetPoints(cell.Letter);
                 dbg.Append($"{cell.Letter}={pts} ");
-                if (pts >= Tile.HIGH_VALUE_POINTS) hit = true;
+                if (pts >= Tile.HIGH_VALUE_POINTS || cell.IsRainGold) hit = true;   // shower gold reads gold too
             }
             return hit;
         }
@@ -1093,6 +1093,14 @@ namespace WordDrop
         }
 
         /// <summary>Vaults: how many anchored vaults remain on the board (objective polls this).</summary>
+        /// <summary>Crates left on the board (full board: every stone is a crate).</summary>
+        public int CountCrateCells()
+        {
+            int n = 0;
+            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) if (_board[c, r] != null && _board[c, r].IsStone && !_board[c, r].IsDropTarget) n++;
+            return n;
+        }
+
         public int CountAnchoredCells()
         {
             int n = 0;
@@ -1933,6 +1941,80 @@ namespace WordDrop
         }
 
         /// <summary>Chance a rising row carries a planted near-word (instant-pop mode).</summary>
+        // ── SPECIAL TILES (2026-10-21 Spencer: Candy-Crush style; "whatever you think is best for now") ─────────
+        // A long word leaves ONE tile behind as a special. It KEEPS its letter; when a later word pops through it
+        // (or it is caught in another special's blast) it fires. 5 letters -> ROCKET along the word's direction,
+        // 6 -> BOMB (3x3), 7+ -> DISCO (every tile with its letter). Created on the swapped cell if it is in the
+        // word, else the middle letter. Instant-pop mode only.
+        public static bool SPECIAL_TILES_ENABLED = true;
+        public const int SPECIAL_NONE = 0, SPECIAL_ROCKET_H = 1, SPECIAL_ROCKET_V = 2, SPECIAL_BOMB = 3, SPECIAL_DISCO = 4;
+        /// <summary>TNT (2026-10-21 Spencer): a letter that starts the level carrying dynamite. Blows like a bomb (3x3, 5x5
+        /// powered) when its letter is used in a word or it is double-tapped. Never born from words — placed at level start.</summary>
+        public const int SPECIAL_TNT = 5;
+        public static bool IsBombLike(int k) => k == SPECIAL_BOMB || k == SPECIAL_TNT;
+        public static int SPECIAL_TILE_PAY = 15;   // points per extra tile a special clears
+        public static bool SpecialTilesActive => SPECIAL_TILES_ENABLED && HandManager.InstantPopMode;
+        /// <summary>The two cells of the most recent player swap — where a special is born if it is in the word.</summary>
+        public static Vector2Int[] LastSwapCells;
+        /// <summary>Every tile ever exploded (monotonic). The bonus pays per tile from its delta — a full board refills in the
+        /// same fall, so "tiles before minus tiles after" read 0 (2026-10-21: 69 tiles cleared, 0 coins).</summary>
+        public static int ExplodedTilesTotal;
+
+        // ── FULL BOARD: SHORT WORDS ONLY ON PURPOSE (2026-10-21 Spencer: full board was "pretty insane. you make one word
+        // and there are explosions everywhere"). Log: GAP popped, the columns slid, and the fall spelled 8 three-letter
+        // words at once — 3-letter words are everywhere in a full grid. Rule: a word shorter than FULL_CASCADE_MIN_LEN
+        // counts only if it runs through a cell the player just SWAPPED. ShortWordCells is set by the swap and closed at
+        // the first explosion, so nothing the fall makes afterwards can qualify. Off outside full-board mode. ──
+        public static int FULL_CASCADE_MIN_LEN = 4;
+        /// <summary>Does this word run through a tile the player just swapped? (= made on purpose.)</summary>
+        private static bool TouchesSwap(List<Vector2Int> cells)
+        {
+            if (ShortWordCells == null || cells == null) return false;
+            foreach (var sc in ShortWordCells) if (cells.Contains(sc)) return true;
+            return false;
+        }
+        public static Vector2Int[] ShortWordCells;
+        // ROUND 2 (2026-10-21): still "any exchange i make creates a word" — 17 of 19 swaps. Simulated 2,400 random swaps on
+        // full boards: 3+ letters 54% hit, 4+ letters 12%. So in full-board mode EVERY word is 4+ (FULL_MIN_LEN), swaps and
+        // swipes included. FULL_SHORT_BY_SWAP = true brings back round 1 (3-letter words allowed when the swap makes them).
+        public static int  FULL_MIN_LEN      = 4;
+        public static bool FULL_SHORT_BY_SWAP = false;
+        // Words the FALL makes must also be COMMON (Resources/common_words.txt = common-words sweep ∩ core, ~4.7k words).
+        // Spencer: the dictionary "counts things you wouldnt even think of as a word" — the log popped SKA, PIA, LAC, LEA,
+        // DEE, NAH. Words the player makes on purpose (swap / swipe) keep the full dictionary, so a real word like HONK
+        // still counts when you go for it. Not a dictionary edit — a second, stricter list for automatic words only.
+        public static bool FULL_FALL_COMMON_ONLY = true;
+        private static HashSet<string> s_commonWords;
+        private static bool IsCommonWord(string w)
+        {
+            if (s_commonWords == null)
+            {
+                s_commonWords = new HashSet<string>();
+                var ta = Resources.Load<TextAsset>("common_words");
+                if (ta != null) foreach (var raw in ta.text.Split('\n')) { var t = raw.Trim().ToUpperInvariant(); if (t.Length > 0) s_commonWords.Add(t); }
+                WDLog.Log($"[FullBoard] common-word list: {s_commonWords.Count} words{(ta == null ? " (MISSING — allowing all)" : "")}");
+            }
+            return s_commonWords.Count == 0 || s_commonWords.Contains(w);
+        }
+        private static bool ShortWordRejected(int len, List<Vector2Int> cells, string word = null)
+        {
+            if (!SurvivalManager.FullBoardActive) return false;
+            bool bySwap = false;
+            if (ShortWordCells != null) foreach (var sc in ShortWordCells) if (cells.Contains(sc)) { bySwap = true; break; }
+            if (len < FULL_MIN_LEN && !(FULL_SHORT_BY_SWAP && bySwap)) return true;
+            if (FULL_SHORT_BY_SWAP && len < FULL_CASCADE_MIN_LEN && !bySwap) return true;
+            if (FULL_FALL_COMMON_ONLY && !bySwap && word != null && !IsCommonWord(word)) return true;   // fall-made: common words only
+            return false;
+        }
+        /// <summary>Shortest word that counts right now (swipes use this too).</summary>
+        public static int EffectiveMinWordLength => SurvivalManager.FullBoardActive ? Mathf.Max(MIN_WORD_LENGTH, FULL_MIN_LEN) : MIN_WORD_LENGTH;
+        /// <summary>One-shot: the next tap detonation seeds EVERY armed word (the bonus blast fires all its specials in one
+        /// detonation, no gaps). Consumed by BeginTapDetonation.</summary>
+        public static bool SeedAllOnNextTap;
+        public struct SpecialFire { public Vector2Int Cell; public int Kind; public char Letter; public string Word; public List<Vector2Int> Cleared; }
+        public static string SpecialName(int k) => k == SPECIAL_ROCKET_H ? "ROCKET-H" : k == SPECIAL_ROCKET_V ? "ROCKET-V"
+                                                 : k == SPECIAL_BOMB ? "BOMB" : k == SPECIAL_TNT ? "TNT" : k == SPECIAL_DISCO ? "DISCO" : "none";
+
         public static float PLANT_CHANCE      = 1.0f;   // 0.6 -> 1.0 2026-10-20: Spencer "RNG seems to be a thing" — whether a
                                                           // level passed hinged on how many plants happened to appear
         /// <summary>Near-words planted into a FRESH level board (so there is something to hunt from move 1).</summary>
@@ -1940,11 +2022,15 @@ namespace WordDrop
 
         /// <summary>Plant up to <paramref name="count"/> near-words into the lowest full rows of the current board
         /// (one per row). Called on a fresh level board before it is rebuilt on screen.</summary>
-        public void PlantNearWordsOnBoard(int count)
+        public void PlantNearWordsOnBoard(int count, bool spreadRows = false)
         {
             int planted = 0;
-            for (int r = 0; r < ROWS && planted < count; r++)
+            var rowOrder = new List<int>(); for (int i = 0; i < ROWS; i++) rowOrder.Add(i);
+            if (spreadRows)   // full board: plants anywhere, not stacked in the bottom rows
+                for (int i = rowOrder.Count - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); int t = rowOrder[i]; rowOrder[i] = rowOrder[j]; rowOrder[j] = t; }
+            foreach (int r in rowOrder)
             {
+                if (planted >= count) break;
                 var row = new char[COLS];
                 for (int c = 0; c < COLS; c++)
                 {
@@ -1962,6 +2048,7 @@ namespace WordDrop
         }
         /// <summary>Of planted words, the share that are 5 letters (the rest are 4).</summary>
         public static float PLANT_FIVE_SHARE  = 0.35f;
+        public static float FULL_PLANT_FIVE_SHARE = 0.6f;   // full board: more 5-letter near-words = more rockets within reach
         private static List<string> s_plant4, s_plant5;
 
         /// <summary>Writes a common 4-5 letter word into the row with two neighbouring letters swapped,
@@ -1969,23 +2056,324 @@ namespace WordDrop
         /// common-words sweep intersected with the core dictionary — recognisable, never obscure).
         /// The scrambled form is checked not to be a word itself, either direction, so it can't pop
         /// on its own.</summary>
-        private void TryPlantNearWord(char[] row)
+        private static HashSet<string> s_plantSet;
+        private void EnsurePlantLists()
         {
-            if (s_plant4 == null)
+            // 2026-10-21: check the SET, not the lists — TryPlantNearWord used to load the lists itself without building the
+            // set, so the set stayed null and every rain NRE'd in CommonWordThrough before a single letter fell.
+            if (s_plantSet != null) return;
+            if (s_plant4 != null) { s_plantSet = new HashSet<string>(s_plant4); s_plantSet.UnionWith(s_plant5); return; }
+            s_plant4 = new List<string>(); s_plant5 = new List<string>();
+            var ta = Resources.Load<TextAsset>("plant_words");
+            if (ta != null)
+                foreach (var raw in ta.text.Split('\n'))
+                {
+                    string w = raw.Trim().ToUpperInvariant();
+                    if (w.Length == 4) s_plant4.Add(w); else if (w.Length == 5) s_plant5.Add(w);
+                }
+            s_plantSet = new HashSet<string>(s_plant4); s_plantSet.UnionWith(s_plant5);
+            WDLog.Log($"[Plant] word list: {s_plant4.Count} four-letter, {s_plant5.Count} five-letter");
+        }
+
+        // ── RAIN SEEDING (2026-10-21 Spencer: "is the rain seeding possible words like row rise does?" — only 2 of 13
+        // rains did, so: smart landing letters + a column-plant fallback). ─────────────────────────────────────────────
+        /// <summary>Letters on the board as a grid ('\0' empty) plus which tiles may move in a swap (not frozen/stone).</summary>
+        public void SnapshotForRain(out char[,] g, out bool[,] movable)
+        {
+            g = new char[COLS, ROWS]; movable = new bool[COLS, ROWS];
+            for (int x = 0; x < COLS; x++)
+                for (int y = 0; y < ROWS; y++)
+                {
+                    var d = _board[x, y];
+                    if (d == null || (d.Letter == '\0' && !d.IsStone)) continue;
+                    g[x, y] = d.IsStone ? '#' : char.ToUpperInvariant(d.Letter);   // crates/stones: occupied walls, never part of a word
+                    movable[x, y] = !d.IsFrozen && !d.IsStone && !d.IsWild && !d.IsDropTarget && !d.IsAnchored;
+                }
+        }
+
+        /// <summary>Is there a COMMON 4-5 letter word (plant list) through <paramref name="c"/>, read the way the game spots
+        /// words (left-to-right, top-to-bottom; row 0 is the bottom)?</summary>
+        private bool CommonWordThrough(char[,] g, Vector2Int c, out string found)
+        {
+            found = null;
+            // horizontal run
+            int l = c.x, r = c.x;
+            while (l - 1 >= 0 && g[l - 1, c.y] != '\0') l--;
+            while (r + 1 < COLS && g[r + 1, c.y] != '\0') r++;
+            for (int len = 5; len >= 4; len--)
+                for (int s = Mathf.Max(l, c.x - len + 1); s <= c.x && s + len - 1 <= r; s++)
+                {
+                    var sb = new System.Text.StringBuilder(len);
+                    for (int k = 0; k < len; k++) sb.Append(g[s + k, c.y]);
+                    string w = sb.ToString();
+                    if (s_plantSet.Contains(w) && WordDictionary.IsValidWord(w)) { found = w; return true; }
+                }
+            // vertical run, top -> bottom = high row -> low row
+            int top = c.y, bot = c.y;
+            while (top + 1 < ROWS && g[c.x, top + 1] != '\0') top++;
+            while (bot - 1 >= 0 && g[c.x, bot - 1] != '\0') bot--;
+            for (int len = 5; len >= 4; len--)
+                for (int s = Mathf.Min(top, c.y + len - 1); s >= c.y && s - len + 1 >= bot; s--)
+                {
+                    var sb = new System.Text.StringBuilder(len);
+                    for (int k = 0; k < len; k++) sb.Append(g[c.x, s - k]);
+                    string w = sb.ToString();
+                    if (s_plantSet.Contains(w) && WordDictionary.IsValidWord(w)) { found = w; return true; }
+                }
+            return false;
+        }
+
+        /// <summary>Find a letter to land at (col,row) so that ONE legal swap of two touching tiles near it spells a common
+        /// 4-5 letter word — and it is NOT already a word before the swap (that would be free, not a find).</summary>
+        public bool FindSmartRainLetter(char[,] g, bool[,] movable, int col, int row, out char letter, out string word)
+        {
+            EnsurePlantLists();
+            letter = '\0'; word = null;
+            const string ABC0 = "EARIOTNSLCUDPMHGBY";   // 18 useful letters — keeps the search cheap on phones (rare letters seldom complete common words)
+            // SHUFFLED per call (2026-10-21). It used to rotate from one of the first 6 letters, so smart letters were almost
+            // always E/A/R/I/O/T — the log's smart picks were R 78, I 77, T 74, E 61, A 56, O 55 — and the board filled with O's.
+            var abcArr = ABC0.ToCharArray();
+            for (int i = abcArr.Length - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); char t0 = abcArr[i]; abcArr[i] = abcArr[j]; abcArr[j] = t0; }
+            string ABC = new string(abcArr); int start = 0;
+            var dirs = new[] { new Vector2Int(1, 0), new Vector2Int(0, 1) };
+            for (int li = 0; li < ABC.Length; li++)
             {
-                s_plant4 = new List<string>(); s_plant5 = new List<string>();
-                var ta = Resources.Load<TextAsset>("plant_words");
-                if (ta != null)
-                    foreach (var raw in ta.text.Split('\n'))
-                    {
-                        string w = raw.Trim().ToUpperInvariant();
-                        if (w.Length == 4) s_plant4.Add(w); else if (w.Length == 5) s_plant5.Add(w);
-                    }
-                WDLog.Log($"[Plant] word list: {s_plant4.Count} four-letter, {s_plant5.Count} five-letter");
+                char L = ABC[(li + start) % ABC.Length];
+                g[col, row] = L; movable[col, row] = true;
+                string pre; bool already = CommonWordThrough(g, new Vector2Int(col, row), out pre);
+                if (!already)
+                    for (int dx = -2; dx <= 2 && word == null; dx++)
+                        for (int dy = -2; dy <= 1 && word == null; dy++)
+                        {
+                            var a = new Vector2Int(col + dx, row + dy);
+                            if (a.x < 0 || a.x >= COLS || a.y < 0 || a.y >= ROWS || g[a.x, a.y] == '\0' || !movable[a.x, a.y]) continue;
+                            foreach (var d in dirs)
+                            {
+                                var b = a + d;
+                                if (b.x >= COLS || b.y >= ROWS || g[b.x, b.y] == '\0' || !movable[b.x, b.y]) continue;
+                                if (g[a.x, a.y] == g[b.x, b.y]) continue;
+                                char t = g[a.x, a.y]; g[a.x, a.y] = g[b.x, b.y]; g[b.x, b.y] = t;
+                                string w1, w2;
+                                bool hit = CommonWordThrough(g, a, out w1) || CommonWordThrough(g, b, out w2) && (w1 = w2) != null;
+                                g[b.x, b.y] = g[a.x, a.y]; g[a.x, a.y] = t;   // undo
+                                if (hit) { word = w1; break; }
+                            }
+                        }
+                if (word != null) { letter = L; return true; }   // leave L in the grid for the caller's next search
+                g[col, row] = '\0'; movable[col, row] = false;
             }
+            return false;
+        }
+
+        // ── FULL BOARD (2026-10-21 Spencer: "just like candy crush and royal match where letters are always fully stacked,
+        // then as you make words it cascades from above"). Refill letters must not spell words by themselves — the
+        // match-3 rule that new pieces never arrive pre-matched — or a full grid pops on its own like a slot machine. ──
+        public static int FULL_NOWORD_TRIES = 14;
+
+        /// <summary>Is there any dictionary word (>= minLen, <= MAX_WORD_LENGTH) through (x,y), read the way the game reads
+        /// (left-to-right, top-to-bottom; row 0 is the bottom)?</summary>
+        /// <summary>Shortest word new full-board letters must avoid spelling. 4 since round 3 (2026-10-21 Spencer: "more nested
+        /// word possibilities ... something just feels off"): 3-letter words can't pop (FULL_MIN_LEN 4), so letting them sit
+        /// on the board keeps the stepping stones (CAT -> CART / CATS / SCAT). At 3 the fill scrubbed them all = letter soup.</summary>
+        public static int FULL_FILL_AVOID_MIN = 4;
+
+        // ── FULL BOARD START STRUCTURE (2026-10-21 Spencer: "there isnt enough seeded words off the start of the level, it
+        // just looks like letter salad"). 2 near-words in 99 random letters reads as noise. Now: FULL_START_PLANTS near-words
+        // spread over the board + FULL_START_SHORT_WORDS real common 3-letter words left intact — they can't pop (words are
+        // 4+ on the full board) but the eye reads them, and each is a stepping stone (CAT -> CART / CATS). ──
+        public static int FULL_START_PLANTS      = 6;
+        public static int CratesBroken;          // monotonic; the crate goal reads CountAnchoredCells(), this is for stats
+        public static int FULL_START_TNT  = 1;   // dynamite letters on every full-board level (2 -> 1, 2026-10-21: levels fell in 1-3 moves)
+        public static int FULL_MAX_HIGH   = 2;   // gold K/Q/J/X/Z/V (locked) on the board at once — 8 in one screenshot clogged it
+        public static int FULL_MAX_RAIN_GOLD = 2;
+
+        /// <summary>Crates in a mirrored, designed-looking pattern (Royal Match boards are symmetric). Rows 1..ROWS-3.</summary>
+        public int PlaceCrates(int count, HashSet<Vector2Int> keep)
+        {
+            int placed = 0, mid = COLS / 2;
+            for (int attempt = 0; attempt < count * 30 && placed < count; attempt++)
+            {
+                int x = SurvivalRng.Range(0, mid + 1), y = SurvivalRng.Range(1, ROWS - 2);
+                var a = new Vector2Int(x, y); var b = new Vector2Int(COLS - 1 - x, y);
+                bool pair = a != b;
+                if (pair && placed + 2 > count) continue;
+                if (keep.Contains(a) || (pair && keep.Contains(b))) continue;
+                var da = _board[a.x, a.y]; var db = _board[b.x, b.y];
+                if (da == null || db == null || da.IsStone || db.IsStone || da.SpecialKind != SPECIAL_NONE || db.SpecialKind != SPECIAL_NONE) continue;
+                foreach (var p in pair ? new[] { a, b } : new[] { a })
+                {
+                    // NOT anchored (2026-10-21 Spencer: "the crates are not dropping"): an anchored crate held its column up and
+                    // left permanent holes beneath it — our board only drops straight down, with no Royal-Match diagonal slide.
+                    var d = _board[p.x, p.y]; d.IsStone = true; d.IsAnchored = false; d.RequiredWordLength = 0; d.IsFrozen = false;
+                    keep.Add(p); placed++;
+                }
+            }
+            return placed;
+        }
+
+        /// <summary>TNT letters: put dynamite on <paramref name="count"/> ordinary letters in the middle band of the board.</summary>
+        public int PlaceStartTnt(int count, HashSet<Vector2Int> keep)
+        {
+            int placed = 0;
+            for (int attempt = 0; attempt < count * 30 && placed < count; attempt++)
+            {
+                var p = new Vector2Int(SurvivalRng.Range(1, COLS - 1), SurvivalRng.Range(2, ROWS - 2));
+                var d = _board[p.x, p.y];
+                if (d == null || d.IsStone || d.IsFrozen || d.SpecialKind != SPECIAL_NONE || keep.Contains(p)) continue;
+                if (LetterData.GetPoints(d.Letter) >= Tile.HIGH_VALUE_POINTS) continue;
+                d.SpecialKind = SPECIAL_TNT; keep.Add(p); placed++;
+            }
+            return placed;
+        }
+        public static int FULL_START_SHORT_WORDS = 8;
+        private static List<string> s_common3;
+
+        /// <summary>Write up to <paramref name="count"/> common 3-letter words intact (across or down) where they spell no
+        /// 4+ word with their neighbours. Cells used are added to <paramref name="keep"/>. Returns words placed.</summary>
+        public int SeedShortWords(int count, HashSet<Vector2Int> keep)
+        {
+            if (s_common3 == null)
+            {
+                s_common3 = new List<string>();
+                var ta = Resources.Load<TextAsset>("common_words");
+                if (ta != null) foreach (var raw in ta.text.Split('\n')) { var t = raw.Trim().ToUpperInvariant(); if (t.Length == 3 && WordDictionary.IsValidWord(t)) s_common3.Add(t); }
+            }
+            if (s_common3.Count == 0) return 0;
+            SnapshotForRain(out var g, out var mv);
+            int placed = 0;
+            for (int attempt = 0; attempt < count * 25 && placed < count; attempt++)
+            {
+                string w = s_common3[SurvivalRng.Range(0, s_common3.Count)];
+                bool across = SurvivalRng.Value < 0.6f;
+                int x0 = SurvivalRng.Range(0, across ? COLS - 2 : COLS), y0 = SurvivalRng.Range(across ? 0 : 2, ROWS);
+                var cells = new Vector2Int[3];
+                bool ok = true;
+                for (int k = 0; k < 3 && ok; k++)
+                {
+                    var p = across ? new Vector2Int(x0 + k, y0) : new Vector2Int(x0, y0 - k);   // down = read top -> bottom
+                    if (p.x >= COLS || p.y < 0 || p.y >= ROWS || keep.Contains(p) || !mv[p.x, p.y] || _board[p.x, p.y] == null) ok = false;
+                    cells[k] = p;
+                }
+                if (!ok) continue;
+                var was = new char[3];
+                for (int k = 0; k < 3; k++) { was[k] = g[cells[k].x, cells[k].y]; g[cells[k].x, cells[k].y] = w[k]; }
+                for (int k = 0; k < 3 && ok; k++) if (FormsWordAt(g, cells[k].x, cells[k].y)) ok = false;   // no 4+ word with neighbours
+                if (!ok) { for (int k = 0; k < 3; k++) g[cells[k].x, cells[k].y] = was[k]; continue; }
+                for (int k = 0; k < 3; k++) { _board[cells[k].x, cells[k].y].Letter = w[k]; keep.Add(cells[k]); }
+                placed++;
+            }
+            return placed;
+        }
+
+        public bool FormsWordAt(char[,] g, int x, int y, int minLen = -1)
+        {
+            if (minLen < 0) minLen = FULL_FILL_AVOID_MIN;
+            if (g[x, y] == '\0') return false;
+            var sb = new System.Text.StringBuilder(7);
+            int l = x, r = x;
+            while (l - 1 >= 0 && g[l - 1, y] != '\0') l--;
+            while (r + 1 < COLS && g[r + 1, y] != '\0') r++;
+            for (int s = l; s <= x; s++)
+                for (int e = Mathf.Max(x, s + minLen - 1); e <= r && e - s + 1 <= MAX_WORD_LENGTH; e++)
+                {
+                    sb.Length = 0; for (int k = s; k <= e; k++) sb.Append(g[k, y]);
+                    if (WordDictionary.IsValidWord(sb.ToString())) return true;
+                }
+            int top = y, bot = y;
+            while (top + 1 < ROWS && g[x, top + 1] != '\0') top++;
+            while (bot - 1 >= 0 && g[x, bot - 1] != '\0') bot--;
+            for (int s = top; s >= y; s--)
+                for (int e = Mathf.Min(y, s - minLen + 1); e >= bot && s - e + 1 <= MAX_WORD_LENGTH; e--)
+                {
+                    sb.Length = 0; for (int k = s; k >= e; k--) sb.Append(g[x, k]);
+                    if (WordDictionary.IsValidWord(sb.ToString())) return true;
+                }
+            return false;
+        }
+
+        /// <summary>Draw a bag letter for (x,y) that spells no word with its neighbours. Leaves it in <paramref name="g"/>.</summary>
+        public char DrawNoWordLetter(char[,] g, int x, int y)
+        {
+            // LETTER BALANCE (2026-10-21: a screenshot had 14 O's in 99 = 2x English, and 8 gold tiles). Count what is on
+            // the board; refuse a letter already over 1.5x its bag share, and gold (locked high-value) past FULL_MAX_HIGH.
+            var counts = new int[26]; int filled = 0, high = 0;
+            for (int cx = 0; cx < COLS; cx++) for (int cy = 0; cy < ROWS; cy++)
+            {
+                if (cx == x && cy == y) continue;
+                char c = g[cx, cy]; if (c < 'A' || c > 'Z') continue;
+                counts[c - 'A']++; filled++;
+                if (LetterData.GetPoints(c) >= Tile.HIGH_VALUE_POINTS) high++;
+            }
+            char L = 'E';
+            for (int i = 0; i < FULL_NOWORD_TRIES; i++)
+            {
+                L = DrawWeightedLetter(); g[x, y] = L;
+                bool isHigh = LetterData.GetPoints(L) >= Tile.HIGH_VALUE_POINTS;
+                if (isHigh && high >= FULL_MAX_HIGH) continue;
+                if (filled >= 12 && counts[L - 'A'] + 1 > 1.5f * LetterShare(L) * (filled + 1) + 1f) continue;
+                if (!FormsWordAt(g, x, y)) return L;
+            }
+            return L;   // very rare: give up and keep the last draw
+        }
+        private static float LetterShare(char L)
+        {
+            if (s_letterBag == null) DrawWeightedLetter();
+            int n = 0; foreach (var c in s_letterBag) if (c == L) n++;
+            return (float)n / Mathf.Max(1, s_letterBag.Length);
+        }
+
+        /// <summary>Data only: clear the board and fill EVERY cell with letters that spell no word.</summary>
+        public void FillBoardNoWords()
+        {
+            ClearBoard();
+            var g = new char[COLS, ROWS];
+            for (int r = 0; r < ROWS; r++)
+                for (int c = 0; c < COLS; c++)
+                    _board[c, r] = new RulesCellData { Letter = DrawNoWordLetter(g, c, r), Col = c, Row = r, PlayerIndex = -1 };
+        }
+
+        /// <summary>After planting near-words: redraw any OTHER cell that now spells a word by accident.</summary>
+        public int ScrubAccidentalWords(HashSet<Vector2Int> keep)
+        {
+            SnapshotForRain(out var g, out var _);
+            int fixedCount = 0;
+            for (int r = 0; r < ROWS; r++)
+                for (int c = 0; c < COLS; c++)
+                {
+                    var d = _board[c, r];
+                    if (d == null || d.Letter == '\0' || d.IsFrozen || d.IsStone || keep.Contains(new Vector2Int(c, r))) continue;
+                    if (!FormsWordAt(g, c, r)) continue;
+                    d.Letter = DrawNoWordLetter(g, c, r); fixedCount++;
+                }
+            return fixedCount;
+        }
+
+        /// <summary>A common 4-letter word with two neighbouring letters swapped (not itself a word either way).</summary>
+        public string PickScrambledPlant(int len, out string word)
+        {
+            EnsurePlantLists();
+            word = null;
+            var pool = len >= 5 ? s_plant5 : s_plant4;
+            for (int attempt = 0; attempt < 8 && pool.Count > 0; attempt++)
+            {
+                string w = pool[Mathf.Clamp((int)(SurvivalRng.Value * pool.Count), 0, pool.Count - 1)];
+                int i = Mathf.Clamp((int)(SurvivalRng.Value * (w.Length - 1)), 0, w.Length - 2);
+                if (w[i] == w[i + 1]) continue;
+                var sc = w.ToCharArray(); char t = sc[i]; sc[i] = sc[i + 1]; sc[i + 1] = t;
+                string s = new string(sc);
+                var rv = s.ToCharArray(); System.Array.Reverse(rv);
+                if (WordDictionary.IsValidWord(s) || WordDictionary.IsValidWord(new string(rv))) continue;
+                word = w; return s;
+            }
+            return null;
+        }
+
+        public void TryPlantNearWord(char[] row)
+        {
+            EnsurePlantLists();   // one loader (builds the lists AND the set)
             for (int attempt = 0; attempt < 6; attempt++)
             {
-                bool five = SurvivalRng.Value < PLANT_FIVE_SHARE && s_plant5.Count > 0;
+                bool five = SurvivalRng.Value < (SurvivalManager.FullBoardActive ? FULL_PLANT_FIVE_SHARE : PLANT_FIVE_SHARE) && s_plant5.Count > 0;
                 var pool = five ? s_plant5 : s_plant4;
                 if (pool.Count == 0) return;
                 string word = pool[Mathf.Clamp((int)(SurvivalRng.Value * pool.Count), 0, pool.Count - 1)];
@@ -2264,7 +2652,7 @@ namespace WordDrop
         /// DERIVED, not a copy. 2026-10-20: this was its own `= 3`, so when LevelRules raised
         /// MIN_WORD_LENGTH to 4 the swipe never heard — on '4+ Letters Only' a swiped 'PEE'
         /// ARMED. Spencer: "3 letter words are still counting when i click and drag across".</summary>
-        public static int SWIPE_MIN_LENGTH => MIN_WORD_LENGTH;
+        public static int SWIPE_MIN_LENGTH => EffectiveMinWordLength;   // full board: 4+ (2026-10-21)
 
         /// <summary>Whether a swipe may run diagonally. OFF — Spencer 2026-10-19: "you
         /// shouldn't be able to make diagonal words". Claude added 8 directions unprompted;
@@ -2332,12 +2720,12 @@ namespace WordDrop
             // Cells are reversed alongside the word because downstream code maps Word[i] to
             // Cells[i] (WildLetterIndices, the primed glow, CellKey).
             var ordered = new List<Vector2Int>(cells);
-            if (!WordDictionary.IsValidWord(word))
+            if (!WordDictionary.IsIntentionalWord(word))   // a swipe is always on purpose — the wider list counts (LOIN, HONK)
             {
                 char[] rev = word.ToCharArray();
                 System.Array.Reverse(rev);
                 string back = new string(rev);
-                if (!WordDictionary.IsValidWord(back))
+                if (!WordDictionary.IsIntentionalWord(back))
                 { reject = $"neither '{word}' nor '{back}' is a word"; return null; }
                 word = back;
                 ordered.Reverse();
@@ -3321,7 +3709,63 @@ namespace WordDrop
                 }
             }
 
+            // FULL BOARD: new letters arrive IN the same fall, the Candy Crush way (2026-10-21 Spencer: "i dont think the
+            // letters should wait before all the explosions are cleared"). The data gets them here; the grid's gravity
+            // spawns their tiles above the board so each column falls as one piece (GridManager.SpawnRefillTiles).
+            if (SurvivalManager.FullBoardActive && FULL_REFILL_IN_GRAVITY) FillTopsInData();
+
             return moves;
+        }
+
+        public static bool FULL_REFILL_IN_GRAVITY = true;
+        public static int  FULL_REFILL_SMART      = 2;    // smart (one swap from a common word) letters per refill
+        public static int  RefillGoldPending;             // a big play's reward: this many of the next refill's smart letters land gold
+
+        /// <summary>Full board: top every column up to the ceiling (above the highest tile — holes under ice stay) with
+        /// letters that spell nothing on their own, plus a few smart letters. Data only. Returns letters added.</summary>
+        public int FillTopsInData()
+        {
+            SnapshotForRain(out var g, out var mv);
+            var cells = new List<Vector2Int>();
+            for (int c = 0; c < COLS; c++)
+            {
+                int top = 0;
+                for (int r = ROWS - 1; r >= 0; r--) if (g[c, r] != '\0') { top = r + 1; break; }
+                for (int r = top; r < ROWS; r++) cells.Add(new Vector2Int(c, r));
+            }
+            if (cells.Count == 0) return 0;
+            cells.Sort((a, b) => a.y != b.y ? a.y.CompareTo(b.y) : a.x.CompareTo(b.x));   // bottom-up: each checked against all below/beside
+            var letters = new Dictionary<Vector2Int, char>();
+            foreach (var p in cells) { letters[p] = DrawNoWordLetter(g, p.x, p.y); mv[p.x, p.y] = true; }
+
+            int wantGold = RefillGoldPending; RefillGoldPending = 0;
+            int goldNow = 0; for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++) if (_board[x, y] != null && _board[x, y].IsRainGold) goldNow++;
+            wantGold = Mathf.Clamp(Mathf.Min(wantGold, FULL_MAX_RAIN_GOLD - goldNow), 0, 9);   // never more than 2 shower-gold on the board
+            int smart = 0; var gold = new HashSet<Vector2Int>();
+            var order = new List<Vector2Int>(cells);
+            for (int i = order.Count - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); var t = order[i]; order[i] = order[j]; order[j] = t; }
+            try
+            {
+                int tried = 0;
+                foreach (var p in order)
+                {
+                    if (smart >= Mathf.Max(FULL_REFILL_SMART, wantGold) || tried++ >= 10) break;   // cap the search (phones)
+                    char was = g[p.x, p.y];
+                    if (FindSmartRainLetter(g, mv, p.x, p.y, out char L, out string w) && !FormsWordAt(g, p.x, p.y))
+                    {
+                        letters[p] = L; smart++;
+                        if (gold.Count < wantGold) gold.Add(p);
+                        WDLog.Log($"[FullBoard] smart '{L}' at ({p.x},{p.y}) (one swap from '{w}'){(gold.Contains(p) ? " GOLD" : "")}");
+                    }
+                    else { g[p.x, p.y] = was; mv[p.x, p.y] = true; }
+                }
+            }
+            catch (System.Exception ex) { Debug.LogError($"[FullBoard] smart seeding failed: {ex.Message}"); }
+
+            foreach (var p in cells)
+                _board[p.x, p.y] = new RulesCellData { Letter = letters[p], Col = p.x, Row = p.y, PlayerIndex = -1, IsRainGold = gold.Contains(p) };
+            WDLog.Log($"[FullBoard] refill {cells.Count} letter(s) in the fall, {smart} smart, {gold.Count} gold");
+            return cells.Count;
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -3408,7 +3852,8 @@ namespace WordDrop
                             if (!hasRealLetter) continue; // reject wild-only words
 
                             string candidate = new string(chars);
-                            if (!WordDictionary.IsValidWord(candidate)) continue;
+                            if (!WordDictionary.IsValidWord(candidate) && !(TouchesSwap(cells) && WordDictionary.IsIntentionalWord(candidate))) continue;
+                            if (ShortWordRejected(wordLen, cells, candidate)) continue;   // full board: short words only by swap
 
                             // ONE CLAIM PER CELL SET. Dedup on the CELLS ALONE, not word+cells.
                             // 2026-10-19: with backwards scanning on, a reversible pair (BAT/TAB
@@ -3907,8 +4352,9 @@ namespace WordDrop
                         if (!hasRealLetter) continue; // reject wild-only words
 
                         string candidate = new string(wordChars);
-                        if (!WordDictionary.IsValidWord(candidate))
+                        if (!WordDictionary.IsValidWord(candidate) && !(TouchesSwap(wordCells) && WordDictionary.IsIntentionalWord(candidate)))
                             continue;
+                        if (ShortWordRejected(wordLen, wordCells, candidate)) continue;   // full board: short words only by swap
 
                         // ONE CLAIM PER CELL SET — see the note on the other scanner.
                         // A reversible pair (BAT/TAB) is two words over identical cells.
@@ -4254,6 +4700,9 @@ namespace WordDrop
             // visual layer reads this to play a defrost VFX + clear the frost overlay, and must
             // NOT route these through the explode animation. Never overlaps ExplodedCells.
             public List<Vector2Int> ThawedCells;
+            public List<KeyValuePair<Vector2Int, int>> SpecialsCreated;   // cell -> kind, born this step
+            public Dictionary<Vector2Int, List<Vector2Int>> SpecialSources;   // birth cell -> the word's cells (merge animation)
+            public List<SpecialFire> SpecialsFired;                         // fired this step, with what they cleared
             public Dictionary<Vector2Int, Vector2Int> GravityMoves;
             public int TotalScore;
             public bool ChainContinues;
@@ -4601,7 +5050,13 @@ namespace WordDrop
             // while sitting lit on screen. Each seed still expands to its own web below.
             // Short words (under INSTANT_POP_AUTO_MIN) are NOT swept in — they are waiting for the player
             // to tap them or extend them; only the web of the one actually tapped/fired goes. 2026-10-20.
-            if (HandManager.InstantPopMode)
+            if (SeedAllOnNextTap)
+            {
+                SeedAllOnNextTap = false;
+                var everything = _primedRegistry.GetAllPrimedWords();
+                if (everything != null && everything.Count > 0) hits = new List<PrimedWordRegistry.PrimedWord>(everything);
+            }
+            else if (HandManager.InstantPopMode)
             {
                 var all = _primedRegistry.GetAllPrimedWords();
                 if (all != null)
@@ -5545,9 +6000,15 @@ namespace WordDrop
 
         private StepResult DoExplode()
         {
+            ShortWordCells = null;   // full board: from here on, only 4+ letter words can form by falling
             var allExplodedCells = new List<Vector2Int>();
             var formedWordCells = new HashSet<Vector2Int>();
             var thawedCells = new List<Vector2Int>(); // frozen tiles caught in this detonation → survive + defrost
+            var specialSurvivors = new HashSet<Vector2Int>();
+            var specialsCreated  = new List<KeyValuePair<Vector2Int, int>>();
+            var specialSources   = new Dictionary<Vector2Int, List<Vector2Int>>();
+            var specialQueue     = new Queue<SpecialFire>();
+            var specialsFired    = new List<SpecialFire>();
             int detonationBonus = 0;
             int totalHeat = 0;
             int swapRefillCount = 0;
@@ -5609,6 +6070,20 @@ namespace WordDrop
             }
             if (comboWordCount > 0) ObjectiveManager.Instance?.NotifyComboDetonated(comboWordCount);
 
+            // FULL BOARD SPECIALS LADDER (2026-10-21 Spencer: "you arent making enough rockets and i dont think ive ever even
+            // made a disco ball"). With 4+ letter words, 7 letters for a disco was near impossible (58 four-letter pops vs 5
+            // of 5+ in one session). Candy Crush's ladder, one step up from its minimum:
+            //   5 letters -> rocket   ·   two words CROSSING in one pop -> bomb at the crossing (CC's L/T wrapped candy)
+            //   6+ letters -> disco ball.        Rising-row mode keeps 5 / 6 / 7+.
+            var crossUse = new Dictionary<Vector2Int, int>();
+            if (SurvivalManager.FullBoardActive)
+                for (int ci = 0; ci < _stepPendingTriggers.Count; ci++)
+                {
+                    var cpw = _primedRegistry.GetById(_stepPendingTriggers[ci]);
+                    if (cpw == null || cpw.Cells == null || cpw.Word == null || cpw.Word.Length < 4) continue;
+                    foreach (var cc in cpw.Cells) { crossUse.TryGetValue(cc, out int n); crossUse[cc] = n + 1; }
+                }
+
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
             {
                 int pid = _stepPendingTriggers[i];
@@ -5622,11 +6097,62 @@ namespace WordDrop
                     longestPrimedWord = pw.Word.Length;
                 keyWordLen = Mathf.Max(keyWordLen, pw.Word.Length); // primed word counts as a chest "key" too
 
+                // SPECIAL TILE BIRTH: pick the survivor cell for a 5+ letter word.
+                Vector2Int specialAt = new Vector2Int(-1, -1);
+                int specialKind = SPECIAL_NONE;
+                // A word that FIRES an existing special does not also birth one. 2026-10-21 Spencer: a cascade EATER ran
+                // through a rocket (fired it) and was also 5 letters, so a NEW rocket was born in the same row and survived
+                // the blast — "it fired the rocket but it didnt destroy it". Firing the special IS that word's reward.
+                bool firesSpecial = false;
+                if (pw.Cells != null)
+                    foreach (var pc in pw.Cells)
+                        if (InBounds(pc.x, pc.y) && _board[pc.x, pc.y] != null && _board[pc.x, pc.y].SpecialKind != SPECIAL_NONE
+                            && !specialSurvivors.Contains(pc)) { firesSpecial = true; break; }
+                bool fullLadder = SurvivalManager.FullBoardActive;
+                Vector2Int crossAt = new Vector2Int(-1, -1);
+                if (fullLadder && pw.Cells != null && pw.Word != null && pw.Word.Length < 6)
+                    foreach (var pc in pw.Cells) if (crossUse.TryGetValue(pc, out int n) && n >= 2) { crossAt = pc; break; }
+                if (SpecialTilesActive && !firesSpecial && pw.Word != null && pw.Cells != null
+                    && ((pw.Word.Length >= 5 && pw.Cells.Count >= 5) || crossAt.x >= 0))
+                {
+                    bool horizontal = true;
+                    for (int c = 1; c < pw.Cells.Count; c++) if (pw.Cells[c].y != pw.Cells[0].y) { horizontal = false; break; }
+                    if (fullLadder)
+                        specialKind = pw.Word.Length >= 6 ? SPECIAL_DISCO : crossAt.x >= 0 ? SPECIAL_BOMB
+                                    : (horizontal ? SPECIAL_ROCKET_H : SPECIAL_ROCKET_V);
+                    else
+                        specialKind = pw.Word.Length >= 7 ? SPECIAL_DISCO : pw.Word.Length == 6 ? SPECIAL_BOMB
+                                    : (horizontal ? SPECIAL_ROCKET_H : SPECIAL_ROCKET_V);
+                    System.Func<Vector2Int, bool> eligible = p => InBounds(p.x, p.y) && _board[p.x, p.y] != null
+                        && !_board[p.x, p.y].IsFrozen && _board[p.x, p.y].SpecialKind == SPECIAL_NONE
+                        && !_board[p.x, p.y].IsDropTarget && !specialSurvivors.Contains(p);
+                    if (specialKind == SPECIAL_BOMB && crossAt.x >= 0 && eligible(crossAt)) specialAt = crossAt;   // bomb sits on the crossing
+                    if (specialAt.x < 0 && LastSwapCells != null)
+                        foreach (var sc in LastSwapCells)
+                            if (specialAt.x < 0 && pw.Cells.Contains(sc) && eligible(sc)) specialAt = sc;
+                    if (specialAt.x < 0 && eligible(pw.Cells[pw.Cells.Count / 2])) specialAt = pw.Cells[pw.Cells.Count / 2];
+                    if (specialAt.x < 0) foreach (var p in pw.Cells) if (specialAt.x < 0 && eligible(p)) specialAt = p;
+                    if (specialAt.x < 0) specialKind = SPECIAL_NONE;
+                }
+
                 for (int c = 0; c < pw.Cells.Count; c++)
                 {
                     Vector2Int cell = pw.Cells[c];
+                    if (specialSurvivors.Contains(cell)) continue;   // born this step — a crossing word must not destroy it
                     if (InBounds(cell.x, cell.y) && _board[cell.x, cell.y] != null)
                     {
+                        if (specialKind != SPECIAL_NONE && cell == specialAt)
+                        {
+                            _board[cell.x, cell.y].SpecialKind = specialKind;   // keeps its letter, survives, becomes special
+                            specialSurvivors.Add(cell);
+                            specialsCreated.Add(new KeyValuePair<Vector2Int, int>(cell, specialKind));
+                            specialSources[cell] = new List<Vector2Int>(pw.Cells);
+                            if (!HandManager.BonusBlastRunning) StageStats.SpecialsMade++;
+                            WDLog.Log($"[Special] {SpecialName(specialKind)} born at ({cell.x},{cell.y}) '{_board[cell.x, cell.y].Letter}' from '{pw.Word}'");
+                            continue;
+                        }
+                        if (_board[cell.x, cell.y].SpecialKind != SPECIAL_NONE)
+                            specialQueue.Enqueue(new SpecialFire { Cell = cell, Kind = _board[cell.x, cell.y].SpecialKind, Letter = _board[cell.x, cell.y].Letter, Word = pw.Word });
                         // Escort drop-targets (rubber chickens) ONLY leave at the bottom row — never destroyed as
                         // primed-word / chain-detonation collateral. Higher-tier chains detonate more primed words
                         // through here, so this path was blowing up chickens on big explosions. 2026-07-23.
@@ -5684,6 +6210,87 @@ namespace WordDrop
 
             _stepTotalScore += detonationBonus;
 
+            // SPECIAL TILES FIRE: every special in a popping word (and any special caught in a blast) clears its area.
+            if (specialQueue.Count > 0)
+            {
+                var exploded = new HashSet<Vector2Int>(allExplodedCells);
+                int guard = 0;
+                while (specialQueue.Count > 0 && guard++ < 64)
+                {
+                    var f = specialQueue.Dequeue();
+                    f.Cleared = new List<Vector2Int>();
+                    var area = new List<Vector2Int>();
+                    // POWERED = fired by a real word the player made (2026-10-21 Spencer: double-tap paid the same as making a
+                    // word "think that making a word should raise the power of it?"). Basic = double-tap / caught in a blast.
+                    //   rocket: one line -> powered: row AND column    bomb: 3x3 -> powered: 5x5
+                    //   disco:  most common letter on the board -> powered: every letter of the word
+                    bool powered = !string.IsNullOrEmpty(f.Word) && f.Word.Length > 1;
+                    bool rocketRow = f.Kind == SPECIAL_ROCKET_H || (powered && f.Kind == SPECIAL_ROCKET_V);
+                    bool rocketCol = f.Kind == SPECIAL_ROCKET_V || (powered && f.Kind == SPECIAL_ROCKET_H);
+                    if (f.Kind == SPECIAL_ROCKET_H || f.Kind == SPECIAL_ROCKET_V)
+                    {
+                        if (rocketRow) for (int x = 0; x < COLS; x++) area.Add(new Vector2Int(x, f.Cell.y));
+                        if (rocketCol) for (int y = 0; y < ROWS; y++) area.Add(new Vector2Int(f.Cell.x, y));
+                    }
+                    else if (IsBombLike(f.Kind))
+                    {
+                        int r = powered ? 2 : 1;
+                        for (int dx = -r; dx <= r; dx++) for (int dy = -r; dy <= r; dy++) area.Add(new Vector2Int(f.Cell.x + dx, f.Cell.y + dy));
+                    }
+                    else if (f.Kind == SPECIAL_DISCO)
+                    {
+                        string set;
+                        if (powered) set = f.Word.ToUpperInvariant();
+                        else
+                        {
+                            // Basic disco: the MOST COMMON letter on the board (Royal Match's tapped light ball) — it was
+                            // the weakest special when it only took its own letter.
+                            var counts = new Dictionary<char, int>();
+                            for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
+                            {
+                                var d0 = _board[x, y];
+                                if (d0 == null || d0.Letter == '\0' || d0.IsStone) continue;
+                                char ch = char.ToUpperInvariant(d0.Letter);
+                                counts[ch] = (counts.TryGetValue(ch, out int k) ? k : 0) + 1;
+                            }
+                            char best = char.ToUpperInvariant(f.Letter); int bestN = -1;
+                            foreach (var kv in counts) if (kv.Value > bestN) { bestN = kv.Value; best = kv.Key; }
+                            set = best.ToString();
+                        }
+                        for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
+                        {
+                            var d = _board[x, y];
+                            if (d != null && !d.IsStone && set.IndexOf(char.ToUpperInvariant(d.Letter)) >= 0) area.Add(new Vector2Int(x, y));
+                        }
+                    }
+                    // Rockets sweep outward from the special, so order the cells by distance (the FX zips along).
+                    area.Sort((a, b) => (Mathf.Abs(a.x - f.Cell.x) + Mathf.Abs(a.y - f.Cell.y)).CompareTo(Mathf.Abs(b.x - f.Cell.x) + Mathf.Abs(b.y - f.Cell.y)));
+                    foreach (var p in area)
+                    {
+                        if (!InBounds(p.x, p.y) || exploded.Contains(p) || specialSurvivors.Contains(p)) continue;
+                        var d = _board[p.x, p.y];
+                        if (d == null || d.IsDropTarget || (d.IsAnchored && !SurvivalManager.FullBoardActive)) continue;
+                        if (d.IsStone && SurvivalManager.FullBoardActive) { CratesBroken++; _stepTotalScore += ICE_BOUNTY; }   // full board: specials smash crates (Royal Match boxes)
+                        // A special's blast takes ICE too (2026-10-21 Spencer: a rocket on the ice level left frozen tiles in its
+                        // row — "it should destroy the whole row"). Candy Crush / Royal Match specials break blockers in their
+                        // path; the "only a word melts ice" rule stays for ordinary splash. Pays the ice bounty.
+                        if (d.IsFrozen) { _stepTotalScore += ICE_BOUNTY; d.IsFrozen = false; }   // destroyed, not thawed — no defrost anim on a dying tile
+                        if (d.SpecialKind != SPECIAL_NONE) specialQueue.Enqueue(new SpecialFire { Cell = p, Kind = d.SpecialKind, Letter = d.Letter });
+                        _board[p.x, p.y] = null;
+                        _bonusCells[p.x, p.y] = false;
+                        _cyanCells[p.x, p.y]  = false;
+                        exploded.Add(p);
+                        allExplodedCells.Add(p);
+                        f.Cleared.Add(p);
+                        _stepTotalScore += SPECIAL_TILE_PAY;
+                    }
+                    specialsFired.Add(f);
+                    if (!HandManager.BonusBlastRunning) StageStats.SpecialsFired++;
+                    WDLog.Log($"[Special] {SpecialName(f.Kind)} fired at ({f.Cell.x},{f.Cell.y}) '{f.Letter}'{(powered ? " POWERED by '" + f.Word + "'" : " basic")} — cleared {f.Cleared.Count} tile(s)");
+                }
+                ValidatePrimedWords();   // armed words that lost letters to a blast are no longer words
+            }
+
             // Phase 9.7: trigger-word tiles clear in Survival AND Level mode.
             // Survival uses this to free more cells per detonation (board-survival mechanic).
             // Level mode uses it so the player's drop-formed trigger word doesn't occupy
@@ -5692,6 +6299,7 @@ namespace WordDrop
             if (SurvivalManager.IsSurvivalMode || GameManager.IsLevelMode)
             {
                 var alreadyExploded = new HashSet<Vector2Int>(allExplodedCells);
+                alreadyExploded.UnionWith(specialSurvivors);   // newborn specials survive every follow-up pass (2026-10-21: GUESS's rocket was wiped by the trigger-word clear)
                 if (_stepTriggerWords != null)
                 {
                     for (int tw = 0; tw < _stepTriggerWords.Count; tw++)
@@ -5814,6 +6422,7 @@ namespace WordDrop
                                 if (_board[col, row].IsDropTarget) continue; // drop-targets only exit at the bottom
                                 // ICE (strict): collateral splash never touches a frozen OR already-thawed tile — only a word detonation clears ice.
                                 if (IsIceProtected(cell, thawedCells)) continue;
+                                if (specialSurvivors.Contains(cell)) continue;   // newborn special survives the splash (2026-10-21)
 
                                 var data = _board[col, row];
                                 int letterPts = LetterData.GetPoints(data.Letter);
@@ -5847,6 +6456,7 @@ namespace WordDrop
                                 if (_board[col, row].IsDropTarget) continue; // drop-targets only exit at the bottom
                                 // ICE (strict): collateral splash never touches a frozen OR already-thawed tile — only a word detonation clears ice.
                                 if (IsIceProtected(cell, thawedCells)) continue;
+                                if (specialSurvivors.Contains(cell)) continue;   // newborn special survives the splash (2026-10-21)
 
                                 var data = _board[col, row];
                                 int letterPts = LetterData.GetPoints(data.Letter);
@@ -5971,6 +6581,7 @@ namespace WordDrop
                             _board[sx, sy] = null;
                             stoneCleared.Add(stonePos);
                             stoneClearCount++;
+                            if (SurvivalManager.FullBoardActive) { CratesBroken++; _stepTotalScore += ICE_BOUNTY; }
                             nextSources.Add(stonePos);
                         }
                     }
@@ -6005,6 +6616,7 @@ namespace WordDrop
                 int junkCleared = 0;
                 var junkCandidates = new List<Vector2Int>();
                 var alreadyExplodedSet = new HashSet<Vector2Int>(allExplodedCells);
+                alreadyExplodedSet.UnionWith(specialSurvivors);   // newborn specials survive every follow-up pass (2026-10-21: GUESS's rocket was wiped by the trigger-word clear)
 
                 // Collect all junk neighbors of exploded cells
                 int snapCount = allExplodedCells.Count;
@@ -6078,6 +6690,7 @@ namespace WordDrop
                 if (clearRow >= 0)
                 {
                     var alreadyExploded = new HashSet<Vector2Int>(allExplodedCells);
+                    alreadyExploded.UnionWith(specialSurvivors);   // newborn specials survive every follow-up pass (2026-10-21: GUESS's rocket was wiped by the trigger-word clear)
                     int rowCleared = 0;
                     for (int col = 0; col < COLS; col++)
                     {
@@ -6104,6 +6717,7 @@ namespace WordDrop
             // Purge scored word keys AFTER all splash damage finalized
             PurgeScoredKeysForCells(allExplodedCells);
             PurgeStepScoredKeysForCells(allExplodedCells);
+            ExplodedTilesTotal += allExplodedCells.Count;   // running count — bonus coins read the delta (full board refills, so occupancy can't)
 
             // if (swapRefillCount > 0 || editRefillCount > 0 || wildRefillCount > 0)
 //                 WDLog.Log($"[RulesEngine] DoExplode: refills collected — swap={swapRefillCount} edit={editRefillCount} wild={wildRefillCount}");
@@ -6114,6 +6728,9 @@ namespace WordDrop
                 ExplodedCells = allExplodedCells,
                 FormedWordCells = formedWordCells.Count > 0 ? new List<Vector2Int>(formedWordCells) : null,
                 ThawedCells = thawedCells,
+                SpecialsCreated = specialsCreated.Count > 0 ? specialsCreated : null,
+                SpecialSources  = specialSources.Count > 0 ? specialSources : null,
+                SpecialsFired   = specialsFired.Count > 0 ? specialsFired : null,
                 TotalScore = _stepTotalScore,
                 DetonationBonus = detonationBonus,
                 DetonationHeat = totalHeat,
@@ -6230,6 +6847,13 @@ namespace WordDrop
         // destroyed (mirrors the drop-target survive-explosion precedent). v1 = single layer. A future
         // multi-layer is an easy add: replace this bool with an IceLayers int and decrement per detonation.
         public bool IsFrozen      { get; set; }
+        /// <summary>Special tile (2026-10-21): 0 none, see RulesEngine.SPECIAL_* constants. Lives on the cell DATA
+        /// object, so it travels with rises and gravity (which move the object); swaps move it explicitly.</summary>
+        public int  SpecialKind   { get; set; }
+        /// <summary>RAIN GOLD (2026-10-21): a shower's smart letter, made gold as the visible reward. Reads + pays like a
+        /// K/Q gold letter (+1 move when it pops) but is NOT locked. Travels like SpecialKind: with the object on
+        /// rises/gravity, explicitly on swaps.</summary>
+        public bool IsRainGold    { get; set; }
         // CHEST TIER (2026-06-12): the word-LENGTH "key" required to crack this vault via the
         // adjacent-detonation stone-splash. 0 = regular (any word), 4 = mid, 5 = high (the
         // telegraphed jackpot). Gated in DoExplode; telegraphed on the tile (bronze/silver/gold).

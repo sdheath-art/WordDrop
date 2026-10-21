@@ -356,6 +356,8 @@ namespace WordDrop
                 if (c == null) continue;
 
                 if (t.IsFrozen     != c.IsFrozen)     { t.SetFrozenVisual(c.IsFrozen);        fixes++; Report(col,row,t,"ice",      c.IsFrozen); }
+                if (t.IsRainGold   != c.IsRainGold)   { t.SetRainGold(c.IsRainGold);          fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' rain-gold: visual={t.IsRainGold} data={c.IsRainGold} → corrected"); }
+                if (t.SpecialKind  != c.SpecialKind)  { t.SetSpecial(c.SpecialKind);          fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' special: visual={t.SpecialKind} data={c.SpecialKind} → corrected"); }
                 // FLAGS AGREEING IS NOT THE SAME AS LOOKING RIGHT. 2026-10-20 — "the ice is
                 // completely disappearing in some cases on some letters when there is a row
                 // rise": a tile recycled mid-melt kept IsFrozen TRUE with its overlay scaled to
@@ -1161,6 +1163,7 @@ namespace WordDrop
             // top out", i.e. rows are rising. Survival qualifies; so does any rising level.
             bool canTopOut = SurvivalManager.IsSurvivalMode
                           || (SurvivalManager.Instance != null && !SurvivalManager.Instance.ActiveRisesOff);
+            if (SurvivalManager.FullBoardActive) canTopOut = false;   // full board is ALWAYS at the top — nothing to warn about
             if (!DANGER_PULSE_ENABLED || !canTopOut)
             {
                 if (_dangerTiles.Count > 0)
@@ -2376,6 +2379,8 @@ namespace WordDrop
                 }
             }
 
+            totalMoved += SpawnRefillTiles(animatingTiles);   // full board: new letters fall in with the rest
+
             if (totalMoved > 0)
             {
 //                 WDLog.Log($"[GridManager] ApplyGravity — {totalMoved} tile(s) falling.");
@@ -2424,9 +2429,43 @@ namespace WordDrop
         /// Event-driven gravity: moves specific tiles based on RulesEngine event data.
         /// More reliable than re-scanning because it uses the source-of-truth positions.
         /// </summary>
+        /// <summary>FULL BOARD (2026-10-21): make tiles for cells the data refilled during gravity (RulesEngine.FillTopsInData).
+        /// Each column's new letters start stacked just above the board and fall the same distance, so the column comes
+        /// down as one piece together with the tiles already falling. Adds them to <paramref name="animating"/>.</summary>
+        public int SpawnRefillTiles(List<Tile> animating)
+        {
+            if (!SurvivalManager.FullBoardActive) return 0;
+            var rules = RulesEngine.Instance; if (rules == null) return 0;
+            const float STAGGER_PER_COL = 0.045f;
+            int spawned = 0; bool anyGold = false;
+            for (int col = 0; col < COLS; col++)
+            {
+                int newCount = 0;
+                for (int row = 0; row < ROWS; row++) { var d = rules.GetCell(col, row); if (d != null && d.Letter != '\0' && _tiles[col, row] == null) newCount++; }
+                if (newCount == 0) continue;
+                for (int row = 0; row < ROWS; row++)
+                {
+                    var d = rules.GetCell(col, row);
+                    if (d == null || d.Letter == '\0' || _tiles[col, row] != null) continue;
+                    Tile tile = CreateSingleTile(col, row, d.Letter);
+                    if (tile == null) continue;
+                    Vector3 target = CellToWorld(col, row);
+                    Vector3 start  = CellToWorld(col, row + newCount); start.z = target.z;
+                    tile.transform.position = start;
+                    if (d.IsRainGold) { tile.SetRainGold(true); anyGold = true; }
+                    tile.AnimateGravityFall(target, Vector3.Distance(start, target) / GRAVITY_FALL_SPEED, col * STAGGER_PER_COL);
+                    animating?.Add(tile);
+                    spawned++;
+                }
+            }
+            if (anyGold) BonusPopup.Instance?.Show("GOLDEN LETTERS!", new Color(1f, 0.85f, 0.3f, 1f), Vector3.zero, 1.1f);
+            return spawned;
+        }
+
         public IEnumerator ApplyGravityFromEvents(Dictionary<Vector2Int, Vector2Int> tileMoves)
         {
-            if (tileMoves == null || tileMoves.Count == 0)
+            if (tileMoves == null) tileMoves = new Dictionary<Vector2Int, Vector2Int>();
+            if (tileMoves.Count == 0 && !SurvivalManager.FullBoardActive)
             {
 //                 WDLog.Log("[GridManager] ApplyGravityFromEvents — no moves.");
                 yield break;
@@ -2500,6 +2539,8 @@ namespace WordDrop
                     tile.transform.position = targetPos;
                 }
             }
+
+            SpawnRefillTiles(animatingTiles);   // full board: new letters fall in with the rest
 
             if (animatingTiles.Count > 0)
             {

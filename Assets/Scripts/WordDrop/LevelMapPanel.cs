@@ -666,11 +666,20 @@ namespace WordDrop
         private const float COIN_FADE_FROM = 0.93f;
 
         private System.Collections.IEnumerator CoinCascadeCoroutine(Vector3 sourceWorld, int share, int index)
+            => CoinFlyRoutine(_canvas != null ? _canvas.transform : null, sourceWorld, _coinsIconRT, share, index, OnCoinCascadeLanded);
+
+        /// <summary>THE home-screen coin flight (burst + gravity arc + shadow + 3D spin + magnet swoop + shrink-in), reusable on
+        /// any overlay canvas with any target and landing callback. 2026-10-21 Spencer: the in-level bonus coins should use
+        /// "the same animation as the homescreen when the coins fly up" — so both callers share this one routine. Run it with
+        /// the CALLER's StartCoroutine; it only reads this panel's coin art and tuning.</summary>
+        public System.Collections.IEnumerator CoinFlyRoutine(Transform parent, Vector3 sourceWorld, RectTransform target, int share, int index,
+                                                             System.Action<int, Vector3> landed)
         {
+            if (parent == null) { landed?.Invoke(share, sourceWorld); yield break; }
             // Container we animate (position + scale). A dark drop-SHADOW child sits behind an offset, and the COIN
             // child rides in front — so the shadow reads under the coin the whole flight.
             var go = new GameObject("CoinFly", typeof(RectTransform));
-            go.transform.SetParent(_canvas.transform, false);
+            go.transform.SetParent(parent, false);
             go.transform.SetAsLastSibling(); // above the map + nodes
             var rt = go.GetComponent<RectTransform>();
             rt.sizeDelta = new Vector2(CoinFlySize, CoinFlySize);
@@ -750,7 +759,7 @@ namespace WordDrop
 
             // Phase 2: HOME to the counter — bezier arc, ease-IN "magnet suck".
             Vector3 from = go != null ? rt.position : sourceWorld;
-            Vector3 tgt  = _coinsIconRT != null ? _coinsIconRT.position : from;
+            Vector3 tgt  = target != null ? target.position : from;
             Vector3 mid  = Vector3.Lerp(from, tgt, 0.5f);
             Vector3 pathDir = (tgt - from).sqrMagnitude > 0.001f ? (tgt - from).normalized : Vector3.up;
             Vector3 perp = new Vector3(-pathDir.y, pathDir.x, 0f);
@@ -780,7 +789,7 @@ namespace WordDrop
             }
             Vector3 landPos = go != null ? rt.position : tgt;
             if (go != null) Destroy(go);
-            OnCoinCascadeLanded(share, landPos);
+            landed?.Invoke(share, landPos);
         }
 
         private void OnCoinCascadeLanded(int share, Vector3 landPos)
@@ -800,13 +809,16 @@ namespace WordDrop
 
         // A gold additive-glow flash + a few sparkles at the coin counter each time a coin lands (Royal-Match "the
         // counter sparkles as coins pour in"). 2026-07-14 Spencer.
-        private void SpawnCoinHitFX(Vector3 worldPos)
+        private void SpawnCoinHitFX(Vector3 worldPos) => SpawnCoinHitFXOn(_canvas != null ? _canvas.transform : null, worldPos);
+
+        /// <summary>The home-screen coin landing glow + sparkle, on any overlay canvas (bonus REWARD panel too).</summary>
+        public void SpawnCoinHitFXOn(Transform parent, Vector3 worldPos)
         {
-            if (_canvas == null) return;
+            if (parent == null) return;
             var mat = LoadMapAdditiveMat();
 
             var glowGO = new GameObject("CoinHitGlow", typeof(RectTransform), typeof(Image));
-            glowGO.transform.SetParent(_canvas.transform, false);
+            glowGO.transform.SetParent(parent, false);
             glowGO.transform.SetAsLastSibling();
             var grt = glowGO.GetComponent<RectTransform>();
             grt.sizeDelta = new Vector2(88f, 88f); grt.position = worldPos;
@@ -823,7 +835,7 @@ namespace WordDrop
             for (int i = 0; i < 3; i++)
             {
                 var sGO = new GameObject("CoinSpark", typeof(RectTransform), typeof(Image));
-                sGO.transform.SetParent(_canvas.transform, false);
+                sGO.transform.SetParent(parent, false);
                 sGO.transform.SetAsLastSibling();
                 var srt = sGO.GetComponent<RectTransform>();
                 srt.sizeDelta = new Vector2(26f, 26f); srt.position = worldPos;
@@ -956,6 +968,7 @@ namespace WordDrop
         /// <summary>The reward earned on the just-cleared level — flies into the coins pill when the star lands on
         /// the map. Set by SurvivalManager at level clear; consumed once by the cascade. 2026-07-14 Spencer.</summary>
         public void SetPendingCoinReward(int coins) => _pendingCoinReward = Mathf.Max(0, coins);
+        public void AddPendingCoinReward(int coins) => _pendingCoinReward = Mathf.Max(0, _pendingCoinReward + coins);   // bonus blast
 
         // ── Tutorial vs Areas (2026-07-14 Spencer) ──────────────────────────────────
         // Levels 1..TUTORIAL_LEVELS are the ONE-TIME tutorial — NOT a numbered Area. The run proper begins at the

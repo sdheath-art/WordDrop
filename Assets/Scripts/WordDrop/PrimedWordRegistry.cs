@@ -89,7 +89,7 @@ namespace WordDrop
             {
                 var c = re.GetCell(cells[i].x, cells[i].y);
                 if (c == null || c.IsWild) continue;
-                if (LetterData.GetPoints(c.Letter) >= Tile.HIGH_VALUE_POINTS) return true;
+                if (LetterData.GetPoints(c.Letter) >= Tile.HIGH_VALUE_POINTS || c.IsRainGold) return true;
             }
             return false;
         }
