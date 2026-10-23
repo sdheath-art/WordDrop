@@ -575,10 +575,40 @@ namespace WordDrop
             // that bypasses the shared-material faux-bold fix in GameFont.GetUITMP, re-garbling the text.
         }
 
+        // ── BUTTON ICON (2026-10-22 Spencer: the clapper on the WATCH AD buttons) — an icon on the left of a built button, the
+        // label nudged right so the two read as one. Resources path in; null-safe if the art is missing. ──
+        private static readonly System.Collections.Generic.Dictionary<string, Sprite> s_btnIconCache = new System.Collections.Generic.Dictionary<string, Sprite>();
+        public static void AddButtonIcon(GameObject button, string resourcePath, float iconLeft = 0.06f, float iconRight = 0.24f)
+        {
+            if (button == null) return;
+            if (!s_btnIconCache.TryGetValue(resourcePath, out var sp) || sp == null)
+            {
+                var tex = Resources.Load<Texture2D>(resourcePath);
+                sp = tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f) : null;
+                s_btnIconCache[resourcePath] = sp;
+            }
+            if (sp == null) { Debug.LogWarning($"[MenuUI] button icon {resourcePath} missing"); return; }
+            var go = new GameObject("Icon", typeof(RectTransform), typeof(UnityEngine.UI.Image));
+            go.transform.SetParent(button.transform, false);
+            var rt = (RectTransform)go.transform;
+            rt.anchorMin = new Vector2(iconLeft, 0.12f); rt.anchorMax = new Vector2(iconRight, 0.88f);
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+            var img = go.GetComponent<UnityEngine.UI.Image>();
+            img.sprite = sp; img.preserveAspect = true; img.raycastTarget = false;
+            var label = button.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+            if (label != null)
+            {
+                var lrt = label.rectTransform;
+                lrt.anchorMin = new Vector2(Mathf.Max(lrt.anchorMin.x, iconRight - 0.02f), lrt.anchorMin.y);
+                lrt.offsetMin = new Vector2(0f, lrt.offsetMin.y);
+            }
+        }
+
         internal static Font GetFont()
         {
             // 2026-06-15 Spencer: Cartoon font for all legacy-Text UI (modals, buttons, panels).
-            Font f = Resources.Load<Font>("Cartoon");
+            Font f = GameFont.ALL_NUNITO ? GameFont.GetUI() : Resources.Load<Font>("Cartoon");   // 2026-10-22: all Nunito
+            if (f == null) f = Resources.Load<Font>("Cartoon");
             if (f == null) f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (f == null) f = Resources.GetBuiltinResource<Font>("Arial.ttf");
             return f;

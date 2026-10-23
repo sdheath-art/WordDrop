@@ -1241,20 +1241,33 @@ namespace WordDrop
         /// so both plates get a real ramp.</summary>
         private static Sprite BuildGreenSprite(int height, Color32 top, Color32 mid, Color32 bot, bool lip, float radiusFrac)
         {
-            int r = Mathf.Max(1, Mathf.RoundToInt(height * radiusFrac));
-            var tex = new Texture2D(1, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            // 2026-10-21 Spencer: "can we fix this button so it doesnt look so weird?" This used to be a 1-PIXEL-WIDE strip,
+            // nine-sliced only top/bottom — so the green plates could never have rounded corners and sat SQUARE inside the
+            // rounded navy frame. Now a real rounded rectangle (anti-aliased corners), sliced on all four sides, so the
+            // gradient still spans any button size while every layer's corners curve together.
+            int r = Mathf.Max(2, Mathf.RoundToInt(height * radiusFrac));
+            int w = r * 2 + 4;
+            var tex = new Texture2D(w, height, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            var px = new Color[w * height];
             for (int y = 0; y < height; y++)
             {
-                float t = 1f - (y / (float)(height - 1));   // texture y=0 is the BOTTOM
-                Color c = t < 0.5f ? Color.Lerp(bot, mid, t / 0.5f)
-                                   : Color.Lerp(mid, top, (t - 0.5f) / 0.5f);
+                float t = 1f - (y / (float)Mathf.Max(1, height - 1));   // texture y=0 is the BOTTOM
+                Color c = t < 0.5f ? Color.Lerp(bot, mid, t / 0.5f) : Color.Lerp(mid, top, (t - 0.5f) / 0.5f);
                 if (lip && y >= height - 2) c = new Color32(0x36, 0x5A, 0x1A, 0xFF); // dark top lip
                 if (lip && y <= 1)          c = new Color32(0x33, 0x6C, 0x1B, 0xFF); // dark bottom lip
-                tex.SetPixel(0, y, c);
+                for (int x = 0; x < w; x++)
+                {
+                    // distance outside the rounded corner (0 inside); 1px soft edge
+                    float cx = Mathf.Clamp(x + 0.5f, r, w - r), cy = Mathf.Clamp(y + 0.5f, r, height - r);
+                    float dx = (x + 0.5f) - cx, dy = (y + 0.5f) - cy;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy) - r;
+                    var o = c; o.a = Mathf.Clamp01(0.5f - d);
+                    px[y * w + x] = o;
+                }
             }
-            tex.Apply(false);
-            return Sprite.Create(tex, new Rect(0, 0, 1, height), new Vector2(0.5f, 0.5f), 100f, 0,
-                                 SpriteMeshType.FullRect, new Vector4(0, r, 0, r));
+            tex.SetPixels(px); tex.Apply(false);
+            return Sprite.Create(tex, new Rect(0, 0, w, height), new Vector2(0.5f, 0.5f), 100f, 0,
+                                 SpriteMeshType.FullRect, new Vector4(r, r, r, r));
         }
 
 
@@ -1484,6 +1497,9 @@ namespace WordDrop
         /// <summary>True while the map is on screen (fading in, hopping, or holding under the intro). HUDManager
         /// uses this to defer the level-entry spring-in until the map has actually faded off the board.</summary>
         public bool IsShowing => _busy;
+        /// <summary>The map/home screen is physically covering the board (canvas on and not faded out). The board's input
+        /// gates refuse while this is true — 2026-10-23 Spencer made moves on a "phantom board" behind the home screen.</summary>
+        public bool BlocksBoard => _canvas != null && _canvas.gameObject.activeInHierarchy && (_group == null || _group.alpha > 0.01f);
 
         // Fade the map away (used after PLAY, once the intro has released the pause and gameplay is starting).
         private void FadeMapOut()

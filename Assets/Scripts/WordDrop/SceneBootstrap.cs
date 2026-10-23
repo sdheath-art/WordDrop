@@ -193,7 +193,7 @@ namespace WordDrop
                 // COVER fit: scale uniformly so the art fills the camera on BOTH axes and
                 // crops the overflow, rather than letterboxing on a different aspect. The
                 // 1.04 overscan keeps camera shake from exposing an edge.
-                const float OVERSCAN = 1.04f;
+                const float OVERSCAN = 1.15f;   // 2026-10-22 Spencer: big camera shakes exposed white space at 1.04 — pairs with WordDropFX.CAMERA_SHAKE_MAX
                 float nativeW = bgArt.rect.width  / bgArt.pixelsPerUnit;
                 float nativeH = bgArt.rect.height / bgArt.pixelsPerUnit;
                 float fit = Mathf.Max((halfW * 2f * OVERSCAN) / nativeW,

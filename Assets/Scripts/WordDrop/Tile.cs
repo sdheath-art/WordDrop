@@ -155,7 +155,7 @@ namespace WordDrop
             // registry caught up — the rose-during-the-flash Spencer kept seeing.
             // Gold wins means gold does not un-win. 2026-09-10 Spencer.
             if (_isGoldPrimed && _hasPrimedGlow) return true;
-            if (callerSaysGold || IsGoldLetter) return true;
+            if (callerSaysGold || IsGoldLetter || IsGem) return true;   // a gem in the word = the gem (gold) armed look
             var c = RulesEngine.PrimedGlowForCell(new Vector2Int(Col, Row));
             return ColorsClose(c, PRIMED_GOLD_GLOW);
         }
@@ -673,7 +673,7 @@ namespace WordDrop
         /// GOLD_HUE_SHIFT / GOLD_SAT_MUL recolour of the white tile. 2026-09-21.
         /// NOTE the gold BONUS cell (`golden_tile2@2x`) and the gold PRIMED face
         /// (`primed_gold_tile@2x`) are SEPARATE sprites and are not affected by this.</summary>
-        public static string GOLD_FACE_ASSET = "Tiles/gold_tile2@2x";
+        public static string GOLD_FACE_ASSET = "Tiles/gold_tile2@2x";   // 2026-10-22: back to the gold tile — the yellow gem now marks GEM tiles (collect goal)
 
         /// <summary>The PRIMED / armed face — the tile a word turns into once it is armed.
         /// "Tiles/primed_tile@2x" is the original magenta. 2026-09-21 trying green_primed@2x.
@@ -691,7 +691,7 @@ namespace WordDrop
         /// like how priming regular tiles swaps to the green tiles". Pointed at the authored gold
         /// art so it is a straight SWAP, not the old render under an amber tint.
         /// Empty string falls back to "Tiles/primed_gold_tile@2x".</summary>
-        public static string GOLD_PRIMED_FACE_ASSET = "Tiles/gold_tile2@2x";
+        public static string GOLD_PRIMED_FACE_ASSET = "Tiles/gem_yellow";   // 2026-10-22 Spencer: a word made WITH a gem turns every tile of it into a gem while it's armed — the old gold-word armed look, now gem art
 
         /// <summary>Neutralise the gold-primed tint too, so the authored gold art LIGHTS UP
         /// rather than being multiplied by PRIMED_GOLD_GLOW (2.0, 1.54, 0.64) — which on gold
@@ -919,6 +919,15 @@ namespace WordDrop
         /// <summary>2026-09-03: cascading tiles land with the DROP squish (chunkier)
         /// rather than the quieter gravity one. False restores the old feel.</summary>
         public  const bool  GRAVITY_USES_LANDING_SQUISH = true;
+        /// <summary>Royal-Match-measured fall (cells/s, cells/s²). false = the old distance-scaled ease-in.</summary>
+        public static bool  RM_FALL       = true;
+        public static float RM_FALL_V0    = 12f;
+        public static float RM_FALL_ACCEL = 18f;
+        public static float RM_FALL_VMAX  = 20f;
+        /// <summary>MASTER SQUASH SWITCH (2026-10-22 Spencer: "is it possible to remove the distortion of the tiles ... i would
+        /// like to see what it looks like without this effect"). false = no fall stretch, no landing squish, no gravity
+        /// squish — tiles keep their exact shape and simply land. true = the old squash-and-stretch feel.</summary>
+        public static bool TILE_SQUASH_STRETCH = false;
         public  const bool  TILE_DROP_SHADOW   = false; // 2026-09-03: per-tile drop shadow off for the stacked/overlap board
         // 2026-10-21 Spencer: "more padding in between letters, it just looks too cluttered" — Royal Match measured: 84 px
         // pitch, ~73 px icons = 87% of the cell. Now a tunable (FX Test Menu cycles it; remembered in PlayerPrefs). The
@@ -1338,6 +1347,16 @@ namespace WordDrop
         {
             SetSpecial(RulesEngine.SPECIAL_NONE);   // a recycled tile must not keep a special marker
             IsRainGold = false;                     // nor a shower-gold flag
+            IsGem = false;                          // nor a gem
+            // nor the refill CLIP (2026-10-22 blank tiles): a tile blown up mid-fall came back with its sprites masked and its
+            // letter's stencil set, so on reuse the letter drew only inside the mask — or not at all.
+            foreach (var csr in GetComponentsInChildren<SpriteRenderer>(true)) csr.maskInteraction = SpriteMaskInteraction.None;
+            if (_letterTMP != null)
+            {
+                var lm = _letterTMP.fontMaterial;
+                if (lm != null && lm.HasProperty("_StencilComp")) { lm.SetFloat("_Stencil", 0f); lm.SetFloat("_StencilComp", (float)UnityEngine.Rendering.CompareFunction.Always); }
+                _letterTMP.alpha = 1f;
+            }
             StopAllCoroutines();
             _gravityCoroutine = null;
             _fallCoroutine = null;
@@ -2112,10 +2131,25 @@ namespace WordDrop
             }
 
             Vector3 start = transform.position;
-            // Feel-pass 2026-05-16: floor lowered from 0.20s → 0.12s so short
-            // single-cell falls feel snappier (RM/CC reference). Long cascades
-            // still get their full duration from the caller.
-            float dur = Mathf.Max(duration, 0.12f);
+            // ROYAL MATCH FALL (2026-10-22, MEASURED from Spencer's 60fps RM recording: pieces start already moving
+            // (~6-15 cells/s), speed up gently (~15-20 cells/s^2) and top out ~18-20 cells/s). Ours started from rest and
+            // slammed in at 29 cells/s, with a different "gravity" per distance (43-213 cells/s^2) so columns stretched.
+            // One rule for every tile now: v0, accel, vmax — a column falls as one block.
+            if (RM_FALL && !mechanical)
+            {
+                float cellW = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.96f;
+                float total = Vector3.Distance(start, target);
+                float v = RM_FALL_V0 * cellW, travelled = 0f;
+                while (travelled < total)
+                {
+                    float dt = Mathf.Min(Time.deltaTime, 1f / 30f);
+                    v = Mathf.Min(v + RM_FALL_ACCEL * cellW * dt, RM_FALL_VMAX * cellW);
+                    travelled = Mathf.Min(total, travelled + v * dt);
+                    transform.position = Vector3.Lerp(start, target, total > 0.0001f ? travelled / total : 1f);
+                    yield return null;
+                }
+            }
+            float dur = RM_FALL && !mechanical ? 0f : Mathf.Max(duration, 0.12f);
             float elapsed = 0f;
 
             // Mechanical: constant-speed linear (conveyor/piston feel)
@@ -2361,7 +2395,104 @@ namespace WordDrop
         }
 
         // ── Value-accent resting colour (2026-06-24 Spencer) ──────────────────
-        private static Color BaseTintForLetter(char letter) => Color.white; // value-accent tinting removed 2026-06-24 (kept as the single resting colour)
+        private static Color BaseTintForLetter(char letter)   // value-accent tinting removed 2026-06-24 (kept as the single resting colour)
+            => (CollectLetter != '\0' && char.ToUpperInvariant(letter) == CollectLetter && !CollectUsesBlueTile) ? COLLECT_TINT : Color.white;
+        /// <summary>2026-10-22 Spencer: "for the collect the Es could we make them the blue coloured tile we had?" The collect
+        /// letter wears the authored blue tile (vowel_tile@2x — the old vowel accent, off since 2026-09-03). false = violet tint.</summary>
+        public static bool COLLECT_BLUE_TILE = true;
+        // GEM TILES (2026-10-22 Spencer: "put the gems as letter tiles on the collect letters levels ... the point of the level
+        // is to collect all the gems"). A gem is a property of the CELL (RulesCellData.HasGem), not of a letter: any ordinary
+        // letter can carry one. The tile wears the yellow gem face with its letter on top; destroying it collects it.
+        public static string GEM_TILE_ASSET = "Tiles/gem_yellow";
+        private static Sprite s_spriteGem;
+        public static Sprite GemSprite => s_spriteGem;
+        public static readonly Color GEM_ACCENT = new Color(1f, 0.82f, 0.15f, 1f);
+        public bool IsGem { get; private set; }
+        public void SetGem(bool on)
+        {
+            if (on == IsGem) return;
+            IsGem = on;
+            if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { _spriteRenderer.sprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
+        }
+        public static string COLLECT_TILE_ASSET = "Tiles/blue_tile@2x";
+        private static Sprite s_spriteCollectBlue;
+        private static Sprite CollectBlueFace => s_spriteCollectBlue != null ? s_spriteCollectBlue : s_spriteVowel;
+        public static bool CollectUsesBlueTile => COLLECT_BLUE_TILE && CollectBlueFace != null;
+        public static Sprite CollectFaceSprite => CollectUsesBlueTile ? CollectBlueFace : s_spriteNormal;
+        /// <summary>The collect letter's colour for HUD/fly/debris: the blue tile's blue, or the violet tint.</summary>
+        public static Color CollectAccent => CollectUsesBlueTile ? new Color(0.12f, 0.42f, 1.0f, 1f) : COLLECT_TINT;   // the ramp tile's deeper blue
+        public static Color CollectFaceTint => CollectUsesBlueTile ? Color.white : COLLECT_TINT;
+        /// <summary>COLLECT GOAL (2026-10-21 Spencer: "the letters that need to be collected should be a different colour on the
+        /// board so they stand out"). Set by LevelRules.Apply; every tile of this letter rests violet.</summary>
+        public static char CollectLetter = '\0';
+        public static Color COLLECT_TINT = new Color(0.78f, 0.64f, 1f, 1f);   // violet — clear of gold (K/Q), ice blue and special pink
+
+        // CONVERGE, DON'T WRITE-ONCE (2026-10-21 Spencer: "the E's lose their colour when you move them or interact with
+        // them"). ~20 paths reset the face to plain white after a select / swap / flash / fade. Rather than patch each one,
+        // every frame a RESTING tile settles to the colour it should have: violet if it's the collect letter, white if it
+        // just stopped being one. Only acts when the face is exactly white or exactly violet, so it never fights a flash,
+        // primed glow, gold or stone tint mid-effect.
+        private void LateUpdate()
+        {
+            // Crate art carries its own colour — never let a tint (stone grey, flashes) darken it.
+            if (_isCrateArt && _spriteRenderer != null && _spriteRenderer.color != Color.white && _flashCoroutine == null)
+                _spriteRenderer.color = Color.white;
+            // Icon-as-tile special: its face stays white (the art carries the colour) and its letter stays white-on-outline,
+            // whatever a flash or reset wrote meanwhile.
+            if (_iconIsTile)
+            {
+                // THE ICON STAYS (2026-10-22 Spencer: "when you make a word that has one of the icons like a dynamite or bomb the
+                // tiles flip to green and that tile stays blank while the badge in the corner has the letter in it"). The word's
+                // armed/scored face swap hit the special too and replaced its art with the plain green face. A special keeps its
+                // own art through every state — the flash / glow TINT still lights it up, so it reads as part of the lit word.
+                if (_spriteRenderer != null && SpecialKind != RulesEngine.SPECIAL_NONE)
+                {
+                    var iconFace = SpecialTileSprite(SpecialKind);
+                    if (iconFace != null && _spriteRenderer.sprite != iconFace) _spriteRenderer.sprite = iconFace;
+                }
+                if (_letterPlateGO != null && _letterPlateGO.activeSelf && _spriteRenderer != null)
+                {   // keep the token between the icon and the letter as the tile changes row band / lifts
+                    var psr = _letterPlateGO.GetComponent<SpriteRenderer>();
+                    if (psr != null && psr.sortingOrder != _spriteRenderer.sortingOrder + 1) psr.sortingOrder = _spriteRenderer.sortingOrder + 1;
+                }
+                // The letter must stay ON its token: flash / punch animations restore it to the tile centre when they end
+                // (2026-10-22: a bomb born from WILE showed a blank token, its letter lost in the middle of the bomb art).
+                if (_letterPlateGO != null && _letterPlateGO.activeSelf && _letterTMP != null)
+                {
+                    var lt = _letterTMP.transform;
+                    if ((lt.localPosition - _letterPlatePos).sqrMagnitude > 1e-6f) lt.localPosition = _letterPlatePos;
+                    if (!DOTween.IsTweening(lt) && (lt.localScale - _letterPlateScale).sqrMagnitude > 1e-6f) lt.localScale = _letterPlateScale;
+                    if (!_letterTMP.gameObject.activeSelf) _letterTMP.gameObject.SetActive(true);
+                    if (_letterTMP.alpha < 0.99f) _letterTMP.alpha = 1f;   // armed or not — the token letter never fades
+                }
+                Color inkWant = SPECIAL_LETTER_PLATE ? LETTER_INK : Color.white;
+                // ON THE TOKEN the letter is ALWAYS dark ink — even while its word is armed. Armed words whiten their letters,
+                // and white on the cream token vanished (2026-10-22 Spencer: "the letter in the badge disappearing looks weird").
+                bool onToken = SPECIAL_LETTER_PLATE && _letterPlateGO != null && _letterPlateGO.activeSelf;
+                if (_letterTMP != null && (onToken || !_hasPrimedGlow) && _letterTMP.color != inkWant) _letterTMP.color = inkWant;
+                return;
+            }
+            if (_spriteRenderer == null || _hasPrimedGlow || _isShowingScoredSprite || _isStone || IsFrozen || IsRainGold) return;
+            if (_flashCoroutine != null) return;
+            bool want = CollectLetter != '\0' && char.ToUpperInvariant(Letter) == CollectLetter;
+            if (CollectUsesBlueTile)
+            {
+                var sp = _spriteRenderer.sprite;
+                if (want && sp == s_spriteNormal && _spriteRenderer.color == Color.white) _spriteRenderer.sprite = CollectBlueFace;
+                else if (!want && sp == CollectBlueFace) { _spriteRenderer.sprite = RestingFaceFor(Letter); }
+                if (_spriteRenderer.color == COLLECT_TINT) { _baseTint = Color.white; _spriteRenderer.color = Color.white; }
+                return;
+            }
+            var c = _spriteRenderer.color;
+            if (want && c == Color.white) { _baseTint = COLLECT_TINT; _spriteRenderer.color = COLLECT_TINT; }
+            else if (!want && c == COLLECT_TINT) { _baseTint = Color.white; _spriteRenderer.color = Color.white; }
+        }
+        /// <summary>Re-tint after the collect letter changes (tiles already on the board).</summary>
+        public void RefreshCollectTint()
+        {
+            RefreshBaseTint();
+            if (!_hasPrimedGlow && !_isShowingScoredSprite && !_isStone && !IsFrozen) ApplyRestingColor();
+        }
         /// <summary>Recompute the per-letter value tint (call when the letter is set/changed).</summary>
         private void RefreshBaseTint() => _baseTint = BaseTintForLetter(Letter);
         /// <summary>Paint the tile face its resting value tint. Used by every "return to normal" revert
@@ -2512,8 +2643,25 @@ namespace WordDrop
         // 2026-06-19 Spencer.
         public static Sprite ChickenSprite => GetChickenSprite(); // exposed for the escort fly-up
         private static Sprite s_chickenSprite; private static bool s_chickenTried;
+        // ── DUCK GOAL (2026-10-22 Spencer: "yes please" to the bring-it-down duck). The old escort-chicken drop-target now
+        // wears Spencer's rubber duck. One unit wide, like the tile faces, so RefitToSprite and the HUD flight size it right. ──
+        public static string DUCK_ASSET = "Goals/duck";
+        private static Sprite s_duckSprite; private static bool s_duckTried;
+        public static Sprite DuckSprite
+        {
+            get
+            {
+                if (s_duckTried) return s_duckSprite;
+                s_duckTried = true;
+                var tex = Resources.Load<Texture2D>(DUCK_ASSET);
+                if (tex != null) s_duckSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width);
+                WDLog.Log($"[Duck] {DUCK_ASSET} -> {(tex != null ? tex.width + "x" + tex.height : "MISSING")}");
+                return s_duckSprite;
+            }
+        }
         private static Sprite GetChickenSprite()
         {
+            if (DuckSprite != null) return DuckSprite;
             if (s_chickenTried) return s_chickenSprite;
             s_chickenTried = true;
             s_chickenSprite = Resources.Load<Sprite>("Tiles/common_icon_chicken");
@@ -2919,6 +3067,7 @@ namespace WordDrop
         // Royal-Match-style crate, not the old treasure chest.
         private static Sprite s_crateSprite; private static bool s_crateTried;
         private bool _isCrateArt;
+        public static Sprite CrateSprite => GetCrateSprite();
         private static Sprite GetCrateSprite()
         {
             if (s_crateTried) return s_crateSprite;
@@ -3168,6 +3317,15 @@ namespace WordDrop
                 BuildSpriteCache();
                 Sprite want = ArmedFace();   // single chokepoint
                 if (want != null && _spriteRenderer.sprite != want) _spriteRenderer.sprite = want;
+            }
+            // GEM WORD GLOW (2026-10-22 Spencer: "when you make a word add a glow to these"): an armed gem word pulses a warm
+            // HDR glow (real bloom) on every tile until it pops / un-arms (ClearPrimedGlow kills it).
+            if (_isGoldPrimed && GEM_WORD_GLOW && _gemGlowPulse == null && !IsWild && !IsStone)
+            {
+                _gemGlowAlpha = GEM_GLOW_LOW;
+                SetBloomGlow(GEM_GLOW_HDR, _gemGlowAlpha, forceDesktop: true);
+                _gemGlowPulse = DOTween.To(() => _gemGlowAlpha, a => { _gemGlowAlpha = a; SetBloomGlow(GEM_GLOW_HDR, a, forceDesktop: true); },
+                                           GEM_GLOW_HIGH, 0.22f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
             }
             int oldFuse = _fuseRemaining;
             _pendingDiffusePop = false; // re-primed → cancel any pending diffuse-pop revert
@@ -3821,12 +3979,32 @@ namespace WordDrop
             DG.Tweening.DOVirtual.DelayedCall(dur + 0.02f, () =>
             {
                 if (this == null) return;
+                // A LATER lift may have extended the deadline (the hint re-lifts every refresh) — an older timer must not drop
+                // it early. 2026-10-23.
+                if (Time.unscaledTime + 0.01f < _fxOrderUntil) return;
                 _fxOrderUntil = 0f;
                 ReassertSortingOrder();
             }, ignoreTimeScale: true);
         }
 
         private float _fxOrderUntil;
+        /// <summary>Drop an FX lift NOW (the hint clears the moment the player touches). The self-restore timer from
+        /// LiftForFx still fires later and simply re-asserts the same normal order — harmless.</summary>
+        /// <summary>The tile's letter is flying to the HUD (theme word): vanish in place. Scale 0 is the state an exploded tile
+        /// ends in anyway, so the pool's Reinitialise already restores it. 2026-10-23.</summary>
+        public void HideForFlight()
+        {
+            transform.DOKill();
+            MarkAnimating(1f);
+            transform.localScale = Vector3.zero;
+        }
+
+        public void EndFxLift()
+        {
+            if (_fxOrderUntil <= 0f) return;
+            _fxOrderUntil = 0f;
+            ReassertSortingOrder();
+        }
 
         /// <summary>Put the CORRECT armed art on, now. Same idea as ReassertSortingOrder: the
         /// face is derived from current state rather than trusted to whoever set it last.
@@ -3915,7 +4093,149 @@ namespace WordDrop
         /// <summary>The rocket art's nose points up-right (45°); rotate it to point along its row or column.</summary>
         public static float SpecialIconAngle(int kind) =>
             kind == RulesEngine.SPECIAL_ROCKET_H ? -45f : kind == RulesEngine.SPECIAL_ROCKET_V ? 45f : 0f;
-        public static float SPECIAL_BADGE_SCALE = 0.55f;   // icon width as a fraction of the tile face
+        public static float SPECIAL_BADGE_SCALE = 0.55f;
+        public static bool  SPECIAL_ICON_AS_TILE = true;
+        public static float SPECIAL_TILE_ICON_FILL = 1.08f;   // icon art width vs the tile face (the art has transparent margins)
+        private bool _iconIsTile;
+        private static readonly System.Collections.Generic.Dictionary<int, Sprite> s_specialTileSprites = new System.Collections.Generic.Dictionary<int, Sprite>();
+
+        /// <summary>The special's art as a FULL TILE face: same world size as the normal face, so every path that swaps the
+        /// face (RestingFaceFor) can use it without a refit. Rockets are pre-rotated to point along their row / column so the
+        /// tile transform (and its letter) never rotates.</summary>
+        public static Sprite SpecialTileSprite(int kind)
+        {
+            if (s_specialTileSprites.TryGetValue(kind, out var sp)) return sp;
+            var icon = SpecialIcon(kind);
+            if (icon == null || s_spriteNormal == null) { s_specialTileSprites[kind] = null; return null; }
+            Texture2D src = icon.texture;
+            float ang = SpecialIconAngle(kind);
+            Texture2D tex = Mathf.Abs(ang) > 0.01f ? RotateTex(src, ang) : src;
+            float faceW = s_spriteNormal.bounds.size.x;
+            float ppu = tex.width / (faceW * SPECIAL_TILE_ICON_FILL);
+            sp = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
+            s_specialTileSprites[kind] = sp;
+            return sp;
+        }
+
+        /// <summary>Rotate a texture about its centre (bilinear, transparent outside). Needs a readable source; falls back to
+        /// a GPU blit copy when it isn't.</summary>
+        private static Texture2D RotateTex(Texture2D src, float degrees)
+        {
+            Texture2D readable = src;
+            if (!src.isReadable)
+            {
+                var rt = RenderTexture.GetTemporary(src.width, src.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+                Graphics.Blit(src, rt);
+                var prev = RenderTexture.active; RenderTexture.active = rt;
+                readable = new Texture2D(src.width, src.height, TextureFormat.RGBA32, false);
+                readable.ReadPixels(new Rect(0, 0, src.width, src.height), 0, 0); readable.Apply();
+                RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rt);
+            }
+            int w = readable.width, h = readable.height;
+            var inPx = readable.GetPixels(); var outPx = new Color[w * h];
+            float rad = -degrees * Mathf.Deg2Rad, cs = Mathf.Cos(rad), sn = Mathf.Sin(rad);
+            float cx = (w - 1) * 0.5f, cy = (h - 1) * 0.5f;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float dx = x - cx, dy = y - cy;
+                    float sx = cs * dx - sn * dy + cx, sy = sn * dx + cs * dy + cy;
+                    if (sx < 0 || sy < 0 || sx > w - 1 || sy > h - 1) { outPx[y * w + x] = new Color(0, 0, 0, 0); continue; }
+                    int x0 = (int)sx, y0 = (int)sy, x1 = Mathf.Min(x0 + 1, w - 1), y1 = Mathf.Min(y0 + 1, h - 1);
+                    float fx = sx - x0, fy = sy - y0;
+                    Color a = Color.Lerp(inPx[y0 * w + x0], inPx[y0 * w + x1], fx);
+                    Color b = Color.Lerp(inPx[y1 * w + x0], inPx[y1 * w + x1], fx);
+                    outPx[y * w + x] = Color.Lerp(a, b, fy);
+                }
+            var t = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            t.SetPixels(outPx); t.Apply();
+            return t;
+        }
+
+        // LETTER PLATE (2026-10-22 Spencer: "there is definitely an issue of readability" — white outlined L lost on the
+        // dynamite's red/white stripes). The letter moves onto a small cream token in the bottom-right corner, in the normal
+        // dark ink, so it reads like every other tile while the icon stays recognisable around it. false = outlined letter.
+        public static bool  SPECIAL_LETTER_PLATE = true;
+        public static float SPECIAL_PLATE_SIZE   = 0.62f;   // plate diameter as a fraction of the face width (0.56 -> 0.62, 2026-10-22 "a hair bigger")
+        public static float SPECIAL_PLATE_OFFSET = 0.25f;   // centre offset toward the corner, fraction of the face width
+        // CENTRED TOKEN (2026-10-22 Spencer: "position the letter badge for the dynamite and so on in the middle of the icon
+        // rather than the corner?"). The token sits exactly where every normal tile's letter sits, so a special's letter
+        // lines up with the word around it; the icon reads as a ring around the token. false = the corner token above.
+        public static bool  SPECIAL_PLATE_CENTRED      = false;   // 2026-10-22 Spencer: back to the corner
+        public static float SPECIAL_PLATE_SIZE_CENTRED = 0.58f;   // token diameter, fraction of the face width
+        public static float SPECIAL_LETTER_SCALE_CENTRED = 0.78f; // letter size vs a normal tile's letter
+        private GameObject _letterPlateGO;
+        private Vector3 _letterHomePos, _letterHomeScale, _letterPlatePos, _letterPlateScale;
+        private static Sprite s_plateSprite;
+
+        private void EnterIconTile(int kind)
+        {
+            _iconIsTile = true;
+            if (_spriteRenderer != null) { _spriteRenderer.sprite = SpecialTileSprite(kind); _spriteRenderer.color = Color.white; }
+            if (_glossGO != null) _glossGO.SetActive(false);
+            if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
+            if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
+            if (_letterTMP == null) return;
+            if (!SPECIAL_LETTER_PLATE)
+            {
+                _letterTMP.color = Color.white;
+                _letterTMP.outlineWidth = 0.28f;
+                _letterTMP.outlineColor = new Color32(20, 22, 40, 255);
+                return;
+            }
+            float faceW = s_spriteNormal != null ? s_spriteNormal.bounds.size.x : 1.7f;
+            // Capture the letter's normal home ONCE (re-entering must not treat the token position as home).
+            bool onPlateAlready = _letterPlateGO != null && _letterPlateGO.activeSelf;
+            Vector3 home = onPlateAlready ? _letterHomePos : _letterTMP.transform.localPosition;
+            float plateSize = SPECIAL_PLATE_CENTRED ? SPECIAL_PLATE_SIZE_CENTRED : SPECIAL_PLATE_SIZE;
+            Vector3 c = SPECIAL_PLATE_CENTRED
+                ? new Vector3(home.x, home.y, -0.09f)
+                : new Vector3(faceW * SPECIAL_PLATE_OFFSET, -faceW * SPECIAL_PLATE_OFFSET, -0.09f);
+            if (s_plateSprite == null)
+            {
+                var px = TileRenderer.CreateRoundedRect(128, 128, 64, TILE_FILL_COLOR, new Color(0.08f, 0.12f, 0.30f, 1f), 7);   // cream token, navy rim
+                s_plateSprite = px;
+            }
+            if (_letterPlateGO == null)
+            {
+                _letterPlateGO = new GameObject("LetterPlate");
+                _letterPlateGO.transform.SetParent(transform, false);
+                _letterPlateGO.AddComponent<SpriteRenderer>();
+            }
+            var psr = _letterPlateGO.GetComponent<SpriteRenderer>();
+            psr.sprite = s_plateSprite;
+            psr.sortingOrder = (_spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder) + 1;   // over the icon, under the letter (+2)
+            float plateNative = s_plateSprite != null ? s_plateSprite.bounds.size.x : 1.28f;
+            _letterPlateGO.transform.localPosition = c;
+            _letterPlateGO.transform.localScale = Vector3.one * (faceW * plateSize / plateNative);
+            if (!onPlateAlready) { _letterHomePos = _letterTMP.transform.localPosition; _letterHomeScale = _letterTMP.transform.localScale; }
+            _letterPlateGO.SetActive(true);
+            _letterPlatePos = new Vector3(c.x, c.y, -0.1f);
+            _letterPlateScale = _letterHomeScale * (SPECIAL_PLATE_CENTRED ? SPECIAL_LETTER_SCALE_CENTRED : SPECIAL_PLATE_SIZE * 1.05f);
+            _letterTMP.transform.localPosition = _letterPlatePos;
+            _letterTMP.transform.localScale = _letterPlateScale;
+            _letterTMP.gameObject.SetActive(true);
+            _letterTMP.color = LETTER_INK;
+            _letterTMP.outlineWidth = 0f;
+        }
+
+        private void ExitIconTile()
+        {
+            if (_letterPlateGO != null && _letterPlateGO.activeSelf && _letterTMP != null)
+            {
+                _letterTMP.transform.localPosition = _letterHomePos;
+                _letterTMP.transform.localScale = _letterHomeScale;
+            }
+            if (_letterPlateGO != null) _letterPlateGO.SetActive(false);
+            _iconIsTile = false;
+            if (_spriteRenderer != null) { _spriteRenderer.sprite = RestingFaceFor(Letter); ApplyRestingColor(); }
+            if (_glossGO != null) _glossGO.SetActive(true);
+            if (_innerShadowGO != null) _innerShadowGO.SetActive(true);
+            if (_pointTMP != null) _pointTMP.gameObject.SetActive(true);
+            if (_letterTMP != null) { _letterTMP.outlineWidth = 0f; _letterTMP.color = LETTER_INK; }
+        }
+        public static float SPECIAL_HALO_SCALE  = 1.16f;   // was 1.32
+        public static float SPECIAL_HALO_MAX    = 1.1f;    // halo colour peak — under the bloom threshold (1.3) so it can't wash the face   // icon width as a fraction of the tile face
 
         public static Color SpecialColor(int kind) =>
               RulesEngine.IsBombLike(kind)       ? new Color(2.4f, 0.55f, 0.35f, 1f)   // hot red-orange
@@ -3924,7 +4244,7 @@ namespace WordDrop
 
         public void SetSpecial(int kind, bool pop = false)
         {
-            if (kind == SpecialKind && (kind == RulesEngine.SPECIAL_NONE || _specialHaloGO != null)) return;
+            if (kind == SpecialKind && (kind == RulesEngine.SPECIAL_NONE || _specialHaloGO != null || _iconIsTile)) return;
             SpecialKind = kind;
             _specialPulse?.Kill(); _specialPulse = null;
             if (kind == RulesEngine.SPECIAL_NONE)
@@ -3932,6 +4252,19 @@ namespace WordDrop
                 if (_specialHaloGO != null) _specialHaloGO.SetActive(false);
                 if (_specialPipGO  != null) _specialPipGO.SetActive(false);
                 if (_specialPip2GO != null) _specialPip2GO.SetActive(false);
+                if (_iconIsTile) ExitIconTile();
+                return;
+            }
+            // ICON AS THE TILE (2026-10-21 Spencer: "instead of ... the icon as a badge is it possible to just make the icon the
+            // tile and i would like to see how the letters overlay overtop of the icons"). The art IS the tile face; the
+            // letter sits on top in white with a dark outline. SPECIAL_ICON_AS_TILE = false -> the corner-badge look.
+            if (SPECIAL_ICON_AS_TILE && SpecialTileSprite(kind) != null)
+            {
+                if (_specialHaloGO != null) _specialHaloGO.SetActive(false);
+                if (_specialPipGO  != null) _specialPipGO.SetActive(false);
+                if (_specialPip2GO != null) _specialPip2GO.SetActive(false);
+                EnterIconTile(kind);
+                if (pop) { transform.DOKill(); Vector3 r0 = CanonicalRestScale(); transform.localScale = r0 * 0.6f; transform.DOScale(r0, 0.32f).SetEase(Ease.OutBack, 2.4f); }
                 return;
             }
             if (s_pipBarH == null)
@@ -3963,13 +4296,19 @@ namespace WordDrop
                 _specialPip2SR = _specialPip2GO.AddComponent<SpriteRenderer>();
             }
             _specialHaloGO.SetActive(true);
-            _specialHaloGO.transform.localScale = Vector3.one * 1.32f;
+            // TONED DOWN (2026-10-21 Spencer: "what the pulsating golden thing is supposed to be. is it just scaled wrong?").
+            // The halo is behind the face, but its HDR colour (up to 2.4) tripped URP bloom, and the bloom blurred FORWARD
+            // over the tile — the whole face read as a big pulsing gold tile. Now: a smaller rim, colour capped under the
+            // bloom threshold (1.3), dimmer pulse. The sticker carries "this is special"; the halo is a warm edge.
+            _specialHaloGO.transform.localScale = Vector3.one * SPECIAL_HALO_SCALE;
+            float peak = Mathf.Max(col.r, Mathf.Max(col.g, col.b));
+            Color haloCol = peak > SPECIAL_HALO_MAX ? new Color(col.r / peak * SPECIAL_HALO_MAX, col.g / peak * SPECIAL_HALO_MAX, col.b / peak * SPECIAL_HALO_MAX, 1f) : col;
             var mpb = new MaterialPropertyBlock();
             _specialHaloSR.GetPropertyBlock(mpb);
-            mpb.SetColor("_Color", col);
+            mpb.SetColor("_Color", haloCol);
             _specialHaloSR.SetPropertyBlock(mpb);
-            _specialHaloSR.color = new Color(1f, 1f, 1f, 0.55f);
-            _specialPulse = _specialHaloSR.DOFade(0.95f, 0.55f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
+            _specialHaloSR.color = new Color(1f, 1f, 1f, 0.35f);
+            _specialPulse = _specialHaloSR.DOFade(0.7f, 0.6f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo);
 
             // Corner pip (top-right of the face), normal blend, LDR version of the colour so it reads on white.
             Color pipCol = new Color(Mathf.Clamp01(col.r * 0.5f), Mathf.Clamp01(col.g * 0.5f), Mathf.Clamp01(col.b * 0.5f), 1f);
@@ -4237,8 +4576,14 @@ namespace WordDrop
         private Color  _diffuseColor = Color.white;
         public void MarkPendingDiffusePop() { _pendingDiffusePop = true; }
 
+        public static bool  GEM_WORD_GLOW = true;
+        public static Color GEM_GLOW_HDR  = new Color(2.4f, 1.8f, 0.45f, 1f);   // warm gold
+        public static float GEM_GLOW_LOW  = 0.35f, GEM_GLOW_HIGH = 0.85f;
+        private Tween _gemGlowPulse; private float _gemGlowAlpha;
+
         public void ClearPrimedGlow()
         {
+            if (_gemGlowPulse != null) { _gemGlowPulse.Kill(); _gemGlowPulse = null; ClearBloomGlow(); }
             // Gold-primed is STICKY while primed (see ResolveGoldPrimed) — so it has to be
             // released here, or a recycled tile carries a previous word's gold into its next
             // life. Nothing cleared this flag at all before. 2026-09-10 Spencer.
@@ -4715,6 +5060,10 @@ namespace WordDrop
         /// </summary>
         public void SetEditSelected(bool active, bool popOnExit = false, float liftScale = -1f)
         {
+            // Crates / stones are never interactive (2026-10-22 Spencer: "when i click on a wooden box it tints it dark").
+            // A press started a 1-tile swipe trace that selected it; the release restored the old grey STONE tint over the
+            // crate art. Refusing here covers every path that selects a tile.
+            if (active && _isStone) return;
             if (active)
             {
                 // 2026-06-04 Spencer: base the pop on the CANONICAL rest scale captured
@@ -4979,6 +5328,7 @@ namespace WordDrop
         /// Prefers the value captured at setup; falls back to a fresh cell computation
         /// if setup hasn't run yet. NEVER reads the live transform (which may be mid
         /// animation) so edit/diffuse pops can't compound the tile bigger.</summary>
+        public Vector3 CanonicalRestScalePublic => CanonicalRestScale();   // HandManager pre-burst swell (2026-10-22)
         private Vector3 CanonicalRestScale()
         {
             if (_restScaleSet) return _restScale;
@@ -5136,7 +5486,7 @@ namespace WordDrop
         // C F M U W G P Y B V K J X Q Z = 15 of 26 letters, so most of the board went gold
         // and nearly every word primed gold. At 7+ it is V K J X Q Z — genuinely rare, so
         // gold reads as an opportunity instead of as noise.
-        public static int  HIGH_VALUE_POINTS     = 7;   // >= this many points reads as "high value"
+        public static int  HIGH_VALUE_POINTS     = 99;  // 2026-10-22 Spencer: K/J/V/X/Q/Z back to NORMAL default tiles — no letter reaches 99, so none is gold, locked or gives a move. Was 7 (>= this many points reads as "high value").
 
         private static Sprite s_spritePrimedGold; // ARMED + high-value: the hot gold face
         private static Sprite s_spriteVowel;      // blue
@@ -5157,6 +5507,29 @@ namespace WordDrop
         /// letter that arrives while any of those flags is up (mid-cascade, mid-flash) never gets
         /// its face corrected when the flag clears, which is how a high-value letter ends up
         /// sitting on the board as a plain tan tile. 2026-09-08 Spencer.</summary>
+        private float _faceWrongSince = -1f;
+        /// <summary>RefreshRestingFace, but only once the face has been wrong for <paramref name="persist"/> seconds in a row.</summary>
+        public void RefreshRestingFaceIfStuck(float persist)
+        {
+            if (_spriteRenderer == null) return;
+            Sprite want = (_hasPrimedGlow || _isShowingScoredSprite || IsStone || IsFrozen || IsWild) ? null : RestingFaceFor(Letter);
+            // COLOUR counts too (2026-10-22: the top rows went gold after a cascade with the RIGHT face — a leftover warm
+            // armed tint (1.3,1.25,1.1) on a plain tile; the face-only check never saw it).
+            bool colourWrong = want != null && _spriteRenderer.sprite == want && !_editSelected && !_swipePreview && _flashCoroutine == null
+                               && !_iconIsTile && !_isCrateArt && !ColorsClose(_spriteRenderer.color, _baseTint);
+            if (want == null || (_spriteRenderer.sprite == want && !colourWrong)) { _faceWrongSince = -1f; return; }
+            if (_faceWrongSince < 0f) { _faceWrongSince = Time.unscaledTime; return; }
+            if (Time.unscaledTime - _faceWrongSince < persist) return;
+            _faceWrongSince = -1f;
+            if (colourWrong)
+            {
+                WDLog.Log($"[FaceFix] ({Col},{Row}) '{Letter}' stuck COLOUR {_spriteRenderer.color} (face {FaceName(_spriteRenderer.sprite)}) -> {_baseTint}");
+                ApplyRestingColor();
+                return;
+            }
+            RefreshRestingFace();
+        }
+
         public void RefreshRestingFace()
         {
             if (!LETTER_CATEGORY_TINTS || _spriteRenderer == null) return;
@@ -5167,9 +5540,62 @@ namespace WordDrop
             Sprite want = RestingFaceFor(Letter);
             if (want != null && _spriteRenderer.sprite != want)
             {
-                WDLog.Log($"[GoldSpawn] RefreshRestingFace CHANGED ({Col},{Row}) '{Letter}': {_spriteRenderer.sprite?.name} -> {want.name}");
+                WDLog.Log($"[FaceFix] ({Col},{Row}) '{Letter}' was showing {FaceName(_spriteRenderer.sprite)} -> {FaceName(want)} " +
+                          $"(color {_spriteRenderer.color}, special {SpecialKind}, rainGold {IsRainGold}, selected {_editSelected})");
                 _spriteRenderer.sprite = want;
+                ApplyRestingColor();
             }
+        }
+        /// <summary>Is this tile wearing a GOLD face (high-value or gold-primed) without being a gold letter?</summary>
+        public bool ShowsGoldFaceWrongly =>
+            _spriteRenderer != null && LetterData.GetPoints(Letter) < HIGH_VALUE_POINTS && !_iconIsTile   // includes shower-gold (capped at 2 — 3+ is itself a bug)
+            && _spriteRenderer.sprite != s_spriteNormal   // some gold slots fall back to the NORMAL face — that is not gold (2026-10-22 false alarm: 96 tiles)
+            && (_spriteRenderer.sprite == s_spriteHighValue || _spriteRenderer.sprite == GoldPrimedSprite || _spriteRenderer.sprite == s_spriteGolden);
+        /// <summary>Everything that can change a tile's face, in one line — for the [GoldRows] tripwire.</summary>
+        public string DebugFaceState() =>
+            $"({Col},{Row}) '{Letter}' face={FaceName(_spriteRenderer != null ? _spriteRenderer.sprite : null)} col={(_spriteRenderer != null ? _spriteRenderer.color.ToString() : "-")} " +
+            $"primedGlow={_hasPrimedGlow} goldPrimed={_isGoldPrimed} scored={_isShowingScoredSprite} swipePrev={_swipePreview} selected={_editSelected} " +
+            $"anim={IsAnimating} flash={(_flashCoroutine != null)} goldBonus={_isGoldBonus} rainGold={IsRainGold} special={SpecialKind}";
+
+        /// <summary>BLANK TILE CHECK (2026-10-22 Spencer: "certain letter tiles are showing up with no letters on them as blanks,
+        /// usually during cascades and explosions"). Why a settled letter tile would show no letter, or null if it's fine.</summary>
+        public string LetterProblem()
+        {
+            if (_letterTMP == null || _isStone || _isVault || IsWild) return null;
+            if (!_letterTMP.gameObject.activeSelf) return "letter object inactive";
+            if (!_letterTMP.enabled) return "letter component disabled";
+            if (string.IsNullOrEmpty(_letterTMP.text)) return "letter text empty";
+            if (_letterTMP.alpha < 0.5f) return $"letter alpha {_letterTMP.alpha:F2}";
+            if (_letterTMP.color.a < 0.5f) return $"letter colour alpha {_letterTMP.color.a:F2}";
+            var m = _letterTMP.fontMaterial;
+            if (m != null && m.HasProperty("_StencilComp") && Mathf.RoundToInt(m.GetFloat("_StencilComp")) != (int)UnityEngine.Rendering.CompareFunction.Always
+                && m.GetFloat("_StencilComp") != 0f) return $"letter stuck CLIPPED (stencil comp {m.GetFloat("_StencilComp")})";
+            if (_letterTMP.transform.localScale.x < 0.01f) return "letter scale ~0";
+            return null;
+        }
+        /// <summary>Put the letter back: active, enabled, text, opaque, unclipped.</summary>
+        public void FixLetter()
+        {
+            if (_letterTMP == null) return;
+            _letterTMP.gameObject.SetActive(true); _letterTMP.enabled = true;
+            if (string.IsNullOrEmpty(_letterTMP.text)) UpdateLetterDisplay(Letter);
+            _letterTMP.alpha = 1f; var c = _letterTMP.color; c.a = 1f; _letterTMP.color = c;
+            var m = _letterTMP.fontMaterial;
+            if (m != null && m.HasProperty("_StencilComp")) { m.SetFloat("_Stencil", 0f); m.SetFloat("_StencilComp", (float)UnityEngine.Rendering.CompareFunction.Always); }
+            if (_letterTMP.transform.localScale.x < 0.01f) _letterTMP.transform.localScale = _letterPlateGO != null && _letterPlateGO.activeSelf ? _letterPlateScale : _letterHomeScale.sqrMagnitude > 0f ? _letterHomeScale : Vector3.one;
+        }
+
+        /// <summary>Readable name for the procedural face sprites (they have no asset names), for the [FaceFix] log.</summary>
+        public static string FaceName(Sprite s)
+        {
+            if (s == null) return "null";
+            if (s == s_spriteNormal) return "NORMAL";
+            if (s == s_spriteHighValue) return "GOLD(high-value)";
+            if (s == GoldPrimedSprite) return "GOLD-PRIMED";
+            if (s == s_spriteGolden) return "GOLDEN-BONUS";
+            if (s == s_spriteVowel) return "VOWEL";
+            if (s == PrimedSprite) return "PRIMED";
+            return string.IsNullOrEmpty(s.name) ? "unnamed" : s.name;
         }
 
         /// <summary>The colour an ARMED tile settles at. Single definition so the scored
@@ -5275,6 +5701,10 @@ namespace WordDrop
         private Sprite RestingFaceFor(char letter)
         {
             BuildSpriteCache();   // no-op once built
+            if (_iconIsTile && SpecialKind != RulesEngine.SPECIAL_NONE) { var st = SpecialTileSprite(SpecialKind); if (st != null) return st; }
+            if (IsGem && s_spriteGem != null && !_isStone) return s_spriteGem;   // gem tile
+            if (CollectUsesBlueTile && CollectLetter != '\0' && char.ToUpperInvariant(letter) == CollectLetter && !_isStone && !IsRainGold
+                && LetterData.GetPoints(letter) < HIGH_VALUE_POINTS) return CollectBlueFace;   // collect letter = blue ramp tile
             if (IsRainGold && LETTER_CATEGORY_TINTS && s_spriteHighValue != null && !_isStone && !_isGoldBonus && !_isVault)
                 return s_spriteHighValue;   // shower gold letter wears the K/Q gold face
             return RestingFaceForRaw(letter);
@@ -5521,6 +5951,33 @@ namespace WordDrop
             tex.SetPixels(px); tex.Apply(false);
             tex.filterMode = src.filterMode; tex.wrapMode = TextureWrapMode.Clamp;
             WDLog.Log($"[HiVal] high-value face -> hue {HIVAL_HUE:0} sat x{HIVAL_SAT_MUL:0.00}");
+            return tex;
+        }
+
+        // ── ARMED-GREEN LIFT (2026-10-22 Spencer: "the green of the tiles might be a little too dark ...
+        // brighten them up just a touch"). Lifts VALUE toward white by this fraction (HSV, hue kept) and trims
+        // saturation by a third of it, so the bevel's light→dark spread stays and nothing turns minty.
+        // green_primed bottom V 0.68 → ~0.75 at 0.22; the top (V 0.92) barely moves. 0 = the art as authored.
+        public static float PRIMED_FACE_LIFT = 0.22f;
+        private static Texture2D LiftedFace(Texture2D src, float lift)
+        {
+            if (src == null || lift <= 0.001f) return src;
+            var tex = ReadableCopy(src);
+            if (tex == null) return src;
+            var px = tex.GetPixels();
+            for (int i = 0; i < px.Length; i++)
+            {
+                Color c = px[i];
+                if (c.a <= 0.004f) continue;
+                float h, sv, v;
+                Color.RGBToHSV(c, out h, out sv, out v);
+                Color o = Color.HSVToRGB(h, Mathf.Clamp01(sv * (1f - lift / 3f)), v + (1f - v) * lift);
+                o.a = c.a;
+                px[i] = o;
+            }
+            tex.SetPixels(px); tex.Apply(false);
+            tex.filterMode = src.filterMode; tex.wrapMode = TextureWrapMode.Clamp;
+            WDLog.Log($"[FaceLift] {src.name} lift {lift:0.00}");
             return tex;
         }
 
@@ -5840,6 +6297,7 @@ namespace WordDrop
             // Spencer is trying green_primed@2x in place of the magenta.
             Texture2D primedTex = AoFace(Resources.Load<Texture2D>(PRIMED_FACE_ASSET)
                                       ?? Resources.Load<Texture2D>("Tiles/primed_tile@2x"), true);
+            primedTex = LiftedFace(primedTex, PRIMED_FACE_LIFT);   // 2026-10-22 brighten the green a touch
             WDLog.Log($"[PrimedFace] {PRIMED_FACE_ASSET} -> {(primedTex != null ? primedTex.width + "x" + primedTex.height : "NULL")}");
             if (PRIMED_TIER_ASSETS != null)
             {
@@ -5918,6 +6376,15 @@ namespace WordDrop
                     s_spriteHighValue = Sprite.Create(hTex, new Rect(0,0,hTex.width,hTex.height),
                         new Vector2(0.5f,0.5f), hTex.width / refB);
                 WDLog.Log($"[LetterTint] vowel={(s_spriteVowel!=null)} highValue={(s_spriteHighValue!=null)}");
+                // COLLECT TILE = Spencer's ramp blue tile (Documents/blue_tile@2x, 2026-09-21) — NOT the flat vowel_tile fill
+                // (2026-10-22: "i meant the blue tiles that i created with the ramp ... i just have a flat blue box").
+                var gTex = Resources.Load<Texture2D>(GEM_TILE_ASSET);
+                if (gTex != null)
+                    s_spriteGem = Sprite.Create(gTex, new Rect(0, 0, gTex.width, gTex.height), new Vector2(0.5f, 0.5f), gTex.width / refB);
+                var cTex = Resources.Load<Texture2D>(COLLECT_TILE_ASSET);
+                if (cTex != null)
+                    s_spriteCollectBlue = Sprite.Create(cTex, new Rect(0, 0, cTex.width, cTex.height), new Vector2(0.5f, 0.5f), cTex.width / refB);
+                WDLog.Log($"[CollectTile] {COLLECT_TILE_ASSET} -> {(cTex != null ? cTex.width + "x" + cTex.height : "NULL — falling back to the flat vowel tile")}");
             }
 
             // Gold PRIMED face — full texture at the white tile's bounds, like the rest.
@@ -6216,7 +6683,7 @@ namespace WordDrop
                 transform.position = Vector3.LerpUnclamped(start, overshootTarget, easedT);
 
                 // Stretch vertically as it falls (anticipation)
-                float stretch = 1f + easedT * 0.10f;
+                float stretch = TILE_SQUASH_STRETCH ? 1f + easedT * 0.10f : 1f;
                 float squash  = 1f / stretch; // preserve volume
                 transform.localScale = new Vector3(baseScale.x * squash, baseScale.y * stretch, 1f);
 
@@ -6265,6 +6732,13 @@ namespace WordDrop
         /// </summary>
         public void PlayLandingSquish(bool playSound = true)
         {
+            if (!TILE_SQUASH_STRETCH)
+            {   // no distortion: snap to the exact rest scale, keep the landing sound
+                if (_squishCoroutine != null) { StopCoroutine(_squishCoroutine); _squishCoroutine = null; }
+                transform.localScale = CanonicalRestScale();
+                if (playSound) PlayLandSound();   // same landing sound the squish played
+                return;
+            }
             if (_squishCoroutine != null) StopCoroutine(_squishCoroutine);
             _squishCoroutine = StartCoroutine(LandingSquishCoroutine(playSound));
         }
@@ -6344,6 +6818,7 @@ namespace WordDrop
         /// </summary>
         public void PlayGravitySquish()
         {
+            if (!TILE_SQUASH_STRETCH) { transform.localScale = CanonicalRestScale(); return; }   // see TILE_SQUASH_STRETCH
             // 2026-05-28: landing dust puff removed — was too noisy with the
             // new rising-row pop animation. Squish-only landing still fires.
             StartCoroutine(GravitySquishCoroutine());

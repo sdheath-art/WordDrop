@@ -43,6 +43,7 @@ namespace WordDrop
         public const string ID_WISPWHIRL     = "wispwhirl_row";   // existing Booster.Id
         public const string ID_ROCK_CRUSHER  = "stone_splitter";
         public const string ID_MALLET        = "mallet";          // 2026-06-24: tap one tile, smash it
+        public const string ID_SPYGLASS      = "lantern_trace";   // 2026-10-22: the PAID strong hint (LanternTrace, shown as "Spyglass")
 
         // ── State ────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,7 @@ namespace WordDrop
             _inventory.Add(new WispwhirlSingleRow());
             _inventory.Add(new RockCrusher());
             _inventory.Add(new Mallet());
+            _inventory.Add(new LanternTrace());   // Spyglass — the strong hint (2026-10-22)
 
             foreach (var b in _inventory)
                 _charges[b.Id] = STARTING_CHARGES;
@@ -260,6 +262,9 @@ namespace WordDrop
         ///   4. HandManager.RunBoosterCascadeChain — drives NextStep with FX
         ///      until the chain finishes; calls FinalizeBoosterCascade.
         ///   5. If nothing moved, finalize directly so engine state returns to Idle.</summary>
+        public HashSet<Vector2Int> SnapshotOccupiedPublic() => SnapshotOccupiedCells();
+        /// <summary>Public entry (2026-10-22): the duck collector reuses this exact gravity + refill + cascade path.</summary>
+        public IEnumerator RunGravityAndCascadePublic(HashSet<Vector2Int> occupiedBefore) => RunGravityAndCascadeCoroutine(occupiedBefore);
         private IEnumerator RunGravityAndCascadeCoroutine(HashSet<Vector2Int> occupiedBefore)
         {
             var rules = RulesEngine.Instance;

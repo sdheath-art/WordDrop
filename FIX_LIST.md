@@ -2,7 +2,7 @@
 Started 2026-10-21 during Spencer's playtest. Add as we go; tick off when Spencer confirms.
 
 ## From Spencer
-- [ ] **Specials SFX** — rocket, bomb, disco ball each need their own sound (fire + impact).
+- [ ] **Specials SFX** — rocket (fireworks-07, 0-1.8s) + bomb/TNT/combos (explosion.mp3) DONE 2026-10-22, awaiting confirm; disco ball still needs a sound.
 - [ ] **Specials VFX pass** — rebuild rocket/bomb/disco effects using the VFX packs already in the project (Hovl, Particle VFX, Hyper Casual, Confetti). Audition first, then pick.
 
 - [ ] Bonus explosion looks wrong in full-board mode ("letters aren't exploding correctly") — need an F9 capture; suspect refill falling in during the rocket ripple.

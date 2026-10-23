@@ -38,6 +38,53 @@ namespace WordDrop
         private CanvasGroup _objectiveIconCG;
         private GameObject  _objectiveIconGO;      // the built icon (rebuilt each show; destroyed first)
         private TextMeshProUGUI _continueLabel;
+        // ── COIN IN THE LABEL (2026-10-22 Spencer: "add the coin icon where the bullet is on the play on button"). The label
+        // leaves COIN_GAP where the ● was; a real coin Image (the HUD's coin3d_icon) is parked on the MIDDLE space of that gap,
+        // measured from TMP's own layout, so it tracks the text whatever the cost or the auto-size. ──
+        private const string COIN_GAP = "     ";
+        private Image _coinInLabel; private string _coinPlacedFor; private float _coinPlacedSize = -1f;
+        private static Sprite s_labelCoin; private static bool s_labelCoinTried;
+        private static Sprite LabelCoinSprite()
+        {
+            if (s_labelCoinTried) return s_labelCoin;
+            s_labelCoinTried = true;
+            foreach (string path in new[] { "Tiles/coin3d_icon", "Tiles/Icon_ImageIcon_Coin" })
+            {
+                s_labelCoin = Resources.Load<Sprite>(path);
+                if (s_labelCoin != null) break;
+                var tex = Resources.Load<Texture2D>(path);
+                if (tex != null) { s_labelCoin = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f); break; }
+            }
+            return s_labelCoin;
+        }
+        private void LateUpdate()
+        {
+            var l = _continueLabel;
+            if (l == null || !l.gameObject.activeInHierarchy) return;
+            if (_coinPlacedFor == l.text && Mathf.Approximately(_coinPlacedSize, l.fontSize)) return;
+            int gap = l.text.IndexOf(COIN_GAP, System.StringComparison.Ordinal);
+            if (_coinInLabel == null)
+            {
+                var sp = LabelCoinSprite(); if (sp == null) return;
+                var go = new GameObject("CoinInLabel", typeof(RectTransform), typeof(Image));
+                go.transform.SetParent(l.transform, false);
+                _coinInLabel = go.GetComponent<Image>(); _coinInLabel.sprite = sp; _coinInLabel.preserveAspect = true; _coinInLabel.raycastTarget = false;
+                var crt = (RectTransform)go.transform; crt.anchorMin = crt.anchorMax = crt.pivot = new Vector2(0.5f, 0.5f);
+            }
+            l.ForceMeshUpdate();
+            _coinPlacedFor = l.text; _coinPlacedSize = l.fontSize;
+            int mid = gap + COIN_GAP.Length / 2;
+            if (gap < 0 || mid >= l.textInfo.characterCount) { _coinInLabel.gameObject.SetActive(false); return; }
+            var ci = l.textInfo.characterInfo[mid];
+            var line = l.textInfo.lineInfo[ci.lineNumber];
+            float x = (ci.origin + ci.xAdvance) * 0.5f;
+            float y = (line.ascender + line.descender) * 0.5f;
+            float h = (line.ascender - line.descender) * 0.85f;
+            var rt = _coinInLabel.rectTransform;
+            rt.localPosition = new Vector3(x, y, 0f);
+            rt.sizeDelta = new Vector2(h, h);
+            _coinInLabel.gameObject.SetActive(true);
+        }
         private TextMeshProUGUI _adLabel;
         private Button _continueButton;
         private GameObject _continueButtonGO;
@@ -185,7 +232,7 @@ namespace WordDrop
             // to mirror StageClearModal's continue button feel.
             var continueBtnGO = MakeButton(panelRT, "ContinueBtn",
                 new Vector2(0.10f, 0.42f), new Vector2(0.90f, 0.56f),
-                "PLAY ON  ●  50",
+                "PLAY ON" + COIN_GAP + "50",
                 new Color(0.96f, 0.63f, 0.16f, 1f), // 2026-06-24: warm orange CTA (was green)
                 OnContinueClicked);
             PinButtonSize(continueBtnGO, 0.45f);  // 2026-06-24: nudged down to open room above for the objective icon
@@ -218,6 +265,7 @@ namespace WordDrop
             _adButton = adBtnGO.GetComponent<Button>();
             _adLabel = adBtnGO.GetComponentInChildren<TextMeshProUGUI>();
             _adButtonCG = adBtnGO.AddComponent<CanvasGroup>();
+            MenuUI.AddButtonIcon(adBtnGO, "UI/icon_clapper");   // 2026-10-22 Spencer's clapper
             // 2026-06-01: smaller-text override removed — Spencer wants all
             // three buttons at the 86px hero size set by MakeButton.
 
@@ -468,8 +516,8 @@ namespace WordDrop
 
             if (_continueLabel != null)
                 _continueLabel.text = canAfford
-                    ? $"PLAY ON  ●  {_currentCost}"
-                    : $"NEED ● {_currentCost - CoinWallet.Balance} MORE";
+                    ? $"PLAY ON{COIN_GAP}{_currentCost}"
+                    : $"NEED{COIN_GAP}{_currentCost - CoinWallet.Balance} MORE";
             if (_continueButton != null)
                 _continueButton.interactable = canAfford;
 

@@ -18,7 +18,7 @@ namespace WordDrop
     public class LanternTrace : Booster
     {
         public override string Id               => "lantern_trace";
-        public override string DisplayName      => "Lantern Trace";
+        public override string DisplayName      => "Spyglass";   // 2026-10-22: the strong (paid) hint — shows the BEST move
         // L1 = 1 hint, L2 = 2 hints, L3 = 3 hints (queued reveals)
         public override string ShortDescription
         {
@@ -42,7 +42,7 @@ namespace WordDrop
                 // re-runs the find-and-highlight pass. Sequential calls reuse the
                 // same surface; for MVP we just log the intended count and fire
                 // once. v1.5 polish can queue/sequence multiple distinct hints.
-                HintManager.Instance.ForceShowHint();
+                HintManager.Instance.ForceShowHint(strong: true);
                 WDLog.Log($"[LanternTrace L{Level}] Hint(s) triggered (logical count={Level}).");
             }
             else

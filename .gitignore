@@ -77,3 +77,6 @@ Assets/Resources/**/add/
 Assets/**/*.psd
 Assets/**/Preview_PSD_Only/
 Assets/Spase_Word/PSD/
+Screenshots/
+BotReports/
+captures/

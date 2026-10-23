@@ -15,6 +15,27 @@ namespace WordDrop
         private static Font _uiFont;
         private static bool _loadedTile, _loadedUI;
 
+        /// <summary>2026-10-22 Spencer: "can you just change all the font to nunito please". UI, display and legacy text all
+        /// use Nunito Black (the tile font). false = the old Montserrat (UI) / Cartoon (display + legacy) split.</summary>
+        public static bool ALL_NUNITO = true;
+        /// <summary>2026-10-22 Spencer: "maybe we should just stick to montserrat for numbers". The styled numbers (HUD moves,
+        /// level star, goal/reward badges, score pop-ups) use Montserrat Black; words stay Nunito.</summary>
+        public static bool NUMBERS_MONTSERRAT = true;
+        private static TMP_FontAsset _numberTMP; private static bool _loadedNumberTMP;
+        public static TMP_FontAsset GetNumberTMP()
+        {
+            if (!NUMBERS_MONTSERRAT) return GetTMP();
+            if (!_loadedNumberTMP) { _numberTMP = Resources.Load<TMP_FontAsset>("Montserrat-Black SDF"); _loadedNumberTMP = true; }
+            return _numberTMP != null ? _numberTMP : GetTMP();
+        }
+        /// <summary>Outline/dilate/underlay values are in units of the atlas SPREAD (padding / point size), which differs per
+        /// font: Nunito 9/90 = 0.10, Montserrat 3/67 = 0.045. Multiply a value tuned on Nunito by this to get the same
+        /// on-screen thickness in <paramref name="f"/>.</summary>
+        public static float SpreadScaleVsNunito(TMP_FontAsset f)
+        {
+            if (f == null || f.faceInfo.pointSize <= 0 || f.atlasPadding <= 0) return 1f;
+            return 0.10f / ((float)f.atlasPadding / f.faceInfo.pointSize);
+        }
         private static TMP_FontAsset _tileTMP;
         private static TMP_FontAsset _uiTMP;
         private static TMP_FontAsset _displayTMP;
@@ -107,7 +128,8 @@ namespace WordDrop
                 // Cartoon, regenerate "Cartoon SDF" in Window▸TextMeshPro▸Font Asset Creator at pointSize
                 // ~90, padding ~9, then switch the first load back to "Cartoon SDF". Display/celebration
                 // text (GetDisplayTMP) stays Cartoon — it's always large, where the bad atlas looks fine.
-                _uiTMP = Resources.Load<TMP_FontAsset>("Montserrat-Black SDF");
+                _uiTMP = ALL_NUNITO ? GetTMP() : null;
+                if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Montserrat-Black SDF");
                 if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_uiTMP == null) _uiTMP = GetTMP();
                 _loadedUITMP = true;
@@ -121,7 +143,7 @@ namespace WordDrop
         {
             if (!_loadedDisplayTMP)
             {
-                _displayTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
+                _displayTMP = ALL_NUNITO ? GetTMP() : null;
                 if (_displayTMP == null) _displayTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_displayTMP == null) _displayTMP = GetUITMP();
                 _loadedDisplayTMP = true;
@@ -147,7 +169,8 @@ namespace WordDrop
         {
             if (!_loadedUI)
             {
-                _uiFont = Resources.Load<Font>("Cartoon"); // 2026-06-15 Spencer: Cartoon for all UI
+                _uiFont = ALL_NUNITO ? Resources.Load<Font>("Nunito-Black") : null;   // Resources/Nunito-Black.ttf (copy of Assets/Fonts)
+                if (_uiFont == null) _uiFont = Resources.Load<Font>("Cartoon"); // 2026-06-15 Spencer: Cartoon for all UI
                 if (_uiFont == null) _uiFont = Resources.Load<Font>("NunitoSans");
                 if (_uiFont == null) _uiFont = Get();
                 _loadedUI = true;

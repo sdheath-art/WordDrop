@@ -149,8 +149,11 @@ namespace WordDrop
                 "WATCH AD", new Color(0.30f, 0.60f, 0.85f, 1f), Color.white, 18,
                 OnWatchAdClicked);
             if (card.transform.childCount > childBefore)
-                _adLabel = card.transform.GetChild(card.transform.childCount - 1)
-                    .GetComponentInChildren<TextMeshProUGUI>();
+            {
+                var adGO = card.transform.GetChild(card.transform.childCount - 1).gameObject;
+                _adLabel = adGO.GetComponentInChildren<TextMeshProUGUI>();
+                MenuUI.AddButtonIcon(adGO, "UI/icon_clapper", 0.05f, 0.30f);   // 2026-10-22 Spencer's clapper (narrow button: bigger share)
+            }
 
             MenuUI.CreateButton(card.transform, "BtnClose",
                 new Vector2(0.67f, btnY0), new Vector2(0.94f, btnY1),

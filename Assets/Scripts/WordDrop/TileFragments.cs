@@ -68,8 +68,92 @@ namespace WordDrop
             PrewarmPool();
         }
 
+        // ── CHUNKY DEBRIS (2026-10-21 Spencer: Royal Match's green leaf bursts into small chunky cubes in its own colour —
+        // "give it a shot"). Solid tinted chunks (Particles/debris_chunky.png: 4 clay-rig renders, art_source/fx/
+        // chunky_shards.py) instead of cut-outs of the tile. Colour = what popped: green word, gold letter, violet collect
+        // letter. Crates keep their wood chunks (no tile shards). CHUNKY_DEBRIS = false brings back the old cut-out shards.
+        public static bool  CHUNKY_DEBRIS = true;
+        public static int   CHUNKY_COUNT  = 4;       // 6 -> 4 (2026-10-22 "chunkier but less of them")
+        public static float CHUNKY_SIZE   = 0.32f;   // chunk width as a fraction of the tile, at its peak (0.24 -> 0.32, 2026-10-22)
+        public static readonly Color CHUNKY_GOLD = new Color(1f, 0.80f, 0.22f, 1f);
+        private Sprite[] _chunkySprites;
+
+        private void LoadChunkySprites()
+        {
+            Texture2D tex = Resources.Load<Texture2D>("Particles/debris_chunky");
+            if (tex == null) { WDLog.Log("[TileFragments] debris_chunky missing — using the cut-out shards"); return; }
+            int half = tex.width / 2;
+            _chunkySprites = new Sprite[4]
+            {
+                Sprite.Create(tex, new Rect(0,    half, half, half), new Vector2(0.5f, 0.5f), 100f),
+                Sprite.Create(tex, new Rect(half, half, half, half), new Vector2(0.5f, 0.5f), 100f),
+                Sprite.Create(tex, new Rect(0,    0,    half, half), new Vector2(0.5f, 0.5f), 100f),
+                Sprite.Create(tex, new Rect(half, 0,    half, half), new Vector2(0.5f, 0.5f), 100f),
+            };
+        }
+
+        private static Color ChunkColor(Tile tile)
+        {
+            if (tile.IsGem) return Tile.GEM_ACCENT;
+            if (tile.IsGoldLetter) return CHUNKY_GOLD;
+            if (Tile.CollectLetter != '\0' && char.ToUpperInvariant(tile.Letter) == Tile.CollectLetter) return Tile.CollectAccent;
+            return Tile.SCORED_TINT;   // the green every word flashes as it pops
+        }
+
+        private void ShatterChunky(Tile tile, float sizeMultiplier)
+        {
+            if (tile.IsStone) return;   // crates throw their own wood chunks (WordDropFX.PlayCrateDebris)
+            var tileSR = tile.GetComponent<SpriteRenderer>();
+            float cell = tileSR != null ? tileSR.bounds.size.x : 0.9f;
+            float native = _chunkySprites[0].bounds.size.x;
+            Color tint = ChunkColor(tile);
+            Vector3 tilePos = tile.transform.position;
+            for (int i = 0; i < CHUNKY_COUNT; i++)
+            {
+                SpriteRenderer sr = Checkout();
+                SpriteMask mask = sr.GetComponentInChildren<SpriteMask>(true);
+                sr.sprite = _chunkySprites[i % _chunkySprites.Length];
+                sr.color = tint;
+                sr.maskInteraction = SpriteMaskInteraction.None;
+                if (mask != null) mask.enabled = false;
+                sr.transform.position = tilePos + new Vector3(Random.Range(-0.15f, 0.15f) * cell, Random.Range(-0.15f, 0.15f) * cell, 0f);
+                sr.transform.rotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
+                float s = CHUNKY_SIZE * cell / Mathf.Max(0.001f, native) * Random.Range(0.8f, 1.15f) * sizeMultiplier;
+                Vector3 finalBase = new Vector3(s, s, 1f);
+                // Up-and-out burst, then gravity carries them OFF THE BOTTOM of the screen — no fade, no shrink
+                // (2026-10-22 Spencer: "have the particles fall all the way off the screen instead of fading out").
+                Vector2 vel = new Vector2(Random.Range(-2.4f, 2.4f), Random.Range(2.5f, 5.5f)) * cell;
+                float spin = Random.Range(SPIN_MIN, SPIN_MAX) * (Random.value < 0.5f ? -1f : 1f);
+                sr.transform.localScale = finalBase * 0.4f;
+                sr.gameObject.SetActive(true);
+                StartCoroutine(ChunkFallCoroutine(sr, vel, spin, finalBase, cell));
+            }
+        }
+
+        public static float CHUNKY_GRAVITY = 26f;   // cells / s^2
+
+        private IEnumerator ChunkFallCoroutine(SpriteRenderer sr, Vector2 vel, float spin, Vector3 size, float cell)
+        {
+            var cam = Camera.main;
+            float floor = cam != null ? cam.ViewportToWorldPoint(new Vector3(0.5f, 0f, 0f)).y - cell : -20f;
+            var tr = sr.transform;
+            float t = 0f;
+            while (sr != null && t < 4f)
+            {
+                float dt = Time.deltaTime; t += dt;
+                tr.localScale = Vector3.Lerp(tr.localScale, size, Mathf.Clamp01(dt * 18f));   // quick pop to full size, then hold
+                vel.y -= CHUNKY_GRAVITY * cell * dt;
+                tr.position += new Vector3(vel.x, vel.y, 0f) * dt;
+                tr.Rotate(0f, 0f, spin * dt);
+                if (tr.position.y < floor) break;
+                yield return null;
+            }
+            if (sr != null) Return(sr);
+        }
+
         private void LoadDebrisSprites()
         {
+            LoadChunkySprites();
             Texture2D tex = Resources.Load<Texture2D>("Particles/debris");
             if (tex == null)
             {
@@ -145,7 +229,9 @@ namespace WordDrop
         /// </summary>
         public void Shatter(Tile tile, float sizeMultiplier)
         {
-            if (tile == null || _debrisSprites == null || _debrisSprites.Length == 0) return;
+            if (tile == null) return;
+            if (CHUNKY_DEBRIS && _chunkySprites != null) { ShatterChunky(tile, sizeMultiplier); return; }
+            if (_debrisSprites == null || _debrisSprites.Length == 0) return;
 
             Vector3 tilePos = tile.transform.position;
             Vector3 tileScale = tile.transform.localScale;

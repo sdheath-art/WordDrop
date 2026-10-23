@@ -32,6 +32,7 @@ namespace WordDrop
         private Text        _goalText;
         private Text        _descText;
         private GameObject  _iconHolder;   // cleared + rebuilt per Show()
+        private GameObject  _goalRow;      // full-board briefing: one picture per goal, with its count (2026-10-22)
         private CanvasGroup _iconGroup;
         private GameObject  _btnPlay;
         private CanvasGroup _btnGroup;
@@ -111,6 +112,8 @@ namespace WordDrop
             // with the description CENTERED underneath; every other mode keeps icon-left / text-right.
             bool hidden = obj.Icon == Objective.HudIcon.HiddenWord;
             ApplyContentLayout(hidden, scoreBrief);
+            BuildGoalRow(scoreBrief && SurvivalManager.FullBoardActive ? LevelRules.GoalIconsFor(levelNum) : null,
+                         scoreBrief && SurvivalManager.FullBoardActive);
 
             // Rebuild the objective icon fresh each time. The score briefing has no icon — it is
             // all text, filling the card — so skip the build entirely rather than building one
@@ -193,8 +196,83 @@ namespace WordDrop
         /// <summary>Positions the icon holder + description for the current mode. HiddenWord: blanks row
         /// centered across the top, description centered underneath. Otherwise: icon left, text right
         /// (the original layout). 2026-06-17 Spencer.</summary>
+        // ── GOAL PICTURES (2026-10-22 Spencer: "if it involves some sort of an icon or tile it would be helpful to have a
+        // visual representation of that as well on the goals explanation"). Full-board briefing: GOAL heading, then a row
+        // with the real art for each goal (crate, ice tile, gem, duck, book, blue letter tile) and a count badge, then text. ──
+        // Layout (card fractions, bottom=0): PLAY button tops out at 0.26, header starts ~0.80.
+        //   GOAL heading 0.735-0.795 · picture row 0.615-0.735 · text 0.285-0.605
+        // Everything is ANCHOR-sized, not pixel-sized: the card's rect is not resolved on the first frame
+        // (reference_wordrop_first_frame_modal_animation), so a size computed from it came out too big — the crate
+        // overflowed its row onto the text (2026-10-22 screenshot).
+        private void BuildGoalRow(System.Collections.Generic.List<LevelRules.GoalIconInfo> goals, bool fullBrief)
+        {
+            if (_goalRow != null) { Destroy(_goalRow); _goalRow = null; }
+            if (_descText != null && !fullBrief) _descText.verticalOverflow = VerticalWrapMode.Overflow;
+            if (!fullBrief || _panel == null) return;
+            bool any = goals != null && goals.Count > 0;
+            if (_goalText != null)
+            {
+                _goalText.gameObject.SetActive(true);
+                var gRT = _goalText.rectTransform;
+                gRT.anchorMin = new Vector2(0.07f, 0.735f); gRT.anchorMax = new Vector2(0.93f, 0.795f);
+                gRT.offsetMin = gRT.offsetMax = Vector2.zero;
+                _goalText.alignment = TextAnchor.MiddleCenter;
+            }
+            if (_descText != null)
+            {
+                var dRT = _descText.rectTransform;
+                dRT.anchorMin = new Vector2(0.08f, 0.285f); dRT.anchorMax = new Vector2(0.92f, any ? 0.605f : 0.725f);
+                dRT.offsetMin = dRT.offsetMax = Vector2.zero;
+                // Best-fit only works with TRUNCATE — with Overflow the text ran on behind the PLAY button.
+                _descText.verticalOverflow = VerticalWrapMode.Truncate;
+                _descText.resizeTextForBestFit = true; _descText.resizeTextMinSize = 12; _descText.resizeTextMaxSize = 22;
+                _descText.lineSpacing = 1.1f;
+            }
+            if (!any) return;
+            _goalRow = new GameObject("GoalRow", typeof(RectTransform));
+            _goalRow.transform.SetParent(_panel.transform, false);
+            var rt = (RectTransform)_goalRow.transform;
+            rt.anchorMin = new Vector2(0.08f, 0.615f); rt.anchorMax = new Vector2(0.92f, 0.735f);
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+            int n = goals.Count;
+            for (int i = 0; i < n; i++)
+            {
+                var g = goals[i];
+                // Each goal gets an equal slot across the row: picture on the left half, "x11" on the right half.
+                float x0 = (float)i / n, x1 = (float)(i + 1) / n;
+                var slot = new GameObject("Goal_" + g.Type, typeof(RectTransform));
+                slot.transform.SetParent(_goalRow.transform, false);
+                var srt = (RectTransform)slot.transform;
+                srt.anchorMin = new Vector2(x0, 0f); srt.anchorMax = new Vector2(x1, 1f);
+                srt.offsetMin = srt.offsetMax = Vector2.zero;
+
+                // picture: square, height of the row, right edge at the slot's centre
+                var pic = new GameObject("Pic", typeof(RectTransform));
+                pic.transform.SetParent(slot.transform, false);
+                var prt = (RectTransform)pic.transform;
+                prt.anchorMin = new Vector2(0.5f, 0.04f); prt.anchorMax = new Vector2(0.5f, 0.96f);
+                prt.pivot = new Vector2(1f, 0.5f);
+                prt.offsetMin = prt.offsetMax = Vector2.zero;
+                var fit = pic.AddComponent<UnityEngine.UI.AspectRatioFitter>();
+                fit.aspectMode = UnityEngine.UI.AspectRatioFitter.AspectMode.HeightControlsWidth; fit.aspectRatio = 1f;
+                var icon = ObjectiveIconBuilder.BuildGoalIcon(g, pic.transform, 64f);
+                if (icon != null)
+                {
+                    var irt = (RectTransform)icon.transform;
+                    irt.anchorMin = Vector2.zero; irt.anchorMax = Vector2.one; irt.offsetMin = irt.offsetMax = Vector2.zero;
+                }
+
+                // count: to the right of the picture, never on top of anything
+                var cnt = CreateLabel(slot.transform, "Count", new Vector2(0.52f, 0.1f), new Vector2(1f, 0.9f), "x" + g.Count, 34, HEADER_BG);
+                cnt.fontStyle = FontStyle.Bold;
+                cnt.alignment = TextAnchor.MiddleLeft;
+                cnt.resizeTextForBestFit = true; cnt.resizeTextMinSize = 14; cnt.resizeTextMaxSize = 40;
+            }
+        }
+
         private void ApplyContentLayout(bool hidden, bool scoreBrief = false)
         {
+            if (_descText != null) _descText.resizeTextForBestFit = false;   // only the full-board brief best-fits (BuildGoalRow)
             if (_iconHolder != null && _iconHolder.transform is RectTransform iRT)
             {
                 if (hidden) { iRT.anchorMin = new Vector2(0.05f, 0.56f); iRT.anchorMax = new Vector2(0.95f, 0.80f); }
@@ -708,6 +786,37 @@ namespace WordDrop
                 case Objective.HudIcon.Vault:      return BuildSpriteIcon(parent, size, "Tiles/Icon_ItemIcon_Treasure", GOLD, badgeCount);
                 default:                           return null;
             }
+        }
+
+        /// <summary>One goal picture for the full-board briefing, using the art the player will see on the board.</summary>
+        public static GameObject BuildGoalIcon(LevelRules.GoalIconInfo g, Transform parent, float size)
+        {
+            g.Count = 0;   // no badge: the card shows the count as its own label beside the picture
+            switch (g.Type)
+            {
+                case LevelRules.GoalType.Crates:  return BuildSprite(parent, size, Tile.CrateSprite, Color.white, null, g.Count, AMBER);
+                case LevelRules.GoalType.Ice:     return BuildSprite(parent, size, Tile.NormalSprite, ICE, null, g.Count, ICE);
+                case LevelRules.GoalType.Gems:    return BuildSprite(parent, size, Tile.GemSprite, Color.white, null, g.Count, GOLD);
+                case LevelRules.GoalType.Ducks:   return BuildSprite(parent, size, Tile.DuckSprite, Color.white, null, g.Count, GOLD);
+                case LevelRules.GoalType.Theme:   return BuildSprite(parent, size, LoadIconSprite(LevelRules.ThemeIconPath(g.Theme)), Color.white, null, g.Count, MAGENTA);
+                case LevelRules.GoalType.Collect: return BuildSprite(parent, size, Tile.CollectFaceSprite, Tile.CollectFaceTint, g.Letter.ToString(), g.Count, BADGE);
+                default: return null;
+            }
+        }
+        private static GameObject BuildSprite(Transform parent, float size, Sprite sprite, Color tint, string letter, int badgeCount, Color fallbackTint)
+        {
+            var go = new GameObject("Icon", typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(size, size);
+            var img = go.GetComponent<Image>();
+            img.raycastTarget = false;
+            if (sprite != null) { img.sprite = sprite; img.preserveAspect = true; img.color = tint; }
+            else { img.sprite = TileRenderer.CreateSolidRoundedRect(80, 80, 18, Color.white); img.color = fallbackTint; }
+            if (!string.IsNullOrEmpty(letter)) AddLetter(go.transform, letter, size);
+            if (badgeCount > 0) AddBadge(go.transform, badgeCount, size);
+            return go;
         }
 
         /// <summary>Icon backed by an actual game sprite (e.g. the treasure chest). Falls back to a

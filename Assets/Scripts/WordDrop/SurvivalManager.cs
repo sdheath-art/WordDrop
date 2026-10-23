@@ -393,7 +393,8 @@ namespace WordDrop
             while (waited < 8f && ((MatchController.Instance != null && MatchController.Instance.IsProcessing)
                                    || (ScoreManager.Instance != null && ScoreManager.Instance.FlyScorePending)
                                    || (HUDManager.Instance != null && HUDManager.Instance.LettersInFlight)   // a gold letter may be bringing a move
-                                   || _isRisingRow))
+                                   || _isRisingRow
+                                   || DuckCollectPending))   // a duck on the bottom row on the last move still counts (2026-10-22)
             { waited += Time.unscaledDeltaTime; yield return null; }
             float settle = 0f;
             while (settle < 0.3f) { settle += Time.unscaledDeltaTime; yield return null; }
@@ -404,7 +405,7 @@ namespace WordDrop
             {
                 var kv = new System.Collections.Generic.List<object> {
                     "stage", _currentStageIndex, "target", CurrentStageTarget, "score", CurrentStageScore,
-                    "moves_used", _currentStageMovesUsed, "moves_budget", CurrentStageMoveBudget,
+                    "moves_used", StageStats.MovesMade, "moves_net", _currentStageMovesUsed, "moves_budget", CurrentStageMoveBudget,
                     "continues_used", _continuesInRun };
                 kv.AddRange(StageStats.Fields());
                 AnalyticsManager.Log("stage_fail", kv.ToArray());
@@ -768,6 +769,7 @@ namespace WordDrop
             _movesPlayed++;
             _movesSinceLastRise = Mathf.Min(_movesSinceLastRise + 1, CurrentMovesPerRise);
             _currentStageMovesUsed++;
+            StageStats.MovesMade++;   // real moves made (moves_used no longer goes negative with gold refunds) — 2026-10-23
 
             // Snapshot the stages-cleared counter so we can detect whether
             // the upcoming CheckStageClear call advanced the stage. If it did,
@@ -944,9 +946,9 @@ namespace WordDrop
                     // finish the level" has twice turned out to be the target quietly not being
                     // met, and a silent `return` gives nothing to go on.
                     // CRATE GOAL (full board, 2026-10-21): the level is won when every crate is broken — score doesn't gate it.
-                    if (LevelRules.CrateGoalFor(_currentStageIndex) && RulesEngine.Instance != null)
+                    if (LevelRules.GoalsActiveFor(_currentStageIndex))
                     {
-                        if (RulesEngine.Instance.CountCrateCells() > 0) return;
+                        if (!LevelRules.AllGoalsDone()) return;   // every goal done = win; score doesn't gate it
                     }
                     else if (CurrentStageScore < CurrentStageTarget)
                     {
@@ -1045,7 +1047,7 @@ namespace WordDrop
                         "score", clearedScore,
                         "overshoot", overshoot,
                         "coins_earned", coinsEarned,
-                        "moves_used", clearedMoves,
+                        "moves_used", StageStats.MovesMade, "moves_net", clearedMoves,
                         "moves_budget", clearedBudget,
                         "rises_fired", clearedRises,
                         "occupancy", Mathf.RoundToInt(occupancy * 100f),
@@ -1570,7 +1572,96 @@ namespace WordDrop
             }
             _wasProcessing = processingNow;
 
+            TickDuckCollect();
             UpdateSurvival();
+        }
+
+        // ── DUCK COLLECT (2026-10-22). A duck on the bottom row is collected once the board is IDLE — no resolution, no
+        // falling tiles — then the column falls and refills through the booster cascade path (BoosterManager), which already
+        // runs gravity + refill + any chain the fall makes. Collecting mid-resolution would punch a hole in the data under a
+        // live step, which is exactly the desync class the 2026-10-20 audit warned about. ──
+        public static float DUCK_COLLECT_PAUSE = 0.18f;   // let the landing read before it lifts off
+        private bool _duckCollecting;
+        private bool DuckCollectPending => _duckCollecting
+            || (FullBoardActive && LevelRules.HasDuckGoal && RulesEngine.Instance != null && RulesEngine.Instance.DucksOnBottomRow() != null);
+        // LAUNCH AT ONCE (2026-10-22 Spencer: "when the ducks hit the bottom their fly up ... should probably be the first animation
+        // that is triggered. right now it is waiting for all the cascading and explosions to finish"). The moment a duck LANDS on
+        // the bottom row it quacks, counts, flies to the HUD and its tile hides — mid-cascade is fine, it's all visual. Removing it
+        // from the board DATA (and refilling the gap) still waits for the board to settle, as before: clearing a cell under a live
+        // resolution step is the desync class we keep out.
+        private readonly HashSet<Tile> _launchedDucks = new HashSet<Tile>();
+        private void LaunchLandedDucks(RulesEngine rules, GridManager grid)
+        {
+            var ducks = rules.DucksOnBottomRow();
+            if (ducks == null) return;
+            int q = 0;
+            foreach (var p in ducks)
+            {
+                var t = grid.GetTile(p.x, p.y);
+                if (t == null || _launchedDucks.Contains(t) || t.IsAnimating) continue;
+                _launchedDucks.Add(t);
+                Vector3 w = grid.CellToWorld(p.x, p.y) + new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+                LevelRules.Collected++; LevelRules.CollectAwaitingFly++; LevelRules.CollectAwaitingSince = Time.unscaledTime;
+                HUDManager.Instance?.FlyCollectLetter(w, '\0');
+                GameParticles.Instance?.PlayShimmerBurst(w, 12);
+                GameAudio.Instance?.PlayDuckQuack(q++);
+                HapticsManager.Strong();
+                var sr = t.GetComponent<SpriteRenderer>(); if (sr != null) sr.enabled = false;   // the flight IS the duck now
+                WDLog.Log($"[Duck] launched at ({p.x},0) -> {LevelRules.Collected} (board clears it when settled)");
+            }
+        }
+
+        private void TickDuckCollect()
+        {
+            if (_duckCollecting || !FullBoardActive || !LevelRules.HasDuckGoal || !LevelRules.GoalsActiveFor(_currentStageIndex)) return;
+            if (_isOverlayPaused || _currentStageCleared) return;
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance; var hm = HandManager.Instance;
+            if (rules == null || grid == null || hm == null || BoosterManager.Instance == null) return;
+            LaunchLandedDucks(rules, grid);   // visual + count: immediately, even mid-cascade
+            // Out of moves leaves input closed — a duck that lands on the LAST move must still be collected.
+            if ((!hm.IsInteractable && CurrentStageMovesRemaining > 0) || rules.IsResolving || hm.IsResolvingChain || (MatchController.Instance != null && MatchController.Instance.IsProcessing)) return;
+            var ducks = rules.DucksOnBottomRow();
+            if (ducks == null) return;
+            foreach (var p in ducks) { var t = grid.GetTile(p.x, p.y); if (t != null && t.IsAnimating) return; }
+            StartCoroutine(DuckCollectRoutine(ducks));
+        }
+        private System.Collections.IEnumerator DuckCollectRoutine(List<Vector2Int> ducks)
+        {
+            _duckCollecting = true;
+            var hm = HandManager.Instance; var grid = GridManager.Instance; var rules = RulesEngine.Instance;
+            bool wasInteractable = hm.IsInteractable;
+            hm.IsInteractable = false;
+            MatchController.Instance?.BeginProcessing();
+            try
+            {
+                yield return new WaitForSeconds(DUCK_COLLECT_PAUSE);
+                var before = BoosterManager.Instance.SnapshotOccupiedPublic();
+                int quackIdx = 0;
+                foreach (var p in ducks)
+                {
+                    if (rules.GetCell(p.x, p.y) == null || !rules.GetCell(p.x, p.y).IsDropTarget) continue;
+                    var dt = grid.GetTile(p.x, p.y);
+                    if (dt == null || !_launchedDucks.Remove(dt))
+                    {   // not launched yet (shouldn't happen — LaunchLandedDucks runs first) — count + fly it now
+                        Vector3 w = grid.CellToWorld(p.x, p.y);
+                        LevelRules.Collected++; LevelRules.CollectAwaitingFly++; LevelRules.CollectAwaitingSince = Time.unscaledTime;
+                        HUDManager.Instance?.FlyCollectLetter(w, '\0');
+                        GameParticles.Instance?.PlayShimmerBurst(w, 12);
+                        GameAudio.Instance?.PlayDuckQuack(quackIdx++);
+                    }
+                    rules.ClearCell(p.x, p.y);
+                    WDLog.Log($"[Duck] cleared from the board at ({p.x},0)");
+                }
+                grid.RemoveTiles(ducks);   // (the buzz already fired at launch)
+                yield return BoosterManager.Instance.StartCoroutine(BoosterManager.Instance.RunGravityAndCascadePublic(before));
+            }
+            finally
+            {
+                MatchController.Instance?.EndProcessing();
+                if (hm != null) hm.IsInteractable = wasInteractable;
+                _duckCollecting = false;
+            }
+            CheckStageClear();
         }
 
         /// <summary>
@@ -2110,7 +2201,7 @@ namespace WordDrop
             _isRisingRow = false; _fullRefilling = false;
         }
 
-        public static int SHOWER_GOLD = 2;   // shower only: this many of the smart letters land GOLD (+1 move when popped)
+        public static int SHOWER_GOLD = 0;   // 2026-10-22 Spencer: "there shouldnt be any of these golden tiles anymore" — big plays no longer drop gold letters (was 2)   // shower only: this many of the smart letters land GOLD (+1 move when popped)
 
         private IEnumerator RainLetters(int count, bool shower = false)
         {

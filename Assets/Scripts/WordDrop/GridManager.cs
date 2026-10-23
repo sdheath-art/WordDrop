@@ -356,6 +356,7 @@ namespace WordDrop
                 if (c == null) continue;
 
                 if (t.IsFrozen     != c.IsFrozen)     { t.SetFrozenVisual(c.IsFrozen);        fixes++; Report(col,row,t,"ice",      c.IsFrozen); }
+                if (t.IsGem        != c.HasGem)       { t.SetGem(c.HasGem);                   fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' gem: visual={t.IsGem} data={c.HasGem} → corrected"); }
                 if (t.IsRainGold   != c.IsRainGold)   { t.SetRainGold(c.IsRainGold);          fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' rain-gold: visual={t.IsRainGold} data={c.IsRainGold} → corrected"); }
                 if (t.SpecialKind  != c.SpecialKind)  { t.SetSpecial(c.SpecialKind);          fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' special: visual={t.SpecialKind} data={c.SpecialKind} → corrected"); }
                 // FLAGS AGREEING IS NOT THE SAME AS LOOKING RIGHT. 2026-10-20 — "the ice is
@@ -838,6 +839,7 @@ namespace WordDrop
             return PsdToWorld(PSD_CANVAS_H * 0.5f - yPsd);
         }
 
+        public static float MOCKUP_TOP_BAND = 0.215f, MOCKUP_BOTTOM_BAND = 0.115f;
         private void CalculateLayout()
         {
             float halfH = _cam.orthographicSize;
@@ -877,8 +879,12 @@ namespace WordDrop
                 //   bottom = ~300 booster row + 34 home indicator + ~40  = ~374
                 // Near-equal, so the leftover splits evenly and the board sits centred.
                 // BOARD_BIAS nudges it: negative = higher, positive = lower.
-                float topBand    = halfH * 2f * (0.195f - BOARD_BIAS);
-                float bottomBand = halfH * 2f * (0.195f + BOARD_BIAS);
+                // 2026-10-22 MOCKUP HUD: the new top bar ends at ~20.2% (level star bottom, 515/2556) and the booster row starts
+                // at ~90% (2302/2556), so the bands are 21.5% / 11.5% with a little breathing room each side.
+                float topFrac = HUDManager.MOCKUP_HUD ? MOCKUP_TOP_BAND : 0.195f;
+                float botFrac = HUDManager.MOCKUP_HUD ? MOCKUP_BOTTOM_BAND : 0.195f;
+                float topBand    = halfH * 2f * (topFrac - BOARD_BIAS);
+                float bottomBand = halfH * 2f * (botFrac + BOARD_BIAS);
                 float freeTop    = halfH - topBand;
                 float freeBottom = -halfH + bottomBand;
                 float boardCentreY = (freeTop + freeBottom) * 0.5f;
@@ -1551,6 +1557,8 @@ namespace WordDrop
                 WDLog.Log("[Grid] inner board = procedural rounded rect (inner_board@2x not found)");
             }
 
+            BuildRefillMask(innerGO, innerW, innerH);
+
             // If the entry slide already parked the board off-screen before this panel
             // existed, register + park it now so it does not pop in at rest position.
             if (_boardEntryPrepped)
@@ -1862,7 +1870,7 @@ namespace WordDrop
         public void ClearAllCells()
         {
             for (int col = 0; col < COLS; col++)
-                for (int row = 0; row < ROWS; row++)
+                for (int row = 0; row < MAX_ROWS; row++)   // all rows — see RebuildFromRulesEngine (home-screen 5-row leak)
                 {
                     if (_tiles[col, row] != null)
                         ReturnTile(_tiles[col, row]);
@@ -1886,9 +1894,11 @@ namespace WordDrop
         {
             if (rules == null) return;
 
-            // Return all existing tiles to pool
+            // Return all existing tiles to pool — ALL rows, not just the current layout's. 2026-10-21: the home screen shrinks
+            // ROWS to 5, so a rebuild there skipped rows 5-10 and leaked a full board's top rows (162 SCENE ORPHAN errors —
+            // invisible on the old sparse board, a whole 54-tile block on the full board).
             for (int col = 0; col < COLS; col++)
-                for (int row = 0; row < ROWS; row++)
+                for (int row = 0; row < MAX_ROWS; row++)
                 {
                     if (_tiles[col, row] != null)
                         ReturnTile(_tiles[col, row]);
@@ -2453,13 +2463,142 @@ namespace WordDrop
                     Vector3 start  = CellToWorld(col, row + newCount); start.z = target.z;
                     tile.transform.position = start;
                     if (d.IsRainGold) { tile.SetRainGold(true); anyGold = true; }
+                    if (d.HasGem) tile.SetGem(true);
+                    if (d.IsDropTarget) tile.SetDropTargetVisual(true);   // duck (2026-10-22)
                     tile.AnimateGravityFall(target, Vector3.Distance(start, target) / GRAVITY_FALL_SPEED, col * STAGGER_PER_COL);
+                    if (REFILL_CLIP) StartCoroutine(ClipWhileFalling(tile));   // hidden above the board, clipped at the rim
                     animating?.Add(tile);
                     spawned++;
                 }
             }
             if (anyGold) BonusPopup.Instance?.Show("GOLDEN LETTERS!", new Color(1f, 0.85f, 0.3f, 1f), Vector3.zero, 1.1f);
             return spawned;
+        }
+
+        /// <summary>REFILL ENTRY (2026-10-21 Spencer: "i dont think the letters should be visible above the board ... shouldnt
+        /// they look like they are coming from inside the board like in other match 3 games?"). A real SpriteMask can't clip
+        /// the TextMeshPro letters, so new tiles are fully transparent while above the board's top edge and fade in as they
+        /// cross it — at falling speed it reads as emerging from the board.</summary>
+        // ── REFILL LID (2026-10-21 Spencer: "it looks like it is a ghost appearing. shouldnt it just be masked so its invisible
+        // until it passes the yellow of the rim on the board?"). A SpriteMask can't clip the TextMeshPro letters, so instead
+        // of cutting the tiles we COVER them: an exact copy of the screen background + the board's frame and its shadow,
+        // drawn in FRONT of every tile (44/45 > tiles' max 43) but behind FX (46+), and masked to the area ABOVE the inner
+        // edge of the rim. Above the rim you see the identical scene; tiles appear crisply as they pass under the rim.
+        // Copies are children of their originals so they ride the entry slide; the bg copy + mask are tracked here.
+        public static bool REFILL_LID = false;   // 2026-10-21: the lid showed a seam above the board (bg copy misaligned). Replaced by REFILL_CLIP.
+        private GameObject _lidMaskGO, _lidBgGO;
+        private static Sprite s_lidMaskSprite;
+        private void BuildRefillLid(SpriteRenderer frameSR, float innerTopY)
+        {
+            if (_lidMaskGO != null) Destroy(_lidMaskGO);
+            if (_lidBgGO != null) Destroy(_lidBgGO);
+            if (!REFILL_LID || frameSR == null) return;
+            if (s_lidMaskSprite == null)
+            {
+                var tex = new Texture2D(4, 4); var px = new Color[16]; for (int i = 0; i < 16; i++) px[i] = Color.white;
+                tex.SetPixels(px); tex.Apply();
+                s_lidMaskSprite = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0f), 4f);   // 1x1 unit, pivot bottom-centre
+            }
+            _lidMaskGO = new GameObject("RefillLidMask");
+            _lidMaskGO.transform.position = new Vector3(0f, innerTopY, 0f);
+            _lidMaskGO.transform.localScale = new Vector3(200f, 200f, 1f);   // everything above the rim, full width
+            var mask = _lidMaskGO.AddComponent<SpriteMask>();
+            mask.sprite = s_lidMaskSprite;
+
+            System.Func<SpriteRenderer, int, GameObject> copy = (src, order) =>
+            {
+                if (src == null) return null;
+                var go = new GameObject(src.gameObject.name + "_Lid");
+                go.transform.SetParent(src.transform, false);
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = src.sprite; sr.drawMode = src.drawMode; if (src.drawMode != SpriteDrawMode.Simple) sr.size = src.size;
+                sr.color = src.color; sr.sortingLayerID = src.sortingLayerID; sr.sortingOrder = order;
+                sr.sharedMaterial = src.sharedMaterial;
+                sr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+                return go;
+            };
+            var bg = GameObject.Find("ScreenBackground");
+            if (bg != null) _lidBgGO = copy(bg.GetComponent<SpriteRenderer>(), 44);
+            if (_specShadowGO != null) copy(_specShadowGO.GetComponent<SpriteRenderer>(), 44);   // same order as bg, nearer z → draws over it
+            copy(frameSR, 45);
+            WDLog.Log($"[Grid] refill lid built above y={innerTopY:F2} (bg={(bg != null)})");
+        }
+
+        // ── REFILL CLIP (2026-10-21 Spencer: "the rim should obscure the letters but you shouldnt be able to see anything odd").
+        // A real SpriteMask the size of the board interior, child of the inner board (rides the entry slide). ONLY tiles
+        // falling in from a refill opt into it, and only until they land — every other tile, the slide and all FX are
+        // untouched. The letters (TextMeshPro) don't take SpriteMask, so their material stencil is set to read the same
+        // stencil the mask writes (ref 1, LessEqual) for the duration of the fall.
+        public static bool REFILL_CLIP = true;
+        private GameObject _refillMaskGO;
+        private static Sprite s_refillMaskSprite;
+        private void BuildRefillMask(GameObject innerGO, float innerW, float innerH)
+        {
+            if (_refillMaskGO != null) Destroy(_refillMaskGO);
+            if (!REFILL_CLIP || innerGO == null) return;
+            if (s_refillMaskSprite == null)
+            {
+                var tex = new Texture2D(4, 4); var px = new Color[16]; for (int i = 0; i < 16; i++) px[i] = Color.white;
+                tex.SetPixels(px); tex.Apply();
+                s_refillMaskSprite = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f);   // 1x1 unit, centred
+            }
+            _refillMaskGO = new GameObject("RefillClipMask");
+            _refillMaskGO.transform.SetParent(innerGO.transform, false);
+            _refillMaskGO.transform.localPosition = Vector3.zero;
+            var ls = innerGO.transform.lossyScale;
+            _refillMaskGO.transform.localScale = new Vector3(innerW / Mathf.Max(0.0001f, ls.x), innerH / Mathf.Max(0.0001f, ls.y), 1f);
+            var m = _refillMaskGO.AddComponent<SpriteMask>();
+            m.sprite = s_refillMaskSprite;
+            WDLog.Log($"[Grid] refill clip mask {innerW:F2}x{innerH:F2}");
+        }
+
+        private IEnumerator ClipWhileFalling(Tile tile)
+        {
+            if (tile == null) yield break;
+            SetRefillClip(tile, true);
+            yield return null;   // the fall starts this frame
+            float guard = 0f;
+            while (tile != null && tile.IsAnimating && guard < 3f) { guard += Time.deltaTime; yield return null; }
+            if (tile != null) SetRefillClip(tile, false);
+        }
+
+        private static void SetRefillClip(Tile tile, bool on)
+        {
+            foreach (var sr in tile.GetComponentsInChildren<SpriteRenderer>(true))
+                sr.maskInteraction = on ? SpriteMaskInteraction.VisibleInsideMask : SpriteMaskInteraction.None;
+            foreach (var tmp in tile.GetComponentsInChildren<TMPro.TMP_Text>(true))
+            {
+                var mat = tmp.fontMaterial;   // per-tile instance
+                if (mat == null) continue;
+                mat.SetFloat("_Stencil", on ? 1f : 0f);
+                mat.SetFloat("_StencilComp", on ? (float)UnityEngine.Rendering.CompareFunction.LessEqual : (float)UnityEngine.Rendering.CompareFunction.Always);
+                mat.SetFloat("_StencilReadMask", 255f);
+            }
+        }
+
+        private IEnumerator RevealFromBoardTop(Tile tile)
+        {
+            if (tile == null) yield break;
+            float h = RowPitch;
+            float topY = CellToWorld(0, ROWS - 1).y + h * 0.5f;
+            var srs  = tile.GetComponentsInChildren<SpriteRenderer>(true);
+            var tmps = tile.GetComponentsInChildren<TMPro.TMP_Text>(true);
+            var srA  = new float[srs.Length]; for (int i = 0; i < srs.Length; i++) srA[i] = srs[i].color.a;
+            var tmA  = new float[tmps.Length]; for (int i = 0; i < tmps.Length; i++) tmA[i] = tmps[i].alpha;
+            float guard = 0f;
+            while (tile != null && guard < 3f)
+            {
+                float bottom = tile.transform.position.y - h * 0.5f;
+                float a = Mathf.Clamp01((topY - bottom) / h);   // 0 until its bottom edge reaches the board top, 1 once fully inside
+                for (int i = 0; i < srs.Length; i++) if (srs[i] != null) { var c = srs[i].color; c.a = srA[i] * a; srs[i].color = c; }
+                for (int i = 0; i < tmps.Length; i++) if (tmps[i] != null) tmps[i].alpha = tmA[i] * a;
+                if (a >= 1f) break;
+                guard += Time.deltaTime;
+                yield return null;
+            }
+            if (tile == null) yield break;
+            for (int i = 0; i < srs.Length; i++) if (srs[i] != null) { var c = srs[i].color; c.a = srA[i]; srs[i].color = c; }
+            for (int i = 0; i < tmps.Length; i++) if (tmps[i] != null) tmps[i].alpha = tmA[i];
         }
 
         public IEnumerator ApplyGravityFromEvents(Dictionary<Vector2Int, Vector2Int> tileMoves)

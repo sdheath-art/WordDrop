@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using DG.Tweening;
 using TMPro;
@@ -29,6 +30,28 @@ namespace WordDrop
         private Coroutine _playerFlushCo;
         private Coroutine _aiFlushCo;
         private const float ACCUM_WINDOW = 0.15f; // merge scores within this window
+
+        // ── WORD INSTEAD OF SCORE (2026-10-22 Spencer: "instead of having the numbers of the score fly up, can we try having the
+        // word that was made instead? i just want to see what it looks like"). The pop-up flies the WORD(S) that went off, in
+        // the same Royal-Match number style; the points still land on the HUD exactly as before. false = "+N". ──
+        public static bool WORD_INSTEAD_OF_SCORE = true;
+        public static int  WORD_POPUP_MAX_WORDS = 2;   // more than this in one burst -> "FIRST +N MORE"
+        private readonly List<string> _playerAccumWords = new List<string>();
+        private void AccumulateScore(int points, Vector3 worldPos, bool isPlayer, string word)
+        {
+            if (isPlayer && !string.IsNullOrEmpty(word))
+                foreach (var w in word.Split(' ')) if (w.Length > 1 && !_playerAccumWords.Contains(w)) _playerAccumWords.Add(w);
+            AccumulateScore(points, worldPos, isPlayer);
+        }
+        private string AccumWordsText()
+        {
+            if (_playerAccumWords.Count == 0) return null;
+            string t = _playerAccumWords.Count <= WORD_POPUP_MAX_WORDS
+                ? string.Join("  ", _playerAccumWords)
+                : $"{_playerAccumWords[0]}  +{_playerAccumWords.Count - 1} MORE";
+            _playerAccumWords.Clear();
+            return t;
+        }
 
         private void AccumulateScore(int points, Vector3 worldPos, bool isPlayer)
         {
@@ -84,7 +107,12 @@ namespace WordDrop
                 fontSize = 6f;
             }
 
-            StartCoroutine(FlyScoreToHUD($"+{total}", color, pos, isPlayer, total, fontSize));
+            string words = isPlayer ? AccumWordsText() : null;
+            WDLog.Log($"[WordPopup] flush total={total} words='{words}' on={WORD_INSTEAD_OF_SCORE}");   // TEMP diag 2026-10-22
+            if (WORD_INSTEAD_OF_SCORE && !string.IsNullOrEmpty(words))
+                StartCoroutine(FlyScoreToHUD(words, color, pos, isPlayer, total, Mathf.Max(6f, fontSize - (words.Length > 8 ? 2f : words.Length > 5 ? 1f : 0f))));
+            else
+                StartCoroutine(FlyScoreToHUD($"+{total}", color, pos, isPlayer, total, fontSize));
         }
 
         // ── Public API ──────────────────────────────────────────────────────
@@ -118,7 +146,7 @@ namespace WordDrop
         /// <summary>Show detonation re-score — accumulated.</summary>
         public void ShowDetonation(string word, int points, Vector3 worldPos, int chainDepth = 0, bool isPlayer = true)
         {
-            AccumulateScore(points, worldPos, isPlayer);
+            AccumulateScore(points, worldPos, isPlayer, word);
         }
 
         /// <summary>Show heat fuse bonus — accumulated.</summary>
@@ -184,6 +212,103 @@ namespace WordDrop
         public static bool FlyingScoreEnabled = false;
         public static bool BonusTextEnabled   = false;
 
+        // ── ROYAL MATCH SCORE STYLE (2026-10-22 Spencer: "make a nunito black version of their text treatment for the score
+        // pop ups"). Measured off his RM screenshot "+50": cream / butter-yellow fill (~#FFF5C0), thick dark navy-teal stroke
+        // (~#0F4064, ~12-15% of cap height), a lighter rim inside the stroke. Here: Nunito Black, vertical cream->butter
+        // gradient, navy outline, and a darker navy underlay offset DOWN as a chunky bottom lip. One shared material. ──
+        public static bool RM_SCORE_STYLE = true;
+        // 2026-10-22: OUR palette (Spencer's mockup "2469"), not Royal Match's navy/butter — see HUDManager RM_NUM_*.
+        public static Color RM_SCORE_TOP     = new Color32(0xFF, 0xFD, 0xE3, 0xFF);   // warm cream
+        public static Color RM_SCORE_BOTTOM  = new Color32(0xEC, 0xDF, 0xDE, 0xFF);   // lavender-cream
+        public static Color RM_SCORE_OUTLINE = new Color32(0x22, 0x03, 0x4F, 0xFF);   // HUD ink purple
+        public static Color RM_SCORE_LIP     = new Color32(0x22, 0x03, 0x4F, 0xFF);   // same ink, the thicker bottom edge
+        private static Material s_rmScoreMat;
+        public static bool ApplyRMScoreStylePublic(TextMeshPro tmp) => ApplyRMScoreStyle(tmp);
+
+        // ── WORD POP STYLE (2026-10-23 Spencer: approximate the Royal Match "+10" — his crop + royalmatchfullplaythrough.mp4
+        // @1:22 — in Nunito Black). Measured: fill pale cream #FBFAD0 at the top to butter #F7EFA5 at the bottom, a THIN dark
+        // slate-navy stroke #27394B, a soft light halo outside it. SIZE (the part that looked "crazy"): RM's digits are ~25% of a
+        // tile tall (24px on a ~96px cell), the "+10" ~2/3 of a tile wide — small, sitting on the cleared tile. WORD_POP_CAP_CELLS
+        // is that final letter height in cells; SizeWordPop measures the laid-out text and fits it. ──
+        public static Color WORD_POP_TOP     = new Color32(0xFB, 0xFA, 0xD0, 0xFF);
+        public static Color WORD_POP_BOTTOM  = new Color32(0xF7, 0xEF, 0xA5, 0xFF);
+        public static Color WORD_POP_STROKE  = new Color32(0x27, 0x39, 0x4B, 0xFF);
+        public static Color WORD_POP_HALO    = new Color(1f, 1f, 0.94f, 0.55f);
+        public static float WORD_POP_CAP_CELLS = 0.80f;   // 2026-10-23 Spencer: "double its size" (0.40 still too small)   // 2026-10-23 Spencer: "too small" at 0.25 (RM's measured digit height). RM's +10 sits
+                                                          // on ONE tile with no letters around it; ours sits on a 4-6 tile word among half-tile
+                                                          // letters, so the same absolute size read tiny. 0.40 = ~80% of a tile letter.
+        public static float WORD_POP_STROKE_W  = 0.16f;   // Nunito units (atlas padding 9 @ 90pt) — ~5-6% of letter height: thin, like RM
+        private static Material s_wordPopMat;
+        public static bool ApplyWordPopStyle(TextMeshPro tmp)
+        {
+            var font = GameFont.GetTMP();   // NunitoBlack SDF
+            if (tmp == null || font == null) return false;
+            tmp.font = font;
+            if (s_wordPopMat == null)
+            {
+                s_wordPopMat = new Material(font.material) { name = "WordPopNunito" };
+                s_wordPopMat.EnableKeyword("OUTLINE_ON");   // TMP_SDF-Mobile: no keyword = no outline
+                s_wordPopMat.SetFloat("_OutlineWidth", WORD_POP_STROKE_W);
+                s_wordPopMat.SetColor("_OutlineColor", WORD_POP_STROKE);
+                s_wordPopMat.SetFloat("_FaceDilate", 0.06f);
+                s_wordPopMat.EnableKeyword("UNDERLAY_ON");    // the soft light halo around the stroke
+                s_wordPopMat.SetColor("_UnderlayColor", WORD_POP_HALO);
+                s_wordPopMat.SetFloat("_UnderlayOffsetX", 0f);
+                s_wordPopMat.SetFloat("_UnderlayOffsetY", 0f);
+                s_wordPopMat.SetFloat("_UnderlayDilate", 0.55f);
+                s_wordPopMat.SetFloat("_UnderlaySoftness", 0.6f);
+            }
+            tmp.fontSharedMaterial = s_wordPopMat;
+            tmp.enableVertexGradient = true;
+            tmp.colorGradient = new VertexGradient(WORD_POP_TOP, WORD_POP_TOP, WORD_POP_BOTTOM, WORD_POP_BOTTOM);
+            tmp.color = Color.white;
+            tmp.fontStyle = FontStyles.Normal;
+            tmp.characterSpacing = 0f;
+            tmp.UpdateMeshPadding();
+            return true;
+        }
+        /// <summary>Fit a word pop so its letters end up WORD_POP_CAP_CELLS of a tile tall AFTER the pop's own swell (grow).
+        /// Measures the laid-out caps rather than trusting a point-size guess.</summary>
+        public static void SizeWordPop(TextMeshPro tmp, float grow = 1f)
+        {
+            if (tmp == null) return;
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.95f;
+            float target = WORD_POP_CAP_CELLS * cell / Mathf.Max(0.01f, grow);
+            tmp.fontSize = 10f; tmp.ForceMeshUpdate();
+            float h = tmp.textBounds.size.y;
+            if (h > 0.0001f) tmp.fontSize = 10f * target / h;
+            tmp.ForceMeshUpdate();
+        }
+        /// <summary>The score pop-up's size ladder (FlushAccum) — shared so the board's word pop matches it exactly.</summary>
+        public static float ScorePopupFontSize(int total) => total >= 25 ? 9f : total >= 16 ? 8f : total >= 8 ? 7f : 6f;
+        private static bool ApplyRMScoreStyle(TextMeshPro tmp)
+        {
+            var font = GameFont.GetNumberTMP();   // 2026-10-22: Montserrat Black for numbers (GameFont.NUMBERS_MONTSERRAT)
+            if (font == null) return false;
+            float k = GameFont.SpreadScaleVsNunito(font);   // the values below were tuned on Nunito
+            tmp.font = font;
+            if (s_rmScoreMat == null)
+            {
+                s_rmScoreMat = new Material(font.material) { name = "RMScorePopup" };
+                s_rmScoreMat.EnableKeyword("OUTLINE_ON");   // TMP_SDF-Mobile: _OutlineWidth is ignored without it (2026-10-22 find)
+                s_rmScoreMat.SetFloat("_OutlineWidth", Mathf.Min(0.75f, 0.28f * k));
+                s_rmScoreMat.SetColor("_OutlineColor", RM_SCORE_OUTLINE);
+                s_rmScoreMat.SetFloat("_FaceDilate", Mathf.Min(0.2f, 0.08f * k));   // pushes the face out so the thick stroke doesn't thin the numerals
+                s_rmScoreMat.EnableKeyword("UNDERLAY_ON");
+                s_rmScoreMat.SetColor("_UnderlayColor", RM_SCORE_LIP);
+                s_rmScoreMat.SetFloat("_UnderlayOffsetX", 0f);
+                s_rmScoreMat.SetFloat("_UnderlayOffsetY", Mathf.Max(-1f, -0.45f * k));
+                s_rmScoreMat.SetFloat("_UnderlayDilate", Mathf.Min(1f, 0.36f * k));
+                s_rmScoreMat.SetFloat("_UnderlaySoftness", 0.05f);
+            }
+            tmp.fontSharedMaterial = s_rmScoreMat;
+            tmp.enableVertexGradient = true;
+            tmp.colorGradient = new VertexGradient(RM_SCORE_TOP, RM_SCORE_TOP, RM_SCORE_BOTTOM, RM_SCORE_BOTTOM);
+            tmp.color = Color.white;
+            tmp.UpdateMeshPadding();
+            return true;
+        }
+
         private IEnumerator FlyScoreToHUD(string text, Color color, Vector3 startPos, bool isPlayer, int points = 0, float fontSize = 6f)
         {
             if (!FlyingScoreEnabled) yield break;
@@ -194,20 +319,26 @@ namespace WordDrop
             go.transform.position = startPos;
 
             TextMeshPro tmp = go.AddComponent<TextMeshPro>();
-            TMPro.TMP_FontAsset font = GameFont.GetDisplayTMP();
-            if (font != null) tmp.font = font;
             tmp.text = text;
             tmp.fontSize = fontSize;
             tmp.fontStyle = FontStyles.Normal;
-            tmp.color = color;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.sortingOrder = 100;
             tmp.rectTransform.sizeDelta = new Vector2(5f, 2f);
             tmp.enableWordWrapping = false;
             tmp.overflowMode = TextOverflowModes.Overflow;
-            tmp.outlineWidth = 0.2f;
-            tmp.outlineColor = new Color32(0, 0, 0, 200);
-            TMPHelper.ApplyEffects(tmp, color);
+            bool isWords = !string.IsNullOrEmpty(text) && !text.StartsWith("+") && !text.StartsWith("FINAL") && !text.StartsWith("COMEBACK");
+            if (isWords && ApplyWordPopStyle(tmp)) { color = Color.white; SizeWordPop(tmp, 1.3f); }   // word pops: RM look + RM size (2026-10-23)
+            else if (RM_SCORE_STYLE && ApplyRMScoreStyle(tmp)) color = Color.white;   // the gradient carries the colour; tint stays white
+            else
+            {
+                TMPro.TMP_FontAsset font = GameFont.GetDisplayTMP();
+                if (font != null) tmp.font = font;
+                tmp.color = color;
+                tmp.outlineWidth = 0.2f;
+                tmp.outlineColor = new Color32(0, 0, 0, 200);
+                TMPHelper.ApplyEffects(tmp, color);
+            }
 
             Transform t = go.transform;
 
@@ -307,7 +438,7 @@ namespace WordDrop
             tmp.fontStyle = FontStyles.Normal;
             tmp.color = Color.white; // Start white — will flash to final color
             tmp.alignment = TextAlignmentOptions.Center;
-            tmp.sortingOrder = 46;  // was 30; re-based above the row bands (tiles reach 37) 2026-10-20
+            tmp.sortingOrder = 47;  // 2026-10-21: 46->47, above the refill lid (44/45) // was 30; re-based above the row bands (tiles reach 37) 2026-10-20
             tmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
             tmp.enableWordWrapping = false;
             tmp.overflowMode = TextOverflowModes.Overflow;
@@ -333,7 +464,7 @@ namespace WordDrop
                 ghostTmp.fontStyle = FontStyles.Normal;
                 ghostTmp.color = new Color(color.r, color.g, color.b, 0.4f);
                 ghostTmp.alignment = TextAlignmentOptions.Center;
-                ghostTmp.sortingOrder = 45; // behind main text  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
+                ghostTmp.sortingOrder = 46; // behind main text (45 tied the refill lid)  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
                 ghostTmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
                 ghostTmp.enableWordWrapping = false;
                 ghostTmp.overflowMode = TextOverflowModes.Overflow;

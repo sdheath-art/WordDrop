@@ -31,12 +31,19 @@ namespace WordDrop
     /// </summary>
     public class StageClearModal : MonoBehaviour
     {
+        public static bool LEVEL_BANNER_HUD_STYLE = true;   // 2026-10-22: Level N banner in the HUD number style
+
         public static StageClearModal Instance { get; private set; }
 
         /// <summary>True while the modal canvas is currently active on screen.
         /// Subscribers (e.g. HintManager) use this to suppress background
         /// animations that would otherwise compete with the modal.</summary>
         public bool IsShowing => _canvas != null && _canvas.gameObject.activeSelf;
+        /// <summary>TRULY on screen. IsShowing stays TRUE forever after the first show — SetCanvasVisible(false) hides by
+        /// disabling the Canvas COMPONENT and leaves the GameObject active (see SwipeWordInput's 2026-10-19 note). Left as-is
+        /// because ObjectiveManager's level-install edge reads it; use IsVisible for "is the player looking at it".
+        /// 2026-10-22: this is why the idle hint never fired.</summary>
+        public bool IsVisible => IsShowing && _canvas.enabled;
         // True from the moment Continue is tapped until the canvas is dropped. The auto-installer uses this to
         // present the world map WHILE this (still-opaque) beige screen is up, so the map fades in over it — the board
         // never shows during the transition. 2026-07-14 Spencer.
@@ -2104,6 +2111,8 @@ namespace WordDrop
             // SHADOW (dark, offset down) → RIM (fat purple, the true outside stroke) → FACE (clean white). TMP's own
             // Outline only strokes INWARD and its soft Underlay shadow blotches once dilated, so we fake both with
             // real offset/fattened copies. The container holds the CanvasGroup + transform all three ride. 2026-07-15.
+            // NOT switched to Nunito (2026-10-22): this title wears Spencer's hand-tuned material ASSETS (LevelShadow /
+            // LevelRim / LevelFace SDF), which are bound to THIS font's atlas — Nunito under them garbled "Level 1".
             var lvlFont = Resources.Load<TMP_FontAsset>("WendyOne SDF")     // preferred (bake @ pt90/pad15 into Resources)
                        ?? Resources.Load<TMP_FontAsset>("Cartoon SDF(done)") // fallback until Wendy One is baked
                        ?? Resources.Load<TMP_FontAsset>("Fredoka-Bold SDF")
@@ -2204,6 +2213,16 @@ namespace WordDrop
 
             // Outline layer OFF for now (Spencer 2026-07-16); shadow is back ON with its own settings (above).
             _levelHeaderOutline.gameObject.SetActive(false);
+
+            // 2026-10-22 Spencer: "switch the level N banner to the number system we are using in the HUD please for now".
+            // The face takes the HUD number style (numbers font, cream->lavender gradient, ink-purple stroke + lip); the
+            // separate shadow copy is off because that style carries its own lip. false = his tuned 3-layer look.
+            if (LEVEL_BANNER_HUD_STYLE)
+            {
+                _levelHeaderShadow.gameObject.SetActive(false);
+                HUDManager.ApplyRMNumberStyle(_levelHeaderTMP, HUDManager.RM_MOVES_TOP, HUDManager.RM_MOVES_BOTTOM);
+                _levelHeaderTMP.characterSpacing = 0f;   // the -5 tracking was tuned for WendyOne
+            }
 
             // Title — baked "Well Done!" image (Resources/Tiles/welldone) fitted in a wide band, preserving aspect.
             // Band is taller than the old TMP band so the sprite displays large. 2026-07-17 Spencer.
@@ -2332,7 +2351,7 @@ namespace WordDrop
             tapRT.anchorMin = new Vector2(0.10f, 0.045f); tapRT.anchorMax = new Vector2(0.90f, 0.125f);
             tapRT.offsetMin = Vector2.zero; tapRT.offsetMax = Vector2.zero;
             var tapTMP = tapGO.AddComponent<TextMeshProUGUI>();
-            var tapFont = Resources.Load<TMP_FontAsset>("WendyOne SDF")
+            var tapFont = Resources.Load<TMP_FontAsset>("WendyOne SDF")   // not Nunito: wears the tuned "TapPrompt SDF" material (atlas-bound)
                        ?? Resources.Load<TMP_FontAsset>("Cartoon SDF(done)");
             if (tapFont != null) tapTMP.font = tapFont;
             tapTMP.text = "Tap to Continue";

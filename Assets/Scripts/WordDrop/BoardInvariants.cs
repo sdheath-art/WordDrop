@@ -15,6 +15,8 @@ namespace WordDrop
     /// persistent fault does not flood the log.</summary>
     public class BoardInvariants : MonoBehaviour
     {
+        public static float FACE_FIX_PERSIST = 1.2f;
+        private static float s_lastGoldRowsLog = -10f;
         public static bool Enabled = true;
         private const float CHECK_INTERVAL = 0.35f;
 
@@ -65,6 +67,27 @@ namespace WordDrop
 
             var live = new HashSet<string>();
 
+            // [GoldRows] TRIPWIRE (2026-10-22 Spencer: "why did all these rows turn into gold tiles?" — twice now, two full
+            // rows, no armed word, nothing in the log). Any time 3+ tiles wear a gold face without being gold letters, dump
+            // every one of them with its whole face state, at most once every 2s.
+            if (Time.unscaledTime - s_lastGoldRowsLog > 2f)
+            {
+                var bad = new List<string>();
+                for (int gc = 0; gc < RulesEngine.COLS; gc++)
+                    for (int gr = 0; gr < RulesEngine.ROWS; gr++)
+                    { var gt = grid.GetTile(gc, gr); if (gt != null && gt.ShowsGoldFaceWrongly) bad.Add(gt.DebugFaceState()); }
+                if (bad.Count >= 3)
+                {
+                    s_lastGoldRowsLog = Time.unscaledTime;
+                    Debug.LogWarning($"[GoldRows] {bad.Count} non-gold tiles showing a GOLD face:\n  " + string.Join("\n  ", bad));
+                }
+            }
+            // Face check only when NOTHING is armed, flashing or resolving anywhere on the board.
+            var anyPrimed = rules.DebugAllPrimedWords();
+            bool faceCheckSafe = (anyPrimed == null || anyPrimed.Count == 0)
+                                 && !(HandManager.Instance != null && HandManager.Instance.IsResolvingChain)
+                                 && !(MatchController.Instance != null && MatchController.Instance.IsProcessing);
+
             for (int c = 0; c < RulesEngine.COLS; c++)
             for (int r = 0; r < RulesEngine.ROWS; r++)
             {
@@ -72,6 +95,23 @@ namespace WordDrop
                 if (t == null || t.IsAnimating) continue;
 
                 bool primedInData = rules.GetPrimedWordsContainingPublic(new Vector2Int(c, r)) > 0;
+
+                // BLANK TILES (2026-10-22): a settled letter tile must show its letter. Log the exact reason, then fix it.
+                var lp = t.LetterProblem();
+                if (lp != null)
+                {
+                    Debug.LogWarning($"[BlankTile] ({c},{r}) '{t.Letter}' — {lp} → fixed");
+                    t.FixLetter();
+                }
+
+                // 0. STUCK FACE (2026-10-21 Spencer: "not sure what happened here but everything turned gold" — 13 settled,
+                //    un-primed tiles wearing a gold face). A settled tile that no word is arming must wear its resting face.
+                //    RefreshRestingFace corrects it and logs [FaceFix] with what it WAS showing — converge, and name the cause.
+                // NOT during a word's glow/flash: the instant-pop HOLD (0.35s) and the scored flash put PRIMED art + HDR colour
+                // on tiles before they pop — this "fixed" them mid-animation 118 times in one session (2026-10-21 log).
+                // Still fired during the pre-pop glow (log 2026-10-22: [FaceFix] the same frame THEN / SENT popped), so it now
+                // only corrects a face that has been wrong for FACE_FIX_PERSIST seconds — a real stuck face, never a transition.
+                if (faceCheckSafe && !primedInData && !t.HasPrimedGlow && !t.IsShowingScoredSprite) t.RefreshRestingFaceIfStuck(FACE_FIX_PERSIST);
 
                 // 1. PRIMED STATE: does the tile agree with the registry?
                 if (primedInData != t.HasPrimedGlow)

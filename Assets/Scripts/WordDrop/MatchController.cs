@@ -1727,7 +1727,7 @@ namespace WordDrop
             OnRewriteUsed?.Invoke(evt);
             // Tile-holder swap uses the SAME sound as a board swap (PlayShuffle), not the old rewrite SFX, so both
             // swap actions sound identical. 2026-07-14 Spencer.
-            GameAudio.Instance?.PlayShuffle();
+            if (GameAudio.SWAP_SHUFFLE_SFX) GameAudio.Instance?.PlayShuffle(); else GameAudio.Instance?.PlaySwapSound();   // same as the board swap (2026-10-22)
 
             if (HUDManager.Instance != null)
                 HUDManager.Instance.ShowRewriteCount(_rewritesRemaining[player]);

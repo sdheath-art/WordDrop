@@ -464,9 +464,13 @@ namespace WordDrop
                    .OnComplete(() => { if (go != null) { go.transform.DOKill(); Destroy(go); } });
         }
 
-        public void PopPayout(Vector3 at, int payout, bool group, float fromFontSize = 0f, int badgeIdx = -1, Color? textCol = null)
+        public void PopPayout(Vector3 at, int payout, bool group, float fromFontSize = 0f, int badgeIdx = -1, Color? textCol = null, string label = null)
         {
             if (payout <= 0 || UIAnimations.ReducedMotion) return;
+            // WORD LABEL (2026-10-23 Spencer: "change these to the words that were made instead of the +number score pop ups ...
+            // i just want to see what it would look like"). THIS is the "+N" that leaps off the board at a pop. With a label the
+            // pop draws the word(s) in the HUD number style instead of the digit art. BonusPopup.WORD_INSTEAD_OF_SCORE drives both.
+            bool wordLabel = !string.IsNullOrEmpty(label) && BonusPopup.WORD_INSTEAD_OF_SCORE;
             // HIDE THE REAL BADGE THIS INSTANT. It otherwise stays up until the next outline
             // rebuild, so the player saw the static badge AND a growing copy at the same time —
             // two numbers, no continuity, which is why the swell did not read as coming out of
@@ -488,7 +492,7 @@ namespace WordDrop
             // Parenting it to the moving object dragged the pill up the screen with the digits,
             // which read as the whole badge flying off rather than the score lifting out of it.
             // 2026-09-10 Spencer.
-            if (BADGE_PLATE && s_pillSprite != null)
+            if (BADGE_PLATE && s_pillSprite != null && !wordLabel)
             {
                 var pill = new GameObject("PayoutPopPill");
                 pill.transform.position = at + new Vector3(0f, 0f, 0.02f);
@@ -512,7 +516,7 @@ namespace WordDrop
 
             // Authored sprite digits if the art is present; TMP otherwise. The pop's scale /
             // drift / fade tweens all act on `go`, so they drive either version unchanged.
-            if (BuildSpriteNumber(textGO.transform, "+" + payout.ToString("N0"), BADGE_ORDER + 40))
+            if (!wordLabel && BuildSpriteNumber(textGO.transform, "+" + payout.ToString("N0"), BADGE_ORDER + 40))
             {
                 var srs = textGO.GetComponentsInChildren<SpriteRenderer>();
                 var b = new Bounds(textGO.transform.position, Vector3.zero);
@@ -527,9 +531,29 @@ namespace WordDrop
                 return;
             }
 
+            if (wordLabel)
+            {
+                // EXACTLY the score pop-up's text (BonusPopup.FlyScoreToHUD + FlushAccum): same font, size ladder by points,
+                // normal weight, the RM number style (font + gradient + outline + lip). Only the leap-up motion is this pop's.
+                var wt = textGO.AddComponent<TextMeshPro>();
+                wt.text = label;
+                wt.fontStyle = FontStyles.Normal;
+                wt.alignment = TextAlignmentOptions.Center;
+                wt.rectTransform.sizeDelta = new Vector2(5f, 2f);
+                wt.enableWordWrapping = false;
+                wt.overflowMode = TextOverflowModes.Overflow;
+                BonusPopup.ApplyWordPopStyle(wt);   // RM "+10" look in Nunito Black (2026-10-23)
+                BonusPopup.SizeWordPop(wt, POP_GROW);   // RM size: letters ~1/4 of a tile tall at the end of the swell
+                wt.sortingOrder = BADGE_ORDER + 40;
+                wt.ForceMeshUpdate();
+                Vector3 wext = wt.textBounds.extents;
+                AnimatePopTransform(go, at, Mathf.Max(wext.x, 0.05f), Mathf.Max(wext.y, 0.05f), v => { if (wt != null) wt.alpha = v; });
+                return;
+            }
+
             var tmp = textGO.AddComponent<TextMeshPro>();
             var f = GameFont.GetTMP(); if (f != null) tmp.font = f;
-            tmp.text = "+" + payout.ToString("N0");   // "+148" — this is score being GAINED
+            tmp.text = wordLabel ? label : "+" + payout.ToString("N0");   // "+148" — this is score being GAINED (or the word, 2026-10-23)
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.enableWordWrapping = false;
             // Starts in the badge's green — so frame one still matches the number it replaces —

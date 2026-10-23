@@ -23,11 +23,13 @@ namespace WordDrop
     /// </summary>
     public static class WDLog
     {
-        [Conditional("UNITY_EDITOR"), Conditional("WORDROP_LOG")]
-        public static void Log(object message) => UnityEngine.Debug.Log(message);
+        /// <summary>Bot playtester: thousands of simulated games would bury the real log. Muted while it runs.</summary>
+        public static bool Muted;
 
         [Conditional("UNITY_EDITOR"), Conditional("WORDROP_LOG")]
-        public static void Log(object message, UnityEngine.Object context)
-            => UnityEngine.Debug.Log(message, context);
+        public static void Log(object message) { if (!Muted) UnityEngine.Debug.Log(message); }
+
+        [Conditional("UNITY_EDITOR"), Conditional("WORDROP_LOG")]
+        public static void Log(object message, UnityEngine.Object context) { if (!Muted) UnityEngine.Debug.Log(message, context); }
     }
 }

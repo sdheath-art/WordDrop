@@ -51,7 +51,7 @@ namespace WordDrop
         private const int GAP       = 6;
         private const int TOGGLE_H  = 32;
         private const int HEADER_H  = 34;
-        private const int CONTENT_H = 1900;
+        private const int CONTENT_H = 2300;   // +combo buttons 2026-10-22
 
         private void Update()
         {
@@ -247,11 +247,32 @@ namespace WordDrop
                 SparkleSpray.Instance.Play(t.transform.position, intensity: 0.5f);
         }
 
+        /// <summary>Whole-menu scale (2026-10-23 Spencer: "increase its font and size so i can see it a little better"). The menu
+        /// lays every button out in fixed pixels, so it is scaled as ONE piece via GUI.matrix — fonts, buttons and gaps grow
+        /// together, and IMGUI maps clicks through the matrix. 1 = the old size.</summary>
+        /// <summary>2026-10-23 Spencer: "is there anything on the FX menu that we dont really need anymore". ~45 buttons from the
+        /// drop / armed-word game and one-off tuning passes (scored-flash variants, unlock/wild flows, top-out, rise-per-move,
+        /// FX bloom tests, forced tier/meltdown detonations, layer toggles) are hidden. true = show them again; code untouched.</summary>
+        public static bool SHOW_LEGACY_TOOLS = false;
+        private int _contentH;
+        public static float MENU_SCALE = 1.5f;
         private void OnGUI()
+        {
+            if (ClaudeScreenshot.Capturing) return;   // stay out of Claude's screenshots (2026-10-23)
+            var prevMatrix = GUI.matrix;
+            GUI.matrix = Matrix4x4.Scale(new Vector3(MENU_SCALE, MENU_SCALE, 1f));
+            try { DrawMenu(); }
+            finally { GUI.matrix = prevMatrix; }
+        }
+
+        private int ScaledScreenW => Mathf.RoundToInt(Screen.width / Mathf.Max(0.1f, MENU_SCALE));
+        private int ScaledScreenH => Mathf.RoundToInt(Screen.height / Mathf.Max(0.1f, MENU_SCALE));
+
+        private void DrawMenu()
         {
             EnsureStyles();
 
-            int x = Screen.width - PANEL_W - 12;
+            int x = ScaledScreenW - PANEL_W - 12;
             int y = 12;
 
             // Collapse / expand header
@@ -263,12 +284,12 @@ namespace WordDrop
             y += BTN_H + GAP;
             if (!_open) return;
 
-            int panelH = Mathf.Min(Screen.height - y - 20, 1100);
-            GUI.Box(new Rect(x - 4, y - 4, PANEL_W + 8, panelH + 8), GUIContent.none);
+            int panelH = Mathf.Min(ScaledScreenH - y - 20, 1100);
+            GUI.Box(new Rect(x - 4, y - 4, PANEL_W + 8, panelH + 8), GUIContent.none, _panelStyle);
 
             _scroll = GUI.BeginScrollView(new Rect(x, y, PANEL_W, panelH),
                                           _scroll,
-                                          new Rect(0, 0, PANEL_W - 20, CONTENT_H));
+                                          new Rect(0, 0, PANEL_W - 20, _contentH > 0 ? _contentH : CONTENT_H));   // fits what is shown (legacy tools hidden 2026-10-23)
 
             int innerY = 0;
 
@@ -277,7 +298,7 @@ namespace WordDrop
             innerY += HEADER_H + 4;
 
             // Skip-to-level: type a number, hit Go (or Enter).
-            GUI.Label(new Rect(0, innerY + 10, 110, BTN_H), "Skip to lvl:", _headerStyle);
+            GUI.Label(new Rect(0, innerY + 10, 110, BTN_H), "Go to LEVEL:", _headerStyle);
             GUI.SetNextControlName("JumpLevelField");
             _jumpLevelInput = GUI.TextField(new Rect(112, innerY, 90, BTN_H), _jumpLevelInput, 3, _tfStyle);
             bool enterPressed = Event.current.type == EventType.KeyDown
@@ -285,8 +306,13 @@ namespace WordDrop
                 && GUI.GetNameOfFocusedControl() == "JumpLevelField";
             if (GUI.Button(new Rect(208, innerY, PANEL_W - 20 - 208, BTN_H), "Go ▶", _btnStyle) || enterPressed)
             {
+                // The box takes the LEVEL NUMBER THE PLAYER SEES (2026-10-21 Spencer: "does the fx test menu not transfer me to
+                // the correct level?" — typing 4 jumped to INTERNAL stage 4, an old tutorial slot; LEVEL 4 is internal 14).
                 if (int.TryParse(_jumpLevelInput, out int lvl) && lvl > 0)
-                    SurvivalManager.Instance?.DebugJumpToStage(lvl);
+                {
+                    LevelRules.ForceFreshBoardOnNextApply();   // same-stage jumps still get a fresh board
+                    SurvivalManager.Instance?.DebugJumpToStage(lvl + LevelMapPanel.TUTORIAL_LEVELS);
+                }
             }
             innerY += BTN_H + GAP;
 
@@ -302,10 +328,47 @@ namespace WordDrop
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Disco (same letter)", _btnStyle))  StartCoroutine(TestSpecial(RulesEngine.SPECIAL_DISCO));
             innerY += BTN_H + GAP;
 
+            // ── SWAP COMBOS (2026-10-22) — two specials placed side by side, then swapped together ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: Rocket + Rocket (cross)", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_ROCKET_H, RulesEngine.SPECIAL_ROCKET_V));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: TNT + Rocket (3 rows + 3 cols)", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_TNT, RulesEngine.SPECIAL_ROCKET_H));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: Bomb + Bomb (7x7)", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_BOMB, RulesEngine.SPECIAL_BOMB));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: Disco + Rocket", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_DISCO, RulesEngine.SPECIAL_ROCKET_H));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: Disco + Disco (board)", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_DISCO, RulesEngine.SPECIAL_DISCO));
+            innerY += BTN_H + GAP;
+
             // ── BOARD MODE (2026-10-21 Spencer: "as long as we can easily go back to the whole row rise game") ──
             // Remembered between sessions. Restarts the current level with the matching board.
             string modeLabel = SurvivalManager.FullBoardEnabled ? "BOARD: FULL (Candy Crush) — tap for RISING ROWS" : "BOARD: RISING ROWS — tap for FULL";
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), modeLabel, _btnStyle)) SurvivalManager.Instance?.ToggleFullBoardAndRestart();
+            innerY += BTN_H + GAP;
+
+            // ── BOT PLAYTEST (2026-10-23) — plays levels FIRST..LAST x TRIALS on a hidden engine; report in BotReports/ ──
+            {
+                var bot = BotPlaytester.Instance;
+                string botLabel = bot != null && bot.Running ? bot.Status
+                                : $"BOT PLAYTEST: levels {BotPlaytester.FIRST_LEVEL}-{BotPlaytester.LAST_LEVEL} x{BotPlaytester.TRIALS}"
+                                  + (bot != null && !string.IsNullOrEmpty(bot.Status) ? $"  ({bot.Status})" : "");
+                if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), botLabel, _btnStyle) && bot != null && !bot.Running) bot.Run();
+                innerY += BTN_H + GAP;
+            }
+
+            // ── SCREENSHOT FOR CLAUDE (2026-10-23) — same as pressing F8: saves Screenshots/claude_latest.png ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SCREENSHOT FOR CLAUDE (or press ` key)", _btnStyle))
+                ClaudeScreenshot.Instance?.Take();
+            innerY += BTN_H + GAP;
+
+            // ── MULTI-WORD POP (2026-10-22): several words detonating together — word by word, or all at once ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), HandManager.MULTI_WORD_STAGGER ? "MULTI-WORD POP: WORD BY WORD — tap for all at once" : "MULTI-WORD POP: ALL AT ONCE — tap for word by word", _btnStyle))
+            { HandManager.MULTI_WORD_STAGGER = !HandManager.MULTI_WORD_STAGGER; WDLog.Log($"[WordPop] multiStagger={HandManager.MULTI_WORD_STAGGER}"); }
+            innerY += BTN_H + GAP;
+
+            // ── WORD POP (2026-10-22 Spencer: one pop vs the per-letter ripple) ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), WordDropFX.SINGLE_WORD_POP ? "WORD POP: ONE POP — tap for letter ripple" : "WORD POP: LETTER RIPPLE — tap for one pop", _btnStyle))
+            { WordDropFX.SINGLE_WORD_POP = !WordDropFX.SINGLE_WORD_POP; WDLog.Log($"[WordPop] single={WordDropFX.SINGLE_WORD_POP}"); }
             innerY += BTN_H + GAP;
 
             // ── TILE SIZE (2026-10-21 Spencer: "more padding in between letters") — cycles 100/92/88/84% of the cell ──
@@ -320,6 +383,7 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             // ── SCORED FLASH VARIANTS (2026-09-10 Spencer) ─────────────────────────────
             // Five CALLERS all funnel into the same PlayWordScored, so buttons per caller
             // would look identical. What actually differs is the STATE of the word when it
@@ -368,6 +432,7 @@ namespace WordDrop
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "✓ Checkmark badge — pop it", _btnStyle))
                 HUDManager.Instance?.DebugFlashObjectiveCheck();
             innerY += BTN_H + GAP;
+            }   // ── end legacy tools ──
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Show", _btnStyle))
                 FireStageClearShow();
@@ -377,6 +442,7 @@ namespace WordDrop
                 FireStageClearHide();
             innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Unlock Modal — Show", _btnStyle))
                 UnlockModal.Instance?.ShowForDebug();
             innerY += BTN_H + GAP;
@@ -398,6 +464,7 @@ namespace WordDrop
                 WDLog.Log("[FXTest] wild_unlock_taught cleared — next wild earned in gameplay will re-trigger the unlock tutorial.");
             }
             innerY += BTN_H + GAP;
+            }   // ── end legacy tools ──
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H),
                     $"Tutorial — RESET (as if never played)  done={SurvivalManager.TutorialDone}", _btnStyle))
@@ -412,9 +479,11 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Top Out Panel (drop / dwell / exit)", _btnStyle))
                 FireTopOutPanel();
             innerY += BTN_H + GAP;
+            }   // ── end legacy tools ──
 
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Continue Modal — Show", _btnStyle))
                 FireContinueModalShow();
@@ -426,6 +495,7 @@ namespace WordDrop
                 HUDManager.Instance?.FlashObjectiveComplete();
             innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             // ── MVP P5 turn-based playtest toggle ────────────────────────────────
             string riseLabel = SurvivalManager.RisePerMoveDebug
                 ? "Rise-Per-Move:  ON  (turn-based)"
@@ -441,6 +511,7 @@ namespace WordDrop
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), editMovesLabel, _btnStyle))
                 SurvivalManager.EditsCountAsMovesGlobalOverride = !SurvivalManager.EditsCountAsMovesGlobalOverride;
             innerY += BTN_H + GAP;
+            }   // ── end legacy tools ──
 
             // ── Booster cheat: refill all 4 boosters to 99 charges ───────────────
             // Lets us spam boosters during the cascade-bug repro session.
@@ -473,11 +544,14 @@ namespace WordDrop
                 HUDManager.Instance?.PlayLevelEntry();
             innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             // ── Force a WILD into the hand (to test the iridescent wild tile) ────
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Force WILD into hand", _btnStyle))
                 HandManager.Instance?.DebugForceWildIntoHand();
             innerY += BTN_H + GAP;
+            }   // ── end legacy tools ──
 
+            if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             innerY += 14;
 
             // ── FX Bloom isolation tests — fire each glow alone so its slider
@@ -628,7 +702,9 @@ namespace WordDrop
             if (GUI.Button(new Rect((PANEL_W - 24) / 2 + 4, innerY, (PANEL_W - 24) / 2, BTN_H), "All OFF", _btnStyle))
                 SetAll(false);
             innerY += BTN_H + GAP;
+            }   // ── end legacy tools ──
 
+            _contentH = innerY + 10;
             GUI.EndScrollView();
         }
 
@@ -1540,15 +1616,59 @@ namespace WordDrop
 
         // ── Styles ────────────────────────────────────────────────────────────────
 
+        private GUIStyle _panelStyle;
+        private static Texture2D SolidTex(Color c)
+        {
+            var t = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
+            t.SetPixel(0, 0, c); t.Apply();
+            return t;
+        }
         private void EnsureStyles()
         {
             if (_btnStyle != null) return;
+            // SOLID, NOT SEE-THROUGH (2026-10-23 Spencer: "make it so theres no opacity to it. its really hard for me to read").
+            // The default IMGUI skin is translucent; every background here is an opaque 1x1 texture with white text.
+            var btnN = SolidTex(new Color32(0x2E, 0x34, 0x46, 0xFF));
+            var btnH = SolidTex(new Color32(0x3E, 0x47, 0x60, 0xFF));
+            var btnA = SolidTex(new Color32(0x50, 0x5C, 0x7C, 0xFF));
             _btnStyle    = new GUIStyle(GUI.skin.button) { fontSize = 18, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(10, 10, 6, 6) };
+            _btnStyle.normal.background = btnN;  _btnStyle.normal.textColor = Color.white;
+            _btnStyle.hover.background  = btnH;  _btnStyle.hover.textColor  = Color.white;
+            _btnStyle.active.background = btnA;  _btnStyle.active.textColor = Color.white;
+            _btnStyle.focused.background = btnN; _btnStyle.focused.textColor = Color.white;
+            _btnStyle.border = new RectOffset(0, 0, 0, 0);
             _toggleStyle = new GUIStyle(GUI.skin.toggle) { fontSize = 16, padding = new RectOffset(6, 6, 4, 4) };
+            _toggleStyle.normal.textColor = Color.white; _toggleStyle.onNormal.textColor = Color.white;
+            _toggleStyle.hover.textColor = Color.white;  _toggleStyle.onHover.textColor = Color.white;
             _headerStyle = new GUIStyle(GUI.skin.label)  { fontSize = 18, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.7f, 0.9f, 1f) } };
             _tfStyle     = new GUIStyle(GUI.skin.textField) { fontSize = 20, alignment = TextAnchor.MiddleCenter };
+            _tfStyle.normal.background = SolidTex(new Color32(0x12, 0x14, 0x1C, 0xFF)); _tfStyle.normal.textColor = Color.white;
+            _tfStyle.focused.background = _tfStyle.normal.background; _tfStyle.focused.textColor = Color.white;
+            _panelStyle  = new GUIStyle(GUI.skin.box);
+            _panelStyle.normal.background = SolidTex(new Color32(0x16, 0x19, 0x22, 0xFF));
         }
     
+        /// <summary>Put two specials side by side near the middle and swap them into a combo (no capture — keeps it smooth).</summary>
+        private System.Collections.IEnumerator TestCombo(int kindA, int kindB)
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || grid == null || HandManager.Instance == null) yield break;
+            Vector2Int a = new Vector2Int(-1, -1), b = a;
+            for (int r = 3; r < RulesEngine.ROWS - 2 && a.x < 0; r++)
+                for (int c = 2; c < RulesEngine.COLS - 3 && a.x < 0; c++)
+                {
+                    var c1 = rules.GetCell(c, r); var c2 = rules.GetCell(c + 1, r);
+                    if (c1 == null || c2 == null || c1.IsFrozen || c2.IsFrozen || c1.IsStone || c2.IsStone) continue;
+                    if (rules.PrimedRegistry.GetPrimedWordsContaining(new Vector2Int(c, r)).Count > 0) continue;
+                    a = new Vector2Int(c, r); b = new Vector2Int(c + 1, r);
+                }
+            if (a.x < 0) { WDLog.Log("[Combo] TEST: no free pair"); yield break; }
+            rules.GetCell(a.x, a.y).SpecialKind = kindA; grid.GetTile(a.x, a.y)?.SetSpecial(kindA, pop: true);
+            rules.GetCell(b.x, b.y).SpecialKind = kindB; grid.GetTile(b.x, b.y)?.SetSpecial(kindB, pop: true);
+            yield return new WaitForSeconds(0.8f);
+            HandManager.Instance.TestCombo(a, b);
+        }
+
         private System.Collections.IEnumerator TestSpecial(int kind)
         {
             var rules = RulesEngine.Instance; var grid = GridManager.Instance;

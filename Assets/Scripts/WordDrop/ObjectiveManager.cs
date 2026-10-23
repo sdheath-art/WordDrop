@@ -793,7 +793,7 @@ namespace WordDrop
         /// double-count. Called on OnResolutionComplete AND polled each frame. 2026-06-09.</summary>
         private void CollectBottomDropTargets()
         {
-            if (Active == null) return;
+            if (Active == null || LevelRules.HasDuckGoal) return;   // duck levels: SurvivalManager.TickDuckCollect owns this
             var rules = RulesEngine.Instance;
             if (rules == null) return;
             var grid = GridManager.Instance;

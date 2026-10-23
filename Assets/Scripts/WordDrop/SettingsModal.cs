@@ -221,20 +221,26 @@ namespace WordDrop
             if (_panelGO == null)
             {
                 if (_canvasGO != null) _canvasGO.SetActive(false);
-                SurvivalManager.Instance?.SetOverlayPaused(false);
+                if (!_quitting) SurvivalManager.Instance?.SetOverlayPaused(false);
+                _quitting = false;
                 return;
             }
             var rt = _panelGO.GetComponent<RectTransform>();
             if (rt == null)
             {
                 if (_canvasGO != null) _canvasGO.SetActive(false);
-                SurvivalManager.Instance?.SetOverlayPaused(false);
+                if (!_quitting) SurvivalManager.Instance?.SetOverlayPaused(false);
+                _quitting = false;
                 return;
             }
             UIAnimations.ExitUp(rt, () => {
                 if (_canvasGO != null) _canvasGO.SetActive(false);
                 if (rt != null) rt.anchoredPosition = Vector2.zero; // reset for next open
-                SurvivalManager.Instance?.SetOverlayPaused(false);
+                // NOT after Quit level (2026-10-23 Spencer: moves on a "phantom board" behind the home screen). The quit has
+                // already handed the screen to the menu, which owns the pause now; unpausing here — a beat later, when the
+                // slide-out ends — left the freshly built board live under the home screen. (10-20 audit item #6.)
+                if (!_quitting) SurvivalManager.Instance?.SetOverlayPaused(false);
+                _quitting = false;
             }, speedMult: MODAL_SPEED_MULT);
         }
 
@@ -917,8 +923,10 @@ namespace WordDrop
             if (_confirmOverlay != null) { Destroy(_confirmOverlay); _confirmOverlay = null; }
         }
 
+        private bool _quitting;
         private void OnQuitLevelTapped()
         {
+            _quitting = true;
             // Hide the modal first so its ExitUp animation runs alongside
             // the screen-slide transition (cosmetic — the slide covers
             // most of the modal anyway). Then transition to Menu, which

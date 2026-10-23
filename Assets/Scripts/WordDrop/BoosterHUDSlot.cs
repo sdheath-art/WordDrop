@@ -59,6 +59,8 @@ namespace WordDrop
         // On this 1179px design width that is a 198px button and a 34px gap — WordDrop's were
         // 135px, about 47% too small, which is why the icons read tiny.
         private const float SLOT_SIZE   = 198f;
+        private const float MK_BOOSTER_SIZE = 176f, MK_SETTINGS_SIZE = 150f;
+        private const float MK_BOOSTER_X0 = 370f, MK_BOOSTER_STEP = 227.7f;
         private const float SLOT_STEP   = 135f + 26.34f;   // 161.34
         private const float SLOT_LEFT_X = 37.98f;
         private const float SLOT_TOP_Y  = 2270.31f;       // unchanged — keeps the "pops above bench" silhouette
@@ -190,12 +192,15 @@ namespace WordDrop
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_MALLET,        PlaceholderChar = "M" }, // 2026-06-24: Mallet first
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_ROCK_CRUSHER,  PlaceholderChar = "S" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BRAMBLE_SWEEP, PlaceholderChar = "C" },
-            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BLOOMBURST,    PlaceholderChar = "B" },
+            // 2026-10-22 Spencer: "the paid booster can be the spyglass one in my mock up" — his mockup's 4th booster is a
+            // spyglass. Bloomburst moves out of the row (code intact; swap this line back to restore it).
+            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_SPYGLASS,      PlaceholderChar = "?" },
+            // new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BLOOMBURST,    PlaceholderChar = "B" },
             // 2026-09-11 (Spencer): row cut to FOUR boosters + Settings. Wispwhirl parked as the
             // 5th — it is the last-listed, nothing else depends on the count. Swap which one is
             // commented out to change the four; BENCH_SLOT_COUNT below must match the row length.
             // new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_WISPWHIRL,     PlaceholderChar = "J" },
-            new SlotSpec { Type = SlotType.Settings,                                              PlaceholderChar = "⚙" },
+            new SlotSpec { Type = SlotType.Settings,                                              PlaceholderChar = "" },   // 2026-10-22: "⚙" isn't in the font (drew an empty box) — a drawn gear sits there instead (GearSprite)
         };
 
         // ── 2026-06-24 layout constants ─────────────────────────────────────────
@@ -456,6 +461,31 @@ namespace WordDrop
 
         // ── PSD coord → Unity anchored position helpers ─────────────────────────
 
+        private static Sprite s_gear;
+        /// <summary>Antialiased white gear (8 teeth, centre hole), 4x4 supersampled. Placeholder settings icon.</summary>
+        private static Sprite GearSprite()
+        {
+            if (s_gear != null) return s_gear;
+            const int N = 128; var tex = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var px = new Color[N * N]; float c = N * 0.5f;
+            float R = N * 0.47f, root = N * 0.35f, hole = N * 0.15f; const int TEETH = 8;
+            for (int y = 0; y < N; y++) for (int x = 0; x < N; x++)
+            {
+                int hit = 0;
+                for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++)
+                {
+                    float dx = x + (sx + 0.5f) / 4f - c, dy = y + (sy + 0.5f) / 4f - c;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy);
+                    float t = Mathf.Repeat(Mathf.Atan2(dy, dx) / (2f * Mathf.PI) * TEETH + 0.25f, 1f);   // 0..1 across one tooth period
+                    float edge = (t > 0.15f && t < 0.55f) ? R : root;                                    // tooth top ~40% of the period
+                    if (r <= edge && r >= hole) hit++;
+                }
+                px[y * N + x] = new Color(1f, 1f, 1f, hit / 16f);
+            }
+            tex.SetPixels(px); tex.Apply();
+            return s_gear = Sprite.Create(tex, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), 100f);
+        }
+
         private static Vector2 PsdAnchoredCenter(float xPsd, float yPsd, float wPsd, float hPsd)
         {
             // Caller anchors with (0.5, 0) (bottom-center) and pivot (0.5, 0.5).
@@ -545,6 +575,13 @@ namespace WordDrop
                 extImg.raycastTarget = false;
             }
 
+            if (HUDManager.MOCKUP_HUD)
+            {
+                // the mockup has no bench strip — the buttons sit on the background
+                benchImg.color = new Color(0f, 0f, 0f, 0f);
+                var benchExt = benchGO.transform.Find("BenchBottomExtend"); if (benchExt != null) benchExt.gameObject.SetActive(false);
+            }
+
             int slotCount = DISPLAY_ORDER.Length;
             _slotButtons           = new GameObject[slotCount];
             _slotImages            = new Image[slotCount];
@@ -576,6 +613,24 @@ namespace WordDrop
                     slotSize = FLANK_SIZE;
                     slotDim  = new Vector2(FLANK_SIZE, FLANK_SIZE);
                     anchored = PsdAnchoredCenter(BAG_X_PSD, FLANK_Y_PSD, FLANK_SIZE, FLANK_SIZE);
+                }
+                else if (HUDManager.MOCKUP_HUD)
+                {
+                    // 2026-10-22 Spencer's layout mockup (newboard@2x.png, /2 = design units): Settings bottom-LEFT, centre
+                    // (114,2405) ~146 across; the four boosters to its right, centres x 370/598/826/1053 at y 2390, ~162 green
+                    // body (+ outline). Placeholder slot art until his buttons land.
+                    if (spec.Type == SlotType.Settings)
+                    {
+                        slotSize = MK_SETTINGS_SIZE; slotDim = new Vector2(slotSize, slotSize);
+                        anchored = PsdAnchoredCenter(114f - slotSize * 0.5f, 2405f - slotSize * 0.5f, slotSize, slotSize);
+                    }
+                    else
+                    {
+                        slotSize = MK_BOOSTER_SIZE; slotDim = new Vector2(slotSize, slotSize);
+                        float cx = MK_BOOSTER_X0 + Mathf.Min(benchIdx, 3) * MK_BOOSTER_STEP;
+                        anchored = PsdAnchoredCenter(cx - slotSize * 0.5f, 2390f - slotSize * 0.5f, slotSize, slotSize);
+                        benchIdx++;
+                    }
                 }
                 else
                 {
@@ -611,6 +666,13 @@ namespace WordDrop
                     // fifth booster. Matches Spencer's concept. 2026-09-11.
                     var c = Resources.Load<Sprite>("UI/booster_circle");
                     _slotImages[i].sprite = c != null ? c : GetCircleSpriteBig();
+                    // placeholder gear until Spencer's settings button art lands
+                    var gearGO = new GameObject("Gear", typeof(RectTransform), typeof(Image));
+                    gearGO.transform.SetParent(slot.transform, false);
+                    var grt = (RectTransform)gearGO.transform;
+                    grt.anchorMin = new Vector2(0.22f, 0.22f); grt.anchorMax = new Vector2(0.78f, 0.78f); grt.offsetMin = grt.offsetMax = Vector2.zero;
+                    var gimg = gearGO.GetComponent<Image>(); gimg.sprite = GearSprite(); gimg.preserveAspect = true; gimg.raycastTarget = false;
+                    gimg.color = new Color32(0xFB, 0xF2, 0xE2, 0xFF);
                 }
                 else
                 {

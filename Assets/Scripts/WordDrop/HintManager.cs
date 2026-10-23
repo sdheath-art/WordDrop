@@ -98,7 +98,12 @@ namespace WordDrop
         /// the swap pivot is being felt out — the marching-ants outline, the idle jam hint
         /// and the lantern trace all read through here. Set true to bring them back;
         /// the per-user settings toggle still works underneath.</summary>
-        public static bool HINTS_DISABLED = true;
+        public static bool HINTS_DISABLED = false;   // 2026-10-22: back ON for the swap game (Spencer: idle hint system)
+        /// <summary>Seconds idle before the SWAP hint shows (full board). Royal Match is ~5s; a word game wants a little
+        /// more think time.</summary>
+        public static float SWAP_IDLE_SECONDS = 15f;          // 2026-10-22: 6 -> 15, a SAFETY NET for the stuck, not a move-by-move crutch
+        public static float SWAP_OUTLINE_EXTRA_SECONDS = 10f; // free hint: lean only, then the word outline this much later
+        private float IdleThreshold => SurvivalManager.FullBoardActive ? SWAP_IDLE_SECONDS : IDLE_THRESHOLD;
 
         public static bool IsEnabled()
         {
@@ -117,6 +122,7 @@ namespace WordDrop
         /// <summary>Call from input handlers — taps, drags, swaps, menu opens.</summary>
         public void ResetIdleTimer()
         {
+            _strongHint = false; _hintCache = null;   // a new board state after the player's move = a new hint later
             _idleTime = 0f;
             _nextLoopTime = -1f;
             if (_activeStage > 0) ClearVisuals();
@@ -124,8 +130,11 @@ namespace WordDrop
 
         /// <summary>MVP P5 — fire a hint immediately, regardless of idle timer.
         /// Used by the Lantern Trace booster (manual hint as a roguelite pick).</summary>
-        public void ForceShowHint()
+        public void ForceShowHint() => ForceShowHint(false);
+        /// <summary>strong = the Spyglass booster: BEST move, outline at once, until the player touches the board.</summary>
+        public void ForceShowHint(bool strong)
         {
+            _strongHint = strong; _hintCache = null;
             ClearVisuals();
             _nextLoopTime = -1f;
             RefreshHint();
@@ -157,6 +166,7 @@ namespace WordDrop
         /// </summary>
         public void OnBoardChanged()
         {
+            _hintCache = null;
             if (_activeStage > 0) ClearVisuals();
             // Delay next re-fire so the board animation (row rise, cascade)
             // has time to settle before we cache new base positions.
@@ -165,7 +175,7 @@ namespace WordDrop
 
         private void Update()
         {
-            if (!IsEnabled()) return;
+            if (!IsEnabled()) { GateDiag(HINTS_DISABLED ? "HINTS_DISABLED" : "player setting hint_enabled=0"); return; }
             if (!GameplayActive()) { ResetIdleTimer(); return; }
 
             // Defensive: any input resets the timer. Picks up taps/drags even
@@ -179,7 +189,7 @@ namespace WordDrop
             _idleTime += Time.deltaTime;
 
             // Time to fire / refresh hint?
-            if (_idleTime >= IDLE_THRESHOLD && Time.unscaledTime >= _nextLoopTime)
+            if (_idleTime >= IdleThreshold && Time.unscaledTime >= _nextLoopTime)
             {
                 RefreshHint();
                 _nextLoopTime = Time.unscaledTime + LOOP_INTERVAL;
@@ -188,8 +198,41 @@ namespace WordDrop
 
         // ── Gating ──────────────────────────────────────────────────────────────
 
+        // TEMP DIAG 2026-10-22 (Spencer: "i dont think the hint system is working" — the log had ZERO [Hint] lines, so the
+        // finder never ran). Logs WHY the hint is blocked, at most every 4s. Strip once the hint is verified.
+        public static bool HINT_GATE_DIAG = true;
+        private float _nextGateLog;
+        private string _lastGateReason;
+        private void GateDiag(string why)
+        {
+            if (!HINT_GATE_DIAG || Time.unscaledTime < _nextGateLog) return;
+            if (why == _lastGateReason && Time.unscaledTime < _nextGateLog + 8f) return;
+            _nextGateLog = Time.unscaledTime + 4f; _lastGateReason = why;
+            WDLog.Log($"[HintGate] blocked: {why} (idle={_idleTime:F1}s)");
+        }
+
+        /// <summary>Full-board gate (2026-10-22): the drop-game checks (match active / human's turn / IsInteractable) were
+        /// never designed for the swap game. Ask what matters here: a run in play, no overlay or modal, board settled.</summary>
+        private bool SwapGameplayActive()
+        {
+            var sm = SurvivalManager.Instance;
+            if (sm == null || !SurvivalManager.IsSurvivalMode) { GateDiag("no survival run"); return false; }
+            if (SurvivalManager.AwaitingNextLevel) { GateDiag("level won / awaiting next"); return false; }
+            if (sm.IsOverlayPaused) { GateDiag("overlay paused"); return false; }
+            if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { GateDiag("map/home on screen"); return false; }
+            if (StageClearModal.Instance != null && StageClearModal.Instance.IsVisible) { GateDiag("stage clear modal"); return false; }
+            if (ContinueModal.Instance != null && ContinueModal.Instance.IsShowing) { GateDiag("continue modal"); return false; }
+            if (GridManager.Instance == null || RulesEngine.Instance == null) { GateDiag("no grid/rules"); return false; }
+            if (RulesEngine.Instance.IsResolving) { GateDiag("rules resolving"); return false; }
+            var hm = HandManager.Instance;
+            if (hm != null && (hm.IsResolvingChain || HandManager.BonusBlastRunning)) { GateDiag("chain / bonus running"); return false; }
+            if (MatchController.Instance != null && MatchController.Instance.IsProcessing) { GateDiag("match processing"); return false; }
+            return true;
+        }
+
         private bool GameplayActive()
         {
+            if (SurvivalManager.FullBoardActive) return SwapGameplayActive();
             // Only run while a match is active and it's the human's turn.
             if (MatchController.Instance == null || !MatchController.Instance.IsMatchActive) return false;
             if (MatchController.Instance.CurrentPlayer != MatchController.PLAYER_HUMAN) return false;
@@ -198,7 +241,7 @@ namespace WordDrop
             // Stage-clear modal up → suppress hints so background tiles don't
             // jiggle behind the panel. The modal's Show() also calls
             // ClearVisuals; this gate keeps Update() from re-firing.
-            if (StageClearModal.Instance != null && StageClearModal.Instance.IsShowing) return false;
+            if (StageClearModal.Instance != null && StageClearModal.Instance.IsVisible) return false;
             // Continue modal (top-out rescue) — same rule. Background tile-hops
             // shouldn't compete with the dim scrim while the player decides
             // whether to play on.
@@ -347,6 +390,7 @@ namespace WordDrop
 
         private void RefreshHint()
         {
+            if (SurvivalManager.FullBoardActive) { RefreshSwapHint(); return; }   // the forced (tutorial) hint is a drop-game card hint — never on the full board
             BestMove move;
             if (_forcedActive)
             {
@@ -379,6 +423,116 @@ namespace WordDrop
             // of the hops. Royal Match-style "here's the word" cue.
             EnsureOutline();
             if (_outline != null) _outline.Show(move.WordCells);
+        }
+
+        // ── SWAP HINT visuals (2026-10-22): the two tiles to swap NUDGE toward each other (Royal Match's idle hint), and the
+        // marching-ants outline traces the word the swap would make. Tiles go back to their exact cell on clear. ──
+        public static float SWAP_NUDGE = 0.22f;   // fraction of a cell the moving tile leans toward the word (one tile since 2026-10-22, so a touch further)
+        private readonly List<Sequence> _swapSeqs = new List<Sequence>();
+        private readonly List<Vector2Int> _swapCells = new List<Vector2Int>();
+        private class SwapHintCache { public Vector2Int A, B; public List<Vector2Int> Cells; }
+        private SwapHintCache _hintCache;   // ONE hint per idle stretch — a random pick must not jump around on every refresh
+        private bool _strongHint;
+        private void RefreshSwapHint()
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            ClearVisuals();
+            if (rules == null || grid == null) return;
+            if (_hintCache == null)
+            {
+                if (!rules.FindSwapHint(_strongHint, out var fa, out var fb, out var fc)) { WDLog.Log("[Hint] no swap makes a word"); return; }
+                _hintCache = new SwapHintCache { A = fa, B = fb, Cells = fc };
+            }
+            var a = _hintCache.A; var b = _hintCache.B; var cells = _hintCache.Cells;
+            var ta = grid.GetTile(a.x, a.y); var tb = grid.GetTile(b.x, b.y);
+            if (ta == null || tb == null) return;
+            _activeStage = 1;
+            float cell = grid.CellSize;
+            Vector3 slide = new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+            Vector3 pa = grid.CellToWorld(a.x, a.y) + slide, pb = grid.CellToWorld(b.x, b.y) + slide;
+            // ONE tile leans (2026-10-22 Spencer: "instead of pushing both of the letters together can you have just one that is
+            // leaning towards the group of words with the indicator"). The word runs through the cell a letter MOVES INTO, so
+            // the mover is the tile on the OTHER side: word covers b (not a) -> a leans toward b, and vice versa.
+            bool aIn = cells.Contains(a), bIn = cells.Contains(b);
+            bool moverIsB = aIn && !bIn;
+            Tile mover = moverIsB ? tb : ta;
+            Vector3 from = moverIsB ? pb : pa, to = moverIsB ? pa : pb;
+            Vector3 dir = to - from; dir.z = 0f; dir.Normalize();
+            // TOUCH, DON'T OVERLAP (2026-10-23 Spencer: "they can touch but they shouldnt overlap"). Lean exactly the GAP between
+            // the two tiles' drawn edges along the swap axis (tiles fill ~88% of a cell side to side, so ~12% of a cell). Stacked
+            // tiles already meet/overlap top-to-bottom (the art is taller than wide), so a vertical hint has no gap — it WIGGLES
+            // toward its partner instead of sliding.
+            Tile partner = moverIsB ? ta : tb;
+            float gap = TileGapAlong(mover, partner, dir, Vector3.Distance(from, to));
+            float lean = Mathf.Min(cell * SWAP_NUDGE, gap);
+            if (lean >= cell * 0.03f) NudgeLoop(mover, from, dir * lean);
+            else WiggleLoop(mover, from, dir);
+            _swapCells.Add(moverIsB ? b : a);
+            // Free hint shows the WORD only after a further SWAP_OUTLINE_EXTRA_SECONDS of idling; the Spyglass shows it at once.
+            bool showWord = _strongHint || _idleTime >= SWAP_IDLE_SECONDS + SWAP_OUTLINE_EXTRA_SECONDS;
+            if (showWord) { EnsureOutline(); if (_outline != null) _outline.Show(cells); }
+            WDLog.Log($"[Hint] {(_strongHint ? "SPYGLASS" : "free")} swap ({a.x},{a.y})<->({b.x},{b.y}) {cells.Count}-letter word, outline={(showWord ? "on" : "not yet")}");
+        }
+        /// <summary>Empty space between two tiles' drawn edges along the axis joining them (0 if they meet or overlap).</summary>
+        private static float TileGapAlong(Tile a, Tile b, Vector3 dir, float centreDist)
+        {
+            var ra = a != null ? a.GetComponent<SpriteRenderer>() : null; var rb = b != null ? b.GetComponent<SpriteRenderer>() : null;
+            if (ra == null || rb == null || ra.sprite == null || rb.sprite == null) return 0f;
+            bool horizontal = Mathf.Abs(dir.x) >= Mathf.Abs(dir.y);
+            float ea = horizontal ? ra.bounds.extents.x : ra.bounds.extents.y;
+            float eb = horizontal ? rb.bounds.extents.x : rb.bounds.extents.y;
+            return Mathf.Max(0f, centreDist - ea - eb);
+        }
+        /// <summary>No room to slide: tilt toward the partner and back (a wiggle), twice, then pause — same rhythm as the lean.</summary>
+        private void WiggleLoop(Tile t, Vector3 home, Vector3 dir)
+        {
+            t.MarkAnimating(LOOP_INTERVAL + 1f);
+            t.LiftForFx(LOOP_INTERVAL + 1f);   // draw OVER the neighbour it leans into (2026-10-23 Spencer) — self-restoring
+            t.transform.DOKill(); t.transform.position = home; t.transform.localRotation = Quaternion.identity;
+            float ang = (Mathf.Abs(dir.x) >= Mathf.Abs(dir.y) ? -Mathf.Sign(dir.x) : (dir.y > 0 ? 1f : -1f)) * HINT_WIGGLE_DEG;
+            var seq = DOTween.Sequence().SetUpdate(true);
+            for (int i = 0; i < 2; i++)
+            {
+                seq.Append(t.transform.DOLocalRotate(new Vector3(0f, 0f, ang), 0.1f).SetEase(Ease.OutQuad));
+                seq.Append(t.transform.DOLocalRotate(new Vector3(0f, 0f, -ang * 0.6f), 0.12f).SetEase(Ease.InOutQuad));
+                seq.Append(t.transform.DOLocalRotate(Vector3.zero, 0.1f).SetEase(Ease.OutQuad));
+            }
+            seq.AppendInterval(1.1f);
+            seq.SetLoops(-1);
+            _swapSeqs.Add(seq);
+        }
+        public static float HINT_WIGGLE_DEG = 7f;
+
+        private void NudgeLoop(Tile t, Vector3 home, Vector3 offset)
+        {
+            t.MarkAnimating(LOOP_INTERVAL + 1f);   // keep the position checkers off it while it leans
+            t.LiftForFx(LOOP_INTERVAL + 1f);       // ...and draw it OVER the neighbour it leans into (2026-10-23) — self-restoring
+            t.transform.DOKill(); t.transform.position = home;
+            var seq = DOTween.Sequence().SetUpdate(true);
+            for (int i = 0; i < 2; i++)
+            {
+                seq.Append(t.transform.DOMove(home + offset, 0.14f).SetEase(Ease.OutQuad));
+                seq.Append(t.transform.DOMove(home, 0.16f).SetEase(Ease.InOutQuad));
+            }
+            seq.AppendInterval(1.1f);
+            seq.SetLoops(-1);
+            _swapSeqs.Add(seq);
+        }
+        private void ClearSwapVisuals()
+        {
+            foreach (var s in _swapSeqs) if (s != null && s.IsActive()) s.Kill();
+            _swapSeqs.Clear();
+            var grid = GridManager.Instance;
+            if (grid != null)
+            {
+                Vector3 slide = new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+                foreach (var c in _swapCells)
+                {
+                    var t = grid.GetTile(c.x, c.y);
+                    if (t != null) { t.transform.position = grid.CellToWorld(c.x, c.y) + slide; t.transform.localRotation = Quaternion.identity; t.EndFxLift(); }   // exact cell + upright + normal layer
+                }
+            }
+            _swapCells.Clear();
         }
 
         private WordHintOutline _outline;
@@ -574,6 +728,7 @@ namespace WordDrop
         {
             // Hide the marching-ants word outline.
             if (_outline != null) _outline.Hide();
+            ClearSwapVisuals();
 
             // Kill card sequence and restore card position + scale
             if (_cardSequence != null && _cardSequence.IsActive()) _cardSequence.Kill();

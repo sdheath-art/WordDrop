@@ -75,8 +75,8 @@ namespace WordDrop
         {
             // CRATE LEVELS (full board): the panel tracks crates broken, not points.
             var smC = SurvivalManager.Instance;
-            if (smC != null && RulesEngine.Instance != null && (LevelRules.CrateGoalFor(smC.CurrentStageIndex) || (SurvivalManager.AwaitingNextLevel && LevelRules.CrateGoal > 0 && SurvivalManager.FullBoardActive)))
-                return $"{Mathf.Max(0, LevelRules.CrateGoal - RulesEngine.Instance.CountCrateCells())}/{LevelRules.CrateGoal}";
+            if (smC != null && (LevelRules.GoalsActiveFor(smC.CurrentStageIndex) || (SurvivalManager.AwaitingNextLevel && LevelRules.Goals.Count > 0 && SurvivalManager.FullBoardActive)))
+                return GoalsOnHud ? "" : LevelRules.GoalsHudText();   // goal pictures carry the count — no "0/11" behind them
             if (!SHOW_SCORE_TARGET) return shown.ToString("N0");
             var sm = SurvivalManager.Instance;
             if (!SurvivalManager.IsSurvivalMode || sm == null) return shown.ToString("N0");
@@ -145,6 +145,8 @@ namespace WordDrop
             _scoreTarget = total;
             _scoreShown  = total;
             ResetScoreTargetLatch();
+            CollectInFlight = 0; LevelRules.CollectAwaitingFly = 0;
+            SyncCollectIcon();
             if (_scorePanelNum != null)
             {
                 if (!_rewardMode) _scorePanelNum.text = ScoreLabel(total);
@@ -503,6 +505,7 @@ namespace WordDrop
         /// <summary>Bonus blast: show this many moves instead of the live count (which already belongs to the NEXT level
         /// once the target is hit). -1 = off. Cleared by LevelRules.Apply when the next level installs.</summary>
         public static int MovesDisplayOverride = -1;
+        public static float BONUS_MOVES_TICK = 0.18f;   // bonus countdown bump (was the 2.2x score pop)
         /// <summary>Board entry slide. MEASURED 2026-10-20 ([EntryPerf], steady 60fps — no hitch): at 0.28s / OutBack 1.6
         /// the board crossed 25% of 12 world units on its FIRST frame, finished in ~10 frames and overshot by 1.08 units
         /// (more than a cell) — read as "catching"/janky. 0.5s / 0.8 ≈ a cell per frame at peak, ~half-cell bump.</summary>
@@ -878,7 +881,7 @@ namespace WordDrop
             // TARGET (left) — objective icon + count badge.
             // 2026-06-24 Spencer: TARGET widened (0.33 → 0.63) into the space freed by removing the LEVEL
             // box — Royal-Match-style big target field, room for bigger words AND a future stacked-icon grid.
-            _objectivePanel = BuildHudPanel(barGO.transform, "TargetPanel", 0.02f, 0.63f, "TARGET", out var tgtInner);
+            _objectivePanel = BuildHudPanel(barGO.transform, "TargetPanel", 0.02f, 0.63f, PanelLabel("TARGET"), out var tgtInner);
             _objectivePanelInner = tgtInner as RectTransform;
             _objectivePanelLabel = _objectivePanel.transform.Find("TargetPanelLabel")?.GetComponent<TextMeshProUGUI>();
             {
@@ -954,7 +957,7 @@ namespace WordDrop
             _levelPanel.SetActive(false);
 
             // MOVES (right) — reparent the existing moves-to-top-out counter into the panel.
-            _movesPanel = BuildHudPanel(barGO.transform, "MovesPanel", 0.67f, 0.98f, "MOVES", out var mvInner);
+            _movesPanel = BuildHudPanel(barGO.transform, "MovesPanel", 0.67f, 0.98f, PanelLabel("MOVES"), out var mvInner);
             _movesPanelInner = mvInner as RectTransform;
             _movesPanelLabel = _movesPanel.transform.Find("MovesPanelLabel")?.GetComponent<TextMeshProUGUI>();
             if (_topOutNumText != null)
@@ -1220,8 +1223,291 @@ namespace WordDrop
             // ── Menu button — small, far right edge ──────────────────────────────
             BuildMenuButton(barGO.transform);
 
+            // ── 2026-10-22 MOCKUP LAYOUT (placeholders until Spencer's art) ─────────
+            if (MOCKUP_HUD) ApplyMockupLayout(canvasGO.transform, barGO);
+
             // ── Word-found overlay ────────────────────────────────────────────────
             BuildWordFoundOverlay(canvasGO.transform);
+        }
+
+        // ══ MOCKUP HUD LAYOUT (2026-10-22) ══════════════════════════════════════════════════════════════════════
+        // Spencer's layout mockup newboard@2x.png (2358x5112 = exactly 2x the 1179x2556 design space the booster row uses),
+        // measured in design units: bar x13-1167 y190-457 · GOAL box x410-868 y233-411 · MOVES box x915-1117 y233-411 ·
+        // plaques ~215x64 centred on each box's top edge · portrait ring centre (186,322) d~350 · level star x140-262 y383-511.
+        // PLACEHOLDER SHAPES in the mockup's colours — each one is a single sprite to swap when the art lands. The existing
+        // GOAL/MOVES panels are RE-LAID-OUT, not rebuilt, so goal pictures, badges, flights and the moves counter keep working.
+        // MOCKUP_HUD = false restores the old strip.
+        public static bool MOCKUP_HUD = true;
+        public static string PROFILE_ASSET = "Goals/profile_placeholder";   // swap for the player's avatar / a character later
+        /// <summary>Panel plaque labels in Title Case on the mockup HUD ("Goal", "Moves", "Animal Words") — 2026-10-22 Spencer:
+        /// "make it not be all caps", matching his mockup's "Score" / "Moves". Every label write goes through this.</summary>
+        public static string PanelLabel(string s)
+        {
+            if (!MOCKUP_HUD || string.IsNullOrEmpty(s)) return s;
+            var parts = s.ToLowerInvariant().Split(' ');
+            for (int i = 0; i < parts.Length; i++) if (parts[i].Length > 0) parts[i] = char.ToUpperInvariant(parts[i][0]) + parts[i].Substring(1);
+            return string.Join(" ", parts);
+        }
+        private const float MK_W = 1179f, MK_H = 540f;   // the top band of the design space the layout lives in
+        private static readonly Color MK_BAR_EDGE  = new Color32(0x3C, 0x0D, 0x78, 0xFF);
+        private static readonly Color MK_BAR_BODY  = new Color32(0x5F, 0x28, 0xD9, 0xFF);
+        private static readonly Color MK_CREAM     = new Color32(0xFB, 0xF2, 0xE2, 0xFF);
+        private static readonly Color MK_CREAM_EDGE= new Color32(0xCA, 0xB1, 0xA3, 0xFF);
+        private static readonly Color MK_PLAQUE    = new Color32(0x6A, 0x30, 0xE0, 0xFF);
+        private static readonly Color MK_RING_BLUE = new Color32(0x00, 0xAA, 0xFF, 0xFF);
+        private static readonly Color MK_STAR_GOLD = new Color32(0xF8, 0xC4, 0x14, 0xFF);
+        private static readonly Color MK_STAR_BLUE = new Color32(0x1E, 0x88, 0xF0, 0xFF);
+        private static readonly Color32 MK_INK     = new Color32(0x25, 0x12, 0x42, 0xFF);
+        private RectTransform _mkRoot; private TextMeshProUGUI _mkStarNum;
+
+        /// <summary>Switch an EXISTING text to another font. Setting .font alone keeps the old atlas material (an outline
+        /// had already instanced it), so the new font's glyph UVs sample the OLD font's atlas = garbled letters ("MAL" for
+        /// GOAL, an invisible MOVES number — 2026-10-22 screenshot). Give it the new font's own material, then re-apply outline.</summary>
+        // ── ROYAL MATCH NUMBER STYLE for the HUD (2026-10-22 Spencer: "you cant really see the number of moves ... come up
+        // with something close to what royal match is doing ... for the moves total but use nunito font"). Measured off his
+        // RM "12" crop: face cream #FFFDE3 at the top fading to pale butter #F7E9A0 at the bottom, a thick dark navy outline
+        // (#013259, ~8% of the glyph), and a deeper navy band UNDER the digits (the 3D lip). Same recipe as the score pop-ups
+        // (BonusPopup.ApplyRMScoreStyle), on a UI text: Nunito Black, vertex gradient, one shared material with outline + a
+        // hard offset underlay. The moves counter's warning colours (red when low) TINT the gradient, so they still read. ──
+        // Re-measured vs RM "10" (2026-10-22): stroke ~4.7% of digit height on top/sides (#003459), bottom ~9% (stroke + a
+        // ~4.7% lip). Face #FEFEE3 -> #F6E99C. Atlas padding 9 @ 90pt: outline+dilate must stay under ~0.75.
+        public static float RM_NUM_OUTLINE_W = 0.20f, RM_NUM_DILATE = 0.06f, RM_NUM_LIP_Y = -0.22f;   // mockup: 7.5% stroke, 15% bottom
+        // 0.45 measured 12-14% of digit height on screen (Spencer: "wayyyy too much") — the unit is ~2.7x what I assumed;
+        // 0.17 should land near RM's 4.7%.
+        // 2026-10-22 Spencer: "match the colours to our colour palette with the effects you chose". Measured off HIS mockup
+        // (newboard@2x.png, "2469"): face #FFFDE3 top -> #ECDFDE bottom (lavender-cream), stroke + lip the HUD ink #22034F,
+        // stroke ~7.5% of digit height top/sides, ~15% at the bottom. (RM navy was #003459 / butter #F6E99C.)
+        public static Color RM_MOVES_TOP    = new Color32(0xFF, 0xFD, 0xE3, 0xFF);
+        public static Color RM_MOVES_BOTTOM = new Color32(0xEC, 0xDF, 0xDE, 0xFF);
+        public static Color RM_NUM_OUTLINE  = new Color32(0x22, 0x03, 0x4F, 0xFF);
+        public static Color RM_NUM_LIP      = new Color32(0x22, 0x03, 0x4F, 0xFF);
+        private static Material s_rmNumMat; private static TMP_FontAsset s_rmNumMatFont;
+        public static void ApplyRMNumberStyle(TMP_Text t, Color top, Color bottom)
+        {
+            if (t == null) return;
+            var font = GameFont.GetNumberTMP(); if (font == null) return;
+            float k = GameFont.SpreadScaleVsNunito(font);   // values below are tuned on Nunito
+            if (s_rmNumMat == null || s_rmNumMatFont != font)
+            {
+                s_rmNumMat = new Material(font.material) { name = "HUDRoyalMatchNumber" };
+                // OUTLINE_ON: Nunito's material is TMP_SDF-Mobile, where the outline is a shader_feature — without the
+                // keyword _OutlineWidth does NOTHING. Every outline set this way before 2026-10-22 was invisible.
+                s_rmNumMat.EnableKeyword("OUTLINE_ON");
+                s_rmNumMat.SetFloat("_OutlineWidth", Mathf.Min(0.9f, RM_NUM_OUTLINE_W * k));
+                s_rmNumMat.SetColor("_OutlineColor", RM_NUM_OUTLINE);
+                s_rmNumMat.SetFloat("_FaceDilate", Mathf.Min(0.5f, RM_NUM_DILATE * k));
+                s_rmNumMat.EnableKeyword("UNDERLAY_ON");
+                s_rmNumMat.SetColor("_UnderlayColor", RM_NUM_LIP);
+                s_rmNumMat.SetFloat("_UnderlayOffsetX", 0f);
+                s_rmNumMat.SetFloat("_UnderlayOffsetY", Mathf.Max(-1f, RM_NUM_LIP_Y * k));
+                s_rmNumMat.SetFloat("_UnderlayDilate", Mathf.Min(1f, (RM_NUM_OUTLINE_W + RM_NUM_DILATE) * k));   // lip = the stroked shape, dropped
+                s_rmNumMat.SetFloat("_UnderlaySoftness", 0f);
+                s_rmNumMatFont = font;
+            }
+            t.font = font;
+            t.fontSharedMaterial = s_rmNumMat;
+            t.enableVertexGradient = true;
+            t.colorGradient = new VertexGradient(top, top, bottom, bottom);
+            t.color = Color.white;
+            t.UpdateMeshPadding();
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<string, Material> s_mkOutlineMats = new System.Collections.Generic.Dictionary<string, Material>();
+        private static void MkSetFont(TMP_Text t, TMP_FontAsset font, float outline, Color32 outlineCol)
+        {
+            if (t == null || font == null) return;
+            // Same route as the badges, which render correctly: a material COPIED from this font's own material with the
+            // outline baked in, assigned as the shared material. Never the .outlineWidth setter on a reused text — that
+            // instanced the material the text already had, which is how the plaques kept garbling.
+            string key = font.name + "|" + outline + "|" + outlineCol;
+            if (!s_mkOutlineMats.TryGetValue(key, out var m) || m == null)
+            {
+                m = new Material(font.material) { name = "HUDOutline_" + font.name };
+                m.EnableKeyword("OUTLINE_ON");   // TMP_SDF-Mobile: no keyword = no outline
+                m.SetFloat("_OutlineWidth", outline); m.SetColor("_OutlineColor", outlineCol);
+                s_mkOutlineMats[key] = m;
+            }
+            t.font = font;
+            t.fontSharedMaterial = m;
+            t.UpdateMeshPadding();
+        }
+        private void MkPlace(RectTransform rt, float x0, float y0, float x1, float y1)
+        {
+            rt.anchorMin = new Vector2(x0 / MK_W, 1f - y1 / MK_H); rt.anchorMax = new Vector2(x1 / MK_W, 1f - y0 / MK_H);
+            rt.offsetMin = rt.offsetMax = Vector2.zero; rt.pivot = new Vector2(0.5f, 0.5f);
+        }
+        private Image MkImage(Transform parent, string name, Sprite sprite, Color col, bool sliced = false)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            var img = go.GetComponent<Image>(); img.sprite = sprite; img.color = col; img.raycastTarget = false;
+            if (sliced) img.type = Image.Type.Sliced; else img.preserveAspect = true;
+            return img;
+        }
+        private static void Inset(RectTransform rt, float frac)
+        {
+            rt.anchorMin = new Vector2(frac, frac); rt.anchorMax = new Vector2(1f - frac, 1f - frac); rt.offsetMin = rt.offsetMax = Vector2.zero;
+        }
+        private static Sprite s_mkDisc, s_mkStar;
+        /// <summary>Antialiased white disc (4x4 supersampled).</summary>
+        private static Sprite MkDisc()
+        {
+            if (s_mkDisc != null) return s_mkDisc;
+            const int N = 128; var tex = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var px = new Color[N * N]; float r = N * 0.5f;
+            for (int y = 0; y < N; y++) for (int x = 0; x < N; x++)
+            {
+                int hit = 0; for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++)
+                { float dx = x + (sx + 0.5f) / 4f - r, dy = y + (sy + 0.5f) / 4f - r; if (dx * dx + dy * dy <= (r - 0.5f) * (r - 0.5f)) hit++; }
+                px[y * N + x] = new Color(1f, 1f, 1f, hit / 16f);
+            }
+            tex.SetPixels(px); tex.Apply();
+            return s_mkDisc = Sprite.Create(tex, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), 100f);
+        }
+        /// <summary>Antialiased white 5-point star with soft rounded look (inner radius 0.5), 4x4 supersampled.</summary>
+        private static Sprite MkStar()
+        {
+            if (s_mkStar != null) return s_mkStar;
+            const int N = 160; var tex = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var poly = new Vector2[10]; float R = N * 0.49f, ri = R * 0.52f; var c = new Vector2(N * 0.5f, N * 0.53f);
+            for (int i = 0; i < 10; i++) { float a = Mathf.PI / 2f + i * Mathf.PI / 5f; float rr = (i % 2 == 0) ? R : ri; poly[i] = c + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * rr; }
+            var px = new Color[N * N];
+            for (int y = 0; y < N; y++) for (int x = 0; x < N; x++)
+            {
+                int hit = 0;
+                for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++)
+                {
+                    var p = new Vector2(x + (sx + 0.5f) / 4f, y + (sy + 0.5f) / 4f); bool inside = false;
+                    for (int i = 0, j = 9; i < 10; j = i++)
+                        if (((poly[i].y > p.y) != (poly[j].y > p.y)) && (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)) inside = !inside;
+                    if (inside) hit++;
+                }
+                px[y * N + x] = new Color(1f, 1f, 1f, hit / 16f);
+            }
+            tex.SetPixels(px); tex.Apply();
+            return s_mkStar = Sprite.Create(tex, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), 100f);
+        }
+
+        /// <summary>Restyle one existing HUD panel (frame + label + inner) as a cream box with a purple plaque on its top edge.</summary>
+        private void MkRestylePanel(GameObject panel, TextMeshProUGUI label, RectTransform inner, float x0, float x1, TMP_FontAsset font)
+        {
+            if (panel == null) return;
+            panel.transform.SetParent(_mkRoot, false);
+            MkPlace((RectTransform)panel.transform, x0, 233f, x1, 411f);
+            var frImg = panel.GetComponent<Image>();
+            if (frImg != null) { frImg.sprite = TileRenderer.CreateSolidRoundedRect(120, 120, 30, Color.white); frImg.type = Image.Type.Sliced; frImg.color = MK_CREAM_EDGE; }
+            if (inner != null)
+            {
+                inner.anchorMin = new Vector2(0.015f, 0.05f); inner.anchorMax = new Vector2(0.985f, 0.985f); inner.offsetMin = inner.offsetMax = Vector2.zero;
+                var inImg = inner.GetComponent<Image>();
+                if (inImg != null) { inImg.sprite = TileRenderer.CreateSolidRoundedRect(120, 120, 28, Color.white); inImg.type = Image.Type.Sliced; inImg.color = MK_CREAM; }
+            }
+            // plaque: 215 x 64 design units, centred on the box's top edge
+            float boxW = x1 - x0, halfW = 108f / boxW, halfH = 32f / 178f;
+            var plq = MkImage(panel.transform, "Plaque", TileRenderer.CreateSolidRoundedRect(120, 60, 26, Color.white), MK_BAR_EDGE, sliced: true);
+            var prt = plq.rectTransform; prt.anchorMin = new Vector2(0.5f - halfW, 1f - halfH); prt.anchorMax = new Vector2(0.5f + halfW, 1f + halfH); prt.offsetMin = prt.offsetMax = Vector2.zero;
+            var plqIn = MkImage(plq.transform, "Fill", TileRenderer.CreateSolidRoundedRect(120, 60, 24, Color.white), MK_PLAQUE, sliced: true);
+            plqIn.rectTransform.anchorMin = new Vector2(0.025f, 0.09f); plqIn.rectTransform.anchorMax = new Vector2(0.975f, 0.91f);
+            plqIn.rectTransform.offsetMin = plqIn.rectTransform.offsetMax = Vector2.zero;
+            if (label != null)
+            {
+                var lrt = label.rectTransform; lrt.SetParent(plq.transform, false);
+                lrt.anchorMin = new Vector2(0.06f, 0.08f); lrt.anchorMax = new Vector2(0.94f, 0.92f); lrt.offsetMin = lrt.offsetMax = Vector2.zero;
+                label.fontSizeMax = 40f; label.fontSizeMin = 8f; label.enableAutoSizing = true;
+                label.color = Color.white;
+                if (font != null) MkSetFont(label, font, 0.18f, MK_INK); else { label.outlineWidth = 0.18f; label.outlineColor = MK_INK; }
+                label.transform.SetAsLastSibling();
+            }
+        }
+
+        private void ApplyMockupLayout(Transform canvasRoot, GameObject barGO)
+        {
+            // the old full-width strip becomes invisible — the mockup floats its bar over the background
+            var barImg = barGO.GetComponent<Image>(); if (barImg != null) barImg.color = new Color(0f, 0f, 0f, 0f);
+            var ext = barGO.transform.Find("BarTopExtend"); if (ext != null) ext.gameObject.SetActive(false);
+            var topFill = canvasRoot.Find("HUDTopFill"); if (topFill != null) topFill.gameObject.SetActive(false);
+
+            var rootGO = new GameObject("MockupHUD", typeof(RectTransform));
+            rootGO.transform.SetParent(canvasRoot, false);
+            _mkRoot = (RectTransform)rootGO.transform;
+            _mkRoot.anchorMin = new Vector2(0f, 1f); _mkRoot.anchorMax = new Vector2(1f, 1f); _mkRoot.pivot = new Vector2(0.5f, 1f);
+            _mkRoot.sizeDelta = Vector2.zero; _mkRoot.anchoredPosition = Vector2.zero;
+            var fit = rootGO.AddComponent<AspectRatioFitter>();
+            fit.aspectMode = AspectRatioFitter.AspectMode.WidthControlsHeight; fit.aspectRatio = MK_W / MK_H;
+
+            // bar: dark edge + body
+            var barEdge = MkImage(_mkRoot, "BarEdge", TileRenderer.CreateSolidRoundedRect(160, 160, 60, Color.white), MK_BAR_EDGE, sliced: true);
+            MkPlace(barEdge.rectTransform, 13f, 190f, 1167f, 457f);
+            var barBody = MkImage(barEdge.transform, "BarBody", TileRenderer.CreateSolidRoundedRect(160, 160, 54, Color.white), MK_BAR_BODY, sliced: true);
+            barBody.rectTransform.anchorMin = new Vector2(0.006f, 0.07f); barBody.rectTransform.anchorMax = new Vector2(0.994f, 0.88f);
+            barBody.rectTransform.offsetMin = barBody.rectTransform.offsetMax = Vector2.zero;
+
+            // portrait: purple ring > blue ring > photo disc (placeholder)
+            var ring = MkImage(_mkRoot, "PortraitRing", MkDisc(), MK_BAR_EDGE); MkPlace(ring.rectTransform, 11f, 147f, 361f, 497f);
+            var ringMid = MkImage(ring.transform, "Mid", MkDisc(), MK_BAR_BODY); Inset(ringMid.rectTransform, 0.035f);
+            var blue = MkImage(ring.transform, "Blue", MkDisc(), MK_RING_BLUE); Inset(blue.rectTransform, 0.085f);
+            var photo = MkImage(ring.transform, "Photo", MkDisc(), new Color(0.86f, 0.90f, 0.97f, 1f)); Inset(photo.rectTransform, 0.13f);
+            _mkPortrait = photo;
+            // 2026-10-22 Spencer's placeholder avatar (Documents/2profile copy.png -> Resources/Goals/profile_placeholder):
+            // a bust, so the disc MASKS it and the shoulders run off the bottom of the circle like a real profile photo.
+            var pTex = Resources.Load<Texture2D>(PROFILE_ASSET);
+            if (pTex != null)
+            {
+                var mask = photo.gameObject.AddComponent<Mask>(); mask.showMaskGraphic = true;
+                var avatar = MkImage(photo.transform, "Avatar",
+                    Sprite.Create(pTex, new Rect(0, 0, pTex.width, pTex.height), new Vector2(0.5f, 0.5f), 100f), Color.white);
+                avatar.rectTransform.anchorMin = new Vector2(0.10f, -0.06f); avatar.rectTransform.anchorMax = new Vector2(0.90f, 0.86f);
+                avatar.rectTransform.offsetMin = avatar.rectTransform.offsetMax = Vector2.zero;
+            }
+
+            // level star
+            var star = MkImage(_mkRoot, "LevelStar", MkStar(), MK_STAR_GOLD); MkPlace(star.rectTransform, 132f, 375f, 270f, 515f);
+            var starIn = MkImage(star.transform, "Blue", MkStar(), MK_STAR_BLUE); Inset(starIn.rectTransform, 0.13f);
+            var numGO = new GameObject("LevelNum", typeof(RectTransform)); numGO.transform.SetParent(star.transform, false);
+            var nrt = (RectTransform)numGO.transform; nrt.anchorMin = new Vector2(0.2f, 0.18f); nrt.anchorMax = new Vector2(0.8f, 0.78f); nrt.offsetMin = nrt.offsetMax = Vector2.zero;
+            _mkStarNum = numGO.AddComponent<TextMeshProUGUI>();
+            var f = BadgeFont(); if (f != null) _mkStarNum.font = f;
+            _mkStarNum.alignment = TextAlignmentOptions.Center; _mkStarNum.enableAutoSizing = true; _mkStarNum.fontSizeMin = 8f; _mkStarNum.fontSizeMax = 60f;
+            _mkStarNum.raycastTarget = false; _mkStarNum.text = "";
+            ApplyRMNumberStyle(_mkStarNum, RM_MOVES_TOP, RM_MOVES_BOTTOM);   // same palette as every HUD number   // 2026-10-22: same treatment as the score pop-ups
+
+            // GOAL + MOVES boxes = the existing panels, re-laid-out
+            var labelFont = BadgeFont();
+            MkRestylePanel(_objectivePanel, _objectivePanelLabel, _objectivePanelInner, 410f, 868f, labelFont);
+            MkRestylePanel(_movesPanel, _movesPanelLabel, _movesPanelInner, 915f, 1117f, labelFont);
+            if (_scorePanelNum != null) { _scorePanelNum.fontSizeMax = 64f; _scorePanelNum.color = MK_INK; }
+            if (_topOutNumText != null) { _topOutNumText.fontSizeMax = 72f; ApplyRMNumberStyle(_topOutNumText, RM_MOVES_TOP, RM_MOVES_BOTTOM); }
+            if (_topOutBubble != null) _topOutBubble.rectTransform.sizeDelta = new Vector2(110f, 110f);
+
+            _mkChrome = new[] { barEdge.gameObject, ring.gameObject, star.gameObject };
+            foreach (var g in _mkChrome) g.SetActive(false);   // shown with the in-run panels (RefreshMockupHud)
+            _hudBarRT = _mkRoot;   // the level-entry drop-in slides the new layout
+            WDLog.Log("[MockupHUD] layout applied");
+        }
+        private Image _mkPortrait; private GameObject[] _mkChrome;
+        public static float MOVES_NUM_INSET_X = 0.17f, MOVES_NUM_INSET_Y = 0.15f;   // margins inside the MOVES box (0 = fill it)
+        private void RefreshMockupHud()
+        {
+            if (_mkChrome != null)
+            {
+                bool show = _movesPanel != null && _movesPanel.activeSelf;   // same rule as the in-run GOAL/MOVES panels
+                foreach (var g in _mkChrome) if (g != null && g.activeSelf != show) g.SetActive(show);
+            }
+            // MOVES number centred in its box unless the old rising-row "rise in N" line under it actually has text
+            // (EnsureRiseSubText squeezes the number into the top 74% for it — always empty on the full board).
+            if (_topOutNumText != null)
+            {
+                bool sub = _riseSubText != null && _riseSubText.gameObject.activeInHierarchy && !string.IsNullOrEmpty(_riseSubText.text);
+                var nrt = _topOutNumText.rectTransform;
+                // 2026-10-22 Spencer: "make the moves value a bit smaller" — it auto-fits, so it shrinks by giving it margins.
+                var wantMinV = new Vector2(MOVES_NUM_INSET_X, sub ? 0.26f : MOVES_NUM_INSET_Y);
+                var wantMaxV = new Vector2(1f - MOVES_NUM_INSET_X, 1f - MOVES_NUM_INSET_Y);
+                if (nrt.anchorMin != wantMinV || nrt.anchorMax != wantMaxV)
+                { nrt.anchorMin = wantMinV; nrt.anchorMax = wantMaxV; nrt.offsetMin = nrt.offsetMax = Vector2.zero; }
+            }
+            if (_mkStarNum == null || SurvivalManager.Instance == null) return;
+            string lv = LevelMapPanel.DisplayNum(SurvivalManager.Instance.CurrentStageIndex).ToString();
+            if (_mkStarNum.text != lv) _mkStarNum.text = lv;
         }
 
         private void BuildResetButton(Transform plateTransform)
@@ -1831,8 +2117,22 @@ namespace WordDrop
         public static float GOLD_FLY_END_SCALE  = 1.0f;
         public static float GOLD_FLY_SUCK_SCALE = 0.75f;
 
-        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0, Color? armedColor = null, bool toMoves = false)
+        public void FlyLetterToTarget(Vector3 startWorld, char letter, bool popIcon = true, System.Action onLand = null, float startDelay = 0f, bool cascadeGreen = false, float popPeak = 1.28f, int sortBase = 200, int comboStep = 0, Color? armedColor = null, bool toMoves = false, bool collect = false)
         {
+            if (collect)
+            {
+                // COLLECT flight: violet tile + violet HDR glow, full size, into the collect icon.
+                var flyTarget = CollectFlightTarget;
+                if (!isActiveAndEnabled || Camera.main == null || flyTarget == null || !flyTarget.gameObject.activeInHierarchy) { OnCollectLanded(); return; }
+                bool duck = LevelRules.HasDuckGoal && Tile.DuckSprite != null;
+                bool gem = !duck && LevelRules.HasGemGoal && Tile.GemSprite != null;
+                Color acc = gem ? Tile.GEM_ACCENT : Tile.CollectAccent;
+                Color vg = new Color(acc.r * 2f + 0.2f, acc.g * 2f + 0.2f, acc.b * 2.2f + 0.2f, 1f);   // HDR glow in the collect colour
+                StartCoroutine(FlyTileCoroutine(startWorld, duck ? Tile.DuckSprite : gem ? Tile.GemSprite : Tile.CollectFaceSprite, (gem || duck) ? Color.white : Tile.CollectFaceTint, vg, letter,
+                    flyTarget.position, OnCollectLanded, startDelay, popPeak, sortBase, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE,
+                    duck ? DUCK_FLY_DUR : -1f));
+                return;
+            }
             // Gold-only fly-up (HandManager.FLY_UP_GOLD_ONLY) is its own permission: both callers already pass
             // ONLY gold tiles in that mode, so the master switch Spencer turned off on 2026-09-10 (all letters)
             // stays off for everything else. 2026-10-20: without this the gold J in JURY "landed" the same
@@ -2194,6 +2494,301 @@ namespace WordDrop
         private bool _rewardMode;
         private int  _rewardShown;
         private Image _rewardCoinIcon;
+
+        // ── COLLECT ICON (2026-10-21 Spencer: "there should be an icon of a purple E tile in the HUD that it flies up to and
+        // glows when it hits much like our coin animation"). A violet tile with the letter, left of the count — the same slot
+        // the reward coin uses. Collected letters fly into it (FlyCollectLetter); the count ticks on LANDING, like coins. ──
+        private GameObject _collectIconGO; private TextMeshProUGUI _collectIconLetter; private char _collectIconFor = '\0';
+        // ── GOAL PICTURES ON THE HUD (2026-10-22 Spencer: "instead of just having text could it have something that says Target
+        // or Goals and then have the icon of the crate with the badge of how many you need to get then update the number as you
+        // clear them"). Royal Match target panel: one picture per goal, a REMAINING-count badge on its corner that counts down,
+        // the 3D check at zero. Same art as the level card (ObjectiveIconBuilder.BuildGoalIcon). The old text readout and the
+        // single collect icon stand down while this is on; collect/gem/duck flights land in their own picture. ──
+        public static bool GOAL_ICONS_HUD = true;
+        public static bool REWARD_BADGE = true;
+        public static float GOAL_PIC_TOP = 0.76f, GOAL_PIC_BOTTOM = 0.10f;   // goal/reward picture band inside the box, clear of the plaque
+        /// <summary>2026-10-22 Spencer: "try ... switching the font to the nunito black just to see". true = Nunito Black
+        /// (the tile font) on the goal + reward badges; false = Montserrat Black (the other HUD numbers).</summary>
+        public static bool BADGE_FONT_NUNITO = true;
+        private static TMP_FontAsset BadgeFont() => BADGE_FONT_NUNITO ? (GameFont.GetTMP() ?? GameFont.GetUITMP()) : GameFont.GetUITMP();
+        private TextMeshProUGUI _rewardBadge; private int _rewardBadgeShown = -1;
+        /// <summary>The outlined count badge on an icon's bottom-right corner (goal pictures + reward coin).</summary>
+        private TextMeshProUGUI MakeCornerBadge(RectTransform onIcon, float wide = 1.7f)
+        {
+            var badge = new GameObject("Badge", typeof(RectTransform));
+            badge.transform.SetParent(onIcon, false);
+            var brt = (RectTransform)badge.transform;
+            brt.anchorMin = new Vector2(0.62f, -0.12f); brt.anchorMax = new Vector2(0.62f + 0.6f * wide, 0.48f);
+            brt.offsetMin = brt.offsetMax = Vector2.zero;
+            var num = badge.AddComponent<TextMeshProUGUI>();
+            var f = BadgeFont(); if (f != null) num.font = f;
+            num.alignment = wide > 1.01f ? TextAlignmentOptions.Left : TextAlignmentOptions.Center; num.raycastTarget = false;
+            num.enableAutoSizing = true; num.fontSizeMin = 10f; num.fontSizeMax = 40f;
+            num.fontStyle = FontStyles.Bold; num.color = Color.white;
+            StyleBadgeNumber(num);
+            num.enableWordWrapping = false;
+            return num;
+        }
+        /// <summary>Badge number: white, a thicker dark outline, and a hard dark drop under it so it reads on the cream box
+        /// (2026-10-22 Spencer: the "12" was faint — 0.22 outline alone on cream). One shared material for every badge.</summary>
+        public static float BADGE_OUTLINE = 0.40f;   // 2026-10-22: 0.30 -> 0.40, "a bit thicker of a stroke" 
+        private static Material s_badgeMat; private static TMP_FontAsset s_badgeMatFont;
+        private static void StyleBadgeNumber(TextMeshProUGUI num)
+        {
+            // RM's target badges ("3", "24") are the SAME treatment as its moves number — cream face, navy stroke, lip —
+            // not white. 2026-10-22 comparison. (BADGE_OUTLINE kept for reference; the shared RM material now drives it.)
+            if (num == null) return;
+            ApplyRMNumberStyle(num, RM_MOVES_TOP, RM_MOVES_BOTTOM);
+        }
+        private void RefreshRewardBadge()
+        {
+            if (!_rewardMode || _rewardBadge == null || !REWARD_BADGE || _rewardShown == _rewardBadgeShown) return;
+            bool changed = _rewardBadgeShown >= 0 && _rewardShown > _rewardBadgeShown;
+            _rewardBadgeShown = _rewardShown;
+            _rewardBadge.text = _rewardShown.ToString("N0");
+            if (changed)
+            {
+                var t = _rewardBadge.transform;
+                t.DOKill(); t.localScale = Vector3.one * 1.3f;
+                t.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+            }
+        }
+        private class GoalIconEntry { public LevelRules.GoalType Type; public RectTransform Pic; public TextMeshProUGUI Num; public GameObject Check; public int Shown = -1; }
+        private readonly List<GoalIconEntry> _goalIcons = new List<GoalIconEntry>();
+        private GameObject _goalIconsRoot; private string _goalIconsSig;
+        private bool GoalsOnHud
+        {
+            get
+            {
+                var sm = SurvivalManager.Instance;
+                return GOAL_ICONS_HUD && !_rewardMode && sm != null && SurvivalManager.FullBoardActive && LevelRules.Goals.Count > 0
+                       && (LevelRules.GoalsActiveFor(sm.CurrentStageIndex) || SurvivalManager.AwaitingNextLevel);
+            }
+        }
+        private bool GoalIconsShowing => _goalIconsRoot != null && _goalIconsRoot.activeSelf;
+        /// <summary>Where a collect/gem/duck flight lands: its own goal picture, or the old collect icon.</summary>
+        private Transform CollectFlightTarget
+        {
+            get
+            {
+                if (GoalIconsShowing)
+                    foreach (var e in _goalIcons)
+                        if (e.Type == LevelRules.GoalType.Collect || e.Type == LevelRules.GoalType.Gems || e.Type == LevelRules.GoalType.Ducks) return e.Pic;
+                return _collectIconGO != null ? _collectIconGO.transform : null;
+            }
+        }
+        private int GoalRemaining(LevelRules.LevelGoal g)
+        {
+            bool flies = g.Type == LevelRules.GoalType.Collect || g.Type == LevelRules.GoalType.Gems || g.Type == LevelRules.GoalType.Ducks;
+            int done = flies ? Mathf.Max(0, LevelRules.GoalProgress(g) - CollectInFlight - LevelRules.CollectAwaitingFly)
+                     : g.Type == LevelRules.GoalType.Theme ? Mathf.Max(0, LevelRules.GoalProgress(g) - LevelRules.ThemeAwaitingFly)
+                     : LevelRules.GoalProgress(g);
+            return Mathf.Max(0, g.Target - done);
+        }
+        private void RefreshGoalIcons(bool punch)
+        {
+            // Safety net: a theme word popped by a path that never launched its letters must not hold the badge forever.
+            if (LevelRules.PendingThemeWords.Count > 0 && Time.unscaledTime - LevelRules.PendingThemeSince > 1.5f)
+            {
+                LevelRules.ThemeAwaitingFly = Mathf.Max(0, LevelRules.ThemeAwaitingFly - LevelRules.PendingThemeWords.Count);
+                WDLog.Log($"[Theme] {LevelRules.PendingThemeWords.Count} word(s) never launched — counted without the flight");
+                LevelRules.PendingThemeWords.Clear();
+            }
+            bool on = GoalsOnHud && _scorePanelNum != null;
+            if (!on)
+            {
+                if (_goalIconsRoot != null && _goalIconsRoot.activeSelf) { _goalIconsRoot.SetActive(false); if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(0); }
+                return;
+            }
+            string sig = LevelRules.GoalsStage.ToString();
+            foreach (var g in LevelRules.Goals) sig += "|" + g.Type + g.Target + g.Letter;
+            if (sig != _goalIconsSig || _goalIconsRoot == null) { BuildGoalIcons(); _goalIconsSig = sig; }
+            if (!_goalIconsRoot.activeSelf) _goalIconsRoot.SetActive(true);
+            if (!_rewardMode && _scorePanelNum.text.Length > 0) _scorePanelNum.text = "";   // converge: any earlier write is wiped
+            for (int i = 0; i < _goalIcons.Count && i < LevelRules.Goals.Count; i++)
+            {
+                var e = _goalIcons[i];
+                int left = GoalRemaining(LevelRules.Goals[i]);
+                if (left == e.Shown) continue;
+                bool changed = e.Shown >= 0;
+                e.Shown = left;
+                e.Num.text = left > 0 ? left.ToString() : "";
+                if (e.Check != null) e.Check.SetActive(left <= 0);
+                if (changed || punch)
+                {
+                    var t = e.Num.transform.parent;
+                    t.DOKill(); t.localScale = Vector3.one * 1.35f;
+                    t.DOScale(1f, 0.25f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+                }
+            }
+        }
+        private void BuildGoalIcons()
+        {
+            if (_goalIconsRoot != null) Destroy(_goalIconsRoot);
+            _goalIcons.Clear();
+            var parent = _scorePanelNum.rectTransform.parent;
+            _goalIconsRoot = new GameObject("GoalIcons", typeof(RectTransform));
+            _goalIconsRoot.transform.SetParent(parent, false);
+            var rrt = (RectTransform)_goalIconsRoot.transform;
+            rrt.anchorMin = Vector2.zero; rrt.anchorMax = Vector2.one; rrt.offsetMin = rrt.offsetMax = Vector2.zero;
+            int n = LevelRules.Goals.Count;
+            for (int i = 0; i < n; i++)
+            {
+                var g = LevelRules.Goals[i];
+                var slot = new GameObject("Goal_" + g.Type, typeof(RectTransform));
+                slot.transform.SetParent(_goalIconsRoot.transform, false);
+                var srt = (RectTransform)slot.transform;
+                srt.anchorMin = new Vector2((float)i / n, 0f); srt.anchorMax = new Vector2((float)(i + 1) / n, 1f);
+                srt.offsetMin = srt.offsetMax = Vector2.zero;
+
+                var pic = new GameObject("Pic", typeof(RectTransform));
+                pic.transform.SetParent(slot.transform, false);
+                var prt = (RectTransform)pic.transform;
+                // Stay BELOW the plaque: on the mockup HUD it hangs over the top ~18% of the box (2026-10-22 Spencer: the
+                // crate was clipped at the top). GOAL_PIC_TOP is the picture's top edge as a fraction of the box height.
+                prt.anchorMin = new Vector2(0.5f, MOCKUP_HUD ? GOAL_PIC_BOTTOM : 0.08f); prt.anchorMax = new Vector2(0.5f, MOCKUP_HUD ? GOAL_PIC_TOP : 0.92f);
+                prt.pivot = new Vector2(0.5f, 0.5f);
+                prt.offsetMin = prt.offsetMax = Vector2.zero;
+                var fit = pic.AddComponent<AspectRatioFitter>();
+                fit.aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth; fit.aspectRatio = 1f;
+                var info = new LevelRules.GoalIconInfo { Type = g.Type, Count = 0, Letter = g.Letter, Theme = g.Theme };
+                var icon = ObjectiveIconBuilder.BuildGoalIcon(info, pic.transform, 40f);
+                if (icon != null)
+                {
+                    var irt = (RectTransform)icon.transform;
+                    irt.anchorMin = Vector2.zero; irt.anchorMax = Vector2.one; irt.offsetMin = irt.offsetMax = Vector2.zero;
+                }
+
+                // badge: bare outlined number on the picture's bottom-right corner (the old TARGET badge style)
+                var badge = new GameObject("Badge", typeof(RectTransform));
+                badge.transform.SetParent(pic.transform, false);
+                var brt = (RectTransform)badge.transform;
+                brt.anchorMin = new Vector2(0.62f, -0.12f); brt.anchorMax = new Vector2(1.22f, 0.48f);
+                brt.offsetMin = brt.offsetMax = Vector2.zero;
+                var num = badge.AddComponent<TextMeshProUGUI>();
+                var f = BadgeFont(); if (f != null) num.font = f;
+                num.alignment = TextAlignmentOptions.Center; num.raycastTarget = false;
+                num.enableAutoSizing = true; num.fontSizeMin = 10f; num.fontSizeMax = 40f;
+                num.fontStyle = FontStyles.Bold; num.color = Color.white;
+                StyleBadgeNumber(num);
+                num.enableWordWrapping = false;
+
+                var check = new GameObject("Check", typeof(RectTransform), typeof(Image));
+                check.transform.SetParent(badge.transform, false);
+                var crt = (RectTransform)check.transform;
+                crt.anchorMin = Vector2.zero; crt.anchorMax = Vector2.one; crt.offsetMin = crt.offsetMax = Vector2.zero;
+                var cimg = check.GetComponent<Image>(); cimg.sprite = LoadCheckSprite(); cimg.preserveAspect = true; cimg.raycastTarget = false;
+                check.SetActive(false);
+
+                _goalIcons.Add(new GoalIconEntry { Type = g.Type, Pic = prt, Num = num, Check = check });
+            }
+            WDLog.Log($"[GoalHud] built {n} goal picture(s)");
+        }
+
+        /// <summary>Fly one theme-word letter (a tile with its letter) into the theme goal picture. lastOfWord ticks the badge.</summary>
+        public void FlyThemeLetter(Vector3 startWorld, char letter, bool lastOfWord, float startDelay)
+        {
+            Transform target = null;
+            if (GoalIconsShowing) foreach (var e in _goalIcons) if (e.Type == LevelRules.GoalType.Theme) target = e.Pic;
+            System.Action land = () =>
+            {
+                if (!lastOfWord) return;
+                if (LevelRules.ThemeAwaitingFly > 0) LevelRules.ThemeAwaitingFly--;
+                RefreshGoalIcons(punch: true);
+                if (target != null)
+                {
+                    target.DOKill(); target.localScale = Vector3.one * 1.28f;
+                    target.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+                    SpawnSlotSparkleBurst((RectTransform)target, Vector2.zero);
+                }
+                GameAudio.Instance?.PlayCoinLand();
+            };
+            if (target == null || !isActiveAndEnabled || Camera.main == null) { land(); return; }
+            Color glow = new Color(2.2f, 1.7f, 0.6f, 1f);   // warm HDR trail, same family as the gem flights
+            StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Color.white, glow, letter, target.position, land,
+                startDelay, 1.15f, 200, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE));
+        }
+
+        public static int CollectInFlight;   // launched but not landed — the panel shows Collected minus these
+        private void SyncCollectIcon()
+        {
+            if (_scorePanelNum == null) return;
+            char want = (!_rewardMode && SurvivalManager.FullBoardActive && !GOAL_ICONS_HUD) ? LevelRules.ActiveCollectLetter : '\0';
+            if (want == '\0' && !_rewardMode && SurvivalManager.FullBoardActive && !GOAL_ICONS_HUD && LevelRules.HasGemGoal) want = '*';   // '*' = gem icon
+            if (want == '\0' && !_rewardMode && SurvivalManager.FullBoardActive && !GOAL_ICONS_HUD && LevelRules.HasDuckGoal && Tile.DuckSprite != null) want = '^';   // '^' = duck icon
+            if (want == _collectIconFor && (want == '\0' || _collectIconGO != null)) return;
+            _collectIconFor = want;
+            var nrt = _scorePanelNum.rectTransform;
+            if (want != '\0' && _collectIconGO == null)
+            {
+                _collectIconGO = new GameObject("CollectIcon", typeof(RectTransform), typeof(Image));
+                _collectIconGO.transform.SetParent(nrt.parent, false);
+                var rt = (RectTransform)_collectIconGO.transform;
+                rt.anchorMin = new Vector2(0.06f, 0.10f); rt.anchorMax = new Vector2(0.28f, 0.90f);
+                rt.offsetMin = rt.offsetMax = Vector2.zero;
+                var img = _collectIconGO.GetComponent<Image>();
+                img.sprite = Tile.CollectFaceSprite; img.preserveAspect = true; img.raycastTarget = false; img.color = Tile.CollectFaceTint;
+                var lgo = new GameObject("Letter", typeof(RectTransform));
+                lgo.transform.SetParent(_collectIconGO.transform, false);
+                var lrt = (RectTransform)lgo.transform; lrt.anchorMin = Vector2.zero; lrt.anchorMax = Vector2.one; lrt.offsetMin = lrt.offsetMax = Vector2.zero;
+                _collectIconLetter = lgo.AddComponent<TextMeshProUGUI>();
+                var f = GameFont.GetTMP(); if (f != null) _collectIconLetter.font = f;
+                _collectIconLetter.alignment = TextAlignmentOptions.Center;
+                _collectIconLetter.enableAutoSizing = true; _collectIconLetter.fontSizeMin = 10; _collectIconLetter.fontSizeMax = 200;
+                _collectIconLetter.color = new Color(0.15f, 0.15f, 0.25f, 1f); _collectIconLetter.raycastTarget = false;
+            }
+            bool on = want != '\0';
+            if (_collectIconGO != null) _collectIconGO.SetActive(on);
+            if (_collectIconLetter != null && on) _collectIconLetter.text = (want == '*' || want == '^') ? "" : want.ToString();
+            if (_collectIconGO != null && on)
+            {
+                var img = _collectIconGO.GetComponent<Image>();
+                img.sprite = want == '^' ? Tile.DuckSprite : want == '*' && Tile.GemSprite != null ? Tile.GemSprite : Tile.CollectFaceSprite;
+                img.color  = (want == '*' || want == '^') ? Color.white : Tile.CollectFaceTint;
+            }
+            if (!_rewardMode)
+            {
+                nrt.anchorMin = new Vector2(on ? 0.28f : 0f, 0f); nrt.anchorMax = Vector2.one;
+                nrt.offsetMin = nrt.offsetMax = Vector2.zero;
+            }
+        }
+
+        /// <summary>A collected target letter flies from the board into the collect icon (gold-letter flight, violet).</summary>
+        // ONE SOUND PER GEM (2026-10-22 Spencer: "make sure it sounds off the same number of gems that hit the HUD"). Gems
+        // popped together flew in parallel and landed in the same frame; the landing sound skips hits < 0.018s apart, so
+        // five gems gave one ding. Launches are now queued COLLECT_LAND_SPACING apart, so every landing is heard.
+        public static float COLLECT_LAND_SPACING = 0.09f;
+        /// <summary>2026-10-22 Spencer: "the duck animation is glitched. it like went super fast". Every HUD flight is a fixed
+        /// 0.34s; a duck always starts on the BOTTOM row — the longest trip on screen — so it crossed the whole screen in a third
+        /// of a second. Ducks get their own, slower float up. Letters/gems keep 0.34.</summary>
+        public static float DUCK_FLY_DUR = 0.8f;
+        private float _collectLaunchGate;
+        public void FlyCollectLetter(Vector3 startWorld, char letter)
+        {
+            if (LevelRules.CollectAwaitingFly > 0) LevelRules.CollectAwaitingFly--;
+            CollectInFlight++;
+            float now = Time.unscaledTime;
+            float delay = Mathf.Max(0f, _collectLaunchGate - now);
+            _collectLaunchGate = now + delay + COLLECT_LAND_SPACING;
+            FlyLetterToTarget(startWorld, letter, popIcon: false, onLand: null, startDelay: delay, collect: true);
+        }
+
+        private void OnCollectLanded()
+        {
+            CollectInFlight = Mathf.Max(0, CollectInFlight - 1);
+            if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(0);
+            var landT = CollectFlightTarget;
+            if (landT == null || !landT.gameObject.activeInHierarchy) return;
+            RefreshGoalIcons(punch: true);
+            var irt = (RectTransform)landT;
+            irt.DOKill(); irt.localScale = Vector3.one * 1.28f;
+            irt.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+            SpawnSlotSparkleBurst(irt, Vector2.zero);
+            var canvas = landT.GetComponentInParent<Canvas>();
+            var map = LevelMapPanel.Instance;
+            if (map != null && canvas != null) map.SpawnCoinHitFXOn(canvas.rootCanvas.transform, irt.position);   // the coin-hit glow
+            GameAudio.Instance?.PlayCoinLand();
+        }
         /// <summary>Coin icon on the left of the panel in REWARD mode, number shifted right. 2026-10-21 Spencer: "could you have
         /// the coin icon though in the reward part of the hud?" Restored to the full-width SCORE layout on exit.</summary>
         private void SetRewardLayout(bool reward)
@@ -2215,7 +2810,24 @@ namespace WordDrop
                 if (mat != null && _rewardCoinIcon.sprite != null) _rewardCoinIcon.material = mat;
             }
             if (_rewardCoinIcon != null) _rewardCoinIcon.gameObject.SetActive(reward);
-            nrt.anchorMin = new Vector2(reward ? 0.30f : 0f, 0f);
+            if (reward && _collectIconGO != null) { _collectIconGO.SetActive(false); _collectIconFor = '\0'; }
+            // REWARD BADGE (2026-10-22 Spencer: "i love the number badge ... could you also do this for the coins when it
+            // switches to reward"). Coin centred, total as the same outlined corner badge the goal pictures use; the
+            // plain text readout stops drawing (its writers still run — the badge mirrors _rewardShown each frame).
+            if (_rewardCoinIcon != null)
+            {
+                var crt = _rewardCoinIcon.rectTransform;
+                if (REWARD_BADGE) { crt.anchorMin = new Vector2(0.5f, MOCKUP_HUD ? GOAL_PIC_BOTTOM : 0.06f); crt.anchorMax = new Vector2(0.5f, MOCKUP_HUD ? GOAL_PIC_TOP : 0.94f); crt.pivot = new Vector2(0.5f, 0.5f);
+                                    var fit = _rewardCoinIcon.GetComponent<AspectRatioFitter>(); if (fit == null) fit = _rewardCoinIcon.gameObject.AddComponent<AspectRatioFitter>();   // no ?? on Unity objects (fake null)
+                                    fit.aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth; fit.aspectRatio = 1f; fit.enabled = true; }
+                else { var fit = _rewardCoinIcon.GetComponent<AspectRatioFitter>(); if (fit != null) fit.enabled = false;
+                       crt.anchorMin = new Vector2(0.04f, 0.08f); crt.anchorMax = new Vector2(0.30f, 0.92f); }
+                crt.offsetMin = crt.offsetMax = Vector2.zero;
+                if (REWARD_BADGE && _rewardBadge == null) _rewardBadge = MakeCornerBadge(crt);
+                if (_rewardBadge != null) { _rewardBadge.gameObject.SetActive(reward && REWARD_BADGE); _rewardBadgeShown = -1; }
+            }
+            _scorePanelNum.enabled = !(reward && REWARD_BADGE && _rewardCoinIcon != null);
+            nrt.anchorMin = new Vector2(reward && !REWARD_BADGE ? 0.30f : 0f, 0f);
             nrt.anchorMax = Vector2.one;
             nrt.offsetMin = nrt.offsetMax = Vector2.zero;
         }
@@ -2226,7 +2838,7 @@ namespace WordDrop
             SetRewardLayout(true);
             _rewardMode = true;
             _rewardShown = Mathf.Max(0, startCoins);
-            if (_objectivePanelLabel != null) _objectivePanelLabel.text = "REWARD";
+            if (_objectivePanelLabel != null) _objectivePanelLabel.text = PanelLabel("REWARD");
             if (_scorePanelNum != null) { _scorePanelNum.text = _rewardShown.ToString("N0"); AnimateScorePop(_scorePanelNum.rectTransform); }
         }
         public void ExitRewardMode()
@@ -2342,7 +2954,7 @@ namespace WordDrop
 
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
             Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200,
-            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE)
+            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE, float flyDurOverride = -1f)
         {
             var cam = Camera.main;
             if (cam == null) { onArrive?.Invoke(); yield break; }
@@ -2438,7 +3050,7 @@ namespace WordDrop
 
             if (glowSR != null) glowSR.DOFade(0.55f, 0.12f);
             if (trail != null) { trail.Clear(); trail.emitting = true; }
-            float flyDur = 0.34f, elapsed = 0f, trailT = 0f; // was 0.5 — snappier float-up (letters + escorts). 2026-06-18 Spencer.
+            float flyDur = flyDurOverride > 0f ? flyDurOverride : 0.34f, elapsed = 0f, trailT = 0f; // was 0.5 — snappier float-up (letters + escorts). 2026-06-18 Spencer.
             while (elapsed < flyDur && go != null)
             {
                 elapsed += Time.deltaTime;
@@ -2933,6 +3545,9 @@ namespace WordDrop
         private void Update()
         {
             RefreshTopOutDanger();
+            RefreshGoalIcons(punch: false);
+            RefreshRewardBadge();
+            RefreshMockupHud();
 
             // Royal Match panels (2026-06-15 Spencer): Target (driven by SetObjective) + Level + Moves
             // show during a Survival run. Level number = the run goal (highest level reached). Coins are
@@ -3021,9 +3636,16 @@ namespace WordDrop
                     bool down = MovesDisplayOverride < _topOutLastShown;
                     _topOutLastShown = MovesDisplayOverride;
                     _topOutNumText.text = MovesDisplayOverride.ToString();
-                    if (down) AnimateScorePop(_topOutNumText.rectTransform);   // a visible tick as each rocket leaves
+                    // A small TICK as each rocket leaves (2026-10-22 Spencer: "can you make it not scale up so huge?"). It used
+                    // AnimateScorePop — a 2.2x swell + 0.6s jitter built for score moments — once per rocket every 0.2s.
+                    if (down)
+                    {
+                        var nt = _topOutNumText.rectTransform;
+                        nt.DOKill(); nt.localScale = Vector3.one; nt.localRotation = Quaternion.identity;
+                        nt.DOPunchScale(Vector3.one * BONUS_MOVES_TICK, 0.16f, 1, 0.5f).SetUpdate(true);
+                    }
                 }
-                if (_movesPanelLabel != null && _movesPanelLabel.text != "MOVES") _movesPanelLabel.text = "MOVES";
+                if (_movesPanelLabel != null && _movesPanelLabel.text != PanelLabel("MOVES")) _movesPanelLabel.text = PanelLabel("MOVES");
                 HideTopOutBubble();
                 return;
             }
@@ -3504,8 +4126,9 @@ namespace WordDrop
                 if (_objectivePanelLabel != null)
                 {
                     string want = _rewardMode ? "REWARD"
-                                : ScoreHudMode ? (LevelRules.CrateGoal > 0 && SurvivalManager.FullBoardActive ? "CRATES" : "SCORE")
+                                : ScoreHudMode ? (LevelRules.Goals.Count > 0 && SurvivalManager.FullBoardActive ? LevelRules.GoalsHudTitle() : "SCORE")
                                 : obj.Icon == Objective.HudIcon.Vault ? "REWARD" : "TARGET";
+                    want = PanelLabel(want);
                     if (_objectivePanelLabel.text != want) _objectivePanelLabel.text = want;
                 }
                 if (ScoreHudMode)
@@ -3630,7 +4253,10 @@ namespace WordDrop
             if (_objectiveIconHolder != null && _objectiveIconHolder.activeInHierarchy)
                 PopObjectiveIconHolder();
             if (_objectiveBadgeText != null) _objectiveBadgeText.gameObject.SetActive(false);
-            ShowObjectiveCheck();
+            // Goal pictures already turn their own badge into the check at 0 (2026-10-22 Spencer: "remove the check mark in
+            // the bottom corner ... we already have one on the badge of the icon which looks better"). The panel-corner check
+            // stays for the old objective HUD only.
+            if (!GoalIconsShowing) ShowObjectiveCheck();
             PlayObjectiveCelebration();
             if (_objectiveText != null && _objectiveText.gameObject.activeSelf)
             {
@@ -3985,6 +4611,10 @@ namespace WordDrop
         /// </summary>
         public void UpdateSurvivalHUD(SurvivalManager sm)
         {
+            SyncCollectIcon();
+            // Safety: a counted letter whose tile never played a hide (no flight launched) must not hold the count down forever.
+            if (LevelRules.CollectAwaitingFly > 0 && Time.unscaledTime - LevelRules.CollectAwaitingSince > 2.5f)
+            { LevelRules.CollectAwaitingFly = 0; if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(0); }
             if (sm == null || _turnCounterText == null) return;
 
             int   stage          = sm.GetCurrentStage();
@@ -4039,7 +4669,7 @@ namespace WordDrop
             }
             if (_movesPanelLabel != null)
             {
-                string want = SurvivalManager.BlastMode ? "BLASTS" : untilRise >= 0 ? "RISE IN" : "MOVES";
+                string want = PanelLabel(SurvivalManager.BlastMode ? "BLASTS" : untilRise >= 0 ? "RISE IN" : "MOVES");
                 if (_movesPanelLabel.text != want) _movesPanelLabel.text = want;
             }
 

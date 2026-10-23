@@ -78,6 +78,7 @@ namespace WordDrop
 
             // Don't compete with a resolution in flight, a rising row, or a locked board.
             if (MatchController.Instance != null && MatchController.Instance.IsProcessing) { Cancel(); return; }
+            if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { Cancel(); return; }   // home screen covers the board (2026-10-23)
             if (!hand.IsInteractable) { Cancel(); return; }
 
             // ── NEVER RUN WHILE AN OVERLAY IS UP. 2026-10-19 ─────────────────────────
@@ -220,6 +221,7 @@ namespace WordDrop
             {
                 var t = grid.GetTile(_path[i].x, _path[i].y);
                 if (t == null) continue;
+                if (t.IsStone) continue;   // crates never light up or lift
                 if (on) t.SetEditSelected(true, false, Tile.SWIPE_LIFT_SCALE); else t.SetEditSelected(false);
                 if (!on) t.SetSwipeValidPreview(false);
             }
@@ -281,6 +283,7 @@ namespace WordDrop
                 return;
             }
 
+            HandManager.MarkPlayerWordComing();   // QUICK_POP: the swiped word is the player's own (short read hold)
             bool ok = hand.CommitSwipedWord(match);
             WDLog.Log($"[Swipe] '{match.Word}' {(ok ? "ARMED" : "refused by registry")} " +
                       $"({match.Cells.Count} cells, {match.Direction}, {match.Score} pts)");

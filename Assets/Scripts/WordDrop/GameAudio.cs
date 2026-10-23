@@ -712,8 +712,17 @@ namespace WordDrop
 
         // ── Public play methods ────────────────────────────────────────────────
 
+        // ONE LANDING SOUND PER LANDING MOMENT (2026-10-22 Spencer: "when you exchange a tile are there two sounds playing?").
+        // Yes — both swapped tiles landed on the same frame and each played its own random tile_land clip (the log showed
+        // tile_land_4 + tile_land_2 on one frame after every swap), so two different clacks stacked on the swap whoosh.
+        // Landings within TILE_DROP_MIN_GAP collapse into one; also keeps cascades from stacking clacks.
+        public static float TILE_DROP_MIN_GAP = 0.05f;
+        private float _lastTileDropAt = -10f;
         public void PlayTileDrop()
         {
+            float now = Time.unscaledTime;
+            if (now - _lastTileDropAt < TILE_DROP_MIN_GAP) return;
+            _lastTileDropAt = now;
             var clip = _tileDropVariants[Random.Range(0, _tileDropVariants.Length)];
             Play(clip != null ? clip : _tileDrop, 0.7f);
         }
@@ -1385,6 +1394,9 @@ namespace WordDrop
             Play(PickRandom(_bonusPopup, _bonusPopupAlt), 0.6f);
         }
 
+        /// <summary>2026-10-22 Spencer: remove the shuffling noise when two letters are exchanged. false = board swaps (tap +
+        /// drag) and tile-holder swaps are silent of it; the jester hat / hand shuffle still use PlayShuffle.</summary>
+        public static bool SWAP_SHUFFLE_SFX = false;
         public void PlayShuffle()
         {
             Play(PickRandom(_shuffle, _shuffleAlt), 0.7f);
@@ -1459,6 +1471,85 @@ namespace WordDrop
         /// fixes: (1) per-hit pitch CLIMB → a rising "ka-ching" run; (2) THROTTLE — drop landings <50ms after
         /// the last audible tick, so a 9-coin burst becomes ~5 rising tones, not 9 flat ticks. Own source so
         /// the pitch never warps other SFX. (The Coins2/3/4 samples were too quiet.) 2026-06-18 Spencer.</summary>
+        // ROCKET FIRE (2026-10-22 Spencer: "can we just use the first little bit of this as the SFX for the rockets?") —
+        // the launch whoosh from dragon-studio-fireworks-07 (Assets/Audio/SFX), cut to 0.0-0.7s with a 0.2s fade:
+        // Resources/Audio/rocket_fire.wav. Rate-limited like the other burst sounds (bonus/combos fire many at once).
+        private AudioClip _rocketFire; private bool _rocketFireTried;
+        private float _lastRocketAt = -10f, _rocketBurstStart = -10f; private int _rocketBurstCount;
+        public static float ROCKET_SFX_MIN_GAP = 0.08f, ROCKET_SFX_VOL = 0.55f;
+        public static int   ROCKET_SFX_BURST_MAX = 3;
+        public void PlayRocketFire()
+        {
+            if (!_rocketFireTried) { _rocketFireTried = true; _rocketFire = Resources.Load<AudioClip>("Audio/rocket_fire"); }
+            if (_rocketFire == null) return;
+            float now = Time.unscaledTime;
+            if (now - _lastRocketAt < ROCKET_SFX_MIN_GAP) return;
+            if (now - _rocketBurstStart > 0.6f) { _rocketBurstStart = now; _rocketBurstCount = 0; }
+            if (_rocketBurstCount >= ROCKET_SFX_BURST_MAX) return;
+            _rocketBurstCount++; _lastRocketAt = now;
+            Play(_rocketFire, ROCKET_SFX_VOL);
+        }
+
+        // BIG EXPLOSION (2026-10-22 Spencer: "for now just use the explosion.mp3 that i added for you for the explosion
+        // stuff") — Assets/Audio/SFX/explosion.mp3 trimmed to 2.55s (stray end click removed, 0.3s fade):
+        // Resources/Audio/explosion_big.wav. Bombs, TNT and combo fireballs. Loud source, so a lower volume + rate limit.
+        private AudioClip _bigBoom; private bool _bigBoomTried;
+        private float _lastBoomAt = -10f, _boomBurstStart = -10f; private int _boomBurstCount;
+        public static float BOOM_SFX_MIN_GAP = 0.15f, BOOM_SFX_VOL = 0.40f;
+        public static int   BOOM_SFX_BURST_MAX = 2;
+        public void PlayBigExplosion()
+        {
+            if (!_bigBoomTried) { _bigBoomTried = true; _bigBoom = Resources.Load<AudioClip>("Audio/explosion_big"); }
+            if (_bigBoom == null) return;
+            float now = Time.unscaledTime;
+            if (now - _lastBoomAt < BOOM_SFX_MIN_GAP) return;
+            if (now - _boomBurstStart > 0.8f) { _boomBurstStart = now; _boomBurstCount = 0; }
+            if (_boomBurstCount >= BOOM_SFX_BURST_MAX) return;
+            _boomBurstCount++; _lastBoomAt = now;
+            Play(_bigBoom, BOOM_SFX_VOL);
+        }
+
+        // CRATE BREAK (2026-10-22 Spencer: "can you add crate SFX when you destroy a crate?", then "try crate2") — his
+        // Assets/Audio/SFX/crate2.mp3 from 0.60s (0.6s of quiet creak BEFORE the crack — played whole, the crack landed
+        // 0.65s after the debris) to 1.32s: the crack at 0.65-0.70, a second crack at 0.95, the tail. 10ms in / 120ms out.
+        // Resources/Audio/crate_break.wav (crate.mp3 was the first try). A rocket
+        // or bomb can break many crates in one frame, so it is rate-limited and lightly pitch-varied so a row of crates
+        // reads as several breaks, not one loud stacked hit.
+        private AudioClip _crate; private bool _crateTried;
+        private float _lastCrateAt = -10f, _crateBurstStart = -10f; private int _crateBurstCount;
+        public static float CRATE_VOL = 0.6f, CRATE_MIN_GAP = 0.06f;
+        public static int   CRATE_BURST_MAX = 4;
+        public void PlayCrateBreak()
+        {
+            if (!_crateTried) { _crateTried = true; _crate = Resources.Load<AudioClip>("Audio/crate_break"); }
+            if (_crate == null) return;
+            float now = Time.unscaledTime;
+            if (now - _lastCrateAt < CRATE_MIN_GAP) return;
+            if (now - _crateBurstStart > 0.6f) { _crateBurstStart = now; _crateBurstCount = 0; }
+            if (_crateBurstCount >= CRATE_BURST_MAX) return;
+            _crateBurstCount++; _lastCrateAt = now;
+            Play(_crate, CRATE_VOL, Random.Range(0.94f, 1.08f));
+        }
+
+        // DUCK QUACK (2026-10-22 Spencer: "can you add the quack sound when you drop a duck to the bottom?") — his
+        // Assets/Audio/SFX/quack.mp3 trimmed to the one quack (0.285s-0.605s, 8ms fade in / 60ms out; the source had 0.3s
+        // of lead silence that would lag the landing): Resources/Audio/quack.wav. Ducks collected together get spaced
+        // quacks with a little pitch spread, so two ducks sound like two ducks.
+        private AudioClip _quack; private bool _quackTried;
+        public static float QUACK_VOL = 0.9f, QUACK_SPACING = 0.12f;
+        public void PlayDuckQuack(int index = 0)
+        {
+            if (!_quackTried) { _quackTried = true; _quack = Resources.Load<AudioClip>("Audio/quack"); }
+            if (_quack == null) return;
+            if (index <= 0) { Play(_quack, QUACK_VOL, 1f); return; }
+            StartCoroutine(QuackLater(index * QUACK_SPACING, 1f + 0.06f * index));
+        }
+        private System.Collections.IEnumerator QuackLater(float delay, float pitch)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            Play(_quack, QUACK_VOL, pitch);
+        }
+
         public void PlayCoinLand()
         {
             float now = Time.unscaledTime;
@@ -1643,19 +1734,37 @@ namespace WordDrop
         private AudioClip[] _tileFallVariants;
         private AudioClip[] _tileFallRareVariants;
 
+        /// <summary>LETTER EXCHANGE sound (2026-10-22 Spencer: "change the sound when you swap letters to any of the
+        /// tile_fall sounds, you can just alternate through them"). Cycles tile_fall_1..6 in order, one per swap.</summary>
+        public static float SWAP_SFX_VOL = 0.6f;
+        private int _swapSfxIdx;
+        public void PlaySwapSound()
+        {
+            if (_tileFallVariants == null) PrimeTileFallVariants();
+            if (_tileFallVariants == null || _tileFallVariants.Length == 0) return;
+            for (int tries = 0; tries < _tileFallVariants.Length; tries++)
+            {
+                var clip = _tileFallVariants[_swapSfxIdx % _tileFallVariants.Length];
+                _swapSfxIdx++;
+                if (clip != null) { Play(clip, SWAP_SFX_VOL); return; }
+            }
+        }
+        private void PrimeTileFallVariants()
+        {
+            if (_tileFallVariants != null) return;
+            _tileFallVariants = new AudioClip[]
+            {
+                Resources.Load<AudioClip>("Audio/tile_fall_1"), Resources.Load<AudioClip>("Audio/tile_fall_2"),
+                Resources.Load<AudioClip>("Audio/tile_fall_3"), Resources.Load<AudioClip>("Audio/tile_fall_4"),
+                Resources.Load<AudioClip>("Audio/tile_fall_5"), Resources.Load<AudioClip>("Audio/tile_fall_6"),
+            };
+        }
+
         public void PlayTileFall()
         {
-            if (_tileFallVariants == null)
+            if (_tileFallRareVariants == null)
             {
-                _tileFallVariants = new AudioClip[]
-                {
-                    Resources.Load<AudioClip>("Audio/tile_fall_1"),
-                    Resources.Load<AudioClip>("Audio/tile_fall_2"),
-                    Resources.Load<AudioClip>("Audio/tile_fall_3"),
-                    Resources.Load<AudioClip>("Audio/tile_fall_4"),
-                    Resources.Load<AudioClip>("Audio/tile_fall_5"),
-                    Resources.Load<AudioClip>("Audio/tile_fall_6"),
-                };
+                PrimeTileFallVariants();   // shared with PlaySwapSound
                 _tileFallRareVariants = new AudioClip[]
                 {
                     // 2026-05-30: whoosh_buildup_1 removed per Spencer — it
