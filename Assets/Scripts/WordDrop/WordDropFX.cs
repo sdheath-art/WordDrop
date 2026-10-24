@@ -993,6 +993,8 @@ namespace WordDrop
         // ── SPECIAL TILE FX (2026-10-21, placeholder art — motion first, Spencer's sprites later) ──────────────────
         private static Material s_specialFxMat;
         private static Sprite s_rocketSprite, s_ringSprite, s_beamSprite;
+        public static float AIRPLANE_TAKEOFF = 0.16f;   // lift-off + wobble before it heads off (HandManager adds this to the target's pop time)
+        public static float AIRPLANE_FLIGHT = 0.8f;   // paper-plane glide is unhurried   // seconds the airplane takes to reach its target (HandManager delays that tile to match)
         private Material SpecialFxMat()
         {
             if (s_specialFxMat == null)
@@ -1277,6 +1279,188 @@ namespace WordDrop
             return sr;
         }
 
+        // ── AIRPLANE FLIGHT (2026-10-23 Spencer: "the flying airplane animation is kinda lame. its just very stiff and boring").
+        // Was: scale-up, then DOJump at one fixed angle. Now, Royal-Match-propeller style: LIFT-OFF (rises, swells, wobbles),
+        // a SWOOPING curve (cubic bezier bowed to one side) with the nose following the path and a banking squash, a sparkle
+        // TRAIL, then a DIVE onto the target (shrink + impact ring + sparks + shake). Timing: AIRPLANE_TAKEOFF + AIRPLANE_FLIGHT. ──
+        private void PlayAirplaneFlight(RulesEngine.SpecialFire f, Vector3 origin, float cell)
+        {
+            // PAPER-PLANE GLIDE (2026-10-23 Spencer, mid-build: "it should probably have motion like a paper airplane might where
+            // it glides"). TOSS up (quick), FLOAT over a high soft arc while it bobs and its nose rocks on the air (the wobble
+            // dies away as it steadies), then tips the nose DOWN and glides in. Soft white wisps behind, not sparks.
+            var grid = GridManager.Instance; if (grid == null) return;
+            var plane = MakeIconSprite("AirplaneArt", f.Kind, cell * 1.0f, 55);
+            if (plane == null) return;
+            Vector3 to = grid.CellToWorld(f.Target.x, f.Target.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f);
+            Vector3 toss = origin + new Vector3(0f, cell * 0.7f, -0.4f);
+            Vector3 d = to - toss; float len = Mathf.Max(0.01f, d.magnitude);
+            float apex = Mathf.Clamp(len * 0.35f, cell * 1.4f, cell * 3.5f);            // high, lazy arc
+            Vector3 mid = toss + d * 0.45f + new Vector3(0f, apex, 0f);
+            System.Func<float, Vector3> P = t => { float u = 1f - t; return u * u * toss + 2f * u * t * mid + t * t * to; };
+            var tr = plane.transform;
+            tr.position = origin; tr.localScale = Vector3.one * cell * 0.9f;
+            float baseScale = cell * 1.2f;
+            var go = plane.gameObject;
+            float dirSign = d.x >= 0f ? 1f : -1f;
+            var seq = DOTween.Sequence().SetTarget(plane);
+            // toss
+            seq.Append(tr.DOMove(toss, AIRPLANE_TAKEOFF).SetEase(Ease.OutQuad));
+            seq.Join(tr.DOScale(baseScale, AIRPLANE_TAKEOFF).SetEase(Ease.OutBack, 1.8f));
+            seq.Join(tr.DORotate(new Vector3(0f, 0f, dirSign > 0 ? -15f : 105f), AIRPLANE_TAKEOFF).SetEase(Ease.OutQuad));
+            // glide
+            float lastWisp = 0f;
+            seq.Append(DOTween.To(() => 0f, t =>
+            {
+                if (go == null) return;
+                // floaty timing: drifts through the top of the arc, picks up speed on the way down
+                float g = t < 0.6f ? Mathf.Lerp(0f, 0.5f, Mathf.Sin(t / 0.6f * Mathf.PI * 0.5f)) : Mathf.Lerp(0.5f, 1f, Mathf.Pow((t - 0.6f) / 0.4f, 1.6f));
+                float calm = 1f - t;                                                      // wobble settles as it glides
+                Vector3 pos = P(g) + new Vector3(0f, Mathf.Sin(t * Mathf.PI * 3f) * cell * 0.18f * calm, 0f);   // bobbing on the air
+                Vector3 ahead = P(Mathf.Min(1f, g + 0.02f)) - P(g);
+                tr.position = pos;
+                float ang = Mathf.Atan2(ahead.y, ahead.x) * Mathf.Rad2Deg;
+                ang += Mathf.Sin(t * Mathf.PI * 4f) * 12f * calm;                        // nose rocks
+                tr.rotation = Quaternion.Euler(0f, 0f, ang - 45f);                         // art nose points up-right
+                float roll = Mathf.Sin(t * Mathf.PI * 2.5f) * 0.08f * calm;
+                tr.localScale = new Vector3(baseScale * (1f - roll), baseScale * (1f + roll), 1f);
+                if (t - lastWisp > 0.05f)
+                {
+                    lastWisp = t;
+                    Vector3 back = -ahead.normalized * cell * 0.4f;
+                    SpawnSpark(pos + back, back * 0.8f + (Vector3)Random.insideUnitCircle * cell * 0.2f,
+                               cell * Random.Range(0.16f, 0.26f), Random.Range(0.3f, 0.5f), new Color(1.15f, 1.2f, 1.3f, 1f));
+                }
+            }, 1f, AIRPLANE_FLIGHT).SetEase(Ease.Linear));
+            // touch-down
+            seq.AppendCallback(() =>
+            {
+                if (s_ringSprite != null)
+                {
+                    var ring = MakeFxSprite("PlaneImpact", s_ringSprite, new Color(1.5f, 1.6f, 2f, 1f), 54);
+                    ring.transform.position = to; ring.transform.localScale = Vector3.one * cell * 0.4f;
+                    var r0 = ring;
+                    ring.transform.DOScale(cell * 1.8f, 0.25f).SetEase(Ease.OutQuad);
+                    ring.DOFade(0f, 0.25f).SetDelay(0.03f).OnComplete(() => { if (r0 != null) Destroy(r0.gameObject); });
+                }
+                for (int k = 0; k < 8; k++)
+                    SpawnSpark(to, (Vector3)(Random.insideUnitCircle.normalized * cell * Random.Range(3f, 6f)), cell * Random.Range(0.14f, 0.24f), Random.Range(0.25f, 0.45f), new Color(1.6f, 1.6f, 1.9f, 1f));
+                GridManager.Instance?.ShakeBoard(0.12f, 0.18f);
+            });
+            seq.Append(plane.DOFade(0f, 0.06f));
+            seq.OnComplete(() => { if (go != null) Destroy(go); });
+        }
+
+        // ── LIGHT BALL / DISCO (2026-10-23 Spencer: "at about 26100 in the royalmatch(1-20) video it shows the disco ball
+        // animation ... see if we can replicate the look"). Measured frames 26280-26365 (~60fps): CHARGE ~1.1s — spinning ball,
+        // white halo + ring pulses, thin white beams to the targets ONE AT A TIME, each hit target keeps a frosty sheen; then
+        // POP — a big white flash at the ball and EVERY target pops on the same frame (ring burst + shards); ~0.2s settle.
+        // HandManager pops the tiles at DiscoPopAt(n) (all together); the beams land at DiscoBeamAt(k, n). ──
+        public static float DISCO_LEAD = 0.18f;          // ball wind-up before the first beam
+        public static float DISCO_CHARGE = 1.0f;         // aim for this long a beam phase (RM ~1.1s)
+        public static float DISCO_GAP_MIN = 0.025f, DISCO_GAP_MAX = 0.07f;
+        public static float DISCO_POP_HOLD = 0.16f;      // last beam -> flash
+        public static Color DISCO_FROST = new Color(1.3f, 1.5f, 1.9f, 1f);
+        public static float DiscoGap(int n) => Mathf.Clamp(DISCO_CHARGE / Mathf.Max(1, n), DISCO_GAP_MIN, DISCO_GAP_MAX);
+        public static float DiscoBeamAt(int k, int n) => DISCO_LEAD + k * DiscoGap(n);
+        public static float DiscoPopAt(int n) => DISCO_LEAD + n * DiscoGap(n) + DISCO_POP_HOLD;
+        private static Sprite s_glowSprite;
+        private static Sprite GlowSprite()
+        {
+            if (s_glowSprite != null) return s_glowSprite;
+            var tex = Resources.Load<Texture2D>("Particles/glow") ?? Resources.Load<Texture2D>("Particles/soft_circle");
+            if (tex != null) s_glowSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width);
+            return s_glowSprite ?? SoftDot();
+        }
+
+        private void PlayDiscoCharge(RulesEngine.SpecialFire f, Vector3 origin, float cell)
+        {
+            var grid = GridManager.Instance; if (grid == null) return;
+            var targets = new List<Vector2Int>();
+            foreach (var c in f.Cleared) if (c != f.Cell) targets.Add(c);
+            int n = targets.Count;
+            float popAt = DiscoPopAt(f.Cleared.Count);
+            Vector3 slide = new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+
+            // the ball: spins the whole charge, swells a touch, gone in the flash
+            var ball = MakeIconSprite("DiscoBall", f.Kind, cell * 1.1f, 52);
+            if (ball != null)
+            {
+                ball.transform.position = origin + new Vector3(0f, 0f, -0.2f);
+                var b0 = ball;
+                ball.transform.DOScale(cell * 1.45f, 0.25f).SetEase(Ease.OutBack, 2f);
+                ball.transform.DORotate(new Vector3(0f, 0f, 360f * 3f), popAt, RotateMode.FastBeyond360).SetEase(Ease.InQuad);
+                ball.DOFade(0f, 0.08f).SetDelay(popAt).OnComplete(() => { if (b0 != null) Destroy(b0.gameObject); });
+            }
+            // halo + ring pulses
+            var halo = MakeFxSprite("DiscoHalo", GlowSprite(), new Color(1.6f, 1.6f, 1.8f, 1f), 51);
+            halo.transform.position = origin + new Vector3(0f, 0f, -0.15f);
+            halo.transform.localScale = Vector3.one * cell * 0.5f;
+            var h0 = halo;
+            halo.transform.DOScale(cell * 2.2f, 0.3f).SetEase(Ease.OutQuad);
+            halo.transform.DOScale(cell * 2.6f, 0.35f).SetDelay(0.3f).SetLoops(Mathf.Max(1, Mathf.CeilToInt((popAt - 0.3f) / 0.35f)), LoopType.Yoyo);
+            DOVirtual.DelayedCall(popAt + 0.05f, () => { if (h0 != null) Destroy(h0.gameObject); });
+            for (float t = 0.1f; t < popAt - 0.1f; t += 0.32f)
+            {
+                var ring = MakeFxSprite("DiscoPulse", s_ringSprite, new Color(1.2f, 1.3f, 1.6f, 1f), 50);
+                ring.transform.position = origin; ring.transform.localScale = Vector3.one * cell * 0.9f; ring.color = new Color(1f, 1f, 1f, 0f);
+                var r0 = ring;
+                ring.DOFade(0.7f, 0.04f).SetDelay(t);
+                ring.transform.DOScale(cell * 2.6f, 0.45f).SetDelay(t).SetEase(Ease.OutQuad);
+                ring.DOFade(0f, 0.4f).SetDelay(t + 0.05f).OnComplete(() => { if (r0 != null) Destroy(r0.gameObject); });
+            }
+
+            // beams, one at a time; each hit target keeps a frosty glow until the pop
+            for (int k = 0; k < n; k++)
+            {
+                var c = targets[k];
+                Vector3 to = grid.CellToWorld(c.x, c.y) + slide + new Vector3(0f, 0f, -0.3f);
+                Vector3 d = to - origin; float len = d.magnitude; if (len < 0.01f) continue;
+                float at = DiscoBeamAt(k, f.Cleared.Count);
+                var beam = MakeFxSprite("DiscoBeam", s_beamSprite, new Color(1.6f, 1.7f, 2.0f, 1f), 49);
+                beam.transform.position = origin + d * 0.5f;
+                beam.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+                beam.transform.localScale = new Vector3(len / s_beamSprite.bounds.size.x, 0.35f, 1f);
+                beam.color = new Color(1f, 1f, 1f, 0f);
+                var bm = beam;
+                beam.DOFade(1f, 0.03f).SetDelay(at);
+                beam.DOFade(0f, 0.18f).SetDelay(at + 0.12f).OnComplete(() => { if (bm != null) Destroy(bm.gameObject); });
+                var cc = c; var tt = to;
+                DOVirtual.DelayedCall(at + 0.03f, () =>
+                {
+                    var tile = GridManager.Instance != null ? GridManager.Instance.GetTile(cc.x, cc.y) : null;
+                    if (tile != null) tile.SetBloomGlow(DISCO_FROST, 0.85f, forceDesktop: true);
+                    for (int sIdx = 0; sIdx < 3; sIdx++)
+                        SpawnSpark(tt, (Vector3)(Random.insideUnitCircle.normalized * cell * Random.Range(2f, 4f)), cell * 0.14f, 0.25f, new Color(1.5f, 1.6f, 2f, 1f));
+                });
+            }
+
+            // the pop: white flash at the ball, a ring burst + shards on every target, same frame
+            var targetsCopy = new List<Vector2Int>(targets);
+            DOVirtual.DelayedCall(popAt, () =>
+            {
+                var g = GridManager.Instance; if (g == null) return;
+                var flash = MakeFxSprite("DiscoFlash", GlowSprite(), new Color(2.2f, 2.2f, 2.3f, 1f), 53);
+                flash.transform.position = origin + new Vector3(0f, 0f, -0.25f);
+                flash.transform.localScale = Vector3.one * cell * 1.2f;
+                var f0 = flash;
+                flash.transform.DOScale(cell * 4.2f, 0.12f).SetEase(Ease.OutQuad);
+                flash.DOFade(0f, 0.3f).SetDelay(0.1f).OnComplete(() => { if (f0 != null) Destroy(f0.gameObject); });
+                foreach (var c in targetsCopy)
+                {
+                    Vector3 p = g.CellToWorld(c.x, c.y) + new Vector3(g.BoardSlideOffsetX, 0f, -0.35f);
+                    var ring = MakeFxSprite("DiscoBurst", s_ringSprite, new Color(1.5f, 1.6f, 2f, 1f), 50);
+                    ring.transform.position = p; ring.transform.localScale = Vector3.one * cell * 0.5f;
+                    var r1 = ring;
+                    ring.transform.DOScale(cell * 1.35f, 0.22f).SetEase(Ease.OutQuad);
+                    ring.DOFade(0f, 0.22f).SetDelay(0.04f).OnComplete(() => { if (r1 != null) Destroy(r1.gameObject); });
+                    for (int sIdx = 0; sIdx < 4; sIdx++)
+                        SpawnSpark(p, (Vector3)(Random.insideUnitCircle.normalized * cell * Random.Range(3f, 6f)), cell * Random.Range(0.12f, 0.2f), Random.Range(0.25f, 0.4f), new Color(1.4f, 1.5f, 2f, 1f));
+                }
+                g.ShakeBoard(0.16f, 0.30f);
+                GameAudio.Instance?.PlayScorePowerup();
+            });
+        }
+
         /// <summary>Plays the fire animation for one special. Rocket: two glowing heads streak out both ways along the
         /// row/column with a fading lane flash. Bomb: white flash + expanding shockwave ring. Disco: beams from the ball
         /// to every tile it took. Visual only — the rules already cleared the cells.</summary>
@@ -1388,33 +1572,15 @@ namespace WordDrop
                 ring.DOFade(0f, 0.32f).SetEase(Ease.InQuad).OnComplete(() => { if (ring != null) Destroy(ring.gameObject); });
                 GridManager.Instance?.ShakeBoard(0.20f * bombScale, 0.28f);
             }
+            else if (f.Kind == RulesEngine.SPECIAL_AIRPLANE)
+            {
+                GridManager.Instance?.ShakeBoard(0.10f, 0.18f);
+                bool hasTarget = f.Target != f.Cell && f.Cleared != null && f.Cleared.Contains(f.Target);
+                if (hasTarget) PlayAirplaneFlight(f, origin, cell);
+            }
             else if (f.Kind == RulesEngine.SPECIAL_DISCO && f.Cleared != null)
             {
-                var dart = MakeIconSprite("DiscoArt", f.Kind, cell * 1.1f, 49);
-                if (dart != null)
-                {
-                    dart.transform.position = origin;
-                    var d0 = dart;
-                    dart.transform.DORotate(new Vector3(0f, 0f, 540f), 0.6f, RotateMode.FastBeyond360).SetEase(Ease.OutCubic);
-                    dart.transform.DOScale(cell * 1.5f, 0.3f).SetEase(Ease.OutBack);
-                    dart.DOFade(0f, 0.2f).SetDelay(0.5f).OnComplete(() => { if (d0 != null) Destroy(d0.gameObject); });
-                }
-                for (int i = 0; i < f.Cleared.Count; i++)
-                {
-                    Vector3 to = grid.CellToWorld(f.Cleared[i].x, f.Cleared[i].y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f);
-                    Vector3 d = to - origin;
-                    float len = d.magnitude;
-                    if (len < 0.01f) continue;
-                    var beam = MakeFxSprite("DiscoBeam", s_beamSprite, col * 1.2f, 47);
-                    beam.transform.position = origin + d * 0.5f;
-                    beam.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
-                    beam.transform.localScale = new Vector3(len / s_beamSprite.bounds.size.x, 0.6f, 1f);
-                    var b = beam;
-                    beam.color = new Color(1f, 1f, 1f, 0f);
-                    beam.DOFade(1f, 0.05f).SetDelay(i * 0.03f);
-                    beam.DOFade(0f, 0.3f).SetDelay(0.18f + i * 0.03f).OnComplete(() => { if (b != null) Destroy(b.gameObject); });
-                }
-                GridManager.Instance?.ShakeBoard(0.16f, 0.30f);
+                PlayDiscoCharge(f, origin, cell);
             }
             GameAudio.Instance?.PlayScorePowerup();
             HapticsManager.Strong();
@@ -1447,9 +1613,14 @@ namespace WordDrop
             if (t == null || !SurvivalManager.FullBoardActive) return;
             // COLLECT: a target letter flies up to the HUD icon the moment its tile hides (every path: words, splash, specials).
             char cl = LevelRules.ActiveCollectLetter;
-            if (!t.IsStone && cl != '\0' && char.ToUpperInvariant(t.Letter) == cl && !SurvivalManager.AwaitingNextLevel)
+            // THE WINNING PIECE STILL FLIES (2026-10-23 Spencer: "the checkmark is still not showing up when achieving an
+            // objective"). The last gem is counted -> the level is WON -> its tile hides a moment later, and this gate skipped its
+            // flight, so CollectAwaitingFly stayed 1 and the badge never reached 0 (log: "goal flights settled ... awaiting=1").
+            // After the win only pieces still owed a flight (awaiting > 0) fly; the bonus blast's gems aren't counted at all.
+            bool flyOk = !SurvivalManager.AwaitingNextLevel || LevelRules.CollectAwaitingFly > 0;   // after the win nothing new is counted (RulesEngine), so awaiting > 0 = the winning pieces
+            if (!t.IsStone && cl != '\0' && char.ToUpperInvariant(t.Letter) == cl && flyOk)
                 HUDManager.Instance?.FlyCollectLetter(t.transform.position, cl);
-            if (t.IsGem && LevelRules.HasGemGoal && !SurvivalManager.AwaitingNextLevel)
+            if (t.IsGem && LevelRules.HasGemGoal && flyOk)
                 HUDManager.Instance?.FlyCollectLetter(t.transform.position, t.Letter);   // gem flies to the gem icon
             if (!t.IsStone || t.IsDropTargetVisual) return;   // ducks are stone-flagged too — they never "break"
             PlayCrateDebris(t.transform.position);

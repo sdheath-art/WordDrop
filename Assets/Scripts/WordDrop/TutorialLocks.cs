@@ -34,6 +34,19 @@ namespace WordDrop
         /// <summary>Set every lock from the current level index. Called per-level in
         /// ObjectiveManager.InstallLevel. Both the UI (BoosterHUDSlot / SWAPS panel) and the mechanics
         /// (MatchController.UseSwap, HandManager rewrite, BoosterManager) read these flags.</summary>
+        /// <summary>FULL-BOARD booster slots unlock ONE AT A TIME (2026-10-23, Royal Match's L8 / L14 / L17 / L19 — Spencer's
+        /// recording). Slot N of the booster row opens at BOOSTER_SLOT_UNLOCKS[N] (display level). Replaces the old drop-game
+        /// all-at-L41 rule on the full board; other modes keep BoostersLocked.</summary>
+        public static readonly int[] BOOSTER_SLOT_UNLOCKS = { 8, 14, 17, 19 };
+        public static int BoosterSlotsOpen()
+        {
+            if (!SurvivalManager.FullBoardActive) return BoostersLocked ? 0 : BOOSTER_SLOT_UNLOCKS.Length;
+            var sm = SurvivalManager.Instance; if (sm == null) return 0;
+            int lvl = LevelMapPanel.RunLevel(sm.CurrentStageIndex), n = 0;
+            foreach (var u in BOOSTER_SLOT_UNLOCKS) if (lvl >= u) n++;
+            return n;
+        }
+
         public static void ApplyForLevel(int level)
         {
             SwapLocked       = level < SWAP_UNLOCK_LEVEL;

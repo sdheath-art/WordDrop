@@ -400,7 +400,9 @@ namespace WordDrop
             while (settle < 0.3f) { settle += Time.unscaledDeltaTime; yield return null; }
             _moveLoseCheckRunning = false;
             if (AwaitingNextLevel || _isGameOver || CurrentStageMovesRemaining > 0) yield break;
+            if (LevelRules.BonusLevelActive) { WDLog.Log("[Bonus] out of moves — bonus level complete"); CheckStageClear(); yield break; }   // no fail
             WDLog.Log($"[MoveLimit] OUT OF MOVES — {CurrentStageScore}/{CurrentStageTarget}, level lost");
+            WinStreak.MarkLoss();
             try
             {
                 var kv = new System.Collections.Generic.List<object> {
@@ -946,7 +948,11 @@ namespace WordDrop
                     // finish the level" has twice turned out to be the target quietly not being
                     // met, and a silent `return` gives nothing to go on.
                     // CRATE GOAL (full board, 2026-10-21): the level is won when every crate is broken — score doesn't gate it.
-                    if (LevelRules.GoalsActiveFor(_currentStageIndex))
+                    if (LevelRules.BonusLevelActive)
+                    {
+                        if (resolving || CurrentStageMovesRemaining > 0) return;   // bonus level: no goals, it ends when the moves do
+                    }
+                    else if (LevelRules.GoalsActiveFor(_currentStageIndex))
                     {
                         if (!LevelRules.AllGoalsDone()) return;   // every goal done = win; score doesn't gate it
                     }
@@ -1081,7 +1087,10 @@ namespace WordDrop
                 // Auto-grant for now, deliberately: prove that compounding power makes runs
                 // feel different BEFORE building a choice screen for it. If it does, this
                 // becomes a pick-one-of-three; if it does not, we have not wasted a modal.
-                if (ScoreRunMode)
+                // 2026-10-23: OFF on the full board — a leftover of the score run (it granted GoldenTouch etc. on every level
+                // clear). The win streak is the full-board reward now.
+                if (FullBoardActive && !LevelRules.BonusLevelActive) WinStreak.Win();
+                if (ScoreRunMode && !FullBoardActive)
                 {
                     var ids = System.Enum.GetValues(typeof(RunBuffs.Id));
                     var pick = (RunBuffs.Id)ids.GetValue(Random.Range(0, ids.Length));
@@ -2644,6 +2653,7 @@ namespace WordDrop
             {
                 _currentStageMovesUsed = Mathf.Max(0, _currentStageMovesUsed - CONTINUE_EXTRA_MOVES);
                 _continuesInRun++;
+                WinStreak.Rescued();
                 WDLog.Log($"[MoveLimit] continue: +{CONTINUE_EXTRA_MOVES} moves -> {CurrentStageMovesRemaining} left, continues_used={_continuesInRun}");
                 return default;
             }

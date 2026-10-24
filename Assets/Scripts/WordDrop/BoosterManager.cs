@@ -43,6 +43,7 @@ namespace WordDrop
         public const string ID_WISPWHIRL     = "wispwhirl_row";   // existing Booster.Id
         public const string ID_ROCK_CRUSHER  = "stone_splitter";
         public const string ID_MALLET        = "mallet";          // 2026-06-24: tap one tile, smash it
+        public const string ID_FREE_SWAP     = "free_swap";       // 2026-10-23: swap any two tiles, no move
         public const string ID_SPYGLASS      = "lantern_trace";   // 2026-10-22: the PAID strong hint (LanternTrace, shown as "Spyglass")
 
         // ── State ────────────────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ namespace WordDrop
             _inventory.Add(new RockCrusher());
             _inventory.Add(new Mallet());
             _inventory.Add(new LanternTrace());   // Spyglass — the strong hint (2026-10-22)
+            _inventory.Add(new FreeSwap());       // 2026-10-23
 
             foreach (var b in _inventory)
                 _charges[b.Id] = STARTING_CHARGES;
@@ -181,6 +183,35 @@ namespace WordDrop
             string id = ArmedBooster.Id;
             if (GetCharges(id) <= 0) { AimMode = false; ArmedBooster = null; OnStateChanged?.Invoke(); return; }
 
+            // TWO-TAP boosters (Free Swap): first tap selects, same tile again deselects, second tile commits the pair.
+            if (ArmedBooster.NeedsTwoTargets)
+            {
+                var p = new Vector2Int(col, row);
+                if (!ArmedBooster.CanResolveAt(col, row))
+                {
+                    WDLog.Log($"[Booster] {ArmedBooster.DisplayName} — can't pick ({col},{row}), staying armed");
+                    GameAudio.Instance?.PlayUIClick();
+                    return;
+                }
+                if (FirstPick == null) { FirstPick = p; GridManager.Instance?.GetTile(col, row)?.SetEditSelected(true); GameAudio.Instance?.PlayUIClick(); OnStateChanged?.Invoke(); return; }
+                var a = FirstPick.Value;
+                if (a == p) { ClearFirstPick(); GameAudio.Instance?.PlayUIClick(); OnStateChanged?.Invoke(); return; }
+                var pairBooster = ArmedBooster;
+                ClearFirstPick();
+                if (!pairBooster.TryResolvePair(a, p))
+                {
+                    WDLog.Log($"[Booster] {pairBooster.DisplayName} pair refused — staying armed (no charge spent)");
+                    GameAudio.Instance?.PlayButtonClick();
+                    OnStateChanged?.Invoke();
+                    return;
+                }
+                _charges[pairBooster.Id] = GetCharges(pairBooster.Id) - 1;
+                AimMode = false; ArmedBooster = null;
+                WDLog.Log($"[Booster] {pairBooster.DisplayName} resolved ({a.x},{a.y})+({col},{row}), charges→{_charges[pairBooster.Id]}");
+                OnStateChanged?.Invoke();
+                return;
+            }
+
             // Invalid target (e.g. Stone Splitter tapped on a non-rock) — ignore the
             // tap and stay armed so the player can retry. NO charge consumed.
             if (!ArmedBooster.CanResolveAt(col, row))
@@ -208,9 +239,20 @@ namespace WordDrop
         }
 
         /// <summary>Player tapped outside the board or hit cancel — no charge consumed.</summary>
+        /// <summary>Two-tap boosters: the selected first tile, or null.</summary>
+        public Vector2Int? FirstPick { get; private set; }
+        private void ClearFirstPick()
+        {
+            if (FirstPick == null) return;
+            var t = GridManager.Instance?.GetTile(FirstPick.Value.x, FirstPick.Value.y);
+            if (t != null) t.SetEditSelected(false);
+            FirstPick = null;
+        }
+
         public void CancelAim()
         {
             if (!AimMode) return;
+            ClearFirstPick();
             AimMode = false;
             ArmedBooster = null;
             WDLog.Log($"[Booster] Aim cancelled (no charge consumed)");

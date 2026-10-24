@@ -91,6 +91,12 @@ namespace WordDrop
             _isPresenting = true;
             _isDismissing = false;
 
+            // NO BOARD BEHIND THE CARD (2026-10-23 Spencer: "a menu pops down giving you the goals and there is a board built
+            // behind it already. you click play and then that board dissapears and then another board pops in"). The entry
+            // animation on PLAY parks the board off-screen then slides it in — so park it NOW, before the card shows: the card
+            // sits over the empty background and PLAY brings the board in once (Royal Match). Prep is idempotent.
+            if (SurvivalManager.FullBoardActive) HUDManager.Instance?.PrepLevelEntry();
+
             if (_titleText != null) _titleText.text = $"LEVEL {LevelMapPanel.DisplayNum(levelNum)}"; // run level (tutorial 1..10)
 
             // 2026-10-20 Spencer: on a scored run the card shows the POINTS TARGET and the rules
@@ -789,6 +795,14 @@ namespace WordDrop
         }
 
         /// <summary>One goal picture for the full-board briefing, using the art the player will see on the board.</summary>
+        private static Sprite s_grassIcon;
+        private static Sprite GrassIcon()
+        {
+            if (s_grassIcon != null) return s_grassIcon;
+            var tex = Resources.Load<Texture2D>("Boosters/2leaf");
+            if (tex != null) s_grassIcon = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            return s_grassIcon;
+        }
         public static GameObject BuildGoalIcon(LevelRules.GoalIconInfo g, Transform parent, float size)
         {
             g.Count = 0;   // no badge: the card shows the count as its own label beside the picture
@@ -799,6 +813,7 @@ namespace WordDrop
                 case LevelRules.GoalType.Gems:    return BuildSprite(parent, size, Tile.GemSprite, Color.white, null, g.Count, GOLD);
                 case LevelRules.GoalType.Ducks:   return BuildSprite(parent, size, Tile.DuckSprite, Color.white, null, g.Count, GOLD);
                 case LevelRules.GoalType.Theme:   return BuildSprite(parent, size, LoadIconSprite(LevelRules.ThemeIconPath(g.Theme)), Color.white, null, g.Count, MAGENTA);
+                case LevelRules.GoalType.Grass:   return BuildSprite(parent, size, GrassIcon(), Color.white, null, g.Count, new Color(0.36f, 0.72f, 0.24f));
                 case LevelRules.GoalType.Collect: return BuildSprite(parent, size, Tile.CollectFaceSprite, Tile.CollectFaceTint, g.Letter.ToString(), g.Count, BADGE);
                 default: return null;
             }

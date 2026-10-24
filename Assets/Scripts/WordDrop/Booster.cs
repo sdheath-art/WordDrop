@@ -80,6 +80,11 @@ namespace WordDrop
         /// (e.g. Stone Splitter → only a stone). 2026-06-03 Spencer.</summary>
         public virtual bool CanResolveAt(int col, int row) => true;
 
+        /// <summary>Two-tap boosters (Free Swap, 2026-10-23): the first aim tap SELECTS, the second resolves the pair via
+        /// TryResolvePair. A charge is spent only when TryResolvePair returns true.</summary>
+        public virtual bool NeedsTwoTargets => false;
+        public virtual bool TryResolvePair(Vector2Int a, Vector2Int b) => false;
+
         /// <summary>Remove LEVEL-OBJECTIVE tiles from a booster's cleared-cell list so boosters can
         /// NEVER blow up an objective (Spencer 2026-06-15: "boosters can't just blow up objectives").
         /// Protects the HeroWord escort drop-targets, frozen ICE tiles, and anchored VAULT chests —

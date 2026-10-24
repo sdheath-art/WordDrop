@@ -31,7 +31,10 @@ namespace WordDrop
         private const int BOARD_BG_ORDER = 41;   // full-board spotlight: board panel above the scrim...
         private const int TILE_ORDER     = 43;   // ...and its tiles above that (band 43..73)
         private const int OVERLAY_ORDER  = 150;  // HUD dim + cursor — above the HUD canvas (50)
-        private static readonly Color DIM = new Color(0f, 0f, 0f, 0.84f);
+        // 2026-10-23 Spencer: "dims out everything in the same style and look as royal match". MEASURED from his RM recording
+        // (L3 TNT beat @1:48): every colour drops to ~30% evenly (cream 225/217/176 -> 68/65/53, board bg x0.27-0.36), i.e. plain
+        // black at ~70%, no tint. Was 0.84 (June drop-game tutorial).
+        private static readonly Color DIM = new Color(0f, 0f, 0f, 0.70f);
         private const float CURSOR_PX     = 140f;
         private const float DRAG_SECONDS  = 1.05f;
         private const float HUD_DIM_FALLBACK_TOP = 0.83f; // viewport y if board bounds unavailable
@@ -276,6 +279,7 @@ namespace WordDrop
         // Bright "undimmed board section" behind the target word — a board-blue rounded slab above the scrim but
         // below the tiles, so empty drop cells read as a lit open slot. 2026-07-08 Spencer (mockup-driven).
         private SpriteRenderer _focusPanel;
+        public static float FOCUS_PAD_CELLS = 0.55f;   // half a cell = window edge just past the tile edge; RM pads ~0.05 cell beyond the tiles
         private int _focusPw = -1, _focusPh = -1;
         private void ShowFocusPanel(System.Collections.Generic.List<Vector2Int> cells)
         {
@@ -289,7 +293,7 @@ namespace WordDrop
                 minX = Mathf.Min(minX, p.x); maxX = Mathf.Max(maxX, p.x);
                 minY = Mathf.Min(minY, p.y); maxY = Mathf.Max(maxY, p.y);
             }
-            float pad = cs * 0.5f;
+            float pad = cs * FOCUS_PAD_CELLS;   // from cell CENTRES: 0.5 = tile edge (old value), 0.55 = a hair past it like RM
             minX -= pad; maxX += pad; minY -= pad; maxY += pad;
             if (_focusPanel == null)
             {
@@ -546,6 +550,10 @@ namespace WordDrop
         // ── hand_point sprite (Resources/Tiles/hand_point) — pivot baked at the FINGERTIP, measured
         //    from the art: opaque pixel (40,16) of 133² → (0.301, 0.880). So transform.position == tip. ──
         private static Sprite _handSprite;
+        // Fingertip in the hand art, as a fraction (y up). 2026-10-23: Spencer's new pointer (Documents "1cursor copy.png", 515px,
+        // finger up-left) — tip pad measured at px (85,30). Old hand was (0.301, 0.880); old art backed up to
+        // ~/Documents/hand_point_OLD_backup_2026-10-23.png.
+        public static float HAND_TIP_X = 0.17f, HAND_TIP_Y = 0.94f;
         private static Sprite GetHandSprite()
         {
             if (_handSprite != null) return _handSprite;
@@ -557,7 +565,7 @@ namespace WordDrop
             }
             if (tex != null)
                 _handSprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
-                                            new Vector2(0.301f, 0.880f), 100f); // pivot = fingertip
+                                            new Vector2(HAND_TIP_X, HAND_TIP_Y), 100f); // pivot = fingertip
             return _handSprite;
         }
     }

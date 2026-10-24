@@ -26,10 +26,18 @@ namespace WordDrop
     public class BotPlaytester : MonoBehaviour
     {
         public static BotPlaytester Instance { get; private set; }
-        public static int   FIRST_LEVEL = 1, LAST_LEVEL = 10, TRIALS = 20;
+        public static int   FIRST_LEVEL = 1, LAST_LEVEL = 20, TRIALS = 40;
+        /// <summary>Share of the CASUAL bot's moves that make no word (calibrated from Spencer's 10-23 run: 54%). 0 = old bot.</summary>
+        public static float CASUAL_NOWORD_RATE = 0.5f;
+        /// <summary>Casual bot only sees COMMON words (people don't spot GAGE / TARO). Stale turn = fewer than STALE_BELOW common-word swaps.</summary>
+        public static bool  CASUAL_COMMON_ONLY = true;
+        /// <summary>Model the game's fishing hint: after FISHING_SWAPS no-word moves the casual bot plays the hint.</summary>
+        public static bool  FISHING_HINT_MODEL = true;
+        public static int   STALE_BELOW = 3;   // 10 -> 20 -> 40 (2026-10-23: 20 games = ±10pp, too coarse to tune budgets by 2-move steps)
         public static float CHOICE_NOISE = 0.5f;
         public static int   CASUAL_SEES = 4;        // CASUAL bot: words it 'notices' per move (research: model a limited-vision player)
-        public static int   UNCAPPED_MOVES = 80;    // games play to the finish; over this = did not finish   // score * (1 + rand[0, noise]) — some variety, still plays sensibly
+        public static int   UNCAPPED_MOVES = 80;
+        public static int   NEAR_MISS_PIECES = 3;   // a loss with this few goal pieces left = a Play On moment    // games play to the finish; over this = did not finish   // score * (1 + rand[0, noise]) — some variety, still plays sensibly
         public bool Running { get; private set; }
         public string Status { get; private set; } = "";
 
@@ -45,12 +53,16 @@ namespace WordDrop
 
         public void Run() { if (!Running) StartCoroutine(RunRoutine(FIRST_LEVEL, LAST_LEVEL, TRIALS)); }
 
-        private class GameResult { public string goals = ""; public bool won, error; public int used, left, words, w4, w5, w6, specialsMade, specialsFired, goldRefunds, cascadeWords, noWordMoves; public long points; }
+        private class GameResult { public string goals = ""; public bool won, error; public int remainingAtBudget = -1; public int used, left, words, w4, w5, w6, specialsMade, specialsFired, goldRefunds, cascadeWords, noWordMoves, turns, staleTurns, commonSum; public long points; }
 
         private IEnumerator RunRoutine(int first, int last, int trials)
         {
             Running = true;
-            if (!SurvivalManager.FullBoardActive) { Status = "BOT: switch the board to FULL first"; Debug.LogWarning("[Bot] full board is off — nothing to test"); Running = false; yield break; }
+            // Keep playing while Unity isn't the focused window (2026-10-23 Spencer: "is there anyway i can run the test in the
+            // background while i do other things?"). Play mode pauses on focus loss unless runInBackground; restored at the end.
+            bool prevBg = Application.runInBackground;
+            Application.runInBackground = true;
+            if (!SurvivalManager.FullBoardActive) { Status = "BOT: switch the board to FULL first"; Debug.LogWarning("[Bot] full board is off — nothing to test"); Running = false; Application.runInBackground = prevBg; yield break; }
             RulesEngine.CreatingSimulation = true;
             var simGO = new GameObject("BotSimEngine");
             var sim = simGO.AddComponent<RulesEngine>();
@@ -62,11 +74,13 @@ namespace WordDrop
             summary.AppendLine($"BOT PLAYTEST {System.DateTime.Now:yyyy-MM-dd HH:mm}  levels {first}-{last}  x{trials} games per bot  (EXPERT sees every word; CASUAL sees {CASUAL_SEES} per move)");
             summary.AppendLine("Games play UNCAPPED; 'net' = moves to finish after gold refunds. win% = share of games finishing within today's budget.");
             summary.AppendLine("Suggested budget = the CASUAL bot's 95th-percentile net moves (~95% of casual players would finish).\n");
-            summary.AppendLine("LVL  name                      budget | EXPERT win%  net p50/p90 | CASUAL win%  net p50/p90  left(wins) | SUGGEST | goals");
+            summary.AppendLine("LVL  name                      budget | EXPERT win%  net p50/p90 | CASUAL win%  net p50/p90  left(wins)  near-miss | SUGGEST | goals");
             var t0 = Time.realtimeSinceStartup;
             for (int lvl = first; lvl <= last; lvl++)
             {
+                if (LevelRules.For(lvl).Bonus) { summary.AppendLine($"{lvl,3}  {Trunc(LevelRules.For(lvl).Name, 24),-24}  bonus level — no fail, not tested"); continue; }
                 int budget = 0;
+                System.Array.Clear(RulesEngine.SimFiredByKind, 0, RulesEngine.SimFiredByKind.Length);
                 var byMode = new List<GameResult>[2];
                 for (int mode = 0; mode < 2; mode++)
                 {
@@ -84,10 +98,13 @@ namespace WordDrop
                 }
                 var ex = Stats(byMode[0], budget); var ca = Stats(byMode[1], budget);
                 string goals = byMode[0].Count > 0 ? byMode[0][0].goals : "";
-                summary.AppendLine($"{lvl,3}  {Trunc(LevelRules.For(lvl).Name, 24),-24}  {budget,4}   |   {ex.win,5:F0}%     {ex.p50,3}/{ex.p90,-3}  |   {ca.win,5:F0}%     {ca.p50,3}/{ca.p90,-3}     {ca.leftPct,5:F0}%    |  {ca.p95,4}   | {goals}{(ex.errs + ca.errs > 0 ? $"  ERRORS {ex.errs + ca.errs}" : "")}");
+                summary.AppendLine($"{lvl,3}  {Trunc(LevelRules.For(lvl).Name, 24),-24}  {budget,4}   |   {ex.win,5:F0}%     {ex.p50,3}/{ex.p90,-3}  |   {ca.win,5:F0}%     {ca.p50,3}/{ca.p90,-3}     {ca.leftPct,5:F0}%      {ca.nearMiss,4:F0}%    |  {ca.p95,4}   | {goals}{(ex.errs + ca.errs > 0 ? $"  ERRORS {ex.errs + ca.errs}" : "")}");
+                summary.AppendLine($"       fired per game (both bots): {FiredLabel(byMode[0].Count + byMode[1].Count)}");
+                { int tt = 0, st = 0; long cs = 0; foreach (var r in byMode[1]) { tt += r.turns; st += r.staleTurns; cs += r.commonSum; }
+                  summary.AppendLine($"       casual board: {(tt > 0 ? (float)cs / tt : 0):F1} common-word swaps per turn, STALE (<{STALE_BELOW}) {(tt > 0 ? 100f * st / tt : 0):F0}% of turns"); }
             }
             Destroy(simGO);
-            summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). DNF games count as 999 in percentiles.");
+            summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). 'near-miss' = casual games that run out with 1-{NEAR_MISS_PIECES} pieces left (Play On moments). Cascade cap {CapLabel}. Casual wastes {CASUAL_NOWORD_RATE:P0} of moves on no-word swaps (human-calibrated), sees common words only: {CASUAL_COMMON_ONLY}, fishing hint: {FISHING_HINT_MODEL}, endgame airplane: {RulesEngine.ENDGAME_AIRPLANE}, re-letter rescue: {RulesEngine.ENDGAME_RESCUE_ON}.");
             try
             {
                 Directory.CreateDirectory(Folder);
@@ -99,23 +116,25 @@ namespace WordDrop
             WDLog.Log("[Bot] DONE\n" + summary);
             Status = "BOT: done — BotReports/bot_latest.txt";
             Running = false;
+            Application.runInBackground = prevBg;
         }
 
-        private struct Summ { public float win, leftPct; public int p50, p90, p95, errs; }
+        private struct Summ { public float win, leftPct, nearMiss; public int p50, p90, p95, errs; }
         private static Summ Stats(List<GameResult> rs, int budget)
         {
-            var nets = new List<int>(); int wins = 0, errs = 0; float left = 0;
+            var nets = new List<int>(); int wins = 0, errs = 0, near = 0; float left = 0;
             foreach (var r in rs)
             {
                 if (r.error) { errs++; continue; }
                 int net = r.won ? r.used - r.goldRefunds : 999;   // didn't finish even uncapped
                 nets.Add(net);
                 if (net <= budget) { wins++; left += budget - net; }
+                else if (r.remainingAtBudget >= 1 && r.remainingAtBudget <= NEAR_MISS_PIECES) near++;
             }
             nets.Sort();
             int P(float q) => nets.Count == 0 ? 0 : nets[Mathf.Clamp(Mathf.CeilToInt(q * nets.Count) - 1, 0, nets.Count - 1)];
             return new Summ { win = nets.Count == 0 ? 0 : 100f * wins / nets.Count, leftPct = wins == 0 || budget == 0 ? 0 : 100f * left / wins / budget,
-                              p50 = P(0.5f), p90 = P(0.9f), p95 = P(0.95f), errs = errs };
+                              p50 = P(0.5f), p90 = P(0.9f), p95 = P(0.95f), errs = errs, nearMiss = nets.Count == 0 ? 0 : 100f * near / nets.Count };
         }
 
         private static string Trunc(string s, int n) => string.IsNullOrEmpty(s) ? "" : (s.Length <= n ? s : s.Substring(0, n - 1) + "…");
@@ -161,11 +180,21 @@ namespace WordDrop
             if (scoreLevel) res.goals = $"Points {SurvivalManager.ComputeStageTarget(level)}";
             int target = scoreLevel ? SurvivalManager.ComputeStageTarget(level) : 0;
             int left = UNCAPPED_MOVES;   // play to the finish; the report judges against the budget afterwards
-            int guard = 0;
+            int guard = 0, missStreak = 0;
             while (left > 0 && guard++ < 200)
             {
                 if (GoalsDone(sim, scoreLevel, res.points, target)) break;
-                var cands = sim.EnumerateWordSwaps();
+                sim.TryStaleRescue(out _, out _, out _);   // the game re-letters a tile on a stale board (HintManager.StaleCheck)
+                var cands = sim.EnumerateWordSwaps(casual && CASUAL_COMMON_ONLY);   // casual: only words a person would spot
+                if (casual) { res.turns++; int common = CASUAL_COMMON_ONLY ? cands.Count : sim.EnumerateWordSwaps(true).Count; res.commonSum += common; if (common < STALE_BELOW) res.staleTurns++; }
+                // HUMAN WASTE (2026-10-23, Spencer's full run L1-10: 100 of 185 swaps made NO word — setups, fishing, misses;
+                // L10 Cold Snap 24 of 42). The bots never did that, so every budget assumed a perfectly efficient player and
+                // L10 "seemed impossible". The casual bot now spends that share of its moves on a swap that makes no word.
+                // FISHING HINT model: after HintManager.FISHING_SWAPS misses in a row the game shows the goal-aware hint — the
+                // casual player takes it (no waste roll that turn, and the hint's pick replaces its own).
+                bool hinted = casual && FISHING_HINT_MODEL && missStreak >= HintManager.FISHING_SWAPS;
+                if (hinted && sim.FindSwapHint(false, out var ha, out var hb, out _)) { cands.Clear(); cands.Add((ha, hb, 1)); }
+                else if (casual && CASUAL_NOWORD_RATE > 0f && Random.value < CASUAL_NOWORD_RATE) cands.Clear();
                 if (casual && cands.Count > CASUAL_SEES)
                 {   // a person spots a handful of the available words, not all of them — keep a random few
                     for (int i = 0; i < CASUAL_SEES; i++) { int j = Random.Range(i, cands.Count); var tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; }
@@ -183,15 +212,41 @@ namespace WordDrop
                 }
                 else if (!RandomLegalSwap(sim, out a, out b)) break;   // nothing movable at all
                 else res.noWordMoves++;
+                missStreak = cands.Count > 0 ? 0 : missStreak + 1;
 
                 DoSwap(sim, a, b);
                 left--; res.used++;
                 ArmSwapWords(sim, a, b, res);
                 left += ResolveEverything(sim, res);
+                if (res.remainingAtBudget < 0 && res.used - res.goldRefunds >= budget)
+                    res.remainingAtBudget = GoalsDone(sim, scoreLevel, res.points, target) ? 0 : GoalPiecesLeft(sim);   // what the player would see as moves hit 0
             }
             res.won = GoalsDone(sim, scoreLevel, res.points, target);
             res.left = left;
             return res;
+        }
+
+        private static string FiredLabel(int games)
+        {
+            var k = RulesEngine.SimFiredByKind; float g = Mathf.Max(1, games);
+            int combos = 0; for (int i = RulesEngine.SPECIAL_COMBO_CROSS; i <= RulesEngine.SPECIAL_COMBO_DISCO_DISCO; i++) combos += k[i];
+            return $"rocket {(k[RulesEngine.SPECIAL_ROCKET_H] + k[RulesEngine.SPECIAL_ROCKET_V]) / g:F1}  bomb {k[RulesEngine.SPECIAL_BOMB] / g:F1}  disco {k[RulesEngine.SPECIAL_DISCO] / g:F1}  " +
+                   $"TNT {k[RulesEngine.SPECIAL_TNT] / g:F1}  airplane {k[RulesEngine.SPECIAL_AIRPLANE] / g:F1}  combos {combos / g:F1}";
+        }
+        private static string CapLabel => RulesEngine.CASCADE_CAP_ON ? $"ON ({RulesEngine.CASCADE_FREE_PER_MOVE} free fall word/move)" : "OFF";
+
+        private static int GoalPiecesLeft(RulesEngine sim)
+        {
+            int n = 0;
+            foreach (var g in LevelRules.Goals)
+                switch (g.Type)
+                {
+                    case LevelRules.GoalType.Crates: n += sim.CountCrateCells(); break;
+                    case LevelRules.GoalType.Ice:    n += sim.CountFrozenCells(); break;
+                    case LevelRules.GoalType.Theme:  n += Mathf.Max(0, g.Target - LevelRules.ThemeMade); break;
+                    default:                         n += Mathf.Max(0, g.Target - LevelRules.Collected); break;
+                }
+            return n;
         }
 
         private static bool GoalsDone(RulesEngine sim, bool scoreLevel, long points, int target)
@@ -228,6 +283,7 @@ namespace WordDrop
         /// <summary>Exactly TryBoardSwap's data exchange.</summary>
         private static void DoSwap(RulesEngine sim, Vector2Int a, Vector2Int b)
         {
+            RulesEngine.BeginPlayerMove();   // per-move cascade budget, like the game's swap
             var c1 = sim.GetCell(a.x, a.y); var c2 = sim.GetCell(b.x, b.y);
             char l = c1.Letter; c1.Letter = c2.Letter; c2.Letter = l;
             int sk = c1.SpecialKind; c1.SpecialKind = c2.SpecialKind; c2.SpecialKind = sk;
@@ -242,17 +298,20 @@ namespace WordDrop
         {
             var found = sim.ScanSeedCellsPublic(new List<Vector2Int> { a, b });
             if (found == null) return;
+            var armed = new List<RulesWordMatch>();
             foreach (var m in found)
             {
                 if (m == null || m.Cells == null || string.IsNullOrEmpty(m.Word)) continue;
                 string key = m.Word + "|" + m.CellKey;
                 if (sim.IsClaimBlocked(key)) continue;
                 sim.RegisterScoredKey(key);
+                armed.Add(m);
                 int turn = sim.GlobalTurn;
                 sim.PrimedRegistry.AddPrimedWord(m.Word, m.Cells, MatchController.PLAYER_HUMAN, turn, turn + sim.GetFuseLengthPublic(m.Word.Length),
                     RulesEngine.CalculateWordScore(m.Word, m.WildLetterIndices), false, sim.HasHighValueLetter(m));
                 CountWord(res, m.Word, false);
             }
+            RulesEngine.NoteSwapWords(armed);   // airplane, like the game's swap
         }
 
         private static void CountWord(GameResult res, string w, bool cascade)

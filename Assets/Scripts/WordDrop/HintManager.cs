@@ -103,7 +103,50 @@ namespace WordDrop
         /// more think time.</summary>
         public static float SWAP_IDLE_SECONDS = 15f;          // 2026-10-22: 6 -> 15, a SAFETY NET for the stuck, not a move-by-move crutch
         public static float SWAP_OUTLINE_EXTRA_SECONDS = 10f; // free hint: lean only, then the word outline this much later
-        private float IdleThreshold => SurvivalManager.FullBoardActive ? SWAP_IDLE_SECONDS : IDLE_THRESHOLD;
+        private float IdleThreshold => SurvivalManager.FullBoardActive
+            ? (HandManager.NoWordStreak >= FISHING_SWAPS ? FISHING_HINT_SECONDS : _staleNow ? STALE_HINT_SECONDS : SWAP_IDLE_SECONDS)
+            : IDLE_THRESHOLD;
+        /// <summary>FISHING HINT (2026-10-23: Spencer's run — 54% of swaps made no word although the bot measured ~17 common-word
+        /// swaps on every board: the words were THERE, he couldn't see them). After FISHING_SWAPS no-word swaps in a row the
+        /// goal-aware hint shows after FISHING_HINT_SECONDS instead of 15s.</summary>
+        public static int   FISHING_SWAPS = 2;
+        public static float FISHING_HINT_SECONDS = 1.5f;
+
+        // ── STALE BOARD (2026-10-23 Spencer: "when you have a stale board and nothing looks available thats when i feel the fun
+        // trail off"). Once per move, after the board settles: RulesEngine.TryStaleRescue re-letters one plain tile if fewer
+        // than STALE_MIN common-word swaps exist; if the board is STILL stale, the hint comes after STALE_HINT_SECONDS. ──
+        public static float STALE_CHECK_DELAY = 0.6f, STALE_HINT_SECONDS = 4f;
+        private bool _staleChecked, _staleNow;
+        public static int NUDGE_AFTER_MOVES = 3;
+        private int _stuckMoves, _lastPieces = -1;
+        private void StaleCheck()
+        {
+            var rules = RulesEngine.Instance; if (rules == null || !SurvivalManager.FullBoardActive) return;
+            if (rules.TryStaleRescue(out var c, out var L, out int before))
+            {
+                var t = GridManager.Instance != null ? GridManager.Instance.GetTile(c.x, c.y) : null;
+                if (t != null)
+                {
+                    t.SetLetter(L);
+                    t.transform.DOPunchScale(Vector3.one * 0.22f, 0.35f, 6, 0.6f).SetUpdate(true);
+                    GameAudio.Instance?.PlayScoreTick(1.3f);
+                }
+                _hintCache = null;
+                WDLog.Log($"[Stale] board had {before} common-word swap(s) — ({c.x},{c.y}) re-lettered to '{L}'");
+            }
+            // BOOSTER NUDGE (2026-10-23, Spencer OK'd): stuck on the last goal pieces for NUDGE_AFTER_MOVES moves -> the first
+            // unlocked booster with charges pulses (RM pattern; with no charges left it's the moment a purchase makes sense).
+            int pieces = RulesEngine.GoalPiecesLeft();
+            if (pieces > 0 && pieces <= RulesEngine.ENDGAME_PIECES)
+            {
+                if (pieces < _lastPieces || _lastPieces < 0) _stuckMoves = 0; else _stuckMoves++;
+                if (_stuckMoves >= NUDGE_AFTER_MOVES) { BoosterHUDSlot.Instance?.NudgeBooster(); _stuckMoves = 0; }
+            }
+            else _stuckMoves = 0;
+            _lastPieces = pieces;
+            _staleNow = rules.CountCommonWordSwaps() < RulesEngine.STALE_MIN;
+            if (_staleNow) WDLog.Log("[Stale] still stale after the rescue — quick hint");
+        }
 
         public static bool IsEnabled()
         {
@@ -122,6 +165,7 @@ namespace WordDrop
         /// <summary>Call from input handlers — taps, drags, swaps, menu opens.</summary>
         public void ResetIdleTimer()
         {
+            _staleChecked = false;
             _strongHint = false; _hintCache = null;   // a new board state after the player's move = a new hint later
             _idleTime = 0f;
             _nextLoopTime = -1f;
@@ -188,6 +232,8 @@ namespace WordDrop
 
             _idleTime += Time.deltaTime;
 
+            if (!_staleChecked && _idleTime >= STALE_CHECK_DELAY) { _staleChecked = true; StaleCheck(); }
+
             // Time to fire / refresh hint?
             if (_idleTime >= IdleThreshold && Time.unscaledTime >= _nextLoopTime)
             {
@@ -218,6 +264,7 @@ namespace WordDrop
             var sm = SurvivalManager.Instance;
             if (sm == null || !SurvivalManager.IsSurvivalMode) { GateDiag("no survival run"); return false; }
             if (SurvivalManager.AwaitingNextLevel) { GateDiag("level won / awaiting next"); return false; }
+            if (TutorialBeats.BlocksInput) { GateDiag("tutorial beat"); return false; }
             if (sm.IsOverlayPaused) { GateDiag("overlay paused"); return false; }
             if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { GateDiag("map/home on screen"); return false; }
             if (StageClearModal.Instance != null && StageClearModal.Instance.IsVisible) { GateDiag("stage clear modal"); return false; }
@@ -431,6 +478,11 @@ namespace WordDrop
         private readonly List<Sequence> _swapSeqs = new List<Sequence>();
         private readonly List<Vector2Int> _swapCells = new List<Vector2Int>();
         private class SwapHintCache { public Vector2Int A, B; public List<Vector2Int> Cells; }
+        /// <summary>The last hint picked — HandManager logs a MISMATCH if the player makes exactly this swap and no word arms.</summary>
+        /// <summary>A swap hint is animating right now (lean / wiggle loops running). Period-key diag.</summary>
+        public bool IsShowingHint => _swapSeqs.Count > 0;
+        public static Vector2Int LastHintA = new Vector2Int(-1, -1), LastHintB = new Vector2Int(-1, -1);
+        public static string LastHintWord;
         private SwapHintCache _hintCache;   // ONE hint per idle stretch — a random pick must not jump around on every refresh
         private bool _strongHint;
         private void RefreshSwapHint()
@@ -438,10 +490,32 @@ namespace WordDrop
             var rules = RulesEngine.Instance; var grid = GridManager.Instance;
             ClearVisuals();
             if (rules == null || grid == null) return;
+            // RE-CHECK the cached hint against the board as it is NOW (2026-10-23 Spencer: hints that "didnt make a word"). Nothing
+            // told the hint when late pops / refills / flights changed the board, so a hint picked earlier could point at letters
+            // that had moved. If its swap no longer arms a word, pick again.
+            if (_hintCache != null && rules.WordsIfSwapped(_hintCache.A, _hintCache.B).Count == 0)
+            {
+                WDLog.Log($"[Hint] cached hint ({_hintCache.A.x},{_hintCache.A.y})<->({_hintCache.B.x},{_hintCache.B.y}) went stale (board changed) — re-picking");
+                _hintCache = null;
+            }
+            // SWIPE HINT, every other free hint (2026-10-23 Spencer: "maybe i didnt drag to make words cause they werent hinted at
+            // much"). A word already on the board (held cascade words etc.) gets the hand tracing across it + a letter-by-letter
+            // glow — the L2 lesson's gesture — so swiping stays taught after L2. The Spyglass always shows the strongest SWAP.
+            if (_hintCache == null && !_strongHint && SWIPE_HINTS && (_preferSwipeNext || !rules.FindSwapHint(false, out _, out _, out _))
+                && rules.FindSwipeHint(out var swCells, out var swWord))
+            {
+                _preferSwipeNext = false;
+                ShowSwipeHint(grid, swCells, swWord);
+                return;
+            }
             if (_hintCache == null)
             {
+                _preferSwipeNext = true;   // next fresh hint tries a swipe first
                 if (!rules.FindSwapHint(_strongHint, out var fa, out var fb, out var fc)) { WDLog.Log("[Hint] no swap makes a word"); return; }
                 _hintCache = new SwapHintCache { A = fa, B = fb, Cells = fc };
+                var expect = rules.WordsIfSwapped(fa, fb);
+                LastHintA = fa; LastHintB = fb; LastHintWord = expect.Count > 0 ? expect[0].Word : "?";
+                WDLog.Log($"[Hint] picked ({fa.x},{fa.y})<->({fb.x},{fb.y}) expects '{LastHintWord}'");
             }
             var a = _hintCache.A; var b = _hintCache.B; var cells = _hintCache.Cells;
             var ta = grid.GetTile(a.x, a.y); var tb = grid.GetTile(b.x, b.y);
@@ -486,6 +560,7 @@ namespace WordDrop
         /// <summary>No room to slide: tilt toward the partner and back (a wiggle), twice, then pause — same rhythm as the lean.</summary>
         private void WiggleLoop(Tile t, Vector3 home, Vector3 dir)
         {
+            if (!_swapTiles.Contains(t)) _swapTiles.Add(t);   // track the TILE, not its cell (it can fall)
             t.MarkAnimating(LOOP_INTERVAL + 1f);
             t.LiftForFx(LOOP_INTERVAL + 1f);   // draw OVER the neighbour it leans into (2026-10-23 Spencer) — self-restoring
             t.transform.DOKill(); t.transform.position = home; t.transform.localRotation = Quaternion.identity;
@@ -505,6 +580,7 @@ namespace WordDrop
 
         private void NudgeLoop(Tile t, Vector3 home, Vector3 offset)
         {
+            if (!_swapTiles.Contains(t)) _swapTiles.Add(t);   // track the TILE, not its cell (it can fall)
             t.MarkAnimating(LOOP_INTERVAL + 1f);   // keep the position checkers off it while it leans
             t.LiftForFx(LOOP_INTERVAL + 1f);       // ...and draw it OVER the neighbour it leans into (2026-10-23) — self-restoring
             t.transform.DOKill(); t.transform.position = home;
@@ -518,10 +594,53 @@ namespace WordDrop
             seq.SetLoops(-1);
             _swapSeqs.Add(seq);
         }
+        public static bool SWIPE_HINTS = true;
+        public static Color SWIPE_HINT_GLOW = new Color(1.3f, 1.35f, 1.45f, 1f);
+        private bool _preferSwipeNext;
+        private void ShowSwipeHint(GridManager grid, List<Vector2Int> cells, string word)
+        {
+            if (cells == null || cells.Count < 2) return;
+            _activeStage = 1;
+            // letters light up one after another along the word, hold, go dark — looped
+            var seq = DOTween.Sequence().SetUpdate(true);
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var t = grid.GetTile(cells[i].x, cells[i].y); if (t == null) continue;
+                if (!_swapTiles.Contains(t)) _swapTiles.Add(t);
+                var tt = t;
+                // A WHITE GLOW, never the gold "real word" face (2026-10-23 Spencer: "some letters were glitching out and turning into gems
+                // and then back" — that gold face reads as a GEM). Soft bloom ripple along the word + a small punch; the face never changes.
+                seq.InsertCallback(0.25f + i * 0.09f, () => { if (tt != null && !tt.HasPrimedGlow) { tt.SetBloomGlow(SWIPE_HINT_GLOW, 0.55f, forceDesktop: true); tt.transform.DOPunchScale(Vector3.one * 0.08f, 0.2f, 4, 0.5f).SetUpdate(true); } });
+                seq.InsertCallback(0.25f + cells.Count * 0.09f + 0.7f, () => { if (tt != null && !tt.HasPrimedGlow) tt.ClearBloomGlow(); });
+            }
+            seq.AppendInterval(1.2f);
+            seq.SetLoops(-1);
+            _swapSeqs.Add(seq);
+            TutorialOverlay.Ensure().ShowHandTrace(cells[0], cells[cells.Count - 1], 0.18f * cells.Count);
+            LastHintA = cells[0]; LastHintB = cells[cells.Count - 1]; LastHintWord = word;
+            WDLog.Log($"[Hint] SWIPE '{word}' ({cells[0].x},{cells[0].y})->({cells[cells.Count - 1].x},{cells[cells.Count - 1].y})");
+        }
+
+        private readonly List<Tile> _swapTiles = new List<Tile>();
         private void ClearSwapVisuals()
         {
+            TutorialOverlay.Instance?.HideHandTrace();
+            foreach (var st in _swapTiles) if (st != null && !st.HasPrimedGlow) st.ClearBloomGlow();
             foreach (var s in _swapSeqs) if (s != null && s.IsActive()) s.Kill();
             _swapSeqs.Clear();
+            // THE HINTED TILES THEMSELVES (2026-10-23 — "a pop happened and then a long delay before another word popped", x3).
+            // Cleanup went by cell: a hinted tile that had FALLEN kept its lean, its lift and its 4.5s MarkAnimating claim, and
+            // the next gravity wait sat on that claim (falls of 1.8s and 3.2s). Release the claim on the real tiles.
+            foreach (var ht in _swapTiles)
+            {
+                if (ht == null) continue;
+                ht.ReleaseAnimatingClaim();
+                ht.transform.localRotation = Quaternion.identity;
+                ht.EndFxLift();
+                if (!ht.IsFalling && GridManager.Instance != null && ht.Col >= 0 && ht.Row >= 0)
+                    ht.transform.position = GridManager.Instance.CellToWorld(ht.Col, ht.Row) + new Vector3(GridManager.Instance.BoardSlideOffsetX, 0f, 0f);
+            }
+            _swapTiles.Clear();
             var grid = GridManager.Instance;
             if (grid != null)
             {

@@ -82,7 +82,10 @@ namespace WordDrop
         private const float SURVIVAL_GRID_WIDTH_FRACTION  = 0.882f;  // was 0.84 — +5% breathing room
         private const float DEFAULT_GRID_WIDTH_FRACTION   = 0.819f;  // was 0.78 — +5% breathing room
         private const float SURVIVAL_GRID_TOP_MARGIN      = 0.30f; // push grid down — more room above for HUD, thumb-friendly
-        private const float GRAVITY_FALL_SPEED            = 14f; // was 10 originally — slightly faster
+        private const float GRAVITY_FALL_SPEED            = 14f; // was 10 originally — slightly faster (world units/s, tuned on the 9-wide board)
+        // FALLS ARE TIMED IN CELLS (2026-10-23, 7x9 board): 14 world units/s was tuned for ~0.96-unit cells; the 7-wide board's
+        // cells are ~29% bigger, so every fall took ~29% longer (log: a refill fall ran 1.75s). Same CELLS per second either board.
+        private float FallSpeed => GRAVITY_FALL_SPEED * (CellSize > 0.01f ? CellSize / 0.96f : 1f);
 
         // Board: deep indigo hero object — darker and cooler than background
         // 2026-05-30 candy-bright pivot: board panel is now Candy-Crush-style
@@ -300,6 +303,7 @@ namespace WordDrop
             // one tile with its letters blended. CheckoutTile already knows col/row, so it can
             // guarantee a sane position; callers that set their own just overwrite this.
             tile.transform.position = CellToWorld(col, row);
+            tile.MarkBorn();   // [GemBorn] diag: a gem on a tile older than its spawn = a plain tile converted
 
             // A level entry was requested before the grid existed — run it now, before this
             // tile (and every tile after it) is placed. 2026-09-10 Spencer.
@@ -343,9 +347,65 @@ namespace WordDrop
         /// carrying its flag, so this is a no-op for it. Every correction is LOGGED: if a line
         /// keeps appearing, something upstream is still desyncing and the real fix belongs
         /// there — this is a safety net, not a licence to skip carrying state properly.</summary>
+        // ── GRASS VISUALS (2026-10-23; mowing since the same day). A green patch per grass square UNDER the tiles (shows round the tile edges) plus a small leaf
+        // (Spencer's pack, 2leaf) in the tile's corner so a covered square is readable even under a full tile. Patches belong to
+        // the board (children of the grid root — they slide with it), not to tiles. Synced from RulesEngine whenever visuals reconcile. ──
+        public static Color GRASS_COLOR = new Color(0.36f, 0.72f, 0.24f, 1f);
+        public static float GRASS_LEAF_SIZE = 0.34f;   // cells
+        private GameObject[,] _grassPatch, _grassLeaf;
+        private static Sprite s_grassPatch, s_grassLeaf;
+        public void SyncGrass(RulesEngine rules)
+        {
+            if (rules == null || _gridRoot == null) return;
+            if (_grassPatch == null || _grassPatch.GetLength(0) != COLS || _grassPatch.GetLength(1) != ROWS) { _grassPatch = new GameObject[COLS, ROWS]; _grassLeaf = new GameObject[COLS, ROWS]; }
+            if (s_grassPatch == null) s_grassPatch = TileRenderer.CreateSolidRoundedRect(128, 128, 26, Color.white);
+            if (s_grassLeaf == null) { var tex = Resources.Load<Texture2D>("Boosters/2leaf"); if (tex != null) s_grassLeaf = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width); }
+            for (int x = 0; x < COLS; x++)
+                for (int y = 0; y < ROWS; y++)
+                {
+                    bool want = rules.HasGrass(x, y);
+                    var go = _grassPatch[x, y];
+                    if (!want)
+                    {   // MOWED: the patch shrinks away and the leaf flips up and fades (a little "mow" beat)
+                        if (go != null) { var g0 = go; g0.transform.DOKill(); g0.transform.DOScale(Vector3.zero, 0.22f).SetEase(Ease.InBack).OnComplete(() => { if (g0 != null) Destroy(g0); }); _grassPatch[x, y] = null; }
+                        var lf = _grassLeaf[x, y];
+                        if (lf != null)
+                        {
+                            _grassLeaf[x, y] = null; lf.transform.DOKill();
+                            lf.transform.DOMove(lf.transform.position + new Vector3(Random.Range(-0.3f, 0.3f), 0.7f, 0f) * CellSize, 0.4f).SetEase(Ease.OutQuad);
+                            lf.transform.DORotate(new Vector3(0f, 0f, Random.Range(-160f, 160f)), 0.4f, RotateMode.FastBeyond360);
+                            var lsr = lf.GetComponent<SpriteRenderer>(); if (lsr != null) lsr.DOFade(0f, 0.4f);
+                            DOVirtual.DelayedCall(0.45f, () => { if (lf != null) Destroy(lf); });
+                        }
+                        continue;
+                    }
+                    Vector3 at = CellToWorld(x, y);
+                    if (go == null)
+                    {
+                        go = new GameObject($"Grass_{x}_{y}"); go.transform.SetParent(_gridRoot.transform, true);
+                        var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = s_grassPatch; sr.color = GRASS_COLOR; sr.sortingOrder = 2;   // grid 1 < GRASS 2 < tiles 5
+                        float w = CellSize * 1.02f, h = RowPitch * 1.02f;
+                        go.transform.localScale = new Vector3(w / s_grassPatch.bounds.size.x, h / s_grassPatch.bounds.size.y, 1f);
+                        go.transform.position = new Vector3(at.x + BoardSlideOffsetX, at.y, 0.05f);
+                        go.transform.DOKill(); var s0 = go.transform.localScale; go.transform.localScale = s0 * 0.4f; go.transform.DOScale(s0, 0.3f).SetEase(Ease.OutBack, 2f);
+                        _grassPatch[x, y] = go;
+                        if (s_grassLeaf != null)
+                        {
+                            var lg = new GameObject($"GrassLeaf_{x}_{y}"); lg.transform.SetParent(_gridRoot.transform, true);
+                            var lsr = lg.AddComponent<SpriteRenderer>(); lsr.sprite = s_grassLeaf; lsr.sortingOrder = 46;   // over the tiles (row bands top out ~37), under board FX (48)
+                            lg.transform.localScale = Vector3.one * CellSize * GRASS_LEAF_SIZE;
+                            lg.transform.position = new Vector3(at.x + BoardSlideOffsetX - CellSize * 0.32f, at.y - RowPitch * 0.30f, -0.5f);
+                            lg.transform.localRotation = Quaternion.Euler(0f, 0f, 20f);
+                            _grassLeaf[x, y] = lg;
+                        }
+                    }
+                }
+        }
+
         public void ReconcileSpecialVisuals(RulesEngine rules)
         {
             if (rules == null) return;
+            SyncGrass(rules);
             int fixes = 0;
             for (int col = 0; col < RulesEngine.COLS; col++)
             for (int row = 0; row < RulesEngine.ROWS; row++)
@@ -370,6 +430,14 @@ namespace WordDrop
                     Debug.LogWarning($"[IceRepair] ({col},{row}) '{t.Letter}' was flagged frozen with no " +
                                      "visible frost — overlay re-asserted. If this keeps printing, something " +
                                      "upstream is interrupting the defrost without releasing it.");
+                }
+                // THE PIXELS, for faces too (2026-10-23: gem/gold faces appeared on plain letters right after a fall — on cells where
+                // gems had just been collected). Flags agreed, so nothing above caught it. TEMP-ish: the log line names the culprit.
+                if (t.FaceIsStale(out string showing))
+                {
+                    WDLog.Log($"[StateSync] ({col},{row}) '{t.Letter}' FACE stale: showing '{showing}' (gem data={c.HasGem}, tile gem={t.IsGem}, " +
+                              $"gold={t.IsRainGold}, special={t.SpecialKind}) → resting face");
+                    t.ForceRestingFace(); fixes++;
                 }
                 if (t.IsStone      != c.IsStone)      { t.SetStoneVisual(c.IsStone);          fixes++; Report(col,row,t,"stone",    c.IsStone); }
                 if (t.IsAnchored   != c.IsAnchored)   { t.SetAnchored(c.IsAnchored);
@@ -603,8 +671,17 @@ namespace WordDrop
         {
             _boardSlideOffsetX = dx;
             for (int i = 0; i < _boardEntryTfs.Count; i++)
-                if (_boardEntryTfs[i] != null)
-                    _boardEntryTfs[i].position = _boardEntryRests[i] + new Vector3(dx, 0f, 0f);
+            {
+                var tf = _boardEntryTfs[i]; if (tf == null) continue;
+                // TILES go to THEIR CELL, never to a remembered position (2026-10-23: "there was an error just now when loading
+                // the board" — the park was snapshotted while the board was still settling, and columns slid in one cell high:
+                // "[Invariant] MISPLACED (7,6) 'P' — 1.0 cells from its own cell"). A tile's rest is CellToWorld(col,row), which
+                // stays right however late or early the park happened. Frame / grid / root keep their snapshot.
+                var tile = tf.GetComponent<Tile>();
+                Vector3 rest = _boardEntryRests[i];
+                if (tile != null && tile.Col >= 0 && tile.Row >= 0) { var cw = CellToWorld(tile.Col, tile.Row); rest = new Vector3(cw.x, cw.y, rest.z); }
+                tf.position = rest + new Vector3(dx, 0f, 0f);
+            }
         }
 
         /// <summary>Level-entry UNIFIED slide: t=1 → parked off the right edge, t=0 → rest, t&lt;0 → overshoot left.
@@ -2375,7 +2452,7 @@ namespace WordDrop
                     {
                         float fallDuration = levelUniform
                             ? UNIFORM_FALL_DURATION
-                            : dist / GRAVITY_FALL_SPEED;
+                            : dist / FallSpeed;
                         float colDelay = levelUniform ? 0f : col * STAGGER_PER_COL;
                         tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
                         animatingTiles.Add(tile);
@@ -2405,7 +2482,9 @@ namespace WordDrop
                     anyAnimating = false;
                     for (int i = 0; i < animatingTiles.Count; i++)
                     {
-                        if (animatingTiles[i] != null && animatingTiles[i].IsAnimating)
+                        // FALLING, not "animating" (2026-10-23): IsAnimating includes external FX claims (the hint claimed 4.5s),
+                        // and a fall waited on them. Only the fall itself decides when gravity is done.
+                        if (animatingTiles[i] != null && animatingTiles[i].IsFalling)
                         {
                             anyAnimating = true;
                             break;
@@ -2463,9 +2542,13 @@ namespace WordDrop
                     Vector3 start  = CellToWorld(col, row + newCount); start.z = target.z;
                     tile.transform.position = start;
                     if (d.IsRainGold) { tile.SetRainGold(true); anyGold = true; }
-                    if (d.HasGem) tile.SetGem(true);
+                    // ALWAYS set the gem state, both ways (2026-10-23: "a bunch of letters just turned into gems" — a whole refilled
+                    // row arrived gold). Recycled tiles can carry the gold face of a gem-armed word; SetGem(false) re-applies the
+                    // plain resting face. Was: only SetGem(true) for gems, so a leftover face was never cleared.
+                    tile.SetGem(d.HasGem);
+                    if (!d.IsRainGold) tile.ForceRestingFace();   // SetGem is a no-op when the flag already matches — the stale FACE is the bug
                     if (d.IsDropTarget) tile.SetDropTargetVisual(true);   // duck (2026-10-22)
-                    tile.AnimateGravityFall(target, Vector3.Distance(start, target) / GRAVITY_FALL_SPEED, col * STAGGER_PER_COL);
+                    tile.AnimateGravityFall(target, Vector3.Distance(start, target) / FallSpeed, col * STAGGER_PER_COL);
                     if (REFILL_CLIP) StartCoroutine(ClipWhileFalling(tile));   // hidden above the board, clipped at the rim
                     animating?.Add(tile);
                     spawned++;
@@ -2668,7 +2751,7 @@ namespace WordDrop
 
                 if (dist > 0.02f)
                 {
-                    float fallDuration = dist / GRAVITY_FALL_SPEED;
+                    float fallDuration = dist / FallSpeed;
                     float colDelay = toCol * STAGGER_PER_COL;
                     tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
                     animatingTiles.Add(tile);

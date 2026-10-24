@@ -46,6 +46,13 @@ namespace WordDrop
         public int    Ducks;          // FULL BOARD only: "Bring N ducks down" goal (2026-10-22)
         public string Theme;          // FULL BOARD only: "Make N <theme> words" goal — Resources/themes/<Theme>.txt (2026-10-22)
         public int    ThemeCount;
+        public int    Moves;          // move budget for this level; 0 = the old MovesFor formula (2026-10-23 curve rebuild)
+        public bool   Bonus;          // no-fail coin level (Royal Match L20) — 2026-10-23
+        public string Teach;          // the one new thing this level introduces (tutorial beat key; see TutorialBeats) — 2026-10-23
+        public string CrateLayout, IceLayout;
+        public int    Grass, GrassSeeds; public string GrassLayout;   // squares of grass to MOW + their starting pattern (GrassSeeds unused since the flip) — 2026-10-23   // designed starting arrangement (RulesEngine.LayoutCells) — 2026-10-23 "bland and repetitive"
+        public static bool HasGrassGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Grass) return true; return false; } }
+        public static bool HasCrateGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Crates) return true; return false; } }
         public static bool HasGemGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Gems) return true; return false; } }
         /// <summary>How many more gems the board should carry right now: up to GEM_MIN_ON_BOARD, but never more than the goal
         /// still needs (gems already on the board count toward it).</summary>
@@ -55,7 +62,15 @@ namespace WordDrop
                 if (g.Type == GoalType.Gems)
                 {
                     int stillNeeded = g.Target - Collected;
-                    return Mathf.Max(0, Mathf.Min(RulesEngine.GEM_MIN_ON_BOARD, stillNeeded) - onBoard);
+                    if (stillNeeded <= 0) return 0;
+                    // SPARES (2026-10-23 Spencer: "this is when it gets a bit boring. when you see you need to make a lot of moves just
+                    // to make the last couple words to clear the objective"). It kept exactly what was still needed (2 left = 2 on the
+                    // board, wherever they fell), so the end was a hunt. Royal Match's board is FULL of the goal colour — the last
+                    // pieces are a choice. Keep GEM_SPARES extra on the board.
+                    // FIXED same day: it was max(4, needed + 3) — an 8-gem level wanted 11 on the board and the first refill turned a
+                    // pile of letters into gems (Spencer: "a bunch of letters just turned into gems"). Intended rule: the board holds
+                    // GEM_MIN_ON_BOARD gems the whole time the goal is open, so the LAST few are still a choice of 4.
+                    return Mathf.Max(0, Mathf.Min(RulesEngine.GEM_MIN_ON_BOARD, stillNeeded + RulesEngine.GEM_SPARES) - onBoard);
                 }
             return 0;
         }
@@ -63,7 +78,7 @@ namespace WordDrop
         // ── LEVEL GOALS (2026-10-21 Spencer: "the objectives levels seem funner"). A level has one or two goals; it is won
         // when ALL are done (score then only feeds coins / the bonus). Goals belong to GoalsStage — the clear check re-runs
         // on the NEXT stage before it installs (the L2 -> L34 runaway), so a goal only counts on its own stage. ──
-        public enum GoalType { Crates, Collect, Ice, Gems, Theme, Ducks }
+        public enum GoalType { Crates, Collect, Ice, Gems, Theme, Ducks, Grass }
         public class LevelGoal { public GoalType Type; public char Letter; public int Target; public string Theme; }
 
         // ── THEME WORDS (2026-10-22 Spencer: "sure" to theme words as the next goal) ───────────────────────────────
@@ -117,7 +132,7 @@ namespace WordDrop
             RulesEngine.BranchPriming   = r.BranchPriming;
             RulesEngine.GoldTilesEnabled = r.GoldTiles;
             RulesEngine.ShortWordCells = null; RulesEngine.LastSwapCells = null; RulesEngine.RefillGoldPending = 0;
-            Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; GoalsStage = internalStage; CrateGoal = 0; CrateGoalStage = internalStage;
+            Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; GoalsStage = internalStage; CrateGoal = 0; CrateGoalStage = internalStage; BonusLevelActive = r.Bonus;
             ThemeMade = 0; ThemeAwaitingFly = 0; PendingThemeWords.Clear(); s_themeWords.Clear(); RulesEngine.ThemePlantPool = null;
             if (!string.IsNullOrEmpty(r.Theme) && r.ThemeCount > 0)
             {
@@ -134,7 +149,10 @@ namespace WordDrop
             var keep = new System.Collections.Generic.HashSet<Vector2Int>();
             for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++) if (before[x, y] != after[x, y]) keep.Add(new Vector2Int(x, y));
             sim.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
+            RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
             int crates = r.Crates > 0 ? sim.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
+            if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = sim.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
+            else sim.ClearGrass();
             sim.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
             if (r.Gems > 0) sim.PlaceGems(Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2), keep);
             if (r.Ducks > 0) sim.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep);
@@ -208,8 +226,26 @@ namespace WordDrop
             return list;
         }
         /// <summary>Called for every popped word. Counts theme words and shows "ANIMAL!" over the word.</summary>
+        // BONUS LEVEL (2026-10-23, Spencer: "bonus level now"; Royal Match L20). No goals, no fail: every popped word pays
+        // BONUS_COINS_PER_LETTER per letter into the HUD's REWARD panel; the level clears when the moves run out.
+        public static bool BonusLevelActive;
+        public static int  BONUS_COINS_PER_LETTER = 1;
+        private static void PayBonusWord(string word, System.Collections.Generic.List<Vector2Int> cells)
+        {
+            int coins = word.Length * BONUS_COINS_PER_LETTER;
+            CoinWallet.Add(coins);
+            SurvivalManager.PendingBonusCoins += coins;
+            LevelMapPanel.Instance?.AddPendingCoinReward(coins);
+            var gm = GridManager.Instance; var hud = HUDManager.Instance;
+            if (gm == null || hud == null || cells == null) return;
+            var starts = new System.Collections.Generic.List<Vector3>();
+            foreach (var c in cells) starts.Add(gm.CellToWorld(c.x, c.y) + new Vector3(gm.BoardSlideOffsetX, 0f, -0.3f));
+            hud.SpawnBonusCoins(starts, coins);
+        }
+
         public static void OnWordPopped(string word, System.Collections.Generic.List<Vector2Int> cells)
         {
+            if (BonusLevelActive && !RulesEngine.Simulating && !string.IsNullOrEmpty(word)) PayBonusWord(word, cells);
             if (string.IsNullOrEmpty(word) || s_themeWords.Count == 0) return;
             string theme = ActiveTheme;
             if (theme == null) return;
@@ -244,8 +280,10 @@ namespace WordDrop
         public static bool GoalsActiveFor(int stage) => Goals.Count > 0 && GoalsStage == stage && SurvivalManager.FullBoardActive;
         public static int GoalProgress(LevelGoal g)
         {
-            if (g.Type == GoalType.Crates) return RulesEngine.Instance != null ? Mathf.Clamp(g.Target - RulesEngine.Instance.CountCrateCells(), 0, g.Target) : 0;
-            if (g.Type == GoalType.Ice)    return RulesEngine.Instance != null ? Mathf.Clamp(g.Target - RulesEngine.Instance.CountFrozenCells(), 0, g.Target) : 0;
+            var re = RulesEngine.Current;   // the board being played — the bot's while it simulates (was always the live one)
+            if (g.Type == GoalType.Crates) return re != null ? Mathf.Clamp(g.Target - re.CountCrateCells(), 0, g.Target) : 0;
+            if (g.Type == GoalType.Ice)    return re != null ? Mathf.Clamp(g.Target - re.CountFrozenCells(), 0, g.Target) : 0;
+            if (g.Type == GoalType.Grass)  return re != null ? Mathf.Clamp(g.Target - re.CountGrass(), 0, g.Target) : 0;   // mowed
             if (g.Type == GoalType.Theme)  return Mathf.Min(ThemeMade, g.Target);
             return Mathf.Min(Collected, g.Target);   // Collect + Gems share the Collected counter (one per level)
         }
@@ -277,15 +315,17 @@ namespace WordDrop
         public static bool CrateGoalFor(int stage) => CrateGoal > 0 && CrateGoalStage == stage && SurvivalManager.FullBoardActive;
         private static LevelRules Make(string name, int ice = 0, int minLen = 3, int cadence = 2,
                                        bool branch = false, bool fuse = false, bool gold = false,
-                                       int fillRows = 5, float density = 0.92f, int crates = 0, char collect = '\0', int collectN = 0, int gems = 0, string theme = null, int themeN = 0, int ducks = 0)
+                                       int fillRows = 5, float density = 0.92f, int crates = 0, char collect = '\0', int collectN = 0, int gems = 0, string theme = null, int themeN = 0, int ducks = 0,
+                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null)
             => new LevelRules {
                 Name = name, IceCount = ice, MinWordLength = minLen, RiseCadence = cadence,
                 BranchPriming = branch, FuseOn = fuse, GoldTiles = gold,
-                FillRows = fillRows, Density = density, Crates = crates, CollectLetter = collect, CollectCount = collectN, Gems = gems, Theme = theme, ThemeCount = themeN, Ducks = ducks };
+                FillRows = fillRows, Density = density, Crates = crates, CollectLetter = collect, CollectCount = collectN, Gems = gems, Theme = theme, ThemeCount = themeN, Ducks = ducks,
+                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout };
 
         /// <summary>The authored opening. One named twist per stage — that is what makes a level
         /// feel designed instead of a number going up. Keep each stage to ONE new idea.</summary>
-        private static readonly LevelRules[] TABLE = {
+        private static readonly LevelRules[] TABLE_OLD = {
             /* 1  */ Make("Welcome",      cadence:3, fillRows:4, density:0.90f, crates:6),   // 2026-10-21 Spencer: "start off with the crate level" (x2 on the full board = 12)
             /* 2  */ Make("Warm Up",      fillRows:4, density:0.92f, gems:10),   // 2026-10-22: first GEM level (was collect 15 E)
             /* 3  */ Make("Animal Kingdom", themeN:3, theme:"animals"),   // 2026-10-22: first THEME level (inserted; later rows shift down one)
@@ -303,6 +343,52 @@ namespace WordDrop
             /* 13 */ Make("Hard Water",   ice:10, fuse:true),
             /* 14 */ Make("Scarcity — 4+ Letters",     minLen:4, cadence:2, crates:16),
             /* 15 */ Make("Crucible — 4+ Letters",     minLen:4, fuse:true, cadence:1),  // BOSS
+        };
+
+        // ── LEVEL CURVE 2026-10-23 (level design delegated to Claude; Royal Match L1-20 pacing from Spencer's recording —
+        // memory reference_royal_match_levels_1_20). L1-5: no blockers, one power-up taught per level. Then a new blocker about
+        // every 4 levels with variations, then mixes; first TIGHT stretch L17-19; L20 = no-fail bonus. crates:N places 2N
+        // (FULL_CRATE_MULT). Moves from the two-bot run of 10-23 09:53 (casual p50/p90: crates12 9/17, crates24 15/22,
+        // crates28 18/27, gems10 17/30, gems12 20/31, ice8 17/26, ice12 23/41, theme3 6/11, ducks4 38/57) — RETUNE WITH THE BOT.
+        // Ducks are slow (casual 15% at 25 moves) — kept out of 1-20. NEW_CURVE=false restores TABLE_OLD. ──
+        public static bool NEW_CURVE = true;
+        private static LevelRules[] TABLE => NEW_CURVE ? TABLE_NEW : TABLE_OLD;
+        private static readonly LevelRules[] TABLE_NEW = {
+            // MOVES re-tuned 2026-10-23 from bot run 12:43 (20 games/bot): casual p95 for tutorial/teach levels (target >=98% casual),
+            // ~90% for onboarding, L17-19 left as the spike (casual 75-80%), L18 eased 65%->~75% so no two <70% levels sit together.
+            // Pass 5c (Spencer's 2nd L1-20 run: spike didn't bite — L17 15/26, L19 14/28 with a win streak): L17 26 -> 22, L19 28 -> 24
+            // (casual ~35-45%; RM's spike = the first 'Play On?' moments). L18 stays the breather.
+            // Pass 5b (18:53 run, goal-progress bug fixed — expert 95-100%): ice L9-12 -> 24 (88-93%, ~50% left now ice is off the
+            // edges), L7 26 (90%), L6 28 (73%), L14 20 (68%), L16 28 (70%, teaches boosters), L17 26 (45% -> ~55%).
+            // Pass 5 (Spencer played L1-20 on 7x9: cleared all, no losses, avg ~55% moves left on L6-16 and 19-47% on the L17-19
+            // spike vs Royal Match's 20-50% / 0-5% — "theres just way too many moves on most levels"). Moves cut ~20-30%: L1-5 at
+            // casual-bot p80, L6-11 p70, L12-16 p65, L17/L19 p50, L18 p70 (17:57 run). Lands in RM's 20-30 move range.
+            // Pass 4 (17:57 run, 7x9 board — crates/ice already x63/99 in ScaleForBoard): L1-5 tightened to casual p95 (were 93-100%
+            // with 50-58% left), L6-12 loosened (65-80%), L7/12/15/16/19 goal trims, ice spawns off the edges (ICE_AVOID_EDGES).
+            // Pass 3 (15:20 run — FIRST human-calibrated: casual wastes 50% of moves, sees common words only, fishing hint + endgame
+            // rescue on): goal COUNTS cut to each level's casual p85-p90 so budgets stay 26-34; L2 / L8 single goal (RM mixes kinds from L12).
+            // Pass 2 (12:56 run, 40 games/bot): L5 20->22 (teach level at 90%), L10 38->32 (overshot: 100%, 57% left), L19 30->28 (93% — the
+            // Gauntlet should bite). Curve now: L1-16 casual 93-98%, L17 the first hard (70%, 28% near-miss), L18 relief 90%, L19 ~85%.
+            /* 1  */ Make("First Gems",     gems:6,               moves:20, teach:"swap"),      // RM L1 "collect 12 red" -> yellow gems
+            /* 2  */ Make("Gem Swipe",      gems:7,               moves:20, teach:"swipe"),     // ONE goal: RM mixes goal KINDS only from L12 (Spencer 10-23); teaches SWIPE
+            /* 3  */ Make("Rocket",         crates:6,             moves:18, teach:"rocket", crateLayout:"band"),    // 5-letter word
+            /* 4  */ Make("Bomb",           gems:8,               moves:20, teach:"bomb"),      // crossing words
+            /* 5  */ Make("Disco",          crates:6,             moves:20, teach:"disco", crateLayout:"corners"),     // 6+ letter word
+            /* 6  */ Make("Crate Yard",     crates:11,            moves:28, teach:"crates", crateLayout:"wall"),    // FIRST BLOCKER, big count (RM L6: 48 boxes)
+            /* 7  */ Make("Stacked",        crates:11,            moves:26, crateLayout:"columns"),
+            /* 8  */ Make("Crate Run",      crates:12,            moves:28, teach:"airplane", crateLayout:"pyramid"),  // ONE goal (was crates + gems); airplane flies to a crate
+            /* 9  */ Make("Ice Breaker",    ice:6, iceLayout:"center", moves:24, teach:"ice"),       // SECOND BLOCKER (grass tried here 10-23: "lame ... boring and it looks bad" — tiles hide the lawn; code kept, GRASS_ON)
+            /* 10 */ Make("Cold Snap",      ice:7, iceLayout:"cross", moves:24),
+            /* 11 */ Make("Deep Freeze",    ice:8, iceLayout:"diagonal", moves:24),
+            /* 12 */ Make("Frozen Crates",  crates:5, ice:4,      moves:24, crateLayout:"ring", iceLayout:"center"),                    // FIRST goal MIX (RM: L12)
+            /* 13 */ Make("Gem Mine",       gems:6, crates:4,     moves:22, crateLayout:"diamond"),                    // was "Animal Kingdom" (theme) — Spencer 10-23: "the animal words idea isnt fun"; theme goals = vocabulary luck. Stone (2-hit crate) planned here
+            /* 14 */ Make("Crate & Ice",    crates:5, ice:4, crateLayout:"pyramid", iceLayout:"line", moves:22),
+            /* 15 */ Make("Triple",         crates:5, ice:4, gems:5, moves:26, crateLayout:"corners", iceLayout:"cross"),                 // first THREE-goal level
+            /* 16 */ Make("Gearing Up",     crates:6, ice:6,      moves:28, teach:"boosters", crateLayout:"columns", iceLayout:"center"),  // RM L16: booster pick before play
+            /* 17 */ Make("The Squeeze",    crates:10, ice:5,     moves:22, crateLayout:"wall", iceLayout:"diagonal"),                    // FIRST TIGHT (RM: won with 1 move) — target ~60%
+            /* 18 */ Make("Cold Hands",     ice:7, gems:6,        moves:24, iceLayout:"cross"),                    // relief-ish ~80%
+            /* 19 */ Make("Gauntlet",       crates:7, ice:6, gems:6, moves:24, crateLayout:"ring", iceLayout:"center"),                 // tightest ~65% (RM: won on the last move)
+            /* 20 */ Make("Bonus Level",    bonus:true,           moves:20, teach:"bonus"),     // no fail, coins everywhere
         };
 
         /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
@@ -335,7 +421,7 @@ namespace WordDrop
         // be the challenge, not the penalties stacked on it: such levels rise one move slower and get extra moves.
         public const int MIN4_EXTRA_MOVES = 4;
         public const int MIN4_EXTRA_CADENCE = 1;
-        public static int MovesForRules(int stage, LevelRules r) => MovesFor(stage) + (r.MinWordLength >= 4 ? MIN4_EXTRA_MOVES : 0);
+        public static int MovesForRules(int stage, LevelRules r) => r.Moves > 0 ? r.Moves : MovesFor(stage) + (r.MinWordLength >= 4 ? MIN4_EXTRA_MOVES : 0);
         public static int CadenceForRules(LevelRules r) => Mathf.Max(1, r.RiseCadence) + (r.MinWordLength >= 4 ? MIN4_EXTRA_CADENCE : 0);
 
         /// <summary>Cap on fresh-board fill density. 2026-10-20: at 0.90-0.96 the opening board was packed with
@@ -348,10 +434,22 @@ namespace WordDrop
         /// per-level tuning comes after we know whether it is fun.</summary>
         public static int  BlastsPerLevel = 5;
 
+        /// <summary>SMALL BOARD (2026-10-23): blocker counts were tuned on 99 cells — on 7x9's 63 the same crates would be over a
+        /// third of the board. Crates and ice scale by the cell ratio (63/99); gems / theme / ducks are about words, not area,
+        /// and keep their counts. Moves get re-tuned from the bot.</summary>
+        public static float SMALL_BOARD_BLOCKER_SCALE = 63f / 99f;
+        private static LevelRules ScaleForBoard(LevelRules r)
+        {
+            if (!RulesEngine.SMALL_BOARD) return r;
+            if (r.Crates > 0) r.Crates = Mathf.Max(1, Mathf.RoundToInt(r.Crates * SMALL_BOARD_BLOCKER_SCALE));
+            if (r.IceCount > 0) r.IceCount = Mathf.Max(1, Mathf.RoundToInt(r.IceCount * SMALL_BOARD_BLOCKER_SCALE));
+            return r;
+        }
+
         public static LevelRules For(int stage)
         {
             if (stage < 1) stage = 1;
-            if (stage <= TABLE.Length) return TABLE[stage - 1];
+            if (stage <= TABLE.Length) return ScaleForBoard(TABLE[stage - 1]);
 
             // Past the table: repeat the 5-beat shape with counts climbing. slot 4 = boss,
             // slot 0 = the valley right after it. Peaks AND valleys both trend up.
@@ -440,6 +538,7 @@ namespace WordDrop
             void Add(GoalType t, int planned, char l = '\0') { if (planned > 0) list.Add(new GoalIconInfo { Type = t, Count = GoalCountFor(internalStage, t, planned), Letter = l }); }
             Add(GoalType.Crates, r.Crates > 0 ? Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT) : 0);
             Add(GoalType.Ice, r.IceCount);
+            Add(GoalType.Grass, r.Grass);
             Add(GoalType.Gems, r.Gems);
             Add(GoalType.Ducks, r.Ducks);
             Add(GoalType.Theme, !string.IsNullOrEmpty(r.Theme) ? r.ThemeCount : 0);
@@ -458,6 +557,8 @@ namespace WordDrop
         {
             var sb = new System.Text.StringBuilder();
             int moves = MovesForRules(stage, r);
+            if (r.Bonus)   // BONUS LEVEL (2026-10-23): nothing to lose, just coins
+                return $"<b>Bonus Level!</b>\nYou can't lose this one. Every word you make in <b>{moves} moves</b> pays coins.";
             // Real counts once the level is installed (ice can place fewer than asked); planned counts before that.
             int GoalCount(GoalType t, int planned) => GoalCountFor(internalStage, t, planned);
             int crates = r.Crates > 0 ? GoalCount(GoalType.Crates, Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT)) : 0;
@@ -471,6 +572,9 @@ namespace WordDrop
 
             var goals = new System.Collections.Generic.List<string>();
             var how   = new System.Collections.Generic.List<string>();
+            int grassN = r.Grass > 0 ? GoalCount(GoalType.Grass, r.Grass) : 0;
+            if (grassN > 0)  { goals.Add($"Mow <b>{grassN} grass</b>");
+                               how.Add("<b>Grass</b> is mowed when a letter on it pops — words, rockets and bombs all mow it."); }
             if (crates > 0)  { goals.Add($"Break <b>{crates} crates</b>");
                                how.Add("<b>Crates</b> break when you make a word right next to them. Rockets and bombs smash them too."); }
             if (ice > 0)     { goals.Add($"Melt <b>{ice} ice</b>");
@@ -663,6 +767,7 @@ namespace WordDrop
             {
                 CrateGoal = 0;
                 Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; GoalsStage = internalStage;
+                BonusLevelActive = SurvivalManager.FullBoardActive && r.Bonus;
                 ThemeMade = 0; ThemeAwaitingFly = 0; PendingThemeWords.Clear(); s_themeWords.Clear(); RulesEngine.ThemePlantPool = null;
                 if (SurvivalManager.FullBoardActive && !string.IsNullOrEmpty(r.Theme) && r.ThemeCount > 0)
                 {
@@ -692,9 +797,15 @@ namespace WordDrop
                     rules2.SnapshotForRain(out var after, out var _);
                     var keep = new System.Collections.Generic.HashSet<Vector2Int>();
                     for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++) if (before[x, y] != after[x, y]) keep.Add(new Vector2Int(x, y));
+                    RulesEngine.TutorialSwipeCells = null;
+                    if (TutorialBeats.WantsSwipePlant(r)) { var sw = rules2.PlantSwipeWord(keep, out _); if (sw != null) foreach (var c in sw) keep.Add(c); }
                     int shortWords = rules2.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
+                    RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
                     int crates = r.Crates > 0 ? rules2.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
+                    if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = rules2.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
+                    else rules2.ClearGrass();
                     int tnt = rules2.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
+                    WinStreak.Apply(rules2, keep);   // 2026-10-23: streak rockets / bombs / disco (live only — the bot's SetupSimLevel skips it)
                     int gemsPlaced = r.Gems > 0 ? rules2.PlaceGems(Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2), keep) : 0;
                     int ducksPlaced = r.Ducks > 0 ? rules2.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep) : 0;
                     CrateGoal = crates; CrateGoalStage = internalStage;
@@ -702,6 +813,7 @@ namespace WordDrop
                     int scrubbed = rules2.ScrubAccidentalWords(keep);
                     WDLog.Log($"[FullBoard] start structure: {shortWords} short word(s), {crates} crate(s) (goal), {tnt} TNT");
                     HUDManager.Instance?.SnapScoreReadoutForNewLevel();   // redraw now the crate goal exists (it read 0/6000 — snapped before the crates)
+                    if (BonusLevelActive) HUDManager.Instance?.EnterRewardMode(0);   // bonus level: the panel counts coins from the start
                     MatchController.Instance?.ResetTurnCounter();
                     GridManager.Instance?.RebuildFromRulesEngine(rules2);
                     var gm = GridManager.Instance;   // the rebuild doesn't paint specials — put the TNT on now, not a sync later

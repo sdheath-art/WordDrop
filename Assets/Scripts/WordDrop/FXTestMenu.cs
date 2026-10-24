@@ -473,6 +473,8 @@ namespace WordDrop
                 // wild-unlock coaching, and the tool-teach hints — so the whole onboarding runs fresh. 2026-07-14.
                 SurvivalManager.TutorialDone = false;
                 TutorialManager.ResetTutorial();            // clears tutorial_complete + hint_rewrite/hint_swap
+                TutorialBeats.ResetAll();                   // 2026-10-23 rebuilt tutorial beats
+                BoosterHUDSlot.ResetSlotsSeen();            // 2026-10-23 booster unlock moments replay
                 PlayerPrefs.DeleteKey("wild_unlock_taught"); // wild-unlock tutorial re-arms
                 PlayerPrefs.Save();
                 WDLog.Log("[FXTest] tutorial fully reset — next run starts at level 1 and every onboarding beat re-fires.");

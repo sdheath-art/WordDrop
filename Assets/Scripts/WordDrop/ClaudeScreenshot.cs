@@ -35,6 +35,57 @@ namespace WordDrop
         private void Update()
         {
             if (Input.GetKeyDown(HOTKEY) || Input.GetKeyDown(HOTKEY_ALT)) Take();
+            if (Input.GetKeyDown(NOTE_KEY)) Mark();
+        }
+
+        // PLAY NOTES (2026-10-23 Spencer: "can i tell you my thoughts while i play and you check the logs"). . (period) drops a findable
+        // marker into the log at this exact moment — level, moves, goal pieces left, board idle or not — so a note sent later
+        // can be matched to the board. Editor + dev builds only (the whole component is).
+        public static KeyCode NOTE_KEY = KeyCode.Period;   // M = music mute, N = no-assist toggle — both taken
+        private static int s_noteNum;
+        public static void Mark()
+        {
+            var sm = SurvivalManager.Instance;
+            int lvl = sm != null ? LevelMapPanel.RunLevel(sm.CurrentStageIndex) : -1;
+            string moves = sm != null ? $"{sm.CurrentStageMovesRemaining} moves left" : "";
+            int pieces = RulesEngine.GoalPiecesLeft();
+            s_noteNum++;
+            WDLog.Log($"[NOTE] #{s_noteNum} ===== LEVEL {lvl}, {moves}, {pieces} goal piece(s) left, streak {WinStreak.Count}, " +
+                      $"no-word streak {HandManager.NoWordStreak} =====");
+            GameAudio.Instance?.PlayUIClick();
+            DumpOddTiles();
+            var hm = HintManager.Instance;
+            WDLog.Log($"[NOTE-HINT] hint showing={(hm != null && hm.IsShowingHint)} cells=({HintManager.LastHintA.x},{HintManager.LastHintA.y})<->({HintManager.LastHintB.x},{HintManager.LastHintB.y}) word='{HintManager.LastHintWord}'");
+        }
+
+        // TEMP DIAG 2026-10-23 ("letters turned into gems" x4, faces + flags both read clean): every tile whose face isn't white /
+        // resting, or that has any extra SpriteRenderer switched on, with all of them listed — names the layer drawing the gold.
+        private static void DumpOddTiles()
+        {
+            var grid = GridManager.Instance; var rules = RulesEngine.Instance; if (grid == null) return;
+            int n = 0;
+            for (int x = 0; x < RulesEngine.COLS; x++)
+                for (int y = 0; y < RulesEngine.ROWS; y++)
+                {
+                    var t = grid.GetTile(x, y); if (t == null) continue;
+                    var main = t.GetComponent<SpriteRenderer>();
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var sr in t.GetComponentsInChildren<SpriteRenderer>(false))
+                    {
+                        if (sr == main || !sr.enabled || sr.sprite == null) continue;
+                        if (sr.color.a < 0.05f || sr.gameObject.name == "TileInnerShadow" || sr.gameObject.name == "LetterPlate") continue;   // always on — noise
+                        sb.Append($" +{sr.gameObject.name}:{sr.sprite.name}({sr.color.r:F1},{sr.color.g:F1},{sr.color.b:F1},{sr.color.a:F2})");
+                    }
+                    bool gemFace = main != null && main.sprite != null && main.sprite == Tile.GemSprite;   // procedural sprites have no names — compare the reference
+                    string faceRep = t.DebugFaceReport(out bool faceOdd);
+                    bool oddMain = main != null && (main.color != Color.white || gemFace || t.IsGem || t.HasPrimedGlow || faceOdd);
+                    if (!oddMain && sb.Length == 0) continue;
+                    var c = rules != null ? rules.GetCell(x, y) : null;
+                    WDLog.Log($"[NOTE-TILE] ({x},{y}) '{t.Letter}' GEMFACE={gemFace} tint={(main != null ? main.color.ToString() : "-")} " +
+                              $"dataGem={(c != null && c.HasGem)} tileGem={t.IsGem} special={t.SpecialKind} {faceRep}{sb}");
+                    if (++n >= 40) return;
+                }
+            if (n == 0) WDLog.Log("[NOTE-TILE] no odd tiles");
         }
 
         public void Take()

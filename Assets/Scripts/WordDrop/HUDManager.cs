@@ -2597,7 +2597,7 @@ namespace WordDrop
             bool on = GoalsOnHud && _scorePanelNum != null;
             if (!on)
             {
-                if (_goalIconsRoot != null && _goalIconsRoot.activeSelf) { _goalIconsRoot.SetActive(false); if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(0); }
+                if (_goalIconsRoot != null && _goalIconsRoot.activeSelf) { WDLog.Log($"[GoalHud] goal pictures HIDDEN (reward={_rewardMode}, awaiting={SurvivalManager.AwaitingNextLevel})"); _goalIconsRoot.SetActive(false); if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(0); }
                 return;
             }
             string sig = LevelRules.GoalsStage.ToString();
@@ -2614,6 +2614,13 @@ namespace WordDrop
                 e.Shown = left;
                 e.Num.text = left > 0 ? left.ToString() : "";
                 if (e.Check != null) e.Check.SetActive(left <= 0);
+                if (left <= 0)   // TEMP DIAG 2026-10-23 (Spencer: "no checkmark on the badge" twice) — strip once seen working
+                {
+                    var ck = e.Check; var crt = ck != null ? (RectTransform)ck.transform : null; var cimg = ck != null ? ck.GetComponent<Image>() : null;
+                    WDLog.Log($"[GoalHud] goal {i} ({LevelRules.Goals[i].Type}) DONE -> check {(ck == null ? "MISSING" : "ON")} " +
+                              $"activeInHierarchy={(ck != null && ck.activeInHierarchy)} sprite={(cimg != null && cimg.sprite != null ? cimg.sprite.name : "null")} " +
+                              $"size={(crt != null ? crt.rect.size.ToString() : "-")} rootOn={_goalIconsRoot.activeSelf} reward={_rewardMode}");
+                }
                 if (changed || punch)
                 {
                     var t = e.Num.transform.parent;
@@ -2706,7 +2713,7 @@ namespace WordDrop
             if (target == null || !isActiveAndEnabled || Camera.main == null) { land(); return; }
             Color glow = new Color(2.2f, 1.7f, 0.6f, 1f);   // warm HDR trail, same family as the gem flights
             StartCoroutine(FlyTileCoroutine(startWorld, Tile.NormalSprite, Color.white, glow, letter, target.position, land,
-                startDelay, 1.15f, 200, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE));
+                startDelay, 1.15f, 200, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE, -1f, Tile.LETTER_INK));   // board navy ink on the white tile
         }
 
         public static int CollectInFlight;   // launched but not landed — the panel shows Collected minus these
@@ -2834,6 +2841,12 @@ namespace WordDrop
 
         public void EnterRewardMode(int startCoins)
         {
+            if (_rewardMode)
+            {   // already counting (BONUS LEVEL, 2026-10-23): the level-clear base coins ADD to what the words paid, not reset it
+                _rewardShown += Mathf.Max(0, startCoins);
+                if (_scorePanelNum != null) { _scorePanelNum.text = _rewardShown.ToString("N0"); AnimateScorePop(_scorePanelNum.rectTransform); }
+                return;
+            }
             if (_scoreCountUp != null) { StopCoroutine(_scoreCountUp); _scoreCountUp = null; }
             SetRewardLayout(true);
             _rewardMode = true;
@@ -2954,7 +2967,7 @@ namespace WordDrop
 
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
             Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200,
-            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE, float flyDurOverride = -1f)
+            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE, float flyDurOverride = -1f, Color? letterColor = null)
         {
             var cam = Camera.main;
             if (cam == null) { onArrive?.Invoke(); yield break; }
@@ -3023,7 +3036,7 @@ namespace WordDrop
                 tmp.fontSize = 7f;
                 tmp.enableWordWrapping = false;
                 tmp.alignment = TextAlignmentOptions.Center;
-                tmp.color = Color.white;
+                tmp.color = letterColor ?? Color.white;   // theme flights ride a WHITE tile — white ink made them read blank (2026-10-23)
                 var tmpR = tmp.GetComponent<MeshRenderer>(); if (tmpR != null) tmpR.sortingOrder = sortBase + 3;
             }
 

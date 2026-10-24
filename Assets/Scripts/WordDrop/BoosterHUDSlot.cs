@@ -165,9 +165,91 @@ namespace WordDrop
             {
                 case SlotType.Edit:    return TutorialLocks.EditLocked;
                 case SlotType.TileBag: return TutorialLocks.BagLocked;
-                case SlotType.Booster: return TutorialLocks.BoostersLocked;
+                case SlotType.Booster: return BoosterOrdinal(spec.BoosterId) >= TutorialLocks.BoosterSlotsOpen();   // one slot at a time (2026-10-23)
                 default:               return false; // Settings always available
             }
+        }
+
+        // ── BOOSTER ICONS + UNLOCK MOMENT (2026-10-23) ──
+        public static float BOOSTER_ICON_FILL = 0.72f;
+        private static readonly Dictionary<string, Sprite> s_boosterIcons = new Dictionary<string, Sprite>();
+        private static string BoosterIconFile(string id) =>
+            id == BoosterManager.ID_FREE_SWAP ? "2glove" : id == BoosterManager.ID_MALLET ? "1hammer"
+          : id == BoosterManager.ID_BRAMBLE_SWEEP ? "1goldlightning" : id == BoosterManager.ID_SPYGLASS ? "2spyglass" : null;
+        private static Sprite LoadBoostersSprite(string file)
+        {
+            if (file == null) return null;
+            if (s_boosterIcons.TryGetValue(file, out var sp)) return sp;
+            var tex = Resources.Load<Texture2D>("Boosters/" + file);
+            sp = tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f) : null;
+            s_boosterIcons[file] = sp;
+            return sp;
+        }
+        private static Sprite BoosterIcon(string id) => LoadBoostersSprite(BoosterIconFile(id));
+
+        /// <summary>Slots opened since the player last saw the row: the closed padlock swaps to the OPEN one (same pack,
+        /// 1lock_03), pops and fades, and the icon scales in. Seen count persists (PlayerPrefs "booster_slots_seen").</summary>
+        private const string SLOTS_SEEN_PREF = "booster_slots_seen";
+        public static void ResetSlotsSeen() { PlayerPrefs.DeleteKey(SLOTS_SEEN_PREF); }
+        private void PlayUnlocksIfAny()
+        {
+            if (!SurvivalManager.FullBoardActive || _slotButtons == null) return;
+            int open = TutorialLocks.BoosterSlotsOpen(), seen = PlayerPrefs.GetInt(SLOTS_SEEN_PREF, 0);
+            if (open <= seen) { if (open < seen) PlayerPrefs.SetInt(SLOTS_SEEN_PREF, open); return; }
+            PlayerPrefs.SetInt(SLOTS_SEEN_PREF, open); PlayerPrefs.Save();
+            var openLock = LoadBoostersSprite("1lock_03");
+            for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+            {
+                var spec = DISPLAY_ORDER[i];
+                if (spec.Type != SlotType.Booster) continue;
+                int ord = BoosterOrdinal(spec.BoosterId);
+                if (ord < seen || ord >= open || _slotButtons[i] == null) continue;
+                WDLog.Log($"[Booster] slot {ord} UNLOCKED ({spec.BoosterId})");
+                var slot = _slotButtons[i].transform;
+                var icon = slot.Find("BoosterIcon");
+                if (icon != null) { icon.localScale = Vector3.zero; icon.DOScale(1f, 0.45f).SetEase(Ease.OutBack, 2.2f).SetDelay(0.55f).SetUpdate(true); }
+                if (openLock == null) continue;
+                var lockGO = new GameObject("UnlockFx", typeof(RectTransform), typeof(Image));
+                lockGO.transform.SetParent(slot, false);
+                var rt = lockGO.GetComponent<RectTransform>();
+                rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.sizeDelta = new Vector2(SLOT_SIZE * 0.62f, SLOT_SIZE * 0.62f);
+                var img = lockGO.GetComponent<Image>(); img.sprite = openLock; img.preserveAspect = true; img.raycastTarget = false;
+                var seq = DOTween.Sequence().SetUpdate(true);
+                seq.Append(rt.DOScale(1.25f, 0.18f).SetEase(Ease.OutQuad));
+                seq.Append(rt.DOScale(1f, 0.15f));
+                seq.AppendInterval(0.2f);
+                seq.Append(rt.DOAnchorPosY(SLOT_SIZE * 0.35f, 0.35f).SetEase(Ease.InQuad));
+                seq.Join(img.DOFade(0f, 0.35f));
+                seq.OnComplete(() => { if (lockGO != null) Destroy(lockGO); });
+                GameAudio.Instance?.PlayScorePowerup();
+            }
+        }
+
+        /// <summary>BOOSTER NUDGE (2026-10-23): pulse the first unlocked booster that has charges (stuck on the last goal pieces).</summary>
+        public void NudgeBooster()
+        {
+            var bm = BoosterManager.Instance; if (bm == null || _slotButtons == null || bm.AimMode) return;
+            for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+            {
+                var spec = DISPLAY_ORDER[i];
+                if (spec.Type != SlotType.Booster || IsSlotLocked(spec) || _slotButtons[i] == null) continue;
+                if (bm.GetCharges(spec.BoosterId) <= 0) continue;
+                var t = _slotButtons[i].transform;
+                t.DOKill(true);
+                t.DOPunchScale(Vector3.one * 0.18f, 0.6f, 4, 0.5f).SetLoops(3).SetUpdate(true);
+                WDLog.Log($"[Booster] NUDGE — stuck on the last goal pieces, pulsing {spec.BoosterId}");
+                return;
+            }
+            WDLog.Log("[Booster] NUDGE — stuck, but no unlocked booster has charges");
+        }
+
+        /// <summary>Position of this booster among the row's BOOSTER slots (0 = leftmost) — its unlock order.</summary>
+        private static int BoosterOrdinal(string id)
+        {
+            int n = 0;
+            foreach (var sp in DISPLAY_ORDER) { if (sp.Type != SlotType.Booster) continue; if (sp.BoosterId == id) return n; n++; }
+            return 99;
         }
 
         private struct SlotSpec
@@ -189,8 +271,13 @@ namespace WordDrop
             // Mallet booster covers "ditch a bad tile." Swap code left dormant (IsScreenPointOverTileBag
             // returns false with no bag slot, so drag-onto-bag simply never triggers). Re-add this
             // SlotSpec line to bring it back.
+            // 2026-10-23: FREE SWAP takes Stone Splitter's slot (Splitter clears every blocker = an instant-win button on crate
+            // levels; it moves to the shop / pre-level later). Swap these two lines back to restore it.
+            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_FREE_SWAP,     PlaceholderChar = "F" },
+            // 2026-10-23: slots unlock left to right at L8 / L14 / L17 / L19 — FREE SWAP first (stale boards are the #1 fun
+            // problem in Spencer's run), Mallet second.
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_MALLET,        PlaceholderChar = "M" }, // 2026-06-24: Mallet first
-            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_ROCK_CRUSHER,  PlaceholderChar = "S" },
+            // new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_ROCK_CRUSHER,  PlaceholderChar = "S" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BRAMBLE_SWEEP, PlaceholderChar = "C" },
             // 2026-10-22 Spencer: "the paid booster can be the spyglass one in my mock up" — his mockup's 4th booster is a
             // spyglass. Bloomburst moves out of the row (code intact; swap this line back to restore it).
@@ -418,11 +505,13 @@ namespace WordDrop
             // padlock overlays appear/disappear correctly (the overlay is built in BuildSlotCanvas). 2026-06-25.
             int lockHash = (TutorialLocks.EditLocked ? 1 : 0)
                          | (TutorialLocks.BagLocked ? 2 : 0)
-                         | (TutorialLocks.BoostersLocked ? 4 : 0);
+                         | (TutorialLocks.BoostersLocked ? 4 : 0)
+                         | (TutorialLocks.BoosterSlotsOpen() << 3);
             if (lockHash != _lastLockHash)
             {
                 _lastLockHash = lockHash;
                 RebuildSlots();
+                PlayUnlocksIfAny();
             }
 
             // Aim-mode board-tap polling.
@@ -762,6 +851,20 @@ namespace WordDrop
                 {
                     // EDITS pip panel — "EDITS" label + 3 gold pips (charge readout). No letter, no badge.
                     BuildEditsPanel(slot, displayFont);
+                    _slotLabels[i] = null;
+                }
+                else if (spec.Type == SlotType.Booster && BoosterIcon(spec.BoosterId) != null)
+                {
+                    // ICON ART (2026-10-23): the row only ever drew a placeholder letter. Icons from Spencer's licensed pack
+                    // (Assets/AssetsCrafters/... 256x256, copied to Resources/Boosters). No icon file = the letter, as before.
+                    var iconGO = new GameObject("BoosterIcon", typeof(RectTransform), typeof(Image));
+                    iconGO.transform.SetParent(slot.transform, false);
+                    var iconImg = iconGO.GetComponent<Image>();
+                    iconImg.sprite = BoosterIcon(spec.BoosterId); iconImg.preserveAspect = true; iconImg.raycastTarget = false;
+                    var iconRT = iconGO.GetComponent<RectTransform>();
+                    iconRT.anchorMin = iconRT.anchorMax = iconRT.pivot = new Vector2(0.5f, 0.5f);
+                    iconRT.sizeDelta = new Vector2(slotSize * BOOSTER_ICON_FILL, slotSize * BOOSTER_ICON_FILL);
+                    iconRT.anchoredPosition = Vector2.zero;
                     _slotLabels[i] = null;
                 }
                 else
@@ -1829,6 +1932,7 @@ namespace WordDrop
 
         private void OnSlotTapped(int slotIndex)
         {
+            if (TutorialBeats.BlocksInput) return;   // tutorial beat up: boosters wait
             if (slotIndex < 0 || slotIndex >= DISPLAY_ORDER.Length) return;
             var spec = DISPLAY_ORDER[slotIndex];
 

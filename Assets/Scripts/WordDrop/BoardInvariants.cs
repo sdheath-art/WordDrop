@@ -60,6 +60,7 @@ namespace WordDrop
             }
 
             CheckBoardIntegrity(grid, rules);
+            grid.ReconcileSpecialVisuals(rules);   // 2026-10-23: also on a settled board — stale gem/gold FACES appeared after landing
 
             // The only check that can see a tile missing from _tiles[] entirely — every other
             // check reads that array, so a true scene orphan is invisible to them. 2026-10-19.

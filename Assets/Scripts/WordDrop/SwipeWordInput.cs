@@ -77,9 +77,24 @@ namespace WordDrop
             if (grid == null || hand == null) return;
 
             // Don't compete with a resolution in flight, a rising row, or a locked board.
-            if (MatchController.Instance != null && MatchController.Instance.IsProcessing) { Cancel(); return; }
-            if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { Cancel(); return; }   // home screen covers the board (2026-10-23)
-            if (!hand.IsInteractable) { Cancel(); return; }
+            if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { Cancel(); _queued = false; return; }   // home screen covers the board (2026-10-23)
+            bool busy = (MatchController.Instance != null && MatchController.Instance.IsProcessing) || !hand.IsInteractable;
+            // REMEMBER A DRAG MADE WHILE BUSY (2026-10-23 Spencer: "when i try to click to move another tile it feels like its stuck and
+            // its waiting for something to complete" -> option 1). The board still can't resolve two things at once, but a swap
+            // dragged during a pop / fall is no longer thrown away: it's remembered (the TILES, which may still be moving) and
+            // committed the moment the board settles.
+            if (busy) { TrackBusyDrag(grid); return; }
+            if (_queued) { CommitQueued(grid, hand); return; }
+            // still holding a drag that began while busy -> hand it to the normal tracker as if it started now
+            if (_busyDown && _qA != null && Input.GetMouseButton(0))
+            {
+                _busyDown = false; _path.Clear(); _abortedSwapSelection = false; _didHighlight = false;
+                _anchor = new Vector2Int(_qA.Col, _qA.Row); _path.Add(_anchor); _active = true; _qA = _qB = null;
+            }
+            else _busyDown = false;
+            // A booster is aiming (Free Swap's two taps, Mallet's one): taps belong to the booster, not to a swipe/drag trace —
+            // a 1-tile trace selects then deselects the tile and would wipe Free Swap's first pick. 2026-10-23.
+            if (BoosterManager.Instance != null && BoosterManager.Instance.AimMode) { Cancel(); return; }
 
             // ── NEVER RUN WHILE AN OVERLAY IS UP. 2026-10-19 ─────────────────────────
             // Spencer cleared a level and the Stage Clear modal froze. debug_log showed the
@@ -124,7 +139,7 @@ namespace WordDrop
                 _abortedSwapSelection = false;
                 _didHighlight = false;
                 Vector2Int c = CellUnder(screenPos, grid);
-                if (c.x >= 0) { _anchor = c; _path.Add(c); _active = true; }
+                if (c.x >= 0) { _anchor = c; _path.Add(c); _active = true; PressGlow(grid.GetTile(c.x, c.y)); }
                 return;
             }
 
@@ -137,6 +152,7 @@ namespace WordDrop
 
             if (_active && up)
             {
+                PressGlow(null);
                 ClearHighlight(grid);
                 TryCommit();
                 Cancel();
@@ -186,6 +202,7 @@ namespace WordDrop
 
             if (_path.Count >= 2)
             {
+                PressGlow(null);
                 // Only light the trace once this is genuinely a swipe. A 1-cell path is a TAP,
                 // and HandManager has already lit that tile as the swap source — calling
                 // SetEditSelected(false) on it during cleanup is what was wiping the cyan
@@ -196,7 +213,7 @@ namespace WordDrop
                 string _rej;
                 bool valid = _path.Count >= RulesEngine.SWIPE_MIN_LENGTH && RulesEngine.Instance != null
                              && RulesEngine.Instance.BuildExplicitMatch(_path, out _rej) != null;
-                for (int i = 0; i < _path.Count; i++) grid.GetTile(_path[i].x, _path[i].y)?.SetSwipeValidPreview(valid);
+                for (int i = 0; i < _path.Count; i++) { var vt = grid.GetTile(_path[i].x, _path[i].y); if (vt == null) continue; vt.SetSwipeValidPreview(valid); if (!_litTiles.Contains(vt)) _litTiles.Add(vt); }
                 IsSwiping = true;
                 if (!_abortedSwapSelection)
                 {
@@ -215,15 +232,27 @@ namespace WordDrop
             return grid.WorldToCell(world);
         }
 
+        // THE TILES WE LIT, not the cells (2026-10-23 Spencer, 4 reports: "a bunch of letters just turned into gems ... always
+        // after the letters have just fallen into their new place"; every one followed "[Swipe] too short — 1 cells"). The trace
+        // lit tiles BY CELL and cleared BY CELL; a drag that started while letters were still landing lit tiles that then fell
+        // out of those cells, so the clear hit whatever had moved in and the lit ones kept the gold "real word" preview face
+        // forever (whole rows of them). Clearing now walks the remembered Tile objects.
+        private readonly List<Tile> _litTiles = new List<Tile>();
         private void Highlight(GridManager grid, bool on)
         {
+            if (!on)
+            {
+                foreach (var lt in _litTiles) { if (lt == null) continue; lt.SetEditSelected(false); lt.SetSwipeValidPreview(false); }
+                _litTiles.Clear();
+                return;
+            }
             for (int i = 0; i < _path.Count; i++)
             {
                 var t = grid.GetTile(_path[i].x, _path[i].y);
                 if (t == null) continue;
                 if (t.IsStone) continue;   // crates never light up or lift
-                if (on) t.SetEditSelected(true, false, Tile.SWIPE_LIFT_SCALE); else t.SetEditSelected(false);
-                if (!on) t.SetSwipeValidPreview(false);
+                t.SetEditSelected(true, false, Tile.SWIPE_LIFT_SCALE);
+                if (!_litTiles.Contains(t)) _litTiles.Add(t);
             }
         }
 
@@ -252,6 +281,17 @@ namespace WordDrop
             // Was a SILENT return — no log, no sound, no feedback of any kind. A refusal the
             // player cannot perceive reads as the feature being broken, which is exactly how it
             // landed. 2026-10-19.
+            // Tutorial beat up: drags (2 cells, above) still go through and AllowSwap filters them; only
+            // word swipes wait. v1 gated this whole Update, which killed drag-to-swap — Spencer couldn't
+            // slide the taught tile. 2026-10-23.
+            if (TutorialBeats.BlocksInput && !TutorialBeats.AllowSwipe(_path))
+            {
+                WDLog.Log("[Swipe] word swipe ignored — tutorial beat up");
+                var gg = GridManager.Instance;
+                if (gg != null) for (int i = 0; i < _path.Count; i++) gg.GetTile(_path[i].x, _path[i].y)?.ShakeNo();
+                return;
+            }
+            if (_path.Count <= 1) return;   // a TAP, not a swipe — no log, no click (2026-10-23 Spencer: "remove ... that click sound")
             if (_path.Count < RulesEngine.SWIPE_MIN_LENGTH)
             {
                 WDLog.Log($"[Swipe] too short — {_path.Count} cells, need {RulesEngine.SWIPE_MIN_LENGTH}");
@@ -285,12 +325,77 @@ namespace WordDrop
 
             HandManager.MarkPlayerWordComing();   // QUICK_POP: the swiped word is the player's own (short read hold)
             bool ok = hand.CommitSwipedWord(match);
+            if (ok) TutorialBeats.OnSwipeCommitted();
             WDLog.Log($"[Swipe] '{match.Word}' {(ok ? "ARMED" : "refused by registry")} " +
                       $"({match.Cells.Count} cells, {match.Direction}, {match.Score} pts)");
         }
 
+        // PRESS GLOW (2026-10-23 Spencer: "have the tile light up with a faint glow when you are pushing down on it", Royal Match):
+        // a soft white bloom on the pressed tile until the finger lifts or the drag turns into a swap / swipe trace.
+        public static Color PRESS_GLOW = new Color(1.25f, 1.25f, 1.3f, 1f);
+        public static float PRESS_GLOW_ALPHA = 0.45f;
+        private Tile _pressed;
+        private void PressGlow(Tile t)
+        {
+            if (_pressed != null && _pressed != t && !_pressed.HasPrimedGlow) _pressed.ClearBloomGlow();
+            _pressed = t;
+            if (t != null && !t.IsStone && !t.HasPrimedGlow) t.SetBloomGlow(PRESS_GLOW, PRESS_GLOW_ALPHA, forceDesktop: true);
+        }
+
+        public static bool  QUEUE_BUSY_SWAPS = true;
+        public static float QUEUE_MAX_WAIT = 3f;   // a remembered swap older than this is dropped
+        private bool _queued, _busyDown;
+        private Tile _qA, _qB;
+        private float _queuedAt;
+        private void TrackBusyDrag(GridManager grid)
+        {
+            if (!QUEUE_BUSY_SWAPS || SurvivalManager.AwaitingNextLevel) { Cancel(); _busyDown = false; return; }
+            bool down = Input.GetMouseButtonDown(0), held = Input.GetMouseButton(0), up = Input.GetMouseButtonUp(0);
+            Vector3 sp = Input.mousePosition;
+            if (Input.touchCount > 0)
+            {
+                var tc = Input.GetTouch(0); sp = tc.position;
+                down = tc.phase == TouchPhase.Began; held = tc.phase == TouchPhase.Moved || tc.phase == TouchPhase.Stationary || down;
+                up = tc.phase == TouchPhase.Ended || tc.phase == TouchPhase.Canceled;
+            }
+            if (down)
+            {
+                var c = CellUnder(sp, grid);
+                _qA = c.x >= 0 ? grid.GetTile(c.x, c.y) : null; _qB = null; _busyDown = _qA != null; _queued = false;
+                PressGlow(_qA);
+                return;
+            }
+            if (!_busyDown || _qA == null) return;
+            if (held)
+            {
+                var c = CellUnder(sp, grid);
+                var under = c.x >= 0 ? grid.GetTile(c.x, c.y) : null;
+                bool touching = under != null && under != _qA && Mathf.Abs(under.Col - _qA.Col) + Mathf.Abs(under.Row - _qA.Row) == 1;
+                _qB = touching ? under : (under == _qA ? null : _qB);
+                return;
+            }
+            if (up)
+            {
+                _busyDown = false;
+                if (_qB != null) { _queued = true; _queuedAt = Time.unscaledTime; WDLog.Log($"[Swipe] swap remembered while the board is busy: ({_qA.Col},{_qA.Row})->({_qB.Col},{_qB.Row})"); }
+                else PressGlow(null);
+            }
+        }
+        private void CommitQueued(GridManager grid, HandManager hand)
+        {
+            _queued = false;
+            var a = _qA; var b = _qB; _qA = _qB = null;
+            PressGlow(null);
+            if (a == null || b == null || Time.unscaledTime - _queuedAt > QUEUE_MAX_WAIT || SurvivalManager.AwaitingNextLevel) return;
+            if (Mathf.Abs(a.Col - b.Col) + Mathf.Abs(a.Row - b.Row) != 1 || grid.GetTile(a.Col, a.Row) != a || grid.GetTile(b.Col, b.Row) != b)
+            { WDLog.Log("[Swipe] remembered swap dropped — the tiles moved apart"); return; }
+            WDLog.Log($"[Swipe] remembered swap committed: ({a.Col},{a.Row})->({b.Col},{b.Row})");
+            hand.CommitDragSwap(new Vector2Int(a.Col, a.Row), new Vector2Int(b.Col, b.Row));
+        }
+
         private void Cancel()
         {
+            PressGlow(null);
             if (_active) ClearHighlight(GridManager.Instance);
             _path.Clear();
             _active = false;

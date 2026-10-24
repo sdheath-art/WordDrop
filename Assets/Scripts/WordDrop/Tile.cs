@@ -979,6 +979,11 @@ namespace WordDrop
         /// externally-driven tween. Extends an existing claim, never shortens one.</summary>
         public void MarkAnimating(float seconds)
             => _animatingUntil = Mathf.Max(_animatingUntil, Time.unscaledTime + seconds);
+        /// <summary>Drop an external MarkAnimating claim early (the effect that claimed it ended). 2026-10-23: the hint's 4.5s claim
+        /// outlived the hint and held every gravity wait it fell into — the "pop, long delay, then the next word" stall.</summary>
+        public void ReleaseAnimatingClaim() => _animatingUntil = 0f;
+        /// <summary>A gravity / fall coroutine is moving this tile (what a gravity wait should wait for — not FX claims).</summary>
+        public bool IsFalling => _gravityCoroutine != null || _fallCoroutine != null;
 
         // Phase C — real wild state. Uncommitted wilds (IsWild && Letter=='\0')
         // render a ★ glyph; committed wilds show the resolved letter in a wild
@@ -1550,7 +1555,7 @@ namespace WordDrop
             TMP_FontAsset tileFont = GameFont.GetTMP();
             if (tileFont != null) _letterTMP.font = tileFont;
             _letterTMP.text           = "";
-            _letterTMP.fontSize       = 6.84f; // 2026-06-05 Spencer: −10% (was 7.6)
+            _letterTMP.fontSize       = 6.84f * LetterSizeFactor; // 2026-06-05 Spencer: −10% (was 7.6); 2026-10-23 scales with the board (see LetterSizeFactor)
             _letterTMP.fontStyle      = TILE_FONT_FAUX_BOLD ? FontStyles.Bold : FontStyles.Normal;
             _letterTMP.color          = LETTER_INK; // #252733
             _letterTMP.alignment      = TextAlignmentOptions.Midline; // Midline (not Center) so a single capital sits visually centered, not high
@@ -1596,7 +1601,7 @@ namespace WordDrop
             _pointTMP = pointGO.AddComponent<TextMeshPro>();
             if (tileFont != null) _pointTMP.font = tileFont;
             _pointTMP.text           = "";
-            _pointTMP.fontSize       = 2.8f;
+            _pointTMP.fontSize       = 2.8f * LetterSizeFactor;
             _pointTMP.fontStyle      = FontStyles.Normal;  // Fredoka Bold already bold
             _pointTMP.color          = new Color(0.40f, 0.40f, 0.50f, 1f);
             _pointTMP.alignment      = TextAlignmentOptions.Center;
@@ -2408,9 +2413,40 @@ namespace WordDrop
         public static Sprite GemSprite => s_spriteGem;
         public static readonly Color GEM_ACCENT = new Color(1f, 0.82f, 0.15f, 1f);
         public bool IsGem { get; private set; }
+        /// <summary>Re-apply the plain resting face + white tint (no-op while primed / scored). Refill uses it so a recycled tile
+        /// never arrives wearing a previous word's gold/gem face (2026-10-23 "letters turned into gems").</summary>
+        private float _bornAt;
+        /// <summary>Stamp when this tile entered the board (checkout from the pool). Used by the [GemBorn] diag.</summary>
+        public void MarkBorn() => _bornAt = Time.unscaledTime;
+
+        /// <summary>BONUS BLAST rockets (2026-10-23 Spencer: "during the bonus it probably shouldnt have letters on the rockets cause it
+        /// doesnt matter"): hide the letter + its plate. The tile is destroyed when the rocket fires, so nothing restores it.</summary>
+        public void HideLetterForBonus()
+        {
+            // Hide by RENDERER only (2026-10-23 fix): deactivating the plate GameObject broke ExitIconTile, which only moves the
+            // letter home while the plate is active — recycled bonus tiles came back with tiny corner letters (Spencer's screenshot).
+            if (_letterTMP != null) _letterTMP.enabled = false;
+            var psr = _letterPlateGO != null ? _letterPlateGO.GetComponent<SpriteRenderer>() : null;
+            if (psr != null) psr.enabled = false;
+        }
+
+        public void ForceRestingFace()
+        {
+            if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { _spriteRenderer.sprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
+        }
+
         public void SetGem(bool on)
         {
             if (on == IsGem) return;
+            // TEMP DIAG 2026-10-23 (Spencer: "the N gem just appeared out of nowhere ... flipping into a gem from a normal tile"):
+            // every tile that BECOMES a gem says where, how long it had existed, and who called.
+            if (on)
+            {
+                var st = new System.Diagnostics.StackTrace(1, false);
+                var who = new System.Text.StringBuilder();
+                for (int i = 0; i < Mathf.Min(3, st.FrameCount); i++) { var m = st.GetFrame(i).GetMethod(); if (m != null) who.Append(m.DeclaringType?.Name).Append('.').Append(m.Name).Append(i < 2 ? " < " : ""); }
+                WDLog.Log($"[GemBorn] ({Col},{Row}) '{Letter}' became a gem — tile age {Time.unscaledTime - _bornAt:F2}s — by {who}");
+            }
             IsGem = on;
             if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { _spriteRenderer.sprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
         }
@@ -4080,7 +4116,7 @@ namespace WordDrop
         private static readonly System.Collections.Generic.Dictionary<string, Sprite> s_specialIcons = new System.Collections.Generic.Dictionary<string, Sprite>();
         public static Sprite SpecialIcon(int kind)
         {
-            string key = kind == RulesEngine.SPECIAL_BOMB ? "special_bomb" : kind == RulesEngine.SPECIAL_TNT ? "special_tnt" : kind == RulesEngine.SPECIAL_DISCO ? "special_disco"
+            string key = kind == RulesEngine.SPECIAL_BOMB ? "special_bomb" : kind == RulesEngine.SPECIAL_TNT ? "special_tnt" : kind == RulesEngine.SPECIAL_DISCO ? "special_disco" : kind == RulesEngine.SPECIAL_AIRPLANE ? "special_airplane"
                        : (kind == RulesEngine.SPECIAL_ROCKET_H || kind == RulesEngine.SPECIAL_ROCKET_V) ? "special_rocket" : null;
             if (key == null) return null;
             if (s_specialIcons.TryGetValue(key, out var sp)) return sp;
@@ -4096,6 +4132,11 @@ namespace WordDrop
         public static float SPECIAL_BADGE_SCALE = 0.55f;
         public static bool  SPECIAL_ICON_AS_TILE = true;
         public static float SPECIAL_TILE_ICON_FILL = 1.08f;   // icon art width vs the tile face (the art has transparent margins)
+        // ROCKET CLIPPED (2026-10-23 Spencer: "the rockets nub ... is being secluded ... was it smaller before?" — no, same size
+        // since 10-21). The art is diagonal; turning it upright inside the SAME 512 square sliced ~3% off the nose and the
+        // flame (measured: rotated bbox touched both edges). RotateTex now rotates into a canvas big enough for the whole art,
+        // and rotated icons are sized by their opaque nose-to-tail span: 1.0 = exactly the tile face's height.
+        public static float SPECIAL_ROTATED_ICON_LEN = 1.0f;
         private bool _iconIsTile;
         private static readonly System.Collections.Generic.Dictionary<int, Sprite> s_specialTileSprites = new System.Collections.Generic.Dictionary<int, Sprite>();
 
@@ -4109,9 +4150,11 @@ namespace WordDrop
             if (icon == null || s_spriteNormal == null) { s_specialTileSprites[kind] = null; return null; }
             Texture2D src = icon.texture;
             float ang = SpecialIconAngle(kind);
-            Texture2D tex = Mathf.Abs(ang) > 0.01f ? RotateTex(src, ang) : src;
+            bool rotated = Mathf.Abs(ang) > 0.01f;
+            Texture2D tex = rotated ? RotateTex(src, ang) : src;
             float faceW = s_spriteNormal.bounds.size.x;
             float ppu = tex.width / (faceW * SPECIAL_TILE_ICON_FILL);
+            if (rotated) ppu = OpaqueSpan(tex) / (faceW * SPECIAL_ROTATED_ICON_LEN);   // size the rocket by its real nose-to-tail length
             sp = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
             s_specialTileSprites[kind] = sp;
             return sp;
@@ -4132,24 +4175,38 @@ namespace WordDrop
                 RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rt);
             }
             int w = readable.width, h = readable.height;
-            var inPx = readable.GetPixels(); var outPx = new Color[w * h];
+            // output canvas fits the WHOLE rotated art (the old same-size canvas cropped the rocket's tips)
+            float rr = degrees * Mathf.Deg2Rad, ac = Mathf.Abs(Mathf.Cos(rr)), asn = Mathf.Abs(Mathf.Sin(rr));
+            int W = Mathf.CeilToInt(w * ac + h * asn), H = Mathf.CeilToInt(w * asn + h * ac);
+            var inPx = readable.GetPixels(); var outPx = new Color[W * H];
             float rad = -degrees * Mathf.Deg2Rad, cs = Mathf.Cos(rad), sn = Mathf.Sin(rad);
-            float cx = (w - 1) * 0.5f, cy = (h - 1) * 0.5f;
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
+            float cx = (w - 1) * 0.5f, cy = (h - 1) * 0.5f, ocx = (W - 1) * 0.5f, ocy = (H - 1) * 0.5f;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
                 {
-                    float dx = x - cx, dy = y - cy;
+                    float dx = x - ocx, dy = y - ocy;
                     float sx = cs * dx - sn * dy + cx, sy = sn * dx + cs * dy + cy;
-                    if (sx < 0 || sy < 0 || sx > w - 1 || sy > h - 1) { outPx[y * w + x] = new Color(0, 0, 0, 0); continue; }
+                    if (sx < 0 || sy < 0 || sx > w - 1 || sy > h - 1) { outPx[y * W + x] = new Color(0, 0, 0, 0); continue; }
                     int x0 = (int)sx, y0 = (int)sy, x1 = Mathf.Min(x0 + 1, w - 1), y1 = Mathf.Min(y0 + 1, h - 1);
                     float fx = sx - x0, fy = sy - y0;
                     Color a = Color.Lerp(inPx[y0 * w + x0], inPx[y0 * w + x1], fx);
                     Color b = Color.Lerp(inPx[y1 * w + x0], inPx[y1 * w + x1], fx);
-                    outPx[y * w + x] = Color.Lerp(a, b, fy);
+                    outPx[y * W + x] = Color.Lerp(a, b, fy);
                 }
-            var t = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            var t = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
             t.SetPixels(outPx); t.Apply();
             return t;
+        }
+
+        /// <summary>The larger of the opaque bounding box's width and height, in pixels (alpha &gt; 0.08).</summary>
+        private static float OpaqueSpan(Texture2D t)
+        {
+            var px = t.GetPixels(); int w = t.width, h = t.height;
+            int x0 = w, x1 = -1, y0 = h, y1 = -1;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if (px[y * w + x].a > 0.08f) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+            return x1 < 0 ? w : Mathf.Max(x1 - x0 + 1, y1 - y0 + 1);
         }
 
         // LETTER PLATE (2026-10-22 Spencer: "there is definitely an issue of readability" — white outlined L lost on the
@@ -4221,12 +4278,15 @@ namespace WordDrop
 
         private void ExitIconTile()
         {
-            if (_letterPlateGO != null && _letterPlateGO.activeSelf && _letterTMP != null)
+            // Letter home WHENEVER a home was recorded — not only while the plate is active (a deactivated plate stranded the letter
+            // small in the corner on recycled tiles, 2026-10-23).
+            if (_letterTMP != null && _letterHomeScale.sqrMagnitude > 0f)
             {
                 _letterTMP.transform.localPosition = _letterHomePos;
                 _letterTMP.transform.localScale = _letterHomeScale;
             }
-            if (_letterPlateGO != null) _letterPlateGO.SetActive(false);
+            if (_letterTMP != null) _letterTMP.enabled = true;
+            if (_letterPlateGO != null) { var psr = _letterPlateGO.GetComponent<SpriteRenderer>(); if (psr != null) psr.enabled = true; _letterPlateGO.SetActive(false); }
             _iconIsTile = false;
             if (_spriteRenderer != null) { _spriteRenderer.sprite = RestingFaceFor(Letter); ApplyRestingColor(); }
             if (_glossGO != null) _glossGO.SetActive(true);
@@ -4240,6 +4300,7 @@ namespace WordDrop
         public static Color SpecialColor(int kind) =>
               RulesEngine.IsBombLike(kind)       ? new Color(2.4f, 0.55f, 0.35f, 1f)   // hot red-orange
             : kind == RulesEngine.SPECIAL_DISCO ? new Color(1.7f, 1.1f, 2.4f, 1f)    // violet-white
+            : kind == RulesEngine.SPECIAL_AIRPLANE ? new Color(0.6f, 1.6f, 2.4f, 1f) // sky blue
             :                                     new Color(2.2f, 1.25f, 0.35f, 1f);  // rocket: orange-gold
 
         public void SetSpecial(int kind, bool pop = false)
@@ -4915,7 +4976,31 @@ namespace WordDrop
         }
 
         private bool _isShowingScoredSprite;
+        /// <summary>LETTERS SCALE WITH THE TILE (2026-10-23 Spencer, 7x9 board: "what do you think about the size of the letters in
+        /// relation to the tiles?"). The glyph is sized in world units and un-scaled against the tile, so on the 7-wide board the
+        /// tiles grew 29% and the letters didn't: measured cap height 53px on a 102px tile (52%) at 9 wide -> 53px on 132px (40%)
+        /// at 7 wide. Factor = board-width ratio x LETTER_SIZE_MUL; 1.06 puts the cap at ~55% of the tile on either board.</summary>
+        public static float LETTER_SIZE_MUL = 0.96f;   // 1.06 (55%) read "too bold and in your face" on the 7x9 tiles — 0.96 ≈ 50% (2026-10-23)
+        public static float LetterSizeFactor => (9f / Mathf.Max(1, RulesEngine.COLS)) * LETTER_SIZE_MUL;
         public bool IsShowingScoredSprite => _isShowingScoredSprite;
+        /// <summary>STALE-FACE CHECK (2026-10-23 "letters turned into gems" x3): the face sprite isn't the resting face for this
+        /// tile's state while nothing (primed glow / scored flash / special / stone / selection) explains it. Returns the
+        /// sprite name for the log.</summary>
+        /// <summary>Period-key diag: the face's readable name, the resting face it SHOULD show, and the flags that could explain a
+        /// difference (2026-10-23 — the gold rows read as gems but could be the swipe-preview or armed-gold faces).</summary>
+        public string DebugFaceReport(out bool odd)
+        {
+            var cur = _spriteRenderer != null ? _spriteRenderer.sprite : null; var rest = RestingFaceFor(Letter);
+            odd = cur != rest;
+            return $"face={FaceName(cur)} resting={FaceName(rest)} swipePreview={_swipePreview} editSel={_editSelected} primedGlow={_hasPrimedGlow} scoredSprite={_isShowingScoredSprite}";
+        }
+
+        public bool FaceIsStale(out string showing)
+        {
+            showing = _spriteRenderer != null && _spriteRenderer.sprite != null ? _spriteRenderer.sprite.name : "null";
+            if (_spriteRenderer == null || _hasPrimedGlow || _isShowingScoredSprite || _isStone || _editSelected || _iconIsTile) return false;
+            return _spriteRenderer.sprite != RestingFaceFor(Letter);
+        }
 
         // Sticky "was-scored" flag — set true when SetScoredSprite(true) fires
         // and NEVER cleared by SetScoredSprite(false). Lets WordDropFX.Tier1Pop
@@ -5512,7 +5597,12 @@ namespace WordDrop
         public void RefreshRestingFaceIfStuck(float persist)
         {
             if (_spriteRenderer == null) return;
-            Sprite want = (_hasPrimedGlow || _isShowingScoredSprite || IsStone || IsFrozen || IsWild) ? null : RestingFaceFor(Letter);
+            // ARMED IN THE RULES = leave it (2026-10-23 Spencer: "a word fell and made another green word but there was a delay ...
+            // something just looked off" — READ lit green, FaceFix flipped it to white, THEN it popped). A word armed by a fall can
+            // carry the armed face without the glow flag; the registry is the truth, so never "fix" a tile that's in an armed word.
+            var reg = RulesEngine.Instance != null ? RulesEngine.Instance.PrimedRegistry : null;
+            bool armedInRules = reg != null && Col >= 0 && Row >= 0 && reg.GetPrimedWordsContaining(new Vector2Int(Col, Row)).Count > 0;
+            Sprite want = (_hasPrimedGlow || _isShowingScoredSprite || IsStone || IsFrozen || IsWild || armedInRules) ? null : RestingFaceFor(Letter);
             // COLOUR counts too (2026-10-22: the top rows went gold after a cascade with the RIGHT face — a leftover warm
             // armed tint (1.3,1.25,1.1) on a plain tile; the face-only check never saw it).
             bool colourWrong = want != null && _spriteRenderer.sprite == want && !_editSelected && !_swipePreview && _flashCoroutine == null
