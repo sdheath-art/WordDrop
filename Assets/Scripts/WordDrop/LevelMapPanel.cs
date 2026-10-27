@@ -1308,7 +1308,7 @@ namespace WordDrop
         // Measured off Royal Kingdom's main screen for the art button: the frame spans 44.8% of the width, centred
         // 80.6% of the way down (= 0.306 below centre). The old button's own measured numbers stay for the old button.
         private float PlayWFrac  => _artBtn != null ? 0.448f : PLAY_W_FRAC;
-        private float PlayYFrac  => _artBtn != null ? 0.279f : PLAY_Y_FRAC;   // 2026-10-27 Spencer: raised 70px of 2556 (was 0.306) - room above the nav dome
+        private float PlayYFrac  => _artBtn != null ? 0.259f : PLAY_Y_FRAC;   // 2026-10-27 Spencer: raised again +50px of 2556 (0.306 -> 0.279 -> 0.259) - room above the nav dome now that the nav sits above the home indicator
         private float PlayAspect => _artBtn != null ? _artBtn.FrameAspect : PLAY_ASPECT;
 
         private Vector2 PlayButtonSize()
