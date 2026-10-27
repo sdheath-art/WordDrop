@@ -282,7 +282,7 @@ namespace WordDrop
         /// then invoke <paramref name="onEntered"/> when the player taps to enter the next level.</summary>
         public void Show(int fromLevel, int toLevel, System.Action onEntered)
         {
-            if (_busy) { onEntered?.Invoke(); return; }
+            if (_busy) { WDLog.Log($"[HomeTap] Show() while busy -> entering immediately {HomeTapTrace()}"); onEntered?.Invoke(); return; }   // TEMP DIAG log
             _busy = true;
             _holdForIntro = false; // standalone Show (FX test) fades out on tap; PresentThenIntro re-sets this true
             _preHop = null;        // cleared here; PresentThenIntro re-sets it AFTER this call when there's a reward
@@ -1432,8 +1432,20 @@ namespace WordDrop
             _playBtnRT.localScale = Vector3.one;
         }
 
+
+        // TEMP DIAG (2026-10-27): who called + what the pointer was over, for the "home screen starts the game by itself" report.
+        private static string HomeTapTrace()
+        {
+            var st = new System.Diagnostics.StackTrace(1, false); var parts = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < Mathf.Min(6, st.FrameCount); i++) { var m = st.GetFrame(i).GetMethod(); if (m != null) parts.Add(m.DeclaringType?.Name + "." + m.Name); }
+            var es = UnityEngine.EventSystems.EventSystem.current;
+            string over = es != null && es.currentSelectedGameObject != null ? es.currentSelectedGameObject.name : "-";
+            return $"frame={Time.frameCount} selected={over} via {string.Join(" < ", parts)}";
+        }
+
         private void OnPlayPressed()
         {
+            WDLog.Log($"[HomeTap] OnPlayPressed (Level button) {HomeTapTrace()}");   // TEMP DIAG 2026-10-27: 'takes you into the game without pushing Level 1'
             if (_playBtnRT != null)
             {
                 var b = _playBtnRT.GetComponent<Button>();
@@ -1452,6 +1464,7 @@ namespace WordDrop
         // map up behind it; fades the map on PLAY, or returns to the bare map on cancel. 2026-07-13 Spencer.
         private void ShowIntroOverMap()
         {
+            WDLog.Log($"[HomeTap] ShowIntroOverMap {HomeTapTrace()}");   // TEMP DIAG
             if (_onEntered == null) return;
             _group.blocksRaycasts = false;                       // intro (higher canvas) takes input; map is backdrop
             if (_currentNodeButton != null) _currentNodeButton.interactable = false;
@@ -1462,6 +1475,7 @@ namespace WordDrop
 
         private void HandleIntroPlayed()
         {
+            WDLog.Log($"[HomeTap] intro PLAY pressed {HomeTapTrace()}");   // TEMP DIAG
             LevelIntroModal.OnPlayStarted -= HandleIntroPlayed;
             LevelIntroModal.OnCancelled   -= HandleIntroCancelled;
             FadeMapOut();
@@ -1507,6 +1521,7 @@ namespace WordDrop
 
         private void OnTapEnter()
         {
+            WDLog.Log($"[HomeTap] OnTapEnter (full-screen tap) busy={_busy} {HomeTapTrace()}");   // TEMP DIAG
             if (!_busy) return;
             SetTapEnabled(false);
             GameAudio.Instance?.PlayButtonClick();

@@ -19,6 +19,8 @@ namespace WordDrop
         // design space (hud_bar.py: W1, H1) and the spots it exported
         private const float DW = 1179f, DH = 250f;
         private const float BAR_TOP = 28f, BAR_CY = 114f;                 // bar box 28..200, portrait centre 114
+        private const float VIS_TOP = 4f;                                 // highest drawn pixel: the portrait ring + outline (centre 114, r ~110)
+        public static float SAFE_MARGIN_FRAC = 0.012f;                    // clear gap under the safe area (~10pt on an iPhone)
         private const float CENTER_FRAC = 0.082f;                         // bar centre at 8.2% of screen height (Spencer's RK ref)
         private static readonly Color INK = new Color32(0x41, 0x1A, 0x6B, 0xFF);           // dark purple numbers
         private static readonly Color COUNT_OUTLINE = new Color32(0x73, 0x17, 0x26, 0xFF); // the heart's own dark (ref '5')
@@ -35,6 +37,7 @@ namespace WordDrop
         private RectTransform _rt, _canvasRT;
         private readonly System.Collections.Generic.List<(TextMeshProUGUI t, float em)> _texts = new System.Collections.Generic.List<(TextMeshProUGUI, float)>();
         private float _k = -1f;
+        private bool _loggedPlace;
         private float _nextTick;
 
         public static HudBar Create(Transform parent)
@@ -124,8 +127,12 @@ namespace WordDrop
             float top = ch * CENTER_FRAC - BAR_CY * k;                            // rect top below the screen top
             Rect sa = Screen.safeArea;
             float inset = Screen.height > 0 ? (Screen.height - sa.yMax) / Screen.height * ch : 0f;
-            top = Mathf.Max(top, inset - BAR_TOP * k);                            // the bar itself stays below the notch
+            // 2026-10-27 Spencer (on his iPhone): "the camera pill is still on top of it a bit". The check kept the BAR's top
+            // edge below the safe area, but the portrait ring rises ~24 design px above the bar. Now the highest drawn pixel
+            // (the ring) clears the safe area by a small margin.
+            top = Mathf.Max(top, inset + ch * SAFE_MARGIN_FRAC - VIS_TOP * k);
             if (Mathf.Abs(k - _k) > 0.0001f) { _k = k; foreach (var (t, em) in _texts) if (t != null) t.fontSize = em * k; }
+            if (!_loggedPlace) { _loggedPlace = true; Debug.Log($"[HudBar] screen {Screen.width}x{Screen.height} safeArea {Screen.safeArea} canvasH {ch:F0} barH {h:F0} top {top:F1} (inset {inset:F1})"); }
             var p = new Vector2(0f, -top);
             if ((_rt.anchoredPosition - p).sqrMagnitude > 0.01f) _rt.anchoredPosition = p;
         }
