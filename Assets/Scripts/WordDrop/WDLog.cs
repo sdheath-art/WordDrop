@@ -26,10 +26,25 @@ namespace WordDrop
         /// <summary>Bot playtester: thousands of simulated games would bury the real log. Muted while it runs.</summary>
         public static bool Muted;
 
-        [Conditional("UNITY_EDITOR"), Conditional("WORDROP_LOG")]
-        public static void Log(object message) { if (!Muted) UnityEngine.Debug.Log(message); }
+        /// <summary>2026-10-27 (Spencer: frame drops while playing). Debug.Log is slow in the editor and these tags fire per tile,
+        /// per frame or per word - ~9,500 lines in one session. They stay silent unless VERBOSE is on. Everything else still logs.</summary>
+        public static bool VERBOSE = false;
+        private static readonly string[] NOISY = {
+            "[Tile] ResetForPool", "[EntryDiag]", "[EntryPerf]", "[PayoutTier]", "[SFX]", "[VFX]", "[FX]", "[FX-",
+            "[ExplosionTier]", "[Meltdown]",
+        };
+        private static bool Quiet(object message)
+        {
+            if (Muted) return true;
+            if (VERBOSE || !(message is string s)) return false;
+            foreach (var p in NOISY) if (s.StartsWith(p, System.StringComparison.Ordinal)) return true;
+            return false;
+        }
 
         [Conditional("UNITY_EDITOR"), Conditional("WORDROP_LOG")]
-        public static void Log(object message, UnityEngine.Object context) { if (!Muted) UnityEngine.Debug.Log(message, context); }
+        public static void Log(object message) { if (!Quiet(message)) UnityEngine.Debug.Log(message); }
+
+        [Conditional("UNITY_EDITOR"), Conditional("WORDROP_LOG")]
+        public static void Log(object message, UnityEngine.Object context) { if (!Quiet(message)) UnityEngine.Debug.Log(message, context); }
     }
 }

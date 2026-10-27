@@ -1308,7 +1308,7 @@ namespace WordDrop
         // Measured off Royal Kingdom's main screen for the art button: the frame spans 44.8% of the width, centred
         // 80.6% of the way down (= 0.306 below centre). The old button's own measured numbers stay for the old button.
         private float PlayWFrac  => _artBtn != null ? 0.448f : PLAY_W_FRAC;
-        private float PlayYFrac  => _artBtn != null ? 0.306f : PLAY_Y_FRAC;
+        private float PlayYFrac  => _artBtn != null ? 0.279f : PLAY_Y_FRAC;   // 2026-10-27 Spencer: raised 70px of 2556 (was 0.306) - room above the nav dome
         private float PlayAspect => _artBtn != null ? _artBtn.FrameAspect : PLAY_ASPECT;
 
         private Vector2 PlayButtonSize()
@@ -1996,8 +1996,25 @@ namespace WordDrop
         // ── HUD panels (Candy-Crush-map layout: hearts + coins + settings up top; bottom bar reserved) ──
         private const float HUD_OVER = 60f; // how far the bars bleed PAST each screen edge (outer corners off-screen)
 
+        public static bool USE_HUD_BAR = true;   // 2026-10-27 Spencer: the purple bevelled HUD bar (HudBar.cs); false = the old pills + gear
+        public const int SETTINGS_TAB = 4;       // with the HUD bar the gear is gone from the top: settings live on the nav bar's last tab
+        private HudBar _hudBar;
+
         private void BuildTopHud(Transform parent)
         {
+            if (USE_HUD_BAR)
+            {
+                _hudBar = HudBar.Create(parent);
+                if (_hudBar != null)
+                {
+                    _heartsText = null;                       // the bar shows LIVES itself (HeartsManager), not continues
+                    _coinsText = _hudBar.CoinLabel;
+                    _coinsIconRT = _hudBar.CoinIcon;          // the coin cascade still flies into the coin
+                    _hudBar.PlusButton.onClick.AddListener(OpenCoinStore);
+                    RefreshHud();
+                    return;
+                }
+            }
             // The pink bar is skipped on the painted map so the artwork runs to the top of the
             // screen. The PILLS below are separate children and are unaffected — hearts, coins
             // and settings still sit in the same places, now floating on the art. TOP_HUD_H is
@@ -2088,7 +2105,26 @@ namespace WordDrop
         private void BuildBottomHud(Transform parent)
         {
             // 2026-10-27 Spencer: the purple dome NAV BAR (v3 art, five tab states). Falls back to the old navy bar if the art is missing.
-            if (USE_NAV_BAR && NavBar.Create(parent) != null) return;
+            if (USE_NAV_BAR)
+            {
+                var nb = NavBar.Create(parent);
+                if (nb != null)
+                {
+                    // the settings gear moved off the top bar: its last tab opens Settings. The dome moves onto that tab while
+                    // Settings is open and re-centres on the MIDDLE tab when it closes (Spencer 2026-10-27).
+                    if (_hudBar != null)
+                    {
+                        nb.OnTabSelected = t =>
+                        {
+                            if (t != SETTINGS_TAB) return;
+                            void Back() { SettingsModal.Closed -= Back; if (nb != null && nb.Selected == SETTINGS_TAB) nb.Select(NavBar.DefaultTab, false); }
+                            SettingsModal.Closed -= Back; SettingsModal.Closed += Back;
+                            OpenSettings();
+                        };
+                    }
+                    return;
+                }
+            }
             // Reserved bar — we fill this later (garden/world shortcuts, daily, shop, etc.).
             BuildFullBleedBar(parent, "BottomHud", HUD_BOTTOM, top: false, visibleH: BOTTOM_HUD_H, radius: 30);
         }
@@ -2189,6 +2225,7 @@ namespace WordDrop
                 int left = Mathf.Max(0, max - used);
                 _heartsText.text = $"{left}/{max}"; // heart is now the soulgem icon in the pill, not a glyph
             }
+            _hudBar?.RefreshHearts();
             if (_coinsText != null)
             {
                 // Show the PRE-reward total while a coin cascade is queued — the flying coins tick it up to the
@@ -2388,3 +2425,5 @@ namespace WordDrop
         }
     }
 }
+
+// recompile nudge 2026-10-27 12:46 (Unity cached these at 12:40:16 and missed the 12:40:17 save)

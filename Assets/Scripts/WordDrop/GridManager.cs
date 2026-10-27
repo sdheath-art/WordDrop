@@ -501,26 +501,35 @@ namespace WordDrop
         ///
         /// Debug-only and not cheap (FindObjectsByType); BoardInvariants calls it on its
         /// 0.35s tick, only while the board is settled.</summary>
+        private static int s_lastOrphanSig;
         public int ReportSceneOrphanTiles()
         {
             var all = Object.FindObjectsByType<Tile>(FindObjectsSortMode.None);
             if (all == null || all.Length == 0) return 0;
 
+            // Walk the WHOLE array, not RulesEngine.ROWS: off a level (main menu) ROWS drops to 5, so a full 9x11 board's rows
+            // 5-10 were reported as 54 "orphans" every time - a false alarm (2026-10-27; RebuildGrid already clears to MAX_ROWS).
             var known = new HashSet<Tile>();
-            for (int c = 0; c < RulesEngine.COLS; c++)
-            for (int r = 0; r < RulesEngine.ROWS; r++)
+            for (int c = 0; c < _tiles.GetLength(0); c++)
+            for (int r = 0; r < _tiles.GetLength(1); r++)
                 if (_tiles[c, r] != null) known.Add(_tiles[c, r]);
             foreach (var pooled in _tilePool) if (pooled != null) known.Add(pooled);
 
-            int orphans = 0;
+            // 2026-10-27: ONE summary line per new orphan set (was one LogError with a stack trace per tile - 54 at once, every
+            // 0.35s tick, which stuttered the editor). Same information; the first 12 are named.
+            int orphans = 0; var names = new System.Text.StringBuilder(); int sig = 17;
             foreach (var t in all)
             {
                 if (t == null || known.Contains(t)) continue;
                 if (!t.gameObject.activeInHierarchy) continue;   // parked/inactive is fine
-                orphans++;
-                Debug.LogError($"[Invariant] SCENE ORPHAN tile '{t.Letter}' at col={t.Col} row={t.Row} " +
-                               $"worldPos={t.transform.position} name='{t.gameObject.name}' — " +
-                               $"in the scene but in NEITHER _tiles[] NOR the pool. Nothing can clean it up.");
+                orphans++; sig = sig * 31 + t.GetInstanceID();
+                if (orphans <= 12) names.Append($"\n  '{t.Letter}' col={t.Col} row={t.Row} pos={t.transform.position} name='{t.gameObject.name}'");
+            }
+            if (orphans > 0 && sig != s_lastOrphanSig)
+            {
+                s_lastOrphanSig = sig;
+                Debug.LogError($"[Invariant] {orphans} SCENE ORPHAN tile(s) - in the scene but in NEITHER _tiles[] NOR the pool, " +
+                               $"nothing can clean them up (frame {Time.frameCount}):{names}{(orphans > 12 ? $"\n  ... +{orphans - 12} more" : "")}");
             }
             return orphans;
         }

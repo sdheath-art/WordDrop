@@ -9,7 +9,8 @@ public class ButtonArtImporter : AssetPostprocessor
 {
     void OnPreprocessTexture()
     {
-        bool nav = assetPath.StartsWith("Assets/Resources/UI/NavBar/");   // 2026-10-27: the bottom nav bar (2160 wide, 2x)
+        bool nav = assetPath.StartsWith("Assets/Resources/UI/NavBar/")    // 2026-10-27: the bottom nav bar (2160 wide, 2x)
+                || assetPath.StartsWith("Assets/Resources/UI/HudBar/");   //             and the top HUD bar (2358 wide, 2x)
         if (!assetPath.StartsWith("Assets/Resources/UI/Buttons/") && !nav) return;
         var ti = (TextureImporter)assetImporter;
         ti.textureType         = TextureImporterType.Sprite;

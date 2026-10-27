@@ -200,8 +200,12 @@ namespace WordDrop
             UIAnimations.DropInWithBounce(rt, speedMult: MODAL_SPEED_MULT);
         }
 
+        /// <summary>Fired when the modal starts closing (the level map's nav bar moves its dome back off the settings tab).</summary>
+        public static event System.Action Closed;
+
         public void Hide()
         {
+            Closed?.Invoke();
             DismissConfirm(); // tear down any open confirm overlay so it can't outlive the modal
 
             // Reverse of the converge-out animation in Show — booster bench
@@ -1019,3 +1023,5 @@ namespace WordDrop
         }
     }
 }
+
+// recompile nudge 2026-10-27 12:46 (Unity cached these at 12:40:16 and missed the 12:40:17 save)
