@@ -91,6 +91,8 @@ public static class FontSdfGenerator
         if (!all)
             Debug.LogWarning($"[FontSDF] {outName}: some characters are not in the face — fine if they are symbols.");
 
+        ImportKerning(fa, outName, ttfPath);
+
         AssetDatabase.DeleteAsset(outPath);          // regenerate cleanly
         AssetDatabase.CreateAsset(fa, outPath);
 
@@ -119,5 +121,40 @@ public static class FontSdfGenerator
                   $"(pointSize {POINT_SIZE}, padding {PADDING}) -> {outPath} " +
                   $"[{(info.Exists ? info.Length / 1024 : 0)} KB]. " +
                   $"Load it with GameFont.TILE_FONT = \"{outName}\";");
+    }
+
+    /// <summary>2026-10-25: TMP's dynamic import left m_GlyphPairAdjustmentRecords EMPTY for WordSlop even though the
+    /// .ttf carries GPOS pair kerning (the +20 anti-collision pairs: 7-1, TT, TY, VY…), so "71" etc. set tighter in
+    /// Unity than in Photoshop. Ask the font engine for the pairs between the baked glyphs and add them by hand.</summary>
+    static void ImportKerning(TMP_FontAsset fa, string outName, string ttfPath)
+    {
+        // Pairs exported from the .ttf's GPOS by Python (FontEngine's pair-table call is internal in this Unity).
+        string kp = Path.ChangeExtension(ttfPath, null) + ".kern.json";
+        if (!File.Exists(kp)) return;
+        var data = JsonUtility.FromJson<KernFile>("{\"unitsPerEm\":" + ExtractUpm(File.ReadAllText(kp)) + ",\"rows\":" + ToRows(File.ReadAllText(kp)) + "}");
+        var list = fa.fontFeatureTable.glyphPairAdjustmentRecords;
+        float k = fa.faceInfo.pointSize / data.unitsPerEm;
+        int added = 0;
+        foreach (var row in data.rows)
+        {
+            if (!fa.characterLookupTable.TryGetValue((uint)row.a, out var ca) || !fa.characterLookupTable.TryGetValue((uint)row.b, out var cb)) continue;
+            list.Add(new UnityEngine.TextCore.LowLevel.GlyphPairAdjustmentRecord(
+                new UnityEngine.TextCore.LowLevel.GlyphAdjustmentRecord(ca.glyphIndex, new UnityEngine.TextCore.LowLevel.GlyphValueRecord(0, 0, row.v * k, 0)),
+                new UnityEngine.TextCore.LowLevel.GlyphAdjustmentRecord(cb.glyphIndex, new UnityEngine.TextCore.LowLevel.GlyphValueRecord(0, 0, 0, 0))));
+            added++;
+        }
+        fa.ReadFontAssetDefinition();
+        Debug.Log($"[FontSDF] {outName}: {added} kerning pairs imported from {Path.GetFileName(kp)}");
+    }
+    [System.Serializable] class KernRow { public int a, b; public float v; }
+    [System.Serializable] class KernFile { public float unitsPerEm; public KernRow[] rows; }
+    static string ExtractUpm(string j) { var m = System.Text.RegularExpressions.Regex.Match(j, "\"unitsPerEm\":\\s*([0-9.]+)"); return m.Success ? m.Groups[1].Value : "1000"; }
+    static string ToRows(string j)
+    {
+        // [[a,b,v],...] -> [{"a":..,"b":..,"v":..},...]  (JsonUtility can't read nested arrays)
+        var sb = new System.Text.StringBuilder("[");
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(j, "\\[\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*,\\s*(-?[0-9.]+)\\s*\\]"))
+            sb.Append(sb.Length > 1 ? "," : "").Append($"{{\"a\":{m.Groups[1].Value},\"b\":{m.Groups[2].Value},\"v\":{m.Groups[3].Value}}}");
+        return sb.Append("]").ToString();
     }
 }

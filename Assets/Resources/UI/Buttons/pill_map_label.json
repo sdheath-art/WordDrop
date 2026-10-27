@@ -1,0 +1,39 @@
+{
+ "canvas": [
+  500,
+  300
+ ],
+ "face": [
+  85.6,
+  83,
+  328.56,
+  130.88
+ ],
+ "textBox": [
+  161.88,
+  107.24,
+  176,
+  82.4
+ ],
+ "label": "Map",
+ "style": "cream",
+ "ink": "#0A2468",
+ "creamTop": "#FFF8D3",
+ "creamBottom": "#FFF4BD",
+ "outlinePx": 3.2,
+ "extrudePx": [
+  4.03,
+  5.97
+ ],
+ "trackingPerMille": -18,
+ "condense": 1,
+ "emPx": 106.46,
+ "inkTopUnits": 608.0,
+ "inkBottomUnits": -166,
+ "frameBox": [
+  41,
+  47,
+  415,
+  217
+ ]
+}

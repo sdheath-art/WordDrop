@@ -66,7 +66,26 @@ namespace WordDrop
             // check reads that array, so a true scene orphan is invisible to them. 2026-10-19.
             grid.ReportSceneOrphanTiles();
 
+
             var live = new HashSet<string>();
+            // GEM COVERED (TEMP DIAG 2026-10-26): a real gem that LOOKS plain with its own face correct = something drawn over it.
+            // Any other active Tile within a third of a cell of a gem tile is named.
+            {
+                Tile[] allT = null;
+                for (int gc = 0; gc < RulesEngine.COLS; gc++)
+                    for (int gr = 0; gr < RulesEngine.ROWS; gr++)
+                    {
+                        var gt = grid.GetTile(gc, gr); if (gt == null || !gt.IsGem || gt.IsAnimating) continue;
+                        if (allT == null) allT = Object.FindObjectsByType<Tile>(FindObjectsSortMode.None);
+                        foreach (var o in allT)
+                        {
+                            if (o == null || o == gt || !o.gameObject.activeInHierarchy) continue;
+                            if ((o.transform.position - gt.transform.position).sqrMagnitude > grid.CellSize * grid.CellSize * 0.11f) continue;
+                            Flag(live, $"gemcover|{gc},{gr}|{o.GetInstanceID()}",
+                                 $"gem ({gc},{gr}) '{gt.Letter}' is COVERED by tile '{o.Letter}' ({o.Col},{o.Row}) name={o.name} gridHolds={(grid.GetTile(o.Col, o.Row) == o)} pos={o.transform.position}");
+                        }
+                    }
+            }
 
             // [GoldRows] TRIPWIRE (2026-10-22 Spencer: "why did all these rows turn into gold tiles?" — twice now, two full
             // rows, no armed word, nothing in the log). Any time 3+ tiles wear a gold face without being gold letters, dump

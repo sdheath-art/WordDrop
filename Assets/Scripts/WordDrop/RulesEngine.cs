@@ -42,7 +42,7 @@ namespace WordDrop
         // bit bigger and cut down on so many words and columns?" -> "yes please"). Half his swaps made no word although 14-28
         // common-word swaps existed every turn: a FINDABILITY problem on 99 letters. SMALL_BOARD = 7x9 (63 tiles, ~29% bigger);
         // false = the 9x11 board. Read once at startup (every board array is sized from these) — flip it OUT of Play mode.
-        public static bool SMALL_BOARD = true;
+        public static bool SMALL_BOARD = false;   // 2026-10-26 Spencer: back to the bigger 9x11 board for the main game (A/B; true = 7x9)
         public static int COLS       => SMALL_BOARD ? 7 : 9;
         public static int MAX_ROWS   => SMALL_BOARD ? 9 : 11;
         public static int LEVEL_ROWS => SMALL_BOARD ? 9 : 11;
@@ -2471,6 +2471,9 @@ namespace WordDrop
         public const string GEM_LETTERS = "EARIOTNSLDU";   // gems only ride common letters, so a gem is always usable
         public static int GEM_MAX_PER_REFILL = 2;
         public static int GEM_SPARES = 3;                       // gems on the board beyond what the goal still needs (2026-10-23)
+        // FIXED GEMS (2026-10-26 Spencer: "go back to how it used to be where there are only a certain amount of gems that spawn and
+        // extra gems are not added"). true = the level places ALL its goal gems at the start and refills never add gems.
+        public static bool GEMS_FIXED = true;
         public static int GEM_MIN_ON_BOARD = 4;               // refills top the board back up to this many until the goal is met
         /// <summary>Where an airplane goes: a remaining goal piece (ice, crate, gem, collect letter; for ducks, the tile under the
         /// lowest duck), picked at random; no goal piece = a random letter. (-1,-1) if the board is empty.</summary>
@@ -4177,7 +4180,7 @@ namespace WordDrop
             // GEMS keep flowing while the gem goal still needs them: top the board back up to GEM_MIN_ON_BOARD (or what's left).
             var gemCells = new HashSet<Vector2Int>();
             int gemsBefore = CountGems();
-            int gemNeed = LevelRules.GemGoalRemainingOnBoardNeed(gemsBefore);
+            int gemNeed = GEMS_FIXED ? 0 : LevelRules.GemGoalRemainingOnBoardNeed(gemsBefore);
             // HARD CAP (2026-10-23 Spencer, twice: "a bunch of letters just turned into gems" — a whole refill row turned gem).
             // Whatever the goal math says, a single refill adds at most GEM_MAX_PER_REFILL gems. TEMP DIAG logs the inputs.
             if (gemNeed > GEM_MAX_PER_REFILL) { WDLog.Log($"[Gems] refill wanted {gemNeed} gems (on board {gemsBefore}) — capped to {GEM_MAX_PER_REFILL}"); gemNeed = GEM_MAX_PER_REFILL; }

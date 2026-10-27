@@ -81,15 +81,68 @@ namespace WordDrop
                     bool oddMain = main != null && (main.color != Color.white || gemFace || t.IsGem || t.HasPrimedGlow || faceOdd);
                     if (!oddMain && sb.Length == 0) continue;
                     var c = rules != null ? rules.GetCell(x, y) : null;
+                    // 2026-10-26: a REAL gem (data + tile + face all gem) photographed as a plain tile -> something draws OVER it.
+                    // List every enabled SpriteRenderer in the scene whose bounds hold the tile centre, with its sorting, so the
+                    // cover is named (children included; the two "noise" children too).
+                    if (gemFace && main != null)
+                    {
+                        var cov = new System.Text.StringBuilder();
+                        Vector3 ctr = main.bounds.center;
+                        foreach (var sr in Object.FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None))
+                        {
+                            if (sr == null || !sr.enabled || !sr.gameObject.activeInHierarchy || sr.sprite == null || sr.color.a < 0.05f) continue;
+                            var b = sr.bounds; if (ctr.x < b.min.x || ctr.x > b.max.x || ctr.y < b.min.y || ctr.y > b.max.y) continue;
+                            if (b.size.x > main.bounds.size.x * 4f) continue;   // board/background
+                            cov.Append($"\n      {(sr == main ? "*FACE* " : "")}{sr.gameObject.name}<{(sr.transform.parent != null ? sr.transform.parent.name : "-")}> sprite={sr.sprite.name} " +
+                                       $"layer={sr.sortingLayerName} order={sr.sortingOrder} z={sr.transform.position.z:F3} size={b.size.x:F2}x{b.size.y:F2} " +
+                                       $"col=({sr.color.r:F2},{sr.color.g:F2},{sr.color.b:F2},{sr.color.a:F2}) mask={sr.maskInteraction}");
+                        }
+                        WDLog.Log($"[NOTE-COVER] ({x},{y}) '{t.Letter}' gem tile: face enabled={main.enabled} order={main.sortingOrder} pos={t.transform.position} scale={t.transform.localScale}{cov}");
+                    }
                     WDLog.Log($"[NOTE-TILE] ({x},{y}) '{t.Letter}' GEMFACE={gemFace} tint={(main != null ? main.color.ToString() : "-")} " +
                               $"dataGem={(c != null && c.HasGem)} tileGem={t.IsGem} special={t.SpecialKind} {faceRep}{sb}");
                     if (++n >= 40) return;
                 }
             if (n == 0) WDLog.Log("[NOTE-TILE] no odd tiles");
+            // 2026-10-26 (gold U/C/X in the top row, NOT listed above — the grid's own tiles there read clean): who else draws
+            // gold? Every enabled renderer with a gem / gold-armed face anywhere, its owner, and whether that owner is the
+            // tile the grid holds at that cell. Plus every ACTIVE Tile the grid doesn't hold (pooled-but-visible ghosts).
+            var gold = new System.Text.StringBuilder(); int gn = 0;
+            foreach (var sr in Object.FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None))
+            {
+                if (sr == null || !sr.enabled || !sr.gameObject.activeInHierarchy || sr.sprite == null || sr.color.a < 0.05f) continue;
+                var tx = sr.sprite.texture;
+                bool g = sr.sprite == Tile.GemSprite || sr.sprite == Tile.GoldPrimedSprite
+                         || (tx != null && ((Tile.GemSprite != null && tx == Tile.GemSprite.texture) || (Tile.GoldPrimedSprite != null && tx == Tile.GoldPrimedSprite.texture)
+                                            || tx.name.ToLower().Contains("gem") || tx.name.ToLower().Contains("gold")));
+                if (!g) continue;
+                var owner = sr.GetComponentInParent<Tile>();
+                var cell = grid.WorldToCell(sr.bounds.center);
+                var held = grid.GetTile(cell.x, cell.y);
+                gold.Append($"\n      {sr.gameObject.name}<{(sr.transform.parent != null ? sr.transform.parent.name : "-")}> at cell ({cell.x},{cell.y}) " +
+                            $"sprite={(sr.sprite == Tile.GemSprite ? "GEM" : sr.sprite == Tile.GoldPrimedSprite ? "GOLD-PRIMED" : "tex:" + (tx != null ? tx.name : "?"))} order={sr.sortingOrder} owner={(owner != null ? owner.name : "none")} " +
+                            $"ownerIsGridTile={(owner != null && owner == held)} gridTile={(held != null ? held.name : "null")}");
+                gn++;
+            }
+            WDLog.Log($"[NOTE-GOLD] {gn} gold/gem renderer(s):{gold}");
+            int ghosts = 0;
+            foreach (var t in Object.FindObjectsByType<Tile>(FindObjectsSortMode.None))
+            {
+                if (t == null || !t.gameObject.activeInHierarchy) continue;
+                bool held = false;
+                for (int x = 0; x < RulesEngine.COLS && !held; x++) for (int y = 0; y < RulesEngine.ROWS && !held; y++) if (grid.GetTile(x, y) == t) held = true;
+                if (held) continue;
+                ghosts++;
+                WDLog.Log($"[NOTE-GHOST] active tile NOT in the grid: {t.name} '{t.Letter}' ({t.Col},{t.Row}) pos={t.transform.position}");
+            }
+            if (ghosts == 0) WDLog.Log("[NOTE-GHOST] none");
         }
 
         public void Take()
         {
+            // 2026-10-26 TEMP DIAG: every screenshot also dumps the odd tiles (the gold "gem" top row, 6th report — Spencer
+            // screenshots it but never had a reason to press '.'). Names the face/flags/overlay painting the gold.
+            if (!Capturing) { WDLog.Log("[NOTE-TILE] ===== screenshot dump ====="); DumpOddTiles(); }
             if (!Capturing) StartCoroutine(CaptureRoutine());
         }
 
@@ -98,6 +151,7 @@ namespace WordDrop
             Capturing = true;
             yield return null;                         // one frame with overlays hidden
             yield return new WaitForEndOfFrame();
+            WDLog.Log("[NOTE-TILE] ===== AT RENDER (what the picture shows) ====="); DumpOddTiles();   // TEMP 2026-10-26: the Take() dump runs 2 frames early
             var tex = ScreenCapture.CaptureScreenshotAsTexture();
             Capturing = false;
             if (tex == null) { Debug.LogWarning("[ClaudeShot] capture failed"); yield break; }

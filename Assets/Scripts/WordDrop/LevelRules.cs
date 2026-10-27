@@ -154,7 +154,7 @@ namespace WordDrop
             if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = sim.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
             else sim.ClearGrass();
             sim.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
-            if (r.Gems > 0) sim.PlaceGems(Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2), keep);
+            if (r.Gems > 0) sim.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep);
             if (r.Ducks > 0) sim.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep);
             CrateGoal = crates;
             if (crates > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Crates, Target = crates });
@@ -806,7 +806,10 @@ namespace WordDrop
                     else rules2.ClearGrass();
                     int tnt = rules2.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
                     WinStreak.Apply(rules2, keep);   // 2026-10-23: streak rockets / bombs / disco (live only — the bot's SetupSimLevel skips it)
-                    int gemsPlaced = r.Gems > 0 ? rules2.PlaceGems(Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2), keep) : 0;
+                    int gemsPlaced = r.Gems > 0 ? rules2.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep) : 0;
+                    // fixed gems: the board can't get more later, so the goal can never ask for more than were placed
+                    if (RulesEngine.GEMS_FIXED && r.Gems > 0)
+                        foreach (var gg in Goals) if (gg.Type == GoalType.Gems && gg.Target > gemsPlaced) { WDLog.Log($"[Gems] only {gemsPlaced}/{gg.Target} placed — goal lowered"); gg.Target = gemsPlaced; }
                     int ducksPlaced = r.Ducks > 0 ? rules2.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep) : 0;
                     CrateGoal = crates; CrateGoalStage = internalStage;
                     if (crates > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Crates, Target = crates });

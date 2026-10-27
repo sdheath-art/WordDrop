@@ -1,0 +1,39 @@
+{
+ "canvas": [
+  800,
+  400
+ ],
+ "face": [
+  108.4,
+  90.92,
+  592.24,
+  165.12
+ ],
+ "textBox": [
+  284.52,
+  113.52,
+  240,
+  120
+ ],
+ "label": "Play",
+ "style": "cream",
+ "ink": "#264108",
+ "creamTop": "#FFF8D3",
+ "creamBottom": "#FFF4BD",
+ "outlinePx": 3.2,
+ "extrudePx": [
+  4.03,
+  5.97
+ ],
+ "trackingPerMille": -18,
+ "condense": 1,
+ "emPx": 149.44,
+ "inkTopUnits": 637,
+ "inkBottomUnits": -166,
+ "frameBox": [
+  42,
+  45,
+  724,
+  277
+ ]
+}

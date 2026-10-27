@@ -2182,6 +2182,7 @@ namespace WordDrop
                 var c = free[Random.Range(0, free.Count)];
                 int kind = Random.value < 0.5f ? RulesEngine.SPECIAL_ROCKET_H : RulesEngine.SPECIAL_ROCKET_V;
                 rules.GetCell(c.x, c.y).SpecialKind = kind;   // claim the cell now so the next rocket picks another
+                grid?.GetTile(c.x, c.y)?.HideLetterForBonus();   // now, not on landing: state sync can show the icon mid-flight (2026-10-26)
                 placed++;
                 HUDManager.MovesDisplayOverride = Mathf.Max(0, movesLeft - placed);   // the move leaves the counter...
                 // OVERLAPPING LAUNCHES (2026-10-22 Spencer: "during the bonus can it dole out the rockets a little bit faster?").

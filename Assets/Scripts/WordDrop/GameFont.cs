@@ -21,6 +21,12 @@ namespace WordDrop
         /// <summary>2026-10-22 Spencer: "maybe we should just stick to montserrat for numbers". The styled numbers (HUD moves,
         /// level star, goal/reward badges, score pop-ups) use Montserrat Black; words stay Nunito.</summary>
         public static bool NUMBERS_MONTSERRAT = true;
+        /// <summary>2026-10-25: WordSlop — our own face (traced from Spencer's ChatGPT specimen; Editor/WordSlopSetup.cs bakes it).
+        /// true = UI + display WORDS use it. Tiles (TILE_FONT) and styled numbers (NUMBERS_MONTSERRAT) are unchanged on purpose —
+        /// both were Spencer's explicit picks. false = back to the ALL_NUNITO behaviour.</summary>
+        public static bool WORDSLOP = true;
+        public const string WORDSLOP_FONT = "WordSlop SDF";
+        private static TMP_FontAsset LoadWordSlop() => WORDSLOP ? Resources.Load<TMP_FontAsset>(WORDSLOP_FONT) : null;
         private static TMP_FontAsset _numberTMP; private static bool _loadedNumberTMP;
         public static TMP_FontAsset GetNumberTMP()
         {
@@ -128,7 +134,8 @@ namespace WordDrop
                 // Cartoon, regenerate "Cartoon SDF" in Window▸TextMeshPro▸Font Asset Creator at pointSize
                 // ~90, padding ~9, then switch the first load back to "Cartoon SDF". Display/celebration
                 // text (GetDisplayTMP) stays Cartoon — it's always large, where the bad atlas looks fine.
-                _uiTMP = ALL_NUNITO ? GetTMP() : null;
+                _uiTMP = LoadWordSlop();
+                if (_uiTMP == null && ALL_NUNITO) _uiTMP = GetTMP();
                 if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Montserrat-Black SDF");
                 if (_uiTMP == null) _uiTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_uiTMP == null) _uiTMP = GetTMP();
@@ -143,7 +150,8 @@ namespace WordDrop
         {
             if (!_loadedDisplayTMP)
             {
-                _displayTMP = ALL_NUNITO ? GetTMP() : null;
+                _displayTMP = LoadWordSlop();
+                if (_displayTMP == null && ALL_NUNITO) _displayTMP = GetTMP();
                 if (_displayTMP == null) _displayTMP = Resources.Load<TMP_FontAsset>("Cartoon SDF");
                 if (_displayTMP == null) _displayTMP = GetUITMP();
                 _loadedDisplayTMP = true;

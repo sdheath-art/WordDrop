@@ -743,7 +743,7 @@ namespace WordDrop
             if (_hasPrimedGlow && _spriteRenderer != null && !_isShowingScoredSprite)
             {
                 var f = ArmedFace();
-                if (f != null && _spriteRenderer.sprite != f) _spriteRenderer.sprite = f;
+                if (f != null && _spriteRenderer.sprite != f) FaceSprite = f;
                 // Only on an UPGRADE, and only if this tile was already sitting at a tier —
                 // otherwise a tile arming for the first time would double up with its own
                 // scored flash.
@@ -1306,7 +1306,7 @@ namespace WordDrop
 
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null) ? s_spriteAI : RestingFaceFor(letter);
+                FaceSprite = (ownerIndex == 1 && s_spriteAI != null) ? s_spriteAI : RestingFaceFor(letter);
                 _baseTint = BaseTintForLetter(letter);   // per-letter value accent
                 _spriteRenderer.color = _baseTint;
                 _spriteRenderer.enabled = true;
@@ -1342,7 +1342,7 @@ namespace WordDrop
             // the moment I make a word." Initialise did this on its own; the recycled path is
             // the one the game actually runs. Same class of bug as the sorting order note above.
             if (_spriteRenderer != null && !IsWild && !IsStone && !IsFrozen)
-                _spriteRenderer.sprite = (ownerIndex == 1 && s_spriteAI != null)
+                FaceSprite = (ownerIndex == 1 && s_spriteAI != null)
                                        ? s_spriteAI : RestingFaceFor(letter);
             if (_letterTMP != null) { _letterTMP.gameObject.SetActive(true); _letterTMP.enabled = true; }
             if (_pointTMP != null) { _pointTMP.gameObject.SetActive(true); _pointTMP.enabled = true; }
@@ -1350,6 +1350,7 @@ namespace WordDrop
 
         public void ResetForPool()
         {
+            _bonusLetterHidden = false;
             SetSpecial(RulesEngine.SPECIAL_NONE);   // a recycled tile must not keep a special marker
             IsRainGold = false;                     // nor a shower-gold flag
             IsGem = false;                          // nor a gem
@@ -1837,13 +1838,13 @@ namespace WordDrop
                         // White base + (optional) crystal overlay. The rainbow aura is
                         // independent (UpdateWildHalo below). IridescentTileTint gates
                         // just the crystal tint on the face.
-                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                        FaceSprite = RestingFaceFor(Letter);
                         _spriteRenderer.color  = Color.white;
                         UpdateIridescent(IridescentTileTint);
                     }
                     else
                     {
-                        _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
+                        FaceSprite = s_spriteWild ?? s_spriteNormal;
                         UpdateIridescent(false);
                     }
                 }
@@ -1852,11 +1853,11 @@ namespace WordDrop
                     UpdateIridescent(false);
                     // Restore to state-appropriate sprite (priority: primed > gold > normal)
                     if (_hasPrimedGlow)
-                        _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                        FaceSprite = s_spriteGold ?? s_spriteNormal;
                     else if (_isGoldBonus)
-                        _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                        FaceSprite = s_spriteGolden ?? s_spriteNormal;
                     else
-                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                        FaceSprite = RestingFaceFor(Letter);
                 }
             }
             // 2026-06-03 Spencer: NO rainbow aura on the board wild — the rays+glow
@@ -2018,7 +2019,7 @@ namespace WordDrop
             if (LETTER_CATEGORY_TINTS && _spriteRenderer != null
                 && !_hasPrimedGlow && !_isShowingScoredSprite && !_isGoldBonus
                 && !IsWild && !IsStone && !IsFrozen)
-                _spriteRenderer.sprite = RestingFaceFor(letter);
+                FaceSprite = RestingFaceFor(letter);
             if (!_isShowingScoredSprite && !_hasPrimedGlow && !_isGoldBonus && !_isStone
                 && !_isFrozen && !_isWild && !_isSwapRefill && !_isEditRefill && !_isWildRefill)
                 ApplyRestingColor(); // repaint only if the tile is in its plain resting state
@@ -2081,7 +2082,7 @@ namespace WordDrop
                 else return; // Fake3D is active and valid — let it manage visibility
             }
 
-            if (_letterTMP != null)
+            if (_letterTMP != null && !_bonusLetterHidden)
             {
                 if (!_letterTMP.gameObject.activeSelf) _letterTMP.gameObject.SetActive(true);
                 if (!_letterTMP.enabled) _letterTMP.enabled = true;
@@ -2316,14 +2317,14 @@ namespace WordDrop
                 // Swap sprite to golden_tile@2x (natural gold artwork) instead of
                 // tinting the white tile yellow. Color stays white so the sprite
                 // renders at its own designed color.
-                _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                FaceSprite = s_spriteGolden ?? s_spriteNormal;
                 _spriteRenderer.color = Color.white;
             }
             else if (!gold && _spriteRenderer != null)
             {
                 if (_goldPulseCoroutine != null) { StopCoroutine(_goldPulseCoroutine); _goldPulseCoroutine = null; }
                 // Restore normal sprite + default color/letter tints
-                _spriteRenderer.sprite = RestingFaceFor(Letter);
+                FaceSprite = RestingFaceFor(Letter);
                 ApplyRestingColor();
                 if (_letterTMP != null)
                     _letterTMP.color = LETTER_INK;
@@ -2421,8 +2422,38 @@ namespace WordDrop
 
         /// <summary>BONUS BLAST rockets (2026-10-23 Spencer: "during the bonus it probably shouldnt have letters on the rockets cause it
         /// doesnt matter"): hide the letter + its plate. The tile is destroyed when the rocket fires, so nothing restores it.</summary>
+        // FACE TRACE (TEMP DIAG 2026-10-26, Spencer: "letters flipping back and forth between regular tiles and gems ... this NEEDS
+        // to be fixed" — 8 reports, every snapshot diag came back clean because the flip happens between the dump and the render).
+        // EVERY write to the face goes through here; a plain letter getting a gem/gold face, or a real gem losing its gem face,
+        // logs the caller chain. Rate-limited per tile.
+        private float _faceTraceNext, _faceGuardLogNext;
+        public static bool FACE_GUARD = true;
+        private Sprite FaceSprite
+        {
+            get => _spriteRenderer != null ? _spriteRenderer.sprite : null;
+            set
+            {
+                if (_spriteRenderer == null) return;
+                var old = _spriteRenderer.sprite;
+                _spriteRenderer.sprite = value;
+                if (old == value || Time.unscaledTime < _faceTraceNext) return;
+                bool goldish = value != null && (value == s_spriteGem || value == s_spritePrimedGold || value == s_spriteGolden
+                               || (value == s_spriteHighValue && LetterData.GetPoints(Letter) < HIGH_VALUE_POINTS && !IsRainGold));
+                bool wrongGold = goldish && !IsGem && !_hasPrimedGlow && !_iconIsTile;
+                bool lostGem = IsGem && old == s_spriteGem && value != s_spriteGem && !_hasPrimedGlow && !_isShowingScoredSprite;
+                if (!wrongGold && !lostGem) return;
+                _faceTraceNext = Time.unscaledTime + 1f;
+                var st = new System.Diagnostics.StackTrace(1, false); var who = new System.Text.StringBuilder();
+                for (int i = 0; i < Mathf.Min(6, st.FrameCount); i++) { var m = st.GetFrame(i).GetMethod(); if (m != null) who.Append(m.DeclaringType?.Name).Append('.').Append(m.Name).Append(i < 5 ? " < " : ""); }
+                WDLog.Log($"[FaceTrace] ({Col},{Row}) '{Letter}' {(wrongGold ? "PLAIN LETTER got " + FaceName(value) : "GEM lost its face -> " + FaceName(value))} " +
+                          $"(was {FaceName(old)}) by {who} | {DebugFaceState()}");
+            }
+        }
+        private bool _bonusLetterHidden;   // 2026-10-26: the [BlankTile] safety net was switching the hidden letter back on
         public void HideLetterForBonus()
         {
+            _bonusLetterHidden = true;
+            if (!_iconIsTile) return;   // claimed but not a rocket yet: LateUpdate hides it the frame it becomes one
             // Hide by RENDERER only (2026-10-23 fix): deactivating the plate GameObject broke ExitIconTile, which only moves the
             // letter home while the plate is active — recycled bonus tiles came back with tiny corner letters (Spencer's screenshot).
             if (_letterTMP != null) _letterTMP.enabled = false;
@@ -2432,7 +2463,7 @@ namespace WordDrop
 
         public void ForceRestingFace()
         {
-            if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { _spriteRenderer.sprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
+            if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { FaceSprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
         }
 
         public void SetGem(bool on)
@@ -2448,7 +2479,7 @@ namespace WordDrop
                 WDLog.Log($"[GemBorn] ({Col},{Row}) '{Letter}' became a gem — tile age {Time.unscaledTime - _bornAt:F2}s — by {who}");
             }
             IsGem = on;
-            if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { _spriteRenderer.sprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
+            if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { FaceSprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
         }
         public static string COLLECT_TILE_ASSET = "Tiles/blue_tile@2x";
         private static Sprite s_spriteCollectBlue;
@@ -2470,6 +2501,54 @@ namespace WordDrop
         // primed glow, gold or stone tint mid-effect.
         private void LateUpdate()
         {
+            // BONUS ROCKETS: no badge, no letter (Spencer 2026-10-26: "i just dont want any badge or lettering showing during the
+            // bonus"). Several paths re-show them (state sync re-entering the icon, letter-repair nets, priming), so this
+            // converges every frame instead of trusting a one-time hide.
+            // FACE GUARD (2026-10-26, Spencer: "certain tiles dont know if they are gems or not"). Last word before the frame is
+            // drawn: a plain letter never wears the gem/gold-armed face unless a word is ARMING it, and a real gem always wears
+            // the gem face when it's resting. Logs [FaceGuard] so the cause is still visible ([FaceTrace] names the writer).
+            // GEM FLAG vs DATA (2026-10-26: an O that was a gem in the data showed plain and the airplane "collected" it). The data is
+            // the truth; a settled tile whose gem flag disagrees is corrected here every frame, and logged.
+            if (FACE_GUARD && !IsAnimating && Col >= 0 && Row >= 0 && RulesEngine.Instance != null && GridManager.Instance != null
+                && GridManager.Instance.GetTile(Col, Row) == this)
+            {
+                var cd = RulesEngine.Instance.GetCell(Col, Row);
+                if (cd != null && cd.Letter == Letter && cd.HasGem != IsGem)
+                {
+                    WDLog.Log($"[FaceGuard] ({Col},{Row}) '{Letter}' gem flag {IsGem} but data says {cd.HasGem} -> following the data | {DebugFaceState()}");
+                    SetGem(cd.HasGem);
+                }
+            }
+            if (FACE_GUARD && _spriteRenderer != null && !_iconIsTile && !_isShowingScoredSprite && !_hasPrimedGlow && !_swipePreview && !_editSelected
+                && !_isStone && !IsFrozen && !IsWild && !IsDissolving)
+            {
+                var cur = _spriteRenderer.sprite;
+                bool gemFace = cur != null && (cur == s_spriteGem || cur == s_spritePrimedGold);
+                if (gemFace != IsGem || (IsGem && cur != s_spriteGem))
+                {
+                    var reg = RulesEngine.Instance != null ? RulesEngine.Instance.PrimedRegistry : null;
+                    bool armed = reg != null && Col >= 0 && Row >= 0 && reg.GetPrimedWordsContaining(new Vector2Int(Col, Row)).Count > 0;
+                    if (!armed)
+                    {
+                        var restFace = RestingFaceFor(Letter);
+                        if (restFace != null && restFace != cur)
+                        {
+                            if (Time.unscaledTime >= _faceGuardLogNext)
+                            {
+                                _faceGuardLogNext = Time.unscaledTime + 1f;
+                                WDLog.Log($"[FaceGuard] ({Col},{Row}) '{Letter}' was {FaceName(cur)} -> {FaceName(restFace)} (gem={IsGem}) | {DebugFaceState()}");
+                            }
+                            FaceSprite = restFace; _spriteRenderer.color = Color.white;
+                        }
+                    }
+                }
+            }
+            if (_bonusLetterHidden && _iconIsTile)   // only once it IS a rocket: the plain tile keeps its letter until the rocket lands
+            {
+                if (_letterTMP != null && _letterTMP.enabled) _letterTMP.enabled = false;
+                if (_letterPlateGO != null) { var bpsr = _letterPlateGO.GetComponent<SpriteRenderer>(); if (bpsr != null && bpsr.enabled) bpsr.enabled = false; }
+                if (_pointTMP != null && _pointTMP.enabled) _pointTMP.enabled = false;
+            }
             // Crate art carries its own colour — never let a tint (stone grey, flashes) darken it.
             if (_isCrateArt && _spriteRenderer != null && _spriteRenderer.color != Color.white && _flashCoroutine == null)
                 _spriteRenderer.color = Color.white;
@@ -2484,7 +2563,7 @@ namespace WordDrop
                 if (_spriteRenderer != null && SpecialKind != RulesEngine.SPECIAL_NONE)
                 {
                     var iconFace = SpecialTileSprite(SpecialKind);
-                    if (iconFace != null && _spriteRenderer.sprite != iconFace) _spriteRenderer.sprite = iconFace;
+                    if (iconFace != null && _spriteRenderer.sprite != iconFace) FaceSprite = iconFace;
                 }
                 if (_letterPlateGO != null && _letterPlateGO.activeSelf && _spriteRenderer != null)
                 {   // keep the token between the icon and the letter as the tile changes row band / lifts
@@ -2514,8 +2593,8 @@ namespace WordDrop
             if (CollectUsesBlueTile)
             {
                 var sp = _spriteRenderer.sprite;
-                if (want && sp == s_spriteNormal && _spriteRenderer.color == Color.white) _spriteRenderer.sprite = CollectBlueFace;
-                else if (!want && sp == CollectBlueFace) { _spriteRenderer.sprite = RestingFaceFor(Letter); }
+                if (want && sp == s_spriteNormal && _spriteRenderer.color == Color.white) FaceSprite = CollectBlueFace;
+                else if (!want && sp == CollectBlueFace) { FaceSprite = RestingFaceFor(Letter); }
                 if (_spriteRenderer.color == COLLECT_TINT) { _baseTint = Color.white; _spriteRenderer.color = Color.white; }
                 return;
             }
@@ -2611,7 +2690,7 @@ namespace WordDrop
             // FULL BOARD CRATE (2026-10-21): crates are plain (falling) stones drawn with Spencer's crate art.
             if (active && SurvivalManager.FullBoardActive && GetCrateSprite() != null)
             {
-                _spriteRenderer.sprite = s_crateSprite; _spriteRenderer.color = Color.white;
+                FaceSprite = s_crateSprite; _spriteRenderer.color = Color.white;
                 RefitToSprite(s_crateSprite); _isCrateArt = true;
                 if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
                 if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
@@ -2623,7 +2702,7 @@ namespace WordDrop
             {
                 _isCrateArt = false;
                 var face = RestingFaceFor(Letter);
-                if (face != null) { _spriteRenderer.sprite = face; RefitToSprite(face); }
+                if (face != null) { FaceSprite = face; RefitToSprite(face); }
             }
             if (active)
             {
@@ -2635,7 +2714,7 @@ namespace WordDrop
                         // deterministic per cell — same rock every time for a given cell
                         int hash = (Col * 73856093) ^ (Row * 19349663);
                         int idx = (hash & 0x7fffffff) % s_rockVariants.Length;
-                        _spriteRenderer.sprite = s_rockVariants[idx];
+                        FaceSprite = s_rockVariants[idx];
                         _spriteRenderer.color  = Color.white;   // the art carries its own colour
                     }
                     else _spriteRenderer.color = STONE_TINT;    // fallback: the old grey tint
@@ -2719,7 +2798,7 @@ namespace WordDrop
                 var chick = GetChickenSprite();
                 if (chick != null)
                 {
-                    if (_spriteRenderer.sprite != chick) { _spriteRenderer.sprite = chick; RefitToSprite(chick); } // swap+fit once
+                    if (_spriteRenderer.sprite != chick) { FaceSprite = chick; RefitToSprite(chick); } // swap+fit once
                     _spriteRenderer.color = Color.white;
                 }
                 else _spriteRenderer.color = DROP_TARGET_TINT; // fallback orange if the chicken can't load
@@ -2732,7 +2811,7 @@ namespace WordDrop
             else
             {
                 Sprite normal = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
-                if (normal != null && _spriteRenderer.sprite != normal) { _spriteRenderer.sprite = normal; RefitToSprite(normal); }
+                if (normal != null && _spriteRenderer.sprite != normal) { FaceSprite = normal; RefitToSprite(normal); }
                 _spriteRenderer.color = Color.white;
                 if (_glossGO != null) _glossGO.SetActive(true);
                 if (_innerShadowGO != null) _innerShadowGO.SetActive(true);
@@ -3146,7 +3225,7 @@ namespace WordDrop
                 var vault = GetVaultSprite();
                 if (vault != null)
                 {
-                    _spriteRenderer.sprite = vault;
+                    FaceSprite = vault;
                     RefitToSprite(vault); // chest bounds ≠ tile bounds — re-scale to the cell
                 }
                 _spriteRenderer.color = VaultTint; // tier telegraph: white / silver / gold
@@ -3167,7 +3246,7 @@ namespace WordDrop
                 Sprite normal = (OwnerIndex == 1 && s_spriteAI != null) ? s_spriteAI : s_spriteNormal;
                 if (normal != null)
                 {
-                    _spriteRenderer.sprite = normal;
+                    FaceSprite = normal;
                     RefitToSprite(normal);
                 }
                 _spriteRenderer.color = Color.white;
@@ -3352,7 +3431,7 @@ namespace WordDrop
             {
                 BuildSpriteCache();
                 Sprite want = ArmedFace();   // single chokepoint
-                if (want != null && _spriteRenderer.sprite != want) _spriteRenderer.sprite = want;
+                if (want != null && _spriteRenderer.sprite != want) FaceSprite = want;
             }
             // GEM WORD GLOW (2026-10-22 Spencer: "when you make a word add a glow to these"): an armed gem word pulses a warm
             // HDR glow (real bloom) on every tile until it pops / un-arms (ClearPrimedGlow kills it).
@@ -3434,7 +3513,7 @@ namespace WordDrop
             // _isGoldPrimed; this one was missed because s_spriteGold and s_spriteGoldThick are
             // THE SAME OBJECT (both = loadedPrimed), so it logged under the other name.
             if (_spriteRenderer != null && s_spriteGold != null && Time.time >= _scoredFlashUntil && !_isShowingScoredSprite)
-                _spriteRenderer.sprite = ArmedFace();   // single chokepoint
+                FaceSprite = ArmedFace();   // single chokepoint
 
             // Start subtle primed idle animation
             if (_primedPulseCoroutine == null)
@@ -3608,7 +3687,7 @@ namespace WordDrop
                     // scored tile. The block just below restores the magenta sprite once the hold expires.
                     if (!WordDropFX.SCORED_FLASH_USES_PRIMED_COLOR
                         && s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
-                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                        FaceSprite = RestingFaceFor(Letter);
                     // NOTE: don't touch the bloom overlay here — during this hold the
                     // scored green-flash tween (WordDropFX.PlayWordScored) owns it. We
                     // resume driving the magenta overlay once the hold expires below.
@@ -3626,13 +3705,13 @@ namespace WordDrop
                     Sprite primedFace = ArmedFace();   // single chokepoint
                     // Hold rather than paint a guess — see GoldAnswerPending.
                     if (primedFace != null && _spriteRenderer.sprite != primedFace && !GoldAnswerPending)
-                        _spriteRenderer.sprite = primedFace;
+                        FaceSprite = primedFace;
                 }
                 else
                 {
                     if (!WordDropFX.SCORED_FLASH_USES_PRIMED_COLOR
                         && s_spriteNormal != null && _spriteRenderer.sprite != s_spriteNormal)
-                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                        FaceSprite = RestingFaceFor(Letter);
                 }
 
                 // ── NOTHING IS MOVING (2026-09-08) ──────────────────────────────────
@@ -3790,7 +3869,7 @@ namespace WordDrop
             if (_spriteRenderer != null)
             {
                 _spriteRenderer.color = Color.white;
-                _spriteRenderer.sprite = RestingFaceFor(Letter);
+                FaceSprite = RestingFaceFor(Letter);
             }
             if (_letterWhitened && _letterTMP != null)
             {
@@ -3827,7 +3906,7 @@ namespace WordDrop
                 // without consulting _isGoldPrimed, which is why gold-armed words kept
                 // reverting to the magenta face no matter where we set it. 2026-09-08.
                 Sprite armed = ArmedFace();   // single chokepoint
-                if (armed != null && _spriteRenderer.sprite != armed) _spriteRenderer.sprite = armed;
+                if (armed != null && _spriteRenderer.sprite != armed) FaceSprite = armed;
                 return;
             }
 
@@ -3844,15 +3923,15 @@ namespace WordDrop
             if (_isGoldPrimed && s_spritePrimedGold != null && effectiveHeat == 0)
             {
                 if (_spriteRenderer.sprite != s_spritePrimedGold)
-                    _spriteRenderer.sprite = s_spritePrimedGold;
+                    FaceSprite = s_spritePrimedGold;
                 return;
             }
             switch (effectiveHeat)
             {
-                case 0:  _spriteRenderer.sprite = s_spriteGoldThick; break;
-                case 1:  _spriteRenderer.sprite = s_spriteHeat1 ?? s_spriteGoldThick; break;
-                case 2:  _spriteRenderer.sprite = s_spriteHeat2 ?? s_spriteGoldThick; break;
-                default: _spriteRenderer.sprite = s_spriteHeat3 ?? s_spriteGoldThick; break;
+                case 0:  FaceSprite = s_spriteGoldThick; break;
+                case 1:  FaceSprite = s_spriteHeat1 ?? s_spriteGoldThick; break;
+                case 2:  FaceSprite = s_spriteHeat2 ?? s_spriteGoldThick; break;
+                default: FaceSprite = s_spriteHeat3 ?? s_spriteGoldThick; break;
             }
         }
 
@@ -3982,7 +4061,7 @@ namespace WordDrop
         {
             if (on == IsRainGold) return;
             IsRainGold = on;
-            if (_spriteRenderer != null && !_hasPrimedGlow) { _spriteRenderer.sprite = RestingFaceFor(Letter); ApplyRestingColor(); }
+            if (_spriteRenderer != null && !_hasPrimedGlow) { FaceSprite = RestingFaceFor(Letter); ApplyRestingColor(); }
         }
 
         public void SnapRestScale()
@@ -4061,7 +4140,7 @@ namespace WordDrop
             Sprite want = ArmedFace();   // single chokepoint
             if (want != null && _spriteRenderer.sprite != want)
             {
-                _spriteRenderer.sprite = want;
+                FaceSprite = want;
                 _staticPrimedApplied = false;            // force the pulse loop to repaint colour too
             }
         }
@@ -4228,7 +4307,7 @@ namespace WordDrop
         private void EnterIconTile(int kind)
         {
             _iconIsTile = true;
-            if (_spriteRenderer != null) { _spriteRenderer.sprite = SpecialTileSprite(kind); _spriteRenderer.color = Color.white; }
+            if (_spriteRenderer != null) { FaceSprite = SpecialTileSprite(kind); _spriteRenderer.color = Color.white; }
             if (_glossGO != null) _glossGO.SetActive(false);
             if (_innerShadowGO != null) _innerShadowGO.SetActive(false);
             if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
@@ -4285,10 +4364,11 @@ namespace WordDrop
                 _letterTMP.transform.localPosition = _letterHomePos;
                 _letterTMP.transform.localScale = _letterHomeScale;
             }
+            _bonusLetterHidden = false;
             if (_letterTMP != null) _letterTMP.enabled = true;
             if (_letterPlateGO != null) { var psr = _letterPlateGO.GetComponent<SpriteRenderer>(); if (psr != null) psr.enabled = true; _letterPlateGO.SetActive(false); }
             _iconIsTile = false;
-            if (_spriteRenderer != null) { _spriteRenderer.sprite = RestingFaceFor(Letter); ApplyRestingColor(); }
+            if (_spriteRenderer != null) { FaceSprite = RestingFaceFor(Letter); ApplyRestingColor(); }
             if (_glossGO != null) _glossGO.SetActive(true);
             if (_innerShadowGO != null) _innerShadowGO.SetActive(true);
             if (_pointTMP != null) _pointTMP.gameObject.SetActive(true);
@@ -4496,7 +4576,7 @@ namespace WordDrop
                 if (_isVault)
                 {
                     // Vaults ALWAYS show the treasure chest — never the grey stone tint.
-                    var v = GetVaultSprite(); if (v != null) _spriteRenderer.sprite = v;
+                    var v = GetVaultSprite(); if (v != null) FaceSprite = v;
                     _spriteRenderer.color = VaultTint; // tier telegraph (white / silver / gold)
                 }
                 else if (_isStone)
@@ -4517,7 +4597,7 @@ namespace WordDrop
                     // its gold.
                     if (LETTER_CATEGORY_TINTS && !_hasPrimedGlow && !_isShowingScoredSprite
                         && !IsWild && !IsStone && !IsFrozen)
-                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                        FaceSprite = RestingFaceFor(Letter);
                 }
             }
             // 2026-06-01: respect aim-mode sortingOrder boost. When a booster
@@ -4701,7 +4781,7 @@ namespace WordDrop
                     _spriteRenderer.color = Color.white;
                 // Restore appropriate sprite based on tile state. Vaults re-assert the chest;
                 // gold-bonus tiles return to their gold sprite, not white.
-                _spriteRenderer.sprite = _isVault
+                FaceSprite = _isVault
                     ? (GetVaultSprite() ?? s_spriteNormal)
                     : _isGoldBonus
                         ? (s_spriteGolden ?? s_spriteNormal)
@@ -4726,7 +4806,7 @@ namespace WordDrop
                 && !_isVault && !_isStone && !_isGoldBonus && !_isWild
                 && !_isSwapRefill && !_isEditRefill && !_isWildRefill && !_isShowingScoredSprite)
             {
-                _spriteRenderer.sprite = _diffuseSprite;
+                FaceSprite = _diffuseSprite;
                 _spriteRenderer.color  = _diffuseColor;
             }
         }
@@ -4749,7 +4829,7 @@ namespace WordDrop
             // Tint the live tile to the scored green (keeps test_tile's shape). 2026-06-10.
             if (_spriteRenderer != null)
             {
-                _spriteRenderer.sprite = RestingFaceFor(Letter);
+                FaceSprite = RestingFaceFor(Letter);
                 _spriteRenderer.color  = SCORED_TINT;
             }
         }
@@ -4773,19 +4853,19 @@ namespace WordDrop
                 {
                     // scored = green tint on the live tile (not a sprite swap). Keep the tint;
                     // do NOT fall through to the color=white reset below. 2026-06-10.
-                    _spriteRenderer.sprite = RestingFaceFor(Letter);
+                    FaceSprite = RestingFaceFor(Letter);
                     _spriteRenderer.color  = SCORED_TINT;
                 }
                 else
                 {
                     if (_hasPrimedGlow)
-                        _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                        FaceSprite = s_spriteGold ?? s_spriteNormal;
                     else if (_isGoldBonus)
-                        _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                        FaceSprite = s_spriteGolden ?? s_spriteNormal;
                     else if (_isWild)
-                        _spriteRenderer.sprite = s_spriteWild ?? s_spriteNormal;
+                        FaceSprite = s_spriteWild ?? s_spriteNormal;
                     else
-                        _spriteRenderer.sprite = RestingFaceFor(Letter);
+                        FaceSprite = RestingFaceFor(Letter);
                     _spriteRenderer.color = Color.white;
                 }
             }
@@ -5022,18 +5102,18 @@ namespace WordDrop
             {
                 // Green the LIVE tile via tint (keeps test_tile's shape) instead of swapping
                 // to the separate green sprite. 2026-06-10 Spencer.
-                _spriteRenderer.sprite = RestingFaceFor(Letter);
+                FaceSprite = RestingFaceFor(Letter);
                 _spriteRenderer.color  = SCORED_TINT;
             }
             else
             {
                 // Priority: primed > gold > normal
                 if (_hasPrimedGlow)
-                    _spriteRenderer.sprite = s_spriteGold ?? s_spriteNormal;
+                    FaceSprite = s_spriteGold ?? s_spriteNormal;
                 else if (_isGoldBonus)
-                    _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                    FaceSprite = s_spriteGolden ?? s_spriteNormal;
                 else
-                    _spriteRenderer.sprite = RestingFaceFor(Letter);
+                    FaceSprite = RestingFaceFor(Letter);
                 _spriteRenderer.color = Color.white;
             }
         }
@@ -5062,7 +5142,7 @@ namespace WordDrop
                 if (_hasPrimedGlow) return;   // already lit — leave it alone
                 _swipePreview = true;
                 bool gold = IsGoldLetter && s_spritePrimedGold != null;
-                _spriteRenderer.sprite = gold ? s_spritePrimedGold : (s_spriteGold ?? s_spriteNormal);
+                FaceSprite = gold ? s_spritePrimedGold : (s_spriteGold ?? s_spriteNormal);
                 _spriteRenderer.color  = NeutralisePrimedTint(gold ? ARMED_GOLD_REST : ARMED_ROSE_REST, gold);
                 // White letters, same as an armed word (ARMED_LETTER_WHITE). 2026-10-20 Spencer: "when you swipe to
                 // create a word can the text also turn white?" Restored on release — BEFORE the word arms, so the
@@ -5088,7 +5168,7 @@ namespace WordDrop
             if (_spriteRenderer == null) return;
             if (_isShowingScoredSprite)
             {
-                _spriteRenderer.sprite = RestingFaceFor(Letter);   // scored = green TINT, not a swap
+                FaceSprite = RestingFaceFor(Letter);   // scored = green TINT, not a swap
                 _spriteRenderer.color  = SCORED_TINT;
                 return;
             }
@@ -5097,19 +5177,19 @@ namespace WordDrop
                 // Gold-primed and rose-primed use different sprites AND different rest colours.
                 // _isGoldPrimed is the sticky resolved flag (see ResolveGoldPrimed).
                 bool goldPrimed = _isGoldPrimed;
-                _spriteRenderer.sprite = (goldPrimed && s_spritePrimedGold != null)
+                FaceSprite = (goldPrimed && s_spritePrimedGold != null)
                     ? s_spritePrimedGold : (s_spriteGold ?? s_spriteNormal);
                 _spriteRenderer.color  = NeutralisePrimedTint(goldPrimed ? ARMED_GOLD_REST : ARMED_ROSE_REST, goldPrimed);
                 return;
             }
             if (_isGoldBonus)
             {
-                _spriteRenderer.sprite = s_spriteGolden ?? s_spriteNormal;
+                FaceSprite = s_spriteGolden ?? s_spriteNormal;
                 _spriteRenderer.color  = GOLD_HIGH;                // gold is a TINT here — do not white it
                 return;
             }
             if (_isStone)   { _spriteRenderer.color = STONE_TINT; return; }
-            _spriteRenderer.sprite = RestingFaceFor(Letter);
+            FaceSprite = RestingFaceFor(Letter);
             _spriteRenderer.color  = _baseTint;
         }
 
@@ -5125,7 +5205,7 @@ namespace WordDrop
             if (_spriteRenderer == null) return;
             if (active)
             {
-                _spriteRenderer.sprite = s_spriteCyan ?? s_spriteNormal;
+                FaceSprite = s_spriteCyan ?? s_spriteNormal;
                 _spriteRenderer.color  = Color.white; // clear any scored green tint while showing cyan
             }
             else
@@ -5404,7 +5484,7 @@ namespace WordDrop
             if (!_isVault && !_isStone && !_isGoldBonus && !_isWild
                 && !_isSwapRefill && !_isEditRefill && !_isWildRefill && !_isShowingScoredSprite && !_hasPrimedGlow)
             {
-                _spriteRenderer.sprite = RestingFaceFor(Letter);
+                FaceSprite = RestingFaceFor(Letter);
                 _spriteRenderer.color  = Color.white;
             }
         }
@@ -5632,7 +5712,7 @@ namespace WordDrop
             {
                 WDLog.Log($"[FaceFix] ({Col},{Row}) '{Letter}' was showing {FaceName(_spriteRenderer.sprite)} -> {FaceName(want)} " +
                           $"(color {_spriteRenderer.color}, special {SpecialKind}, rainGold {IsRainGold}, selected {_editSelected})");
-                _spriteRenderer.sprite = want;
+                FaceSprite = want;
                 ApplyRestingColor();
             }
         }
@@ -5651,7 +5731,7 @@ namespace WordDrop
         /// usually during cascades and explosions"). Why a settled letter tile would show no letter, or null if it's fine.</summary>
         public string LetterProblem()
         {
-            if (_letterTMP == null || _isStone || _isVault || IsWild) return null;
+            if (_letterTMP == null || _isStone || _isVault || IsWild || _bonusLetterHidden) return null;   // bonus rockets: hidden on purpose
             if (!_letterTMP.gameObject.activeSelf) return "letter object inactive";
             if (!_letterTMP.enabled) return "letter component disabled";
             if (string.IsNullOrEmpty(_letterTMP.text)) return "letter text empty";
@@ -5666,7 +5746,7 @@ namespace WordDrop
         /// <summary>Put the letter back: active, enabled, text, opaque, unclipped.</summary>
         public void FixLetter()
         {
-            if (_letterTMP == null) return;
+            if (_letterTMP == null || _bonusLetterHidden) return;
             _letterTMP.gameObject.SetActive(true); _letterTMP.enabled = true;
             if (string.IsNullOrEmpty(_letterTMP.text)) UpdateLetterDisplay(Letter);
             _letterTMP.alpha = 1f; var c = _letterTMP.color; c.a = 1f; _letterTMP.color = c;
@@ -5775,7 +5855,7 @@ namespace WordDrop
                           $"isGold(arg)={isGold} _isGoldPrimed={_isGoldPrimed} " +
                           $"registered={RulesEngine.PrimedWordRegisteredForCell(new Vector2Int(Col, Row))} " +
                           $"-> {(armed == s_spritePrimedGold ? "GOLD" : armed == s_spriteGoldThick ? "GREEN(primed)" : "other")}");
-            if (armed != null) _spriteRenderer.sprite = armed;
+            if (armed != null) FaceSprite = armed;
         }
 
         /// <summary>Choose this tile's resting face, GUARANTEEING the sprite cache exists first.
@@ -6688,16 +6768,16 @@ namespace WordDrop
             // primed sprite family — missing PRIMED_DANGER_GLOW here was the
             // root cause of the white flash on fuse→1 / fuse→0 transitions.
             if (ColorsClose(borderColor, TILE_BORDER_NORMAL))
-                _spriteRenderer.sprite = PlainFaceForBorder(thick);   // was s_spriteNormal — ate the gold face
+                FaceSprite = PlainFaceForBorder(thick);   // was s_spriteNormal — ate the gold face
             else if (ColorsClose(borderColor, TILE_BORDER_GOLD)
                   || ColorsClose(borderColor, PRIMED_GLOW)
                   || ColorsClose(borderColor, PRIMED_DANGER_GLOW)
                   || ColorsClose(borderColor, PRIMED_GOLD_GLOW))
-                _spriteRenderer.sprite = (_isGoldPrimed && _hasPrimedGlow && s_spritePrimedGold != null)
+                FaceSprite = (_isGoldPrimed && _hasPrimedGlow && s_spritePrimedGold != null)
                     ? s_spritePrimedGold
                     : (thick ? s_spriteGoldThick : s_spriteGold);
             else if (ColorsClose(borderColor, Color.white))
-                _spriteRenderer.sprite = s_spriteWhiteThick;
+                FaceSprite = s_spriteWhiteThick;
             else if (_hasPrimedGlow)
             {
                 // Any other color while primed — keep the primed sprite family,
@@ -6707,14 +6787,14 @@ namespace WordDrop
                 // NEUTRALISED for authored art that test can never match, so a GOLD word fell
                 // through to here and got the rose/green primed face — Spencer: "JAR did not
                 // light up gold, it lit up green". _isGoldPrimed is the resolved, sticky answer.
-                _spriteRenderer.sprite = (_isGoldPrimed && s_spritePrimedGold != null)
+                FaceSprite = (_isGoldPrimed && s_spritePrimedGold != null)
                     ? s_spritePrimedGold
                     : (thick ? s_spriteGoldThick : s_spriteGold);
             }
             else
             {
                 // Unknown color (player green / AI orange flash) — use SpriteRenderer tint instead of regenerating
-                _spriteRenderer.sprite = PlainFaceForBorder(thick);   // category-aware, see above
+                FaceSprite = PlainFaceForBorder(thick);   // category-aware, see above
                 // Border color is faked via sprite tint — good enough for a brief flash
             }
         }
@@ -6723,9 +6803,9 @@ namespace WordDrop
         {
             if (_spriteRenderer == null) return;
             if (ColorsClose(borderColor, Color.white))
-                _spriteRenderer.sprite = s_spriteWhiteThick;
+                FaceSprite = s_spriteWhiteThick;
             else
-                _spriteRenderer.sprite = s_spriteThick;
+                FaceSprite = s_spriteThick;
         }
 
         private static bool ColorsClose(Color a, Color b)

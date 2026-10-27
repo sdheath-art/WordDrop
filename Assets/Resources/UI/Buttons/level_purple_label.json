@@ -1,0 +1,39 @@
+{
+ "canvas": [
+  800,
+  446.92
+ ],
+ "face": [
+  108.4,
+  99.6,
+  592.24,
+  193.2
+ ],
+ "textBox": [
+  284.52,
+  136.2,
+  240,
+  120
+ ],
+ "label": "Level 120",
+ "style": "cream",
+ "ink": "#30005B",
+ "creamTop": "#FFF8D3",
+ "creamBottom": "#FFF4BD",
+ "outlinePx": 4.4,
+ "extrudePx": [
+  0.0,
+  5.4
+ ],
+ "trackingPerMille": -18,
+ "condense": 1.06,
+ "emPx": 134.1,
+ "inkTopUnits": 637,
+ "inkBottomUnits": -10,
+ "frameBox": [
+  42,
+  46,
+  724,
+  323
+ ]
+}

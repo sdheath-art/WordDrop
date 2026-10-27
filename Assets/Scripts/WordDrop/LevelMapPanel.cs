@@ -121,6 +121,11 @@ namespace WordDrop
         private TextMeshProUGUI _playBtnLabel;
         private TextMeshProUGUI _playBtnShadow;
         private RectTransform   _playFaceRT, _playRimRT, _playPanelRT;
+        // 2026-10-25: the Level button is the Photoshop art (gold frame + green face, label drawn live so the number
+        // changes). false = the old code-drawn navy/green button below, untouched.
+        private const bool   USE_ART_BUTTON = true;
+        private const string ART_BUTTON_KEY = "level_blue";    // Spencer 2026-10-27: blue (was purple 10-25; or level_green / level_purple)
+        private ArtButton _artBtn;
         private int             _homeLevel = 1;
         private bool _holdForIntro;       // true in the map-flow: keep the map UP while the play modal drops over it
         private int  _windowStart;        // level of node index 0
@@ -1077,6 +1082,7 @@ namespace WordDrop
             // read after the layout system has run at least once.
             StartCoroutine(LayoutPlayButtonDeferred());
             string lvlText = $"LEVEL {DisplayNum(toLevel)}";
+            if (_artBtn != null) _artBtn.Label = $"Level {DisplayNum(toLevel)}";   // the art's mixed-case label
             if (_playBtnLabel  != null) _playBtnLabel.text  = lvlText;
             if (_playBtnShadow != null) _playBtnShadow.text = lvlText;   // twin must track it
 
@@ -1119,6 +1125,20 @@ namespace WordDrop
         private void EnsurePlayButton()
         {
             if (_playBtnRT != null) return;
+
+            if (USE_ART_BUTTON)
+            {
+                _artBtn = ArtButton.Create(_canvas.transform, ART_BUTTON_KEY, "Level 1");
+                if (_artBtn != null)
+                {
+                    _artBtn.name = "PlayButton";
+                    _playBtnRT = (RectTransform)_artBtn.transform;
+                    LayoutPlayButton();
+                    _artBtn.Button.interactable = false;      // armed once the screen has faded in
+                    _artBtn.Button.onClick.AddListener(OnPlayPressed);
+                    return;
+                }
+            }
 
             var go = new GameObject("PlayButton", typeof(RectTransform), typeof(Image), typeof(Button));
             go.transform.SetParent(_canvas.transform, false);
@@ -1285,13 +1305,19 @@ namespace WordDrop
         private const float PLAY_ASPECT = 2.42f;    // w:h              — measured off the reference
         private const float PLAY_Y_FRAC = 0.26f;    // below centre, as a fraction of canvas height
 
+        // Measured off Royal Kingdom's main screen for the art button: the frame spans 44.8% of the width, centred
+        // 80.6% of the way down (= 0.306 below centre). The old button's own measured numbers stay for the old button.
+        private float PlayWFrac  => _artBtn != null ? 0.448f : PLAY_W_FRAC;
+        private float PlayYFrac  => _artBtn != null ? 0.306f : PLAY_Y_FRAC;
+        private float PlayAspect => _artBtn != null ? _artBtn.FrameAspect : PLAY_ASPECT;
+
         private Vector2 PlayButtonSize()
         {
             float w = _playBtnRT != null && _playBtnRT.rect.width > 1f
                 ? _playBtnRT.rect.width                                   // resolved by the anchors
-                : ((RectTransform)_canvas.transform).rect.width * PLAY_W_FRAC;
-            if (w <= 1f) w = 540f * PLAY_W_FRAC;                          // nothing resolved yet
-            return new Vector2(w, w / PLAY_ASPECT);
+                : ((RectTransform)_canvas.transform).rect.width * PlayWFrac;
+            if (w <= 1f) w = 540f * PlayWFrac;                            // nothing resolved yet
+            return new Vector2(w, w / PlayAspect);
         }
 
         /// <summary>WIDTH COMES FROM ANCHORS, NOT FROM A MEASUREMENT. 2026-10-20, second attempt:
@@ -1305,7 +1331,7 @@ namespace WordDrop
         private void LayoutPlayButton()
         {
             if (_playBtnRT == null) return;
-            float half = PLAY_W_FRAC * 0.5f;
+            float half = PlayWFrac * 0.5f;
             _playBtnRT.anchorMin = new Vector2(0.5f - half, 0.5f);
             _playBtnRT.anchorMax = new Vector2(0.5f + half, 0.5f);
             _playBtnRT.pivot     = new Vector2(0.5f, 0.5f);
@@ -1320,7 +1346,8 @@ namespace WordDrop
             // than invisible, so a timing slip degrades to slightly-misplaced, never gone.
             float ch   = cr.height > 1f ? cr.height : 960f;
             float maxY = Mathf.Max(0f, ch * 0.5f - size.y * 0.75f);
-            _playBtnRT.anchoredPosition = new Vector2(0f, Mathf.Clamp(-ch * PLAY_Y_FRAC, -maxY, maxY));
+            _playBtnRT.anchoredPosition = new Vector2(0f, Mathf.Clamp(-ch * PlayYFrac, -maxY, maxY));
+            if (_artBtn != null) _artBtn.Refit();
 
             // The children are inset by PIXEL offsets derived from the button's height, so a
             // size change has to re-apply them — stretching the root alone would leave a border
@@ -1413,9 +1440,11 @@ namespace WordDrop
                 if (b != null) b.interactable = false;   // one press only; re-armed on cancel
                 _playBtnRT.DOKill();
                 _playBtnRT.localScale = Vector3.one;
-                UIAnimations.ButtonPress(_playBtnRT);
+                // The art button squeezes its face and plays its own press/release pair — don't layer a second
+                // squash or a second release sound on top.
+                if (_artBtn == null) UIAnimations.ButtonPress(_playBtnRT);
             }
-            GameAudio.Instance?.PlayMultiPopRelease();
+            if (_artBtn == null) GameAudio.Instance?.PlayMultiPopRelease();
             ShowIntroOverMap();   // the SAME hand-off a node tap used: home -> level card -> play
         }
 
@@ -2055,8 +2084,11 @@ namespace WordDrop
             RefreshHud();
         }
 
+        public static bool USE_NAV_BAR = true;
         private void BuildBottomHud(Transform parent)
         {
+            // 2026-10-27 Spencer: the purple dome NAV BAR (v3 art, five tab states). Falls back to the old navy bar if the art is missing.
+            if (USE_NAV_BAR && NavBar.Create(parent) != null) return;
             // Reserved bar — we fill this later (garden/world shortcuts, daily, shop, etc.).
             BuildFullBleedBar(parent, "BottomHud", HUD_BOTTOM, top: false, visibleH: BOTTOM_HUD_H, radius: 30);
         }

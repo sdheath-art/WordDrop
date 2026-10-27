@@ -34,6 +34,7 @@ namespace WordDrop
         private GameObject  _iconHolder;   // cleared + rebuilt per Show()
         private GameObject  _goalRow;      // full-board briefing: one picture per goal, with its count (2026-10-22)
         private CanvasGroup _iconGroup;
+        public static bool USE_ART_PLAY = true;   // 2026-10-27: green pill Play art button (false = the old orange MenuUI button)
         private GameObject  _btnPlay;
         private CanvasGroup _btnGroup;
         private GameObject  _closeBtn;     // X (map-flow only): cancel → bare map
@@ -649,8 +650,23 @@ namespace WordDrop
             _descText.fontStyle = FontStyle.Bold;
 
             // PLAY button + CanvasGroup for the staggered fade-in.
-            int before = _panel.transform.childCount;
-            MenuUI.CreateButton(_panel.transform, "BtnPlay",
+            // 2026-10-27 Spencer: the green PILL Play art button (v3 style) replaces the flat orange one. ArtButton brings
+            // its own press squeeze and the two-stage press/release SFX, so none are added here. Falls back to the old
+            // button if the art is missing.
+            ArtButton artPlay = USE_ART_PLAY ? ArtButton.Create(_panel.transform, "pill_play", "Play") : null;
+            if (artPlay != null)
+            {
+                artPlay.name = "BtnPlay";
+                var prt = (RectTransform)artPlay.transform;
+                prt.anchorMin = new Vector2(0.26f, 0.05f); prt.anchorMax = new Vector2(0.74f, 0.26f);   // same slot as before;
+                prt.offsetMin = prt.offsetMax = Vector2.zero; prt.pivot = new Vector2(0.5f, 0.5f);          // the art keeps its aspect inside it
+                artPlay.Refit();
+                artPlay.Button.onClick.AddListener(OnPlay);
+                _btnPlay = artPlay.gameObject;
+                _btnGroup = _btnPlay.AddComponent<CanvasGroup>();
+            }
+            int before = artPlay != null ? int.MaxValue : _panel.transform.childCount;
+            if (artPlay == null) MenuUI.CreateButton(_panel.transform, "BtnPlay",
                 new Vector2(0.26f, 0.05f), new Vector2(0.74f, 0.26f),
                 "PLAY", new Color(0.96f, 0.63f, 0.16f, 1f), Color.white, 30, OnPlay); // 2026-06-24: warm orange CTA
             if (_panel.transform.childCount > before)

@@ -1,0 +1,39 @@
+{
+ "canvas": [
+  720,
+  360.392
+ ],
+ "face": [
+  94.84,
+  85.8,
+  522.44,
+  177.08
+ ],
+ "textBox": [
+  160.04,
+  134.36,
+  392,
+  80
+ ],
+ "label": "Continue",
+ "style": "cream",
+ "ink": "#30005B",
+ "creamTop": "#FFF8D3",
+ "creamBottom": "#FFF4BD",
+ "outlinePx": 3.2,
+ "extrudePx": [
+  4.03,
+  5.97
+ ],
+ "trackingPerMille": -18,
+ "condense": 1,
+ "emPx": 123.08,
+ "inkTopUnits": 640,
+ "inkBottomUnits": -10,
+ "frameBox": [
+  41,
+  43,
+  630,
+  280
+ ]
+}
