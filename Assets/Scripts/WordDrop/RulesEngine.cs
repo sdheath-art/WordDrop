@@ -1120,7 +1120,7 @@ namespace WordDrop
         public int CountCrateCells()
         {
             int n = 0;
-            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) if (_board[c, r] != null && _board[c, r].IsStone && !_board[c, r].IsDropTarget) n++;
+            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) if (_board[c, r] != null && _board[c, r].IsStone && !_board[c, r].IsDropTarget && _board[c, r].TreasureHits == 0) n++;
             return n;
         }
 
@@ -2011,6 +2011,13 @@ namespace WordDrop
         // SWAP COMBOS (2026-10-22 Spencer, from the Royal Match recording @1:21 — TNT swapped into a rocket became a 3x3 of
         // rockets firing 3 rows + 3 columns). Swapping two specials together fires one of these at the swap cell:
         public const int SPECIAL_COMBO_CROSS = 6, SPECIAL_COMBO_BIGCROSS = 7, SPECIAL_COMBO_MEGA = 8, SPECIAL_COMBO_DISCO = 9, SPECIAL_COMBO_DISCO_DISCO = 10;
+        /// <summary>AIRPLANE + AIRPLANE (2026-10-28 Spencer: "two airplanes together needs a combo like when the reference game matches
+        /// two propellers"). RK/RM propeller+propeller: a burst at home, then several propellers split off and each smashes a
+        /// different target. Ours: 3x3 at home, then COMBO_PLANES_COUNT airplanes, each to its own target (PickAirplaneTarget skips
+        /// cells already cleared, so they spread), leaving AIRPLANE_COMBO_STAGGER s apart.</summary>
+        public const int SPECIAL_COMBO_PLANES = 12;
+        public static int   COMBO_PLANES_COUNT = 3;
+        public static float AIRPLANE_COMBO_STAGGER = 0.12f;
         public static bool IsRocket(int k) => k == SPECIAL_ROCKET_H || k == SPECIAL_ROCKET_V;
         /// <summary>rocket+rocket = cross · bomb/TNT+rocket = 3 rows+3 cols · bomb+bomb = 7x7 · disco+X = every tile of the
         /// commonest letter becomes X and fires · disco+disco = whole board.</summary>
@@ -2019,6 +2026,7 @@ namespace WordDrop
             bool da = a == SPECIAL_DISCO, db = b == SPECIAL_DISCO;
             if (da && db) return SPECIAL_COMBO_DISCO_DISCO;
             if (da || db) return SPECIAL_COMBO_DISCO;
+            if (a == SPECIAL_AIRPLANE && b == SPECIAL_AIRPLANE) return SPECIAL_COMBO_PLANES;
             if (IsRocket(a) && IsRocket(b)) return SPECIAL_COMBO_CROSS;
             if (IsBombLike(a) && IsBombLike(b)) return SPECIAL_COMBO_MEGA;
             return SPECIAL_COMBO_BIGCROSS;
@@ -2085,11 +2093,11 @@ namespace WordDrop
         /// <summary>One-shot: the next tap detonation seeds EVERY armed word (the bonus blast fires all its specials in one
         /// detonation, no gaps). Consumed by BeginTapDetonation.</summary>
         public static bool SeedAllOnNextTap;
-        public struct SpecialFire { public Vector2Int Cell; public int Kind; public char Letter; public string Word; public List<Vector2Int> Cleared; public Vector2Int Target; }   // Target: airplane only
+        public struct SpecialFire { public Vector2Int Cell; public int Kind; public char Letter; public string Word; public List<Vector2Int> Cleared; public Vector2Int Target; public float Delay; }   // Target: airplane only; Delay: extra launch delay (airplane combo, 2026-10-28)
         public static string SpecialName(int k) => k == SPECIAL_ROCKET_H ? "ROCKET-H" : k == SPECIAL_ROCKET_V ? "ROCKET-V"
                                                  : k == SPECIAL_BOMB ? "BOMB" : k == SPECIAL_TNT ? "TNT" : k == SPECIAL_DISCO ? "DISCO"
                                                  : k == SPECIAL_COMBO_CROSS ? "COMBO-CROSS" : k == SPECIAL_COMBO_BIGCROSS ? "COMBO-BIGCROSS" : k == SPECIAL_COMBO_MEGA ? "COMBO-MEGA"
-                                                 : k == SPECIAL_AIRPLANE ? "AIRPLANE" : k == SPECIAL_COMBO_DISCO ? "COMBO-DISCO" : k == SPECIAL_COMBO_DISCO_DISCO ? "COMBO-DISCO-DISCO" : "none";
+                                                 : k == SPECIAL_AIRPLANE ? "AIRPLANE" : k == SPECIAL_COMBO_PLANES ? "COMBO-PLANES" : k == SPECIAL_COMBO_DISCO ? "COMBO-DISCO" : k == SPECIAL_COMBO_DISCO_DISCO ? "COMBO-DISCO-DISCO" : "none";
 
         public static float PLANT_CHANCE      = 1.0f;   // 0.6 -> 1.0 2026-10-20: Spencer "RNG seems to be a thing" — whether a
                                                           // level passed hinged on how many plants happened to appear
@@ -2433,6 +2441,40 @@ namespace WordDrop
             return placed;
         }
 
+        // ── TREASURE (2026-10-27, Spencer: "added randomly for extra rewards"). Bonus loot, never a goal. Each level rolls
+        // TREASURE_CHANCE for one (and TREASURE_CHANCE2 for a second); from TREASURE_FROM_LEVEL on; never the top row or the
+        // bottom row; never on a special/gem/duck/ice/crate cell. Opening one pays TREASURE_COINS (HandManager.PayTreasure). ──
+        public static float TREASURE_CHANCE = 0.55f, TREASURE_CHANCE2 = 0.2f;
+        public static int   TREASURE_FROM_LEVEL = 4, TREASURE_HITS = 3, TREASURE_COINS = 5;
+        public static bool  TREASURE_TEST = false;   // TEMP test switch: true = force 2 treasures on every level
+        /// <summary>2026-10-28 Spencer: "the treasure chests look out of place, can we remove them for now until we get art that
+        /// goes with this stuff?" false = no treasure tiles spawn (code + FX kept; flip back on with the new chest art).</summary>
+        public static bool  TREASURE_ON = false;
+        public int PlaceTreasures(int level, HashSet<Vector2Int> keep)
+        {
+            if (!TREASURE_ON) return 0;
+            if (level < TREASURE_FROM_LEVEL && !TREASURE_TEST) return 0;
+            int want = SurvivalRng.Value < TREASURE_CHANCE ? (SurvivalRng.Value < TREASURE_CHANCE2 ? 2 : 1) : 0;
+            if (TREASURE_TEST && !Simulating) want = 2;   // TEMP 2026-10-27: every level gets 2 so Spencer can see them - set false before a build
+            var spots = new List<Vector2Int>();
+            for (int x = 0; x < COLS; x++)
+                for (int y = 1; y < ROWS - 1; y++)
+                {
+                    var p = new Vector2Int(x, y); var d = _board[x, y];
+                    if (d == null || d.IsStone || d.IsFrozen || d.HasGem || d.IsDropTarget || d.SpecialKind != SPECIAL_NONE || keep.Contains(p)) continue;
+                    spots.Add(p);
+                }
+            int placed = 0;
+            while (placed < want && spots.Count > 0)
+            {
+                int i = SurvivalRng.Range(0, spots.Count); var p = spots[i]; spots.RemoveAt(i);
+                var d = _board[p.x, p.y]; d.IsStone = true; d.IsAnchored = false; d.RequiredWordLength = 0; d.IsFrozen = false;
+                d.TreasureHits = TREASURE_HITS; keep.Add(p); placed++;
+            }
+            if (placed > 0 && !Simulating) WDLog.Log($"[Treasure] {placed} treasure tile(s) placed (level {level})");
+            return placed;
+        }
+
         // ── DUCKS (2026-10-22): bring-it-down goal. A duck is the old escort drop-target — a non-letter cell that falls with
         // gravity, survives every blast, can't be swapped, and is collected on the bottom row (SurvivalManager.TickDuckCollect). ──
         public static int DUCKS_ON_BOARD = 3;   // at most this many on the board at once; refills bring the rest
@@ -2494,7 +2536,7 @@ namespace WordDrop
                     var p = new Vector2Int(x, y); var d = _board[x, y];
                     if (d == null || exploded.Contains(p) || area.Contains(p)) continue;
                     if (d.IsDropTarget) { if (needDucks && y > 0 && y < lowDuck.y) lowDuck = p; continue; }
-                    bool isGoal = (d.IsFrozen && needIce) || (d.IsStone && needCrates) || (d.HasGem && needGems)
+                    bool isGoal = (d.IsFrozen && needIce) || (d.IsStone && d.TreasureHits == 0 && needCrates) || (d.HasGem && needGems)
                                || (needCollect && collect != '\0' && char.ToUpperInvariant(d.Letter) == collect && !d.IsStone);
                     if (isGoal) goal.Add(p); else if (!d.IsStone) any.Add(p);
                 }
@@ -4930,7 +4972,7 @@ namespace WordDrop
             for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
             {
                 var d = _board[x, y]; if (d == null) continue;
-                bool piece = (d.HasGem && LevelRules.HasGemGoal) || d.IsFrozen || (d.IsStone && LevelRules.HasCrateGoal) || d.IsDropTarget;
+                bool piece = (d.HasGem && LevelRules.HasGemGoal) || d.IsFrozen || (d.IsStone && d.TreasureHits == 0 && LevelRules.HasCrateGoal) || d.IsDropTarget;
                 if (!piece) continue;
                 for (int dx = -2; dx <= 2; dx++) for (int dy = -2; dy <= 2; dy++) set.Add(new Vector2Int(x + dx, y + dy));
             }
@@ -5505,6 +5547,9 @@ namespace WordDrop
             // visual layer reads this to play a defrost VFX + clear the frost overlay, and must
             // NOT route these through the explode animation. Never overlaps ExplodedCells.
             public List<Vector2Int> ThawedCells;
+            public List<KeyValuePair<string, List<Vector2Int>>> PoppedWords;
+            public List<Vector2Int> GemsCollectedOnSpecials;   // gem tiles that became a special this step (collected, tile survives)   // every armed word this step exploded + its cells (word pop-ups, 2026-10-28)
+            public List<Vector2Int> TreasureHitCells, TreasureOpenedCells;   // treasure lost a band (survives) / opened (cleared, pays coins)
             public List<KeyValuePair<Vector2Int, int>> SpecialsCreated;   // cell -> kind, born this step
             public Dictionary<Vector2Int, List<Vector2Int>> SpecialSources;   // birth cell -> the word's cells (merge animation)
             public List<SpecialFire> SpecialsFired;                         // fired this step, with what they cleared
@@ -6854,8 +6899,28 @@ namespace WordDrop
             return (data != null && data.IsFrozen) || thawed.Contains(cell);
         }
 
+        // TREASURE per-step bookkeeping (reset at the top of every DoExplode; read into the StepResult)
+        private readonly HashSet<Vector2Int> _treasureHitThisStep = new HashSet<Vector2Int>();
+        private List<Vector2Int> _treasureHitCells = new List<Vector2Int>(), _treasureOpenedCells = new List<Vector2Int>();
+        private List<KeyValuePair<string, List<Vector2Int>>> _poppedWords = new List<KeyValuePair<string, List<Vector2Int>>>();
+        private List<Vector2Int> _gemsOnSpecials = new List<Vector2Int>();
+        public static int TreasuresOpened;   // monotonic stat
+        /// <summary>One hit on a treasure. Returns TRUE when this hit OPENS it (caller then clears the cell like a crate);
+        /// FALSE when it survives (lost a band) or was already hit this step.</summary>
+        private bool TreasureHit(Vector2Int p, RulesCellData d)
+        {
+            if (!_treasureHitThisStep.Add(p)) return false;
+            d.TreasureHits--;
+            if (d.TreasureHits > 0) { _treasureHitCells.Add(p); return false; }
+            _treasureOpenedCells.Add(p); TreasuresOpened++;
+            return true;
+        }
+
         private StepResult DoExplode()
         {
+            _treasureHitThisStep.Clear(); _treasureHitCells = new List<Vector2Int>(); _treasureOpenedCells = new List<Vector2Int>();
+            _poppedWords = new List<KeyValuePair<string, List<Vector2Int>>>();
+            _gemsOnSpecials = new List<Vector2Int>();
             // COLLECT GOAL: remember letters before this step clears anything, count target letters among the exploded.
             char collectL = LevelRules.ActiveCollectLetter;
             char[,] preLetters = null;
@@ -7045,6 +7110,19 @@ namespace WordDrop
                         if (specialKind != SPECIAL_NONE && cell == specialAt)
                         {
                             _board[cell.x, cell.y].SpecialKind = specialKind;   // keeps its letter, survives, becomes special
+                            // GEM IN THE WORD COUNTS (2026-10-28 Spencer: "since you already made a word with it, it should count").
+                            // The survivor tile used to keep its gem flag, hidden under the special's art. Collect it now (the gem's
+                            // flight to the goal plays from this cell - HandManager, SpecialsCreated).
+                            if (_board[cell.x, cell.y].HasGem)
+                            {
+                                _board[cell.x, cell.y].HasGem = false;
+                                if (LevelRules.HasGemGoal && !(SurvivalManager.AwaitingNextLevel && !Simulating))
+                                {
+                                    LevelRules.Collected++; LevelRules.CollectAwaitingFly++; LevelRules.CollectAwaitingSince = Time.unscaledTime;
+                                    _gemsOnSpecials.Add(cell);
+                                    WDLog.Log($"[Goal] collected 1 gem at special birth ({cell.x},{cell.y}) -> {LevelRules.Collected}");
+                                }
+                            }
                             specialSurvivors.Add(cell);
                             specialsCreated.Add(new KeyValuePair<Vector2Int, int>(cell, specialKind));
                             specialSources[cell] = new List<Vector2Int>(pw.Cells);
@@ -7101,6 +7179,7 @@ namespace WordDrop
 
                 StageStats.RecordPopped(pw.Word);   // tuning stats (2026-10-20)
                 LevelRules.OnWordPopped(pw.Word, pw.Cells);   // theme-word goal (2026-10-22)
+                if (pw.Word != null && pw.Cells != null) _poppedWords.Add(new KeyValuePair<string, List<Vector2Int>>(pw.Word, new List<Vector2Int>(pw.Cells)));
                 _primedRegistry.RemovePrimedWord(pid);
                 _stepJustPrimed.Remove(pid);
 
@@ -7177,6 +7256,12 @@ namespace WordDrop
                                 specialQueue.Enqueue(new SpecialFire { Cell = p0, Kind = k, Letter = d0.Letter });
                             }
                         }
+                        else if (f.Kind == SPECIAL_COMBO_PLANES)
+                        {
+                            for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) area.Add(f.Cell + new Vector2Int(dx, dy));
+                            for (int i = 0; i < COMBO_PLANES_COUNT; i++)
+                                specialQueue.Enqueue(new SpecialFire { Cell = f.Cell, Kind = SPECIAL_AIRPLANE, Letter = f.Letter, Delay = (i + 1) * AIRPLANE_COMBO_STAGGER });
+                        }
                         else if (f.Kind == SPECIAL_AIRPLANE)
                         {
                             foreach (var o in new[] { Vector2Int.zero, Vector2Int.left, Vector2Int.right, Vector2Int.up, Vector2Int.down }) area.Add(f.Cell + o);
@@ -7234,7 +7319,8 @@ namespace WordDrop
                             if (!InBounds(p.x, p.y) || exploded.Contains(p) || specialSurvivors.Contains(p)) continue;
                             var d = _board[p.x, p.y];
                             if (d == null || d.IsDropTarget || (d.IsAnchored && !SurvivalManager.FullBoardActive)) continue;
-                            if (d.IsStone && SurvivalManager.FullBoardActive) { CratesBroken++; _stepTotalScore += ICE_BOUNTY; }   // full board: specials smash crates (Royal Match boxes)
+                            if (d.TreasureHits > 0) { if (!TreasureHit(p, d)) continue; _stepTotalScore += ICE_BOUNTY; }   // treasure: one band per hit, opens on the last
+                            else if (d.IsStone && SurvivalManager.FullBoardActive) { CratesBroken++; _stepTotalScore += ICE_BOUNTY; }   // full board: specials smash crates (Royal Match boxes)
                             // A special's blast takes ICE too (2026-10-21 Spencer: a rocket on the ice level left frozen tiles in its
                             // row — "it should destroy the whole row"). Candy Crush / Royal Match specials break blockers in their
                             // path; the "only a word melts ice" rule stays for ordinary splash. Pays the ice bounty.
@@ -7544,10 +7630,12 @@ namespace WordDrop
                         if (adj != null && adj.IsStone && !adj.IsDropTarget
                             && keyWordLen >= adj.RequiredWordLength)
                         {
+                            bool wasTreasure = adj.TreasureHits > 0;
+                            if (wasTreasure && !TreasureHit(stonePos, adj)) continue;   // lost a band, stays (and doesn't chain)
                             _board[sx, sy] = null;
                             stoneCleared.Add(stonePos);
                             stoneClearCount++;
-                            if (SurvivalManager.FullBoardActive) { CratesBroken++; _stepTotalScore += ICE_BOUNTY; }
+                            if (SurvivalManager.FullBoardActive) { if (!wasTreasure) CratesBroken++; _stepTotalScore += ICE_BOUNTY; }
                             nextSources.Add(stonePos);
                         }
                     }
@@ -7718,6 +7806,10 @@ namespace WordDrop
                 ExplodedCells = allExplodedCells,
                 FormedWordCells = formedWordCells.Count > 0 ? new List<Vector2Int>(formedWordCells) : null,
                 ThawedCells = thawedCells,
+                PoppedWords = _poppedWords.Count > 0 ? _poppedWords : null,
+                GemsCollectedOnSpecials = _gemsOnSpecials.Count > 0 ? _gemsOnSpecials : null,
+                TreasureHitCells = _treasureHitCells.Count > 0 ? _treasureHitCells : null,
+                TreasureOpenedCells = _treasureOpenedCells.Count > 0 ? _treasureOpenedCells : null,
                 SpecialsCreated = specialsCreated.Count > 0 ? specialsCreated : null,
                 SpecialSources  = specialSources.Count > 0 ? specialSources : null,
                 SpecialsFired   = specialsFired.Count > 0 ? specialsFired : null,
@@ -7853,6 +7945,11 @@ namespace WordDrop
         // telegraphed jackpot). Gated in DoExplode; telegraphed on the tile (bronze/silver/gold).
         // Replaces the old random IsSpecialVault.
         public int RequiredWordLength { get; set; }
+        /// <summary>TREASURE (2026-10-27, Spencer: "its own type of tile. a treasure tile ... added randomly for extra rewards").
+        /// 0 = not a treasure. >0 = a locked treasure blocker (also IsStone) with this many HITS LEFT (3 = two gold bands, 2 = one,
+        /// 1 = bare). Each adjacent pop / special blast takes ONE hit per resolution step; the last hit OPENS it -> coins.
+        /// Never a goal: CountCrateCells ignores it.</summary>
+        public int TreasureHits { get; set; }
     }
 
     public enum WordDirection

@@ -2233,6 +2233,22 @@ namespace WordDrop
         // currency is already banked (VaultObjective.RewardCoins) — these coins drive _displayedReward.
         // 2026-06-18 Spencer.
         private Sprite _coinSpriteCache; private bool _coinSpriteTried;
+        /// <summary>TREASURE (2026-10-27): the coin sprite + where treasure coins land (the REWARD coin in reward mode, else the
+        /// score panel), in screen space, and a little punch on landing.</summary>
+        public Sprite TreasureCoinSprite => GetCoinSprite();
+        public Vector2 TreasureCoinTargetScreen()
+        {
+            if (_rewardMode && _rewardCoinIcon != null && _rewardCoinIcon.gameObject.activeInHierarchy) return _rewardCoinIcon.rectTransform.position;
+            if (_scorePanelNum != null) return _scorePanelNum.rectTransform.position;
+            return GetObjectiveIconScreenPos();
+        }
+        public void TreasureCoinLanded()
+        {
+            var t = (_rewardMode && _rewardCoinIcon != null) ? (Transform)_rewardCoinIcon.transform : (_scorePanelNum != null ? _scorePanelNum.transform : null);
+            if (t != null) { t.DOKill(true); t.localScale = Vector3.one; t.DOPunchScale(Vector3.one * 0.18f, 0.16f, 6, 0.6f).SetUpdate(true); }
+            GameAudio.Instance?.PlayCoinLand();
+        }
+
         private Sprite GetCoinSprite()
         {
             if (_coinSpriteTried) return _coinSpriteCache;
@@ -2895,6 +2911,28 @@ namespace WordDrop
             }
         }
         public static int BONUS_COIN_VISUAL_CAP = 14;
+        /// <summary>TREASURE (2026-10-27, Spencer: "copy the exact animation we already have for the bonus where the coins fly up"):
+        /// the bonus blast's coin flight (LevelMapPanel.CoinFlyRoutine - spinning 3D coin, shadow, pop + fan + stream) from the
+        /// opened treasure into the REWARD coin, or the score panel when the HUD isn't in reward mode.</summary>
+        public static int TREASURE_COIN_VISUALS = 8;
+        public void SpawnTreasureCoins(Vector3 worldStart, int totalValue)
+        {
+            if (totalValue <= 0 || !isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) return;
+            RectTransform target = (_rewardMode && _rewardCoinIcon != null && _rewardCoinIcon.gameObject.activeInHierarchy) ? _rewardCoinIcon.rectTransform
+                                 : (_scorePanelNum != null ? _scorePanelNum.rectTransform : null);
+            var map = LevelMapPanel.Instance;
+            var hudCanvas = target != null && target.GetComponentInParent<Canvas>() != null ? target.GetComponentInParent<Canvas>().rootCanvas : null;
+            if (map == null || target == null || hudCanvas == null || hudCanvas.renderMode != RenderMode.ScreenSpaceOverlay) return;
+            int n = Mathf.Clamp(totalValue, 1, TREASURE_COIN_VISUALS), per = totalValue / n, rem = totalValue - per * n;
+            Vector3 screen = Camera.main.WorldToScreenPoint(worldStart);
+            var hudRoot = hudCanvas.transform;
+            for (int i = 0; i < n; i++)
+            {
+                int share = per + (i == n - 1 ? rem : 0);
+                StartCoroutine(map.CoinFlyRoutine(hudRoot, screen, target, share, i,
+                    (sh, p) => { TreasureCoinLanded(); map.SpawnCoinHitFXOn(hudRoot, target != null ? target.position : p); }));
+            }
+        }
         private System.Collections.IEnumerator DelayedRewardCoin(Vector3 at, int share, int index, float delay)
         {
             if (delay > 0f) yield return new WaitForSecondsRealtime(delay);

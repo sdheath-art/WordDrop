@@ -666,20 +666,20 @@ namespace WordDrop
         /// <summary>Which Resources texture is the resting tile face. Swap tiles by changing
         /// THIS ONE STRING. Candidates present: "Tiles/white_tile@2x", "Tiles/peach_tile@2x",
         /// "Tiles/white_glossy@2x" (the original Blender render). 2026-09-21.</summary>
-        public static string RESTING_FACE_ASSET = "Tiles/white_tile_2@2x";
+        public static string RESTING_FACE_ASSET = "Tiles/white_tile_pillow@2x";   // 2026-10-28 PILLOW FAMILY (Spencer: "yes the bottom ones look great"). Hand-painted original: "Tiles/white_tile_2@2x"
 
         /// <summary>Hand-painted GOLD face (the high-value letter tile — `s_spriteHighValue`,
         /// labelled "gold-resting" at line 175). Empty string falls back to the old
         /// GOLD_HUE_SHIFT / GOLD_SAT_MUL recolour of the white tile. 2026-09-21.
         /// NOTE the gold BONUS cell (`golden_tile2@2x`) and the gold PRIMED face
         /// (`primed_gold_tile@2x`) are SEPARATE sprites and are not affected by this.</summary>
-        public static string GOLD_FACE_ASSET = "Tiles/gold_tile2@2x";   // 2026-10-22: back to the gold tile — the yellow gem now marks GEM tiles (collect goal)
+        public static string GOLD_FACE_ASSET = "Tiles/gold_tile_pillow@2x";   // 2026-10-28 pillow family; original "Tiles/gold_tile2@2x"   // 2026-10-22: back to the gold tile — the yellow gem now marks GEM tiles (collect goal)
 
         /// <summary>The PRIMED / armed face — the tile a word turns into once it is armed.
         /// "Tiles/primed_tile@2x" is the original magenta. 2026-09-21 trying green_primed@2x.
         /// NOTE the gold-primed variant (`primed_gold_tile@2x`) is a SEPARATE sprite, chosen
         /// per-tile by `_isGoldPrimed`, and is not affected by this.</summary>
-        public static string PRIMED_FACE_ASSET = "Tiles/green_primed@2x";
+        public static string PRIMED_FACE_ASSET = "Tiles/green_primed_pillow@2x";   // 2026-10-28 pillow family; original "Tiles/green_primed@2x"
 
         /// <summary>When the primed face is AUTHORED art, make its glow/pulse a NEUTRAL luminance
         /// lift instead of the magenta PRIMED_GLOW tint. Set false to restore the old behaviour
@@ -715,7 +715,7 @@ namespace WordDrop
         public static float TIER_UP_FLASH_PEAK  = 0.85f;   // overlay alpha at the peak
 
         public static int[]    PRIMED_TIER_CUTS   = { 100, 400 };
-        public static string[] PRIMED_TIER_ASSETS = { "", "Tiles/primed_tier1@2x", "Tiles/primed_tier2@2x" };
+        public static string[] PRIMED_TIER_ASSETS = { "", "Tiles/primed_tier1_pillow@2x", "Tiles/primed_tier2_pillow@2x" };   // 2026-10-28 pillow family; originals "Tiles/primed_tier1@2x" / "Tiles/primed_tier2@2x"
         private static Sprite[] s_spritePrimedTier;
         private int _primedTier;
 
@@ -932,13 +932,13 @@ namespace WordDrop
         // 2026-10-21 Spencer: "more padding in between letters, it just looks too cluttered" — Royal Match measured: 84 px
         // pitch, ~73 px icons = 87% of the cell. Now a tunable (FX Test Menu cycles it; remembered in PlayerPrefs). The
         // cell pitch does NOT change — only the tile inside it shrinks, so the board stays the same size.
-        public static readonly float[] TILE_RATIO_STEPS = { 1.0f, 0.92f, 0.88f, 0.84f };
-        public static float TILE_DISPLAY_RATIO_DEFAULT = 0.88f;
+        public static readonly float[] TILE_RATIO_STEPS = { 1.0f, 0.92f, 0.91f, 0.88f, 0.84f };
+        public static float TILE_DISPLAY_RATIO_DEFAULT = 0.91f;   // 2026-10-28 Spencer: "scaled up just a hair" (.88 -> .91, +3.4%)
         private static float s_tileRatio = -1f;
         public static float TILE_DISPLAY_RATIO
         {
-            get { if (s_tileRatio < 0f) s_tileRatio = PlayerPrefs.GetFloat("WD_TileRatio", TILE_DISPLAY_RATIO_DEFAULT); return s_tileRatio; }
-            set { s_tileRatio = value; PlayerPrefs.SetFloat("WD_TileRatio", value); PlayerPrefs.Save(); }
+            get { if (s_tileRatio < 0f) s_tileRatio = PlayerPrefs.GetFloat("WD_TileRatio2", TILE_DISPLAY_RATIO_DEFAULT)   /* key bumped 10-28 so the new default wins over a saved .88 */; return s_tileRatio; }
+            set { s_tileRatio = value; PlayerPrefs.SetFloat("WD_TileRatio2", value); PlayerPrefs.Save(); }
         }
         /// <summary>Re-apply the rest scale after TILE_DISPLAY_RATIO changes (FX Test Menu).</summary>
         public void RefitRestScale() { if (_spriteRenderer != null && _spriteRenderer.sprite != null) RefitToSprite(_spriteRenderer.sprite); }
@@ -1351,6 +1351,7 @@ namespace WordDrop
         public void ResetForPool()
         {
             _bonusLetterHidden = false;
+            TreasureHits = 0;                       // a recycled tile must not stay a treasure
             SetSpecial(RulesEngine.SPECIAL_NONE);   // a recycled tile must not keep a special marker
             IsRainGold = false;                     // nor a shower-gold flag
             IsGem = false;                          // nor a gem
@@ -1449,8 +1450,15 @@ namespace WordDrop
             Letter = '\0';
             Col = -1;
             Row = -1;
+            Generation++;   // anything still holding this tile from before the recycle can tell it's a different tile now
             gameObject.SetActive(false);
         }
+
+        /// <summary>Bumped every time the tile goes back to the pool. A delayed FX step (a pop that hides the tile ~0.3s
+        /// later) captures it and does nothing if it changed — the tile was recycled into a NEW letter meanwhile.
+        /// 2026-10-28: a late pop hid five freshly recycled refill tiles, so they never fell and gravity sat on its
+        /// 600-frame safety (~10s pause, empty cells at the top).</summary>
+        public int Generation { get; private set; }
 
         /// <summary>Tracks whether BuildVisuals has already run on this instance, so it can
         /// never stack a second set of child objects. 2026-10-19.</summary>
@@ -2113,6 +2121,13 @@ namespace WordDrop
         /// </summary>
         public void AnimateGravityFall(Vector3 targetWorldPos, float duration, float startDelay = 0f, bool mechanical = false)
         {
+            // Backstop for the pool race above: a live grid tile that something hid can't run a coroutine, and gravity
+            // would wait ~10s on a fall that never starts. Show it and let it fall.
+            if (!gameObject.activeSelf && Letter != '\0')
+            {
+                Debug.LogWarning($"[PoolRace] '{Letter}' ({Col},{Row}) was hidden when told to fall - re-shown");
+                gameObject.SetActive(true);
+            }
             if (_gravityCoroutine != null)
             {
                 StopCoroutine(_gravityCoroutine);
@@ -2409,10 +2424,30 @@ namespace WordDrop
         // GEM TILES (2026-10-22 Spencer: "put the gems as letter tiles on the collect letters levels ... the point of the level
         // is to collect all the gems"). A gem is a property of the CELL (RulesCellData.HasGem), not of a letter: any ordinary
         // letter can carry one. The tile wears the yellow gem face with its letter on top; destroying it collects it.
-        public static string GEM_TILE_ASSET = "Tiles/gem_yellow";
+        public static string GEM_TILE_ASSET = "Tiles/gem_teal";   // 2026-10-28: teal Blender gem (was "Tiles/gem_yellow"; the ARMED gold look keeps gem_yellow)
+        // CARVED GEMS (2026-10-28 Spencer chose the Blender teal gem with the letter CARVED into it). One render per letter
+        // (Resources/Tiles/GemLetters/gem_teal_A..Z, from WordDrop_icon_gen/gem_blender/gem_carved.py + add_gloss.py): a gem tile
+        // wears its letter's carved face and the TMP letter is hidden while it does (LateUpdate). Armed gem words keep the gold
+        // armed face + TMP letter. CARVED_GEMS = false -> blank teal gem with the TMP letter on top.
+        public static bool   CARVED_GEMS = true;
+        public static string CARVED_GEM_PREFIX = "Tiles/GemLetters/gem_teal_";
+        private static readonly Sprite[] s_gemLetters = new Sprite[26];
+        private static Sprite GemFaceFor(char letter)
+        {
+            if (CARVED_GEMS) { int i = char.ToUpperInvariant(letter) - 'A'; if (i >= 0 && i < 26 && s_gemLetters[i] != null) return s_gemLetters[i]; }
+            return s_spriteGem;
+        }
+        public static bool IsCarvedGemFace(Sprite s)
+        {
+            if (s == null) return false;
+            for (int i = 0; i < 26; i++) if (s_gemLetters[i] == s) return true;
+            return false;
+        }
+        public static bool IsGemFace(Sprite s) => s != null && (s == s_spriteGem || IsCarvedGemFace(s));
+        private bool _carvedHidLetter;
         private static Sprite s_spriteGem;
         public static Sprite GemSprite => s_spriteGem;
-        public static readonly Color GEM_ACCENT = new Color(1f, 0.82f, 0.15f, 1f);
+        public static readonly Color GEM_ACCENT = new Color(0.25f, 0.85f, 0.92f, 1f);   // teal (was gold 1,.82,.15 for the yellow gem)
         public bool IsGem { get; private set; }
         /// <summary>Re-apply the plain resting face + white tint (no-op while primed / scored). Refill uses it so a recycled tile
         /// never arrives wearing a previous word's gold/gem face (2026-10-23 "letters turned into gems").</summary>
@@ -2437,10 +2472,10 @@ namespace WordDrop
                 var old = _spriteRenderer.sprite;
                 _spriteRenderer.sprite = value;
                 if (old == value || Time.unscaledTime < _faceTraceNext) return;
-                bool goldish = value != null && (value == s_spriteGem || value == s_spritePrimedGold || value == s_spriteGolden
+                bool goldish = value != null && (IsGemFace(value) || value == s_spritePrimedGold || value == s_spriteGolden
                                || (value == s_spriteHighValue && LetterData.GetPoints(Letter) < HIGH_VALUE_POINTS && !IsRainGold));
                 bool wrongGold = goldish && !IsGem && !_hasPrimedGlow && !_iconIsTile;
-                bool lostGem = IsGem && old == s_spriteGem && value != s_spriteGem && !_hasPrimedGlow && !_isShowingScoredSprite;
+                bool lostGem = IsGem && IsGemFace(old) && !IsGemFace(value) && !_hasPrimedGlow && !_isShowingScoredSprite;
                 if (!wrongGold && !lostGem) return;
                 _faceTraceNext = Time.unscaledTime + 1f;
                 var st = new System.Diagnostics.StackTrace(1, false); var who = new System.Text.StringBuilder();
@@ -2481,7 +2516,7 @@ namespace WordDrop
             IsGem = on;
             if (_spriteRenderer != null && !_hasPrimedGlow && !_isShowingScoredSprite) { FaceSprite = RestingFaceFor(Letter); _spriteRenderer.color = Color.white; }
         }
-        public static string COLLECT_TILE_ASSET = "Tiles/blue_tile@2x";
+        public static string COLLECT_TILE_ASSET = "Tiles/blue_tile_pillow@2x";   // 2026-10-28 pillow family; original "Tiles/blue_tile@2x"
         private static Sprite s_spriteCollectBlue;
         private static Sprite CollectBlueFace => s_spriteCollectBlue != null ? s_spriteCollectBlue : s_spriteVowel;
         public static bool CollectUsesBlueTile => COLLECT_BLUE_TILE && CollectBlueFace != null;
@@ -2523,8 +2558,8 @@ namespace WordDrop
                 && !_isStone && !IsFrozen && !IsWild && !IsDissolving)
             {
                 var cur = _spriteRenderer.sprite;
-                bool gemFace = cur != null && (cur == s_spriteGem || cur == s_spritePrimedGold);
-                if (gemFace != IsGem || (IsGem && cur != s_spriteGem))
+                bool gemFace = cur != null && (IsGemFace(cur) || cur == s_spritePrimedGold);
+                if (gemFace != IsGem || (IsGem && cur != GemFaceFor(Letter)))
                 {
                     var reg = RulesEngine.Instance != null ? RulesEngine.Instance.PrimedRegistry : null;
                     bool armed = reg != null && Col >= 0 && Row >= 0 && reg.GetPrimedWordsContaining(new Vector2Int(Col, Row)).Count > 0;
@@ -2542,6 +2577,13 @@ namespace WordDrop
                         }
                     }
                 }
+            }
+            // CARVED GEM: the letter is in the gem art, so the TMP letter hides while the carved face shows (and comes back the
+            // moment the face changes - armed gold, swipe preview, crate...). Only re-enables what THIS hid.
+            {
+                bool carved = _spriteRenderer != null && !_iconIsTile && IsCarvedGemFace(_spriteRenderer.sprite);
+                if (carved) { if (_letterTMP != null && _letterTMP.enabled) _letterTMP.enabled = false; _carvedHidLetter = true; }
+                else if (_carvedHidLetter) { _carvedHidLetter = false; if (_letterTMP != null && !_bonusLetterHidden) _letterTMP.enabled = true; }
             }
             if (_bonusLetterHidden && _iconIsTile)   // only once it IS a rocket: the plain tile keeps its letter until the rocket lands
             {
@@ -2688,10 +2730,13 @@ namespace WordDrop
             _isStone = active;
             if (_spriteRenderer == null) return;
             // FULL BOARD CRATE (2026-10-21): crates are plain (falling) stones drawn with Spencer's crate art.
-            if (active && SurvivalManager.FullBoardActive && GetCrateSprite() != null)
+            // TREASURE (2026-10-27): a stone with TreasureHits > 0 draws its locked-treasure state instead (3 / 2 / 1 bands).
+            var blockSprite = TreasureHits > 0 ? TreasureSprite(TreasureHits) : null;
+            if (blockSprite == null && SurvivalManager.FullBoardActive) blockSprite = GetCrateSprite();
+            if (active && blockSprite != null && (SurvivalManager.FullBoardActive || TreasureHits > 0))
             {
-                FaceSprite = s_crateSprite; _spriteRenderer.color = Color.white;
-                RefitToSprite(s_crateSprite); _isCrateArt = true;
+                FaceSprite = blockSprite; _spriteRenderer.color = Color.white;
+                RefitToSprite(blockSprite); _isCrateArt = true;
                 if (_letterTMP != null) _letterTMP.gameObject.SetActive(false);
                 if (_pointTMP != null) _pointTMP.gameObject.SetActive(false);
                 if (_glossGO != null) _glossGO.SetActive(false);
@@ -3177,6 +3222,31 @@ namespace WordDrop
         private static Sprite s_vaultSprite;
         private static bool   s_vaultSpriteTried;
         private Coroutine     _vaultIdleRoutine;   // anticipation jiggle while rendered as a chest
+
+        // ── TREASURE TILE (2026-10-27) ── art: Resources/Blockers/treasure_{3,2,1}.png (+ treasure_band_{3,2}.png = the band that
+        // comes off on that hit, cut as the difference between states). Hits left mirror RulesCellData.TreasureHits.
+        public int TreasureHits { get; private set; }
+        private static readonly Sprite[] s_treasure = new Sprite[4], s_treasureBand = new Sprite[4]; private static bool s_treasureTried;
+        private static void LoadTreasure()
+        {
+            if (s_treasureTried) return; s_treasureTried = true;
+            for (int i = 1; i <= 3; i++)
+            {
+                var t = Resources.Load<Texture2D>($"Blockers/treasure_{i}");
+                if (t != null) s_treasure[i] = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width);
+                var b = Resources.Load<Texture2D>($"Blockers/treasure_band_{i}");
+                if (b != null) s_treasureBand[i] = Sprite.Create(b, new Rect(0, 0, b.width, b.height), new Vector2(0.5f, 0.5f), b.width);
+            }
+        }
+        public static Sprite TreasureSprite(int hits) { LoadTreasure(); return s_treasure[Mathf.Clamp(hits, 1, 3)]; }
+        public static Sprite TreasureBandSprite(int hits) { LoadTreasure(); return hits >= 2 && hits <= 3 ? s_treasureBand[hits] : null; }
+        /// <summary>Set hits left and repaint (only when the tile is drawn as a block). Damage FX is TreasureFX.Hit.</summary>
+        public void SetTreasureHits(int hits)
+        {
+            if (TreasureHits == hits) return;
+            TreasureHits = hits;
+            if (_isStone) SetStoneVisual(true);
+        }
 
         // CRATE (2026-10-21 Spencer's placeholder, Resources/Blockers/crate.png): on the full board an anchored stone is a
         // Royal-Match-style crate, not the old treasure chest.
@@ -5760,6 +5830,7 @@ namespace WordDrop
         {
             if (s == null) return "null";
             if (s == s_spriteNormal) return "NORMAL";
+            if (IsCarvedGemFace(s)) return "GEM-CARVED";
             if (s == s_spriteHighValue) return "GOLD(high-value)";
             if (s == GoldPrimedSprite) return "GOLD-PRIMED";
             if (s == s_spriteGolden) return "GOLDEN-BONUS";
@@ -5872,7 +5943,7 @@ namespace WordDrop
         {
             BuildSpriteCache();   // no-op once built
             if (_iconIsTile && SpecialKind != RulesEngine.SPECIAL_NONE) { var st = SpecialTileSprite(SpecialKind); if (st != null) return st; }
-            if (IsGem && s_spriteGem != null && !_isStone) return s_spriteGem;   // gem tile
+            if (IsGem && !_isStone) { var gf = GemFaceFor(letter); if (gf != null) return gf; }   // gem tile (carved per letter)
             if (CollectUsesBlueTile && CollectLetter != '\0' && char.ToUpperInvariant(letter) == CollectLetter && !_isStone && !IsRainGold
                 && LetterData.GetPoints(letter) < HIGH_VALUE_POINTS) return CollectBlueFace;   // collect letter = blue ramp tile
             if (IsRainGold && LETTER_CATEGORY_TINTS && s_spriteHighValue != null && !_isStone && !_isGoldBonus && !_isVault)
@@ -6128,7 +6199,7 @@ namespace WordDrop
         // brighten them up just a touch"). Lifts VALUE toward white by this fraction (HSV, hue kept) and trims
         // saturation by a third of it, so the bevel's light→dark spread stays and nothing turns minty.
         // green_primed bottom V 0.68 → ~0.75 at 0.22; the top (V 0.92) barely moves. 0 = the art as authored.
-        public static float PRIMED_FACE_LIFT = 0.22f;
+        public static float PRIMED_FACE_LIFT = 0f;   // 2026-10-28: 0 - the green is now on the RK clover ramp; the .22 lift (10-22) washed it toward lime
         private static Texture2D LiftedFace(Texture2D src, float lift)
         {
             if (src == null || lift <= 0.001f) return src;
@@ -6551,6 +6622,15 @@ namespace WordDrop
                 var gTex = Resources.Load<Texture2D>(GEM_TILE_ASSET);
                 if (gTex != null)
                     s_spriteGem = Sprite.Create(gTex, new Rect(0, 0, gTex.width, gTex.height), new Vector2(0.5f, 0.5f), gTex.width / refB);
+                int carvedN = 0;
+                for (int li = 0; li < 26; li++)
+                {
+                    var lt = Resources.Load<Texture2D>(CARVED_GEM_PREFIX + (char)('A' + li));
+                    if (lt == null) continue;
+                    s_gemLetters[li] = Sprite.Create(lt, new Rect(0, 0, lt.width, lt.height), new Vector2(0.5f, 0.5f), lt.width / refB);
+                    carvedN++;
+                }
+                WDLog.Log($"[GemTile] {GEM_TILE_ASSET} {(gTex != null ? "ok" : "MISSING")}, carved letters {carvedN}/26");
                 var cTex = Resources.Load<Texture2D>(COLLECT_TILE_ASSET);
                 if (cTex != null)
                     s_spriteCollectBlue = Sprite.Create(cTex, new Rect(0, 0, cTex.width, cTex.height), new Vector2(0.5f, 0.5f), cTex.width / refB);
@@ -6579,7 +6659,7 @@ namespace WordDrop
             // 2026-06-04 Spencer: new glossy green tile (greeny). It's trimmed to the
             // tile (100% fill), so use the FULL rect at a PPU that matches the white
             // tile's bounds — true drop-in, same size as the rest.
-            Texture2D greenyTex = AoFace(Resources.Load<Texture2D>("Tiles/greeny@2x"), true);
+            Texture2D greenyTex = AoFace(Resources.Load<Texture2D>("Tiles/greeny_pillow@2x") ?? Resources.Load<Texture2D>("Tiles/greeny@2x"), true);   // 2026-10-28 pillow family (scored flash)
             if (greenyTex != null && loadedNormal != null && loadedNormal.bounds.size.x > 0.0001f)
             {
                 float gppu = greenyTex.width / loadedNormal.bounds.size.x;

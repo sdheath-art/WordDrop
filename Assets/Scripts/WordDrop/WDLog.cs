@@ -48,3 +48,34 @@ namespace WordDrop
         public static void Log(object message, UnityEngine.Object context) { if (!Quiet(message)) UnityEngine.Debug.Log(message, context); }
     }
 }
+
+namespace WordDrop
+{
+    /// <summary>TEMP PERF PROBE (2026-10-28 Spencer: "a lot of frame rate problems ... on everything"). Every 3s logs
+    /// [Perf]: average + worst frame, GameObject count, live DOTween tweens, active SpriteRenderers. A count that only
+    /// ever grows = a leak. Strip once the slowdown is found.</summary>
+    public class PerfProbe : UnityEngine.MonoBehaviour
+    {
+        public static bool ENABLED = true;
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void Boot()
+        {
+            if (!ENABLED) return;
+            var go = new UnityEngine.GameObject("PerfProbe"); DontDestroyOnLoad(go); go.AddComponent<PerfProbe>();
+        }
+        private float _t0, _worst; private int _frames;
+        private void Update()
+        {
+            float dt = UnityEngine.Time.unscaledDeltaTime;
+            _frames++; if (dt > _worst) _worst = dt;
+            if (_t0 == 0f) _t0 = UnityEngine.Time.unscaledTime;
+            float el = UnityEngine.Time.unscaledTime - _t0;
+            if (el < 3f) return;
+            int gos = FindObjectsByType<UnityEngine.Transform>(UnityEngine.FindObjectsSortMode.None).Length;
+            int srs = 0; foreach (var s in FindObjectsByType<UnityEngine.SpriteRenderer>(UnityEngine.FindObjectsSortMode.None)) if (s.enabled && s.gameObject.activeInHierarchy) srs++;
+            int tw = DG.Tweening.DOTween.TotalPlayingTweens();
+            UnityEngine.Debug.Log($"[Perf] avg {el / _frames * 1000f:F1}ms ({_frames / el:F0} fps) worst {_worst * 1000f:F0}ms | objects {gos} | sprites on {srs} | tweens {tw}");
+            _t0 = UnityEngine.Time.unscaledTime; _frames = 0; _worst = 0f;
+        }
+    }
+}

@@ -23,7 +23,7 @@ namespace WordDrop
         public const float SCORE_POP_STRENGTH   = 0.12f;  // subtler pop
         public const float SCORE_POP_DURATION   = 0.14f;
         public const float TILE_STAGGER_DELAY   = 0.03f;
-        public static bool SINGLE_WORD_POP = true;   // false = the old 30ms-per-letter ripple
+        public static bool SINGLE_WORD_POP = false;   // 2026-10-28 Spencer: back to the 30ms-per-letter light-up ripple ("i think i like the ripple"); the pop is still one burst. true = whole word lights at once
 
         // ── Tuning: Detonation ──────────────────────────────────────────────────
         public const float DETONATE_SQUEEZE     = 0.85f;
@@ -944,7 +944,15 @@ namespace WordDrop
 
             // Realtime so a concurrent hitstop (timeScale=0) doesn't freeze
             // the swell — the board holds visually while the audio builds.
+            // BIG-CHAIN DIM (2026-10-28, RK/RM clips): the board darkens under the cluster while it puckers - the popping
+            // tiles are lifted above the veil, so they read as a spotlight - and the veil lifts as they burst.
+            if (BIG_POP_DIM && Instance != null)
+            {
+                for (int i = 0; i < tiles.Count; i++) if (tiles[i] != null) tiles[i].LiftForFx(hold + 0.15f);
+                Instance.BoardDim(BOARD_DIM_ALPHA * 0.8f, hold);
+            }
             yield return new WaitForSecondsRealtime(hold);
+            if (BIG_POP_DIM && Instance != null) Instance.BoardDimLift();
 
             // Restore rest scale so the suck-in NEVER persists. The explosion
             // bursts these tiles right after; any that survive (test reactivation,
@@ -1005,6 +1013,16 @@ namespace WordDrop
             return s_specialFxMat;
         }
         public static float ROCKET_HEAD_FLIGHT = 0.30f;
+        /// <summary>TRAVELLING ROCKET (2026-10-28, Spencer's RK/RM clips, ~/Documents/animations/_findings): the heads fly at
+        /// ~17-30 tiles/s, each tile breaks about a frame after its head passes, and the flame line grows WITH the heads then
+        /// lingers ~0.35s. false = the 10-22 look (the whole line flashes at once, tiles go together).</summary>
+        public static bool  ROCKET_TRAVEL = true;
+        public static float ROCKET_LINGER = 0.35f;
+        /// <summary>Seconds after the fire until a rocket head reaches a cell <paramref name="dist"/> cells away. The head is a
+        /// DOMove over the line's full length (<paramref name="lineCells"/>) in ROCKET_HEAD_FLIGHT with Ease.InQuad, so
+        /// progress p = (t/T)^2 and t = T*sqrt(dist/lineCells); +1 frame so the tile breaks just behind the head.</summary>
+        public static float RocketArriveAt(float dist, int lineCells)
+            => dist <= 0 ? 0f : ROCKET_HEAD_FLIGHT * Mathf.Sqrt(Mathf.Clamp01(dist / (float)Mathf.Max(1, lineCells))) + 0.033f;
         public static float ROCKET_LINE_LIFE   = 0.42f;   // measured: the flame lingers ~0.4s
         public static Color ROCKET_CORE  = new Color(3.2f, 3.0f, 2.6f, 1f);   // white-hot
         public static Color ROCKET_FLAME = new Color(2.6f, 1.25f, 0.25f, 1f); // orange-yellow flame
@@ -1061,14 +1079,29 @@ namespace WordDrop
                     Random.value < 0.5f ? ROCKET_FLAME : new Color(3f, 2.4f, 0.8f, 1f));
             }
             float t = 0f;
-            while (t < ROCKET_LINE_LIFE)
+            float life = ROCKET_TRAVEL ? ROCKET_HEAD_FLIGHT + ROCKET_LINGER : ROCKET_LINE_LIFE;
+            Vector3 ax = horizontal ? Vector3.right : Vector3.up;
+            float lo = -length * 0.5f, hi = length * 0.5f;                            // line extent along the axis, about centre
+            float o = Vector3.Dot(origin - centre, ax);                                // where the rocket sits on it
+            while (t < life)
             {
                 t += Time.deltaTime;
-                float k = Mathf.Clamp01(t / ROCKET_LINE_LIFE);
-                float snap = Mathf.Clamp01(t / 0.05f);                                 // the line snaps across in 0.05s
+                float k = Mathf.Clamp01(t / life);
                 float flick = 0.85f + 0.3f * Mathf.PerlinNoise(Time.time * 30f, origin.x * 7f);
-                core.transform.localScale  = new Vector3(length * snap, coreW * (1f - k) * 2f / 1f, 1f);
-                flame.transform.localScale = new Vector3(length * snap, flameW * (1f - k * 0.8f) * flick * 2f, 1f);
+                float len = length; Vector3 mid = centre;
+                if (ROCKET_TRAVEL)
+                {   // the flame stretches out WITH the two heads (same InQuad as their DOMove), then lingers and thins
+                    float p = Mathf.Clamp01(t / ROCKET_HEAD_FLIGHT); p *= p;
+                    float reach = length / 1.15f * p;
+                    float a = Mathf.Max(lo, o - reach), b = Mathf.Min(hi, o + reach);
+                    len = Mathf.Max(0.001f, b - a); mid = centre + ax * ((a + b) * 0.5f);
+                    float kk = Mathf.Clamp01((t - ROCKET_HEAD_FLIGHT * 0.5f) / (life - ROCKET_HEAD_FLIGHT * 0.5f));   // thin after the heads are well out
+                    k = kk;
+                }
+                else len = length * Mathf.Clamp01(t / 0.05f);                          // the line snaps across in 0.05s
+                core.transform.position = flame.transform.position = mid;
+                core.transform.localScale  = new Vector3(len, coreW * (1f - k) * 2f / 1f, 1f);
+                flame.transform.localScale = new Vector3(len, flameW * (1f - k * 0.8f) * flick * 2f, 1f);
                 core.color  = new Color(1f, 1f, 1f, 1f - Mathf.Clamp01(k * 1.8f));     // core burns out first
                 flame.color = new Color(1f, 1f, 1f, 1f - k * k);                       // flame lingers, thinning
                 yield return null;
@@ -1267,6 +1300,101 @@ namespace WordDrop
             return seq;
         }
 
+        // ── BONUS COMET + LANDING STARS (2026-10-28 Spencer: Royal Match @1:19 - "a trailer starting at the moves left and then
+        // they are placed on the board with a stars particle animation ... we have some star VFX sprites"). Measured from
+        // royalmatch(1-20).mov at 30fps: a thick WHITE comet streaks straight from the Moves counter to its tile in ~0.15-0.2s,
+        // shedding sparkle dust; on arrival a white flash (~0.6 cell, ~0.1s) and a ring of twinkling 4-point stars round the
+        // tile while the rocket appears. Sprites: Particles/flare_star (4-point twinkle), Star02 (soft 5-point star).
+        public static bool  BONUS_COMET = true;
+        public static Color COMET_COLOR = new Color(2.4f, 2.35f, 2.2f, 1f);
+        private static Sprite s_twinkle, s_star5; private static bool s_starsTried;
+        private static void LoadStars()
+        {
+            if (s_starsTried) return; s_starsTried = true;
+            Sprite Mk(string n) { var t = Resources.Load<Texture2D>("Particles/" + n); return t != null ? Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width) : null; }
+            s_twinkle = Mk("flare_star"); s_star5 = Mk("Star02");
+        }
+        public void BonusComet(Vector3 from, Vector3 to, float dur)
+        {
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
+            StartCoroutine(BonusCometRoutine(from, to, dur, cell));
+        }
+        private System.Collections.IEnumerator BonusCometRoutine(Vector3 from, Vector3 to, float dur, float cell)
+        {
+            LoadStars();
+            var tail = MakeFxSprite("CometTail", SoftBeam(), COMET_COLOR, 61);
+            var head = MakeFxSprite("CometHead", SoftDot(), COMET_COLOR, 62);
+            Vector3 d = to - from; float len = d.magnitude; Vector3 dir = len > 0.001f ? d / len : Vector3.down;
+            float ang = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
+            tail.transform.rotation = Quaternion.Euler(0f, 0f, ang);
+            float tailMax = Mathf.Min(len, cell * 3.2f), t = 0f, nextDust = 0f;
+            while (t < dur)
+            {
+                t += Time.unscaledDeltaTime; float k = Mathf.Clamp01(t / dur); float e = k * k * (3f - 2f * k);
+                Vector3 p = from + d * e;
+                float tl = Mathf.Min(tailMax, len * e);
+                head.transform.position = p; head.transform.localScale = Vector3.one * cell * 0.55f;
+                tail.transform.position = p - dir * tl * 0.5f;
+                tail.transform.localScale = new Vector3(Mathf.Max(0.01f, tl), cell * 0.5f, 1f);
+                if (t >= nextDust && s_twinkle != null)
+                {   // sparkle dust shed off the trail, drifting sideways and fading
+                    nextDust = t + 0.025f;
+                    Vector3 side = new Vector3(-dir.y, dir.x, 0f) * Random.Range(-0.35f, 0.35f) * cell;
+                    StartCoroutine(Twinkle(p - dir * Random.Range(0f, tl) + side, cell * Random.Range(0.18f, 0.32f), Random.Range(0.25f, 0.4f), 0f,
+                        side.normalized * cell * 0.6f + Vector3.down * cell * 0.3f, 60));
+                }
+                yield return null;
+            }
+            // tail drains into the tile
+            float f = 0f; Vector3 end = to;
+            while (f < 0.08f) { f += Time.unscaledDeltaTime; float q = 1f - f / 0.08f; tail.transform.localScale = new Vector3(Mathf.Max(0.01f, tailMax * q), cell * 0.5f * q, 1f); tail.transform.position = end - dir * tailMax * q * 0.5f; yield return null; }
+            Destroy(tail.gameObject); Destroy(head.gameObject);
+        }
+        /// <summary>Flash + a ring of twinkling stars round the tile as the bonus rocket appears.</summary>
+        public void BonusLandSparkle(Vector3 at)
+        {
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
+            LoadStars();
+            var fl = MakeFxSprite("BonusLandFlash", SoftDot(), COMET_COLOR, 62);
+            fl.transform.position = at; fl.transform.localScale = Vector3.one * cell * 0.3f;
+            var f0 = fl;
+            fl.transform.DOScale(cell * 1.1f, 0.10f).SetEase(Ease.OutQuad).SetUpdate(true);
+            fl.DOFade(0f, 0.16f).SetDelay(0.06f).SetUpdate(true).OnComplete(() => { if (f0 != null) Destroy(f0.gameObject); });
+            if (s_twinkle == null) return;
+            int n = 7; float a0 = Random.Range(0f, 360f);
+            for (int i = 0; i < n; i++)
+            {
+                float a = (a0 + i * 360f / n + Random.Range(-15f, 15f)) * Mathf.Deg2Rad;
+                Vector3 p = at + new Vector3(Mathf.Cos(a), Mathf.Sin(a), 0f) * cell * Random.Range(0.42f, 0.62f);
+                StartCoroutine(Twinkle(p, cell * Random.Range(0.32f, 0.5f), Random.Range(0.32f, 0.45f), Random.Range(0f, 0.12f),
+                    (p - at).normalized * cell * 0.5f, 63));
+            }
+            if (s_star5 != null)
+                for (int i = 0; i < 3; i++)
+                {
+                    Vector2 r = Random.insideUnitCircle.normalized;
+                    StartCoroutine(Twinkle(at + (Vector3)r * cell * 0.2f, cell * 0.22f, 0.45f, 0.03f * i, (Vector3)r * cell * 1.6f, 63, s_star5));
+                }
+        }
+        /// <summary>One star: pops 0 -> size -> 0 over life (peak at 35%), slow spin, drifts by vel.</summary>
+        private System.Collections.IEnumerator Twinkle(Vector3 at, float size, float life, float delay, Vector3 vel, int order, Sprite sp = null)
+        {
+            if (delay > 0f) { float w = 0f; while (w < delay) { w += Time.unscaledDeltaTime; yield return null; } }
+            var sr = MakeFxSprite("Twinkle", sp ?? s_twinkle, COMET_COLOR, order);
+            if (sr == null) yield break;
+            float t = 0f, spin = Random.Range(-90f, 90f), rot0 = Random.Range(0f, 45f);
+            while (t < life && sr != null)
+            {
+                t += Time.unscaledDeltaTime; float k = t / life;
+                float s = k < 0.35f ? k / 0.35f : 1f - (k - 0.35f) / 0.65f;
+                sr.transform.position = at + vel * t;
+                sr.transform.localScale = Vector3.one * size * Mathf.Max(0f, s);
+                sr.transform.rotation = Quaternion.Euler(0f, 0f, rot0 + spin * t);
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
+        }
+
         private SpriteRenderer MakeIconSprite(string name, int kind, float worldSize, int order)
         {
             var icon = Tile.SpecialIcon(kind);
@@ -1372,6 +1500,119 @@ namespace WordDrop
             return s_glowSprite ?? SoftDot();
         }
 
+        // REAL LIGHTNING (2026-10-28 Spencer: "i have some real VFX sprites of these in my project"). Three bolt strips cut from
+        // the AllIn1Vfx pack's TrailElectric 10 / 5 / 3 (Resources/Particles/bolt_a|b|c, white + alpha), stretched ball -> target.
+        // The beam crackles: the shape swaps every ~2 frames and flips randomly, then fades. DISCO_BOLTS = false -> the old bar.
+        public static bool  DISCO_BOLTS = true;
+        public static Color DISCO_BOLT_COLOR = new Color(1.25f, 1.6f, 2.9f, 1f);   // blue-white, HDR so it catches the bloom
+        public static float DISCO_BOLT_WIDTH = 0.72f;
+        public static Color DISCO_BOLT_FRINGE = new Color(0.22f, 0.45f, 1f, 0.85f);   // normal-blend blue under the core                              // bolt amplitude, cells
+        private static Sprite[] s_bolts; private static readonly float[] s_boltFill = { 1.3f, 1.79f, 1.08f };   // strip height / bolt height
+        private static bool s_boltsTried;
+        private static bool LoadBolts()
+        {
+            if (s_boltsTried) return s_bolts != null;
+            s_boltsTried = true;
+            var list = new List<Sprite>();
+            foreach (var n in new[] { "bolt_a", "bolt_b", "bolt_c" })
+            {
+                var t = Resources.Load<Texture2D>("Particles/" + n);
+                if (t == null) { WDLog.Log($"[Disco] {n} missing - plain beams"); return false; }
+                list.Add(Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width));   // 1 unit wide
+            }
+            s_bolts = list.ToArray();
+            return true;
+        }
+        private System.Collections.IEnumerator DiscoBolt(Vector3 from, Vector3 to, float at, float cell)
+        {
+            if (at > 0f) yield return new WaitForSeconds(at);
+            Vector3 d = to - from; float len = d.magnitude; if (len < 0.01f) yield break;
+            var sr = MakeFxSprite("DiscoBolt", s_bolts[0], DISCO_BOLT_COLOR, 50);
+            sr.transform.position = from + d * 0.5f;
+            sr.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+            // BLUE FRINGE (2026-10-28 Spencer screenshots: the bolts vanished over the white letter tiles - additive light can't
+            // show on white). A NORMAL-blended, wider copy in saturated blue sits under the hot core, so over a white tile you
+            // still see a blue bolt with a white centre.
+            var fringe = new GameObject("DiscoBoltFringe").AddComponent<SpriteRenderer>();
+            fringe.sprite = s_bolts[0]; fringe.sortingOrder = 49; fringe.color = DISCO_BOLT_FRINGE;
+            fringe.transform.SetParent(sr.transform, false);
+            fringe.transform.localScale = new Vector3(1f, 1.35f, 1f);   // 1.7 -> 1.35 (overdraw)
+            float life = 0.30f, t = 0f, nextSwap = 0f; int idx = Random.Range(0, s_bolts.Length);
+            while (t < life && sr != null)
+            {
+                if (t >= nextSwap)
+                {   // crackle: a new shape, flipped at random, every ~2 frames
+                    idx = (idx + 1 + Random.Range(0, s_bolts.Length - 1)) % s_bolts.Length;
+                    sr.sprite = s_bolts[idx]; fringe.sprite = s_bolts[idx];
+                    // sprite is 1 unit wide and (H/W) tall: scale y so the BOLT itself spans DISCO_BOLT_WIDTH cells
+                    float h = cell * DISCO_BOLT_WIDTH * s_boltFill[idx] / Mathf.Max(0.001f, s_bolts[idx].bounds.size.y);
+                    sr.transform.localScale = new Vector3(len, h * (Random.value < 0.5f ? -1f : 1f), 1f);
+                    nextSwap = t + 0.035f;
+                }
+                float k = t / life;
+                float al = k < 0.5f ? 1f : 1f - (k - 0.5f) / 0.5f;
+                sr.color = new Color(1f, 1f, 1f, al);
+                fringe.color = new Color(DISCO_BOLT_FRINGE.r, DISCO_BOLT_FRINGE.g, DISCO_BOLT_FRINGE.b, DISCO_BOLT_FRINGE.a * al);
+                t += Time.deltaTime;
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
+        }
+
+        // CHARGED TILES (2026-10-28 Spencer: "little electro shocks floating around them ... like in the reference gif"). Every
+        // tile a beam has hit crackles until the pop: small zaps from the Particle VFX pack's electricity flipbook
+        // (Resources/Particles/electro_sheet = 4x2 frames) pop in around its edge, each at a new spot/angle every ~70ms.
+        // Normal blend (not additive) so they show over the white tiles too. DISCO_TILE_SHOCKS = false -> off.
+        public static bool  DISCO_TILE_SHOCKS = true;
+        public static int   SHOCKS_PER_TILE   = 2;
+        public static float SHOCK_SIZE        = 0.95f;   // flipbook frame size, cells (the zap itself is ~45% of the frame)
+        private static Sprite[] s_shockFrames; private static bool s_shockTried;
+        private static bool LoadShocks()
+        {
+            if (s_shockTried) return s_shockFrames != null;
+            s_shockTried = true;
+            var t = Resources.Load<Texture2D>("Particles/electro_sheet");
+            if (t == null) { WDLog.Log("[Disco] electro_sheet missing - no tile shocks"); return false; }
+            int fw = t.width / 4, fh = t.height / 2;
+            s_shockFrames = new Sprite[8];
+            for (int i = 0; i < 8; i++)
+                s_shockFrames[i] = Sprite.Create(t, new Rect((i % 4) * fw, (1 - i / 4) * fh, fw, fh), new Vector2(0.5f, 0.5f), fw);   // 1 unit wide
+            return true;
+        }
+        private System.Collections.IEnumerator TileShocks(Vector3 centre, float cell, float dur)
+        {
+            if (dur <= 0.02f || !LoadShocks()) yield break;
+            var zaps = new SpriteRenderer[SHOCKS_PER_TILE];
+            for (int i = 0; i < zaps.Length; i++)
+            {
+                zaps[i] = new GameObject("TileShock").AddComponent<SpriteRenderer>();
+                zaps[i].sortingOrder = 51;
+                zaps[i].enabled = false;
+            }
+            float t = 0f; var next = new float[zaps.Length];
+            for (int i = 0; i < next.Length; i++) next[i] = i * 0.035f;   // staggered so they don't all jump together
+            while (t < dur)
+            {
+                for (int i = 0; i < zaps.Length; i++)
+                {
+                    if (zaps[i] == null || t < next[i]) continue;
+                    var z = zaps[i];
+                    z.enabled = Random.value > 0.2f;   // the odd blank beat = flicker
+                    z.sprite = s_shockFrames[Random.Range(0, s_shockFrames.Length)];
+                    float ang = Random.Range(0f, 360f);
+                    Vector2 off = new Vector2(Mathf.Cos(ang * Mathf.Deg2Rad), Mathf.Sin(ang * Mathf.Deg2Rad)) * cell * Random.Range(0.28f, 0.5f);
+                    z.transform.position = centre + (Vector3)off + new Vector3(0f, 0f, -0.4f);
+                    z.transform.rotation = Quaternion.Euler(0f, 0f, ang + Random.Range(-40f, 40f));
+                    float sc = cell * SHOCK_SIZE * Random.Range(0.8f, 1.15f);
+                    z.transform.localScale = new Vector3(sc * (Random.value < 0.5f ? -1f : 1f), sc, 1f);
+                    next[i] = t + Random.Range(0.055f, 0.09f);
+                }
+                t += Time.deltaTime;
+                yield return null;
+            }
+            foreach (var z in zaps) if (z != null) Destroy(z.gameObject);
+        }
+
         private void PlayDiscoCharge(RulesEngine.SpecialFire f, Vector3 origin, float cell)
         {
             var grid = GridManager.Instance; if (grid == null) return;
@@ -1416,19 +1657,29 @@ namespace WordDrop
                 Vector3 to = grid.CellToWorld(c.x, c.y) + slide + new Vector3(0f, 0f, -0.3f);
                 Vector3 d = to - origin; float len = d.magnitude; if (len < 0.01f) continue;
                 float at = DiscoBeamAt(k, f.Cleared.Count);
+                // PERF (2026-10-28 probe: disco 17fps in the editor): with real bolts the old bar under each beam is skipped -
+                // the blue fringe already gives the halo, and three stacked strips per beam piled up overdraw at the ball.
+                if (DISCO_BOLTS && LoadBolts())
+                {
+                    StartCoroutine(DiscoBolt(origin, to, at, cell));
+                    goto hitFx;
+                }
                 var beam = MakeFxSprite("DiscoBeam", s_beamSprite, new Color(1.6f, 1.7f, 2.0f, 1f), 49);
                 beam.transform.position = origin + d * 0.5f;
                 beam.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
-                beam.transform.localScale = new Vector3(len / s_beamSprite.bounds.size.x, 0.35f, 1f);
+                beam.transform.localScale = new Vector3(len / s_beamSprite.bounds.size.x, DISCO_BOLTS && LoadBolts() ? 0.30f : 0.35f, 1f);
                 beam.color = new Color(1f, 1f, 1f, 0f);
                 var bm = beam;
-                beam.DOFade(1f, 0.03f).SetDelay(at);
+                float glowA = DISCO_BOLTS && LoadBolts() ? 0.7f : 1f;   // with real bolts the bar is just a soft glow under them
+                beam.DOFade(glowA, 0.03f).SetDelay(at);
                 beam.DOFade(0f, 0.18f).SetDelay(at + 0.12f).OnComplete(() => { if (bm != null) Destroy(bm.gameObject); });
+                hitFx:
                 var cc = c; var tt = to;
                 DOVirtual.DelayedCall(at + 0.03f, () =>
                 {
                     var tile = GridManager.Instance != null ? GridManager.Instance.GetTile(cc.x, cc.y) : null;
                     if (tile != null) tile.SetBloomGlow(DISCO_FROST, 0.85f, forceDesktop: true);
+                    if (DISCO_TILE_SHOCKS) StartCoroutine(TileShocks(tt, cell, popAt - (at + 0.03f)));
                     for (int sIdx = 0; sIdx < 3; sIdx++)
                         SpawnSpark(tt, (Vector3)(Random.insideUnitCircle.normalized * cell * Random.Range(2f, 4f)), cell * 0.14f, 0.25f, new Color(1.5f, 1.6f, 2f, 1f));
                 });
@@ -1464,6 +1715,142 @@ namespace WordDrop
         /// <summary>Plays the fire animation for one special. Rocket: two glowing heads streak out both ways along the
         /// row/column with a fading lane flash. Bomb: white flash + expanding shockwave ring. Disco: beams from the ball
         /// to every tile it took. Visual only — the rules already cleared the cells.</summary>
+        // ── COMBO WIND-UP + BOARD DIM (2026-10-28, Spencer's RK/RM combo clips, ~/Documents/animations/_findings) ─────────────
+        // Theirs never fire a combo on the swap frame: MERGE -> a WIND-UP sized to the payoff (rocket+rocket ~1-frame star pop;
+        // TNT+rocket ~0.46s flip; TNT+TNT grow + spin + countdown; light ball + X ~0.3s shrink) -> a burst that is FULL WHITE on
+        // its first frame, plateaus ~3 frames, fades ~0.3s. The biggest also DIM the board (~45% over ~0.43s) and lift it with
+        // the flash. Ours fired everything instantly. Kept SHORT on purpose (Spencer 10-23 cut dead time): ~0.15-0.55s.
+        // COMBO_WINDUP = false -> the old instant combos. HandManager adds ComboWindupFor(step) to every pop/fire in the step.
+        public static bool  COMBO_WINDUP = true;
+        public static float ComboWindup(int kind)
+        {
+            if (!COMBO_WINDUP) return 0f;
+            switch (kind)
+            {
+                case RulesEngine.SPECIAL_COMBO_CROSS:       return 0.15f;
+                case RulesEngine.SPECIAL_COMBO_BIGCROSS:    return 0.35f;
+                case RulesEngine.SPECIAL_COMBO_DISCO:       return 0.30f;
+                case RulesEngine.SPECIAL_COMBO_MEGA:        return 0.55f;
+                case RulesEngine.SPECIAL_COMBO_DISCO_DISCO: return 0.55f;
+                case RulesEngine.SPECIAL_COMBO_PLANES:      return 0.25f;
+                default: return 0f;
+            }
+        }
+        public static bool ComboDims(int kind) => kind == RulesEngine.SPECIAL_COMBO_MEGA || kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO;
+
+        /// <summary>Wind-up art at the combo cell for <paramref name="dur"/> s; the real burst (PlaySpecialFire) follows it.</summary>
+        public void PlayComboWindup(RulesEngine.SpecialFire f, float dur)
+        {
+            var grid = GridManager.Instance; if (grid == null || dur <= 0f) return;
+            float cell = grid.CellSize;
+            Vector3 origin = grid.CellToWorld(f.Cell.x, f.Cell.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.35f);
+            if (ComboDims(f.Kind)) BoardDim(BOARD_DIM_ALPHA, dur);
+            StartCoroutine(ComboWindupRoutine(f.Kind, origin, cell, dur));
+        }
+
+        private System.Collections.IEnumerator ComboWindupRoutine(int kind, Vector3 origin, float cell, float dur)
+        {
+            int a = RulesEngine.SPECIAL_ROCKET_H, b = RulesEngine.SPECIAL_ROCKET_H;
+            if (kind == RulesEngine.SPECIAL_COMBO_BIGCROSS) { a = RulesEngine.SPECIAL_TNT; b = RulesEngine.SPECIAL_ROCKET_H; }
+            else if (kind == RulesEngine.SPECIAL_COMBO_MEGA) { a = b = RulesEngine.SPECIAL_TNT; }
+            else if (kind == RulesEngine.SPECIAL_COMBO_DISCO || kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO) { a = b = RulesEngine.SPECIAL_DISCO; }
+            else if (kind == RulesEngine.SPECIAL_COMBO_PLANES) { a = b = RulesEngine.SPECIAL_AIRPLANE; }
+            var art = MakeIconSprite("ComboWindup", a, cell, 60);
+            var glow = MakeFxSprite("ComboWindupGlow", SoftDot(), new Color(1.6f, 1.25f, 0.6f, 1f), 59);
+            if (glow != null) glow.transform.position = origin + new Vector3(0f, 0f, 0.02f);
+            if (art != null) art.transform.position = origin;
+            float baseRot = art != null ? art.transform.eulerAngles.z : 0f;
+            // peak size per kind (TNT+TNT grows biggest, rocket+rocket just pops)
+            float peak = kind == RulesEngine.SPECIAL_COMBO_MEGA ? 2.4f : kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO ? 2.0f
+                       : kind == RulesEngine.SPECIAL_COMBO_CROSS ? 1.35f : 1.6f;
+            float t = 0f;
+            while (t < dur)
+            {
+                t += Time.deltaTime; float k = Mathf.Clamp01(t / dur);
+                // grow with overshoot (out-back), then a last-instant pucker to 0.85 of peak right before the burst
+                float g = DOVirtual.EasedValue(0f, 1f, Mathf.Clamp01(k / 0.7f), Ease.OutBack);
+                float s = Mathf.Lerp(1f, peak, g) * (k > 0.85f ? Mathf.Lerp(1f, 0.85f, (k - 0.85f) / 0.15f) : 1f);
+                if (art != null)
+                {
+                    art.transform.localScale = Vector3.one * cell * s;
+                    if (kind == RulesEngine.SPECIAL_COMBO_BIGCROSS)
+                    {   // TNT <-> rocket ALTERNATE in the flat (2026-10-28 Spencer: a 2D sprite shouldn't fake a 3D flip): ~3 swaps,
+                        // each new one punches up as it takes the front, with a little tilt wobble
+                        float ph = k * 3f; int n = (int)ph; float u = ph - n;
+                        int kindNow = (n & 1) == 0 ? a : b;
+                        art.sprite = Tile.SpecialIcon(kindNow) ?? art.sprite;
+                        float punch = 1f + 0.22f * Mathf.Exp(-u * 7f) * Mathf.Cos(u * 18f);
+                        art.transform.localScale = Vector3.one * cell * s * punch;
+                        art.transform.rotation = Quaternion.Euler(0f, 0f, Tile.SpecialIconAngle(kindNow) + Mathf.Sin(ph * Mathf.PI * 2f) * 7f);
+                    }
+                    else if (kind == RulesEngine.SPECIAL_COMBO_MEGA || kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO)
+                        art.transform.rotation = Quaternion.Euler(0f, 0f, baseRot + 360f * DOVirtual.EasedValue(0f, 1f, k, Ease.InOutQuad));
+                    else art.transform.rotation = Quaternion.Euler(0f, 0f, baseRot + Mathf.Sin(k * 40f) * 8f * (1f - k));   // shiver
+                    art.transform.position = origin + new Vector3(0f, cell * 0.25f * g, 0f);   // lifts off the board a little
+                }
+                if (glow != null)
+                {
+                    glow.transform.localScale = Vector3.one * cell * (1.2f + 1.4f * k) * s * 0.8f;
+                    glow.color = new Color(1f, 1f, 1f, 0.35f + 0.5f * k);
+                }
+                yield return null;
+            }
+            if (art != null) Destroy(art.gameObject);
+            if (glow != null) Destroy(glow.gameObject);
+        }
+
+        /// <summary>Burst flash: FULL white on its first frame, holds ~3 frames, then fades ~0.3s (RK: no ramp-up).</summary>
+        private System.Collections.IEnumerator WhiteBurstFlash(Vector3 centre, float radius)
+        {
+            var f = MakeFxSprite("BurstFlash", SoftDot(), new Color(2.4f, 2.3f, 2.1f, 1f), 50);
+            f.transform.position = centre - new Vector3(0f, 0f, 0.1f);
+            float t = 0f, hold = 0.1f, fade = 0.3f;
+            while (t < hold + fade)
+            {
+                t += Time.deltaTime;
+                float k = t < hold ? 0f : (t - hold) / fade;
+                f.transform.localScale = Vector3.one * radius * 2.4f * (1f + 0.25f * k);
+                f.color = new Color(1f, 1f, 1f, 1f - k * k);
+                yield return null;
+            }
+            Destroy(f.gameObject);
+        }
+
+        // ── BOARD DIM: a black veil over the board + background (order 44: above every tile, under the FX 46+; lifted
+        // tiles at 60 stay bright = a spotlight). Rides the camera so a jolt can't uncover an edge. ──
+        public static bool  BOARD_DIM = true;
+        public static bool  BIG_POP_DIM = true;   // dim during the 20+ tile big-pop hold
+        public static float BOARD_DIM_ALPHA = 0.5f;   // RK ball+ball: 127 -> 57 mean brightness (~55% darker)
+        public static float BOARD_DIM_LIFT  = 0.3f;
+        private SpriteRenderer _dimSR; private Tween _dimTw;
+        public void BoardDim(float alpha, float dur)
+        {
+            if (!BOARD_DIM) return;
+            var cam = Camera.main; if (cam == null) return;
+            if (_dimSR == null)
+            {
+                var tex = new Texture2D(4, 4); var px = new Color[16]; for (int i = 0; i < 16; i++) px[i] = Color.white; tex.SetPixels(px); tex.Apply();
+                var go = new GameObject("BoardDim"); _dimSR = go.AddComponent<SpriteRenderer>();
+                _dimSR.sprite = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f);
+                _dimSR.sortingOrder = 44; _dimSR.color = new Color(0.03f, 0.01f, 0.08f, 0f);
+                go.transform.SetParent(cam.transform, false);
+                go.transform.localPosition = new Vector3(0f, 0f, 4f);
+            }
+            float h = cam.orthographicSize * 2.6f;
+            _dimSR.transform.localScale = new Vector3(h * cam.aspect * 1.3f, h, 1f);
+            _dimSR.gameObject.SetActive(true);
+            _dimTw?.Kill();
+            _dimTw = _dimSR.DOFade(alpha, Mathf.Max(0.05f, dur)).SetEase(Ease.OutQuad).SetUpdate(true);
+        }
+        public void BoardDimLift(float dur = -1f)
+        {
+            if (_dimSR == null || !_dimSR.gameObject.activeSelf) return;
+            _dimTw?.Kill();
+            var sr = _dimSR;
+            _dimTw = sr.DOFade(0f, dur > 0f ? dur : BOARD_DIM_LIFT).SetEase(Ease.InQuad).SetUpdate(true)
+                .OnComplete(() => { if (sr != null) sr.gameObject.SetActive(false); });
+        }
+
         public void PlaySpecialFire(RulesEngine.SpecialFire f)
         {
             var grid = GridManager.Instance;
@@ -1487,6 +1874,14 @@ namespace WordDrop
                 return;
             }
             float bombScale = (powered && RulesEngine.IsBombLike(f.Kind)) ? 1.7f : 1f;   // 5x5 vs 3x3
+            // AIRPLANE COMBO: a burst at home (3x3); the airplanes it launches are their own SpecialFire entries.
+            if (f.Kind == RulesEngine.SPECIAL_COMBO_PLANES)
+            {
+                StartCoroutine(Fireball(origin, 1.3f * cell, cell));
+                if (COMBO_WINDUP) StartCoroutine(WhiteBurstFlash(origin, 1.3f * cell));
+                GridManager.Instance?.ShakeBoard(0.12f, 0.2f);
+                return;
+            }
             // SWAP COMBOS — built from the same rocket lines + fireball, bigger.
             if (f.Kind >= RulesEngine.SPECIAL_COMBO_CROSS && f.Kind <= RulesEngine.SPECIAL_COMBO_DISCO_DISCO)
             {
@@ -1508,6 +1903,15 @@ namespace WordDrop
                     StartCoroutine(Fireball(mid, 6f * cell, cell));
                 }
                 else StartCoroutine(Fireball(origin, 1.4f * cell, cell));   // disco + X: the partner specials fire their own FX
+                if (COMBO_WINDUP)
+                {
+                    float fr = f.Kind == RulesEngine.SPECIAL_COMBO_MEGA ? 3f : f.Kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO ? 4.5f : 1.3f;
+                    Vector3 fc = f.Kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO
+                        ? grid.CellToWorld(RulesEngine.COLS / 2, RulesEngine.ROWS / 2) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f) : origin;
+                    StartCoroutine(WhiteBurstFlash(fc, fr * cell));
+                    if (ComboDims(f.Kind)) BoardDimLift();
+                    if (ComboDims(f.Kind)) { var cam = Camera.main; if (cam != null) { cam.transform.DOKill(); PlayJolt(cam.transform, CAMERA_SHAKE_MAX); } }
+                }
                 GridManager.Instance?.ShakeBoard(0.28f, 0.35f);
                 return;
             }
@@ -1623,6 +2027,17 @@ namespace WordDrop
             if (t.IsGem && LevelRules.HasGemGoal && flyOk)
                 HUDManager.Instance?.FlyCollectLetter(t.transform.position, t.Letter);   // gem flies to the gem icon
             if (!t.IsStone || t.IsDropTargetVisual) return;   // ducks are stone-flagged too — they never "break"
+            if (t.TreasureHits > 0)
+            {   // TREASURE OPENS (2026-10-27): pay + the coin fountain instead of crate chunks. Paid here because every explosion path
+                // hides its tiles through these three sites; the bonus blast's treasures pay too (Spencer: extra rewards).
+                int coins = RulesEngine.TREASURE_COINS;
+                CoinWallet.Add(coins);
+                SurvivalManager.PendingBonusCoins += coins;
+                LevelMapPanel.Instance?.AddPendingCoinReward(coins);
+                WDLog.Log($"[Treasure] opened at ({t.Col},{t.Row}) -> +{coins} coins");
+                TreasureFX.Open(t.transform.position, coins);   // (TreasureHits resets in ResetForPool)
+                return;
+            }
             PlayCrateDebris(t.transform.position);
             GameAudio.Instance?.PlayCrateBreak();   // 2026-10-22 Spencer: crate SFX
         }
@@ -2270,10 +2685,11 @@ namespace WordDrop
         private IEnumerator Tier1PopCoroutine(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop = false)
         {
             if (tile == null) yield break;
+            int gen = tile.Generation;   // recycled into a new letter while we waited? then it isn't ours to pop (2026-10-28)
             if (startDelay > 0f)
             {
                 yield return WaitCache.Get(startDelay);
-                if (tile == null) yield break;
+                if (tile == null || tile.Generation != gen) yield break;
             }
 
             Transform xform = tile.transform;
@@ -2367,14 +2783,14 @@ namespace WordDrop
                 // 2026-06-08 Spencer: pre-pop pause HALVED (0.12+0.08 → 0.06+0.04) for
                 // snappier cascades while still showing a brief light-up beat.
                 yield return WaitCache.Get(0.06f);
-                if (tile == null) yield break;
+                if (tile == null || tile.Generation != gen) yield break;
                 tileSR.color = new Color(
                     Mathf.Min(preservedColor.r * 1.2f, GlintCap),
                     Mathf.Min(preservedColor.g * 1.2f, GlintCap),
                     Mathf.Min(preservedColor.b * 1.2f, GlintCap),
                     1f); // de-blown 2026-06-03: clamp 1.5→1.28 (under the bloom line) so the cascade pre-pop glint doesn't white-out
                 yield return WaitCache.Get(0.04f);
-                if (tile == null) yield break;
+                if (tile == null || tile.Generation != gen) yield break;
                 tileSR.color = preservedColor;
             }
 
@@ -2415,7 +2831,7 @@ namespace WordDrop
             if (!instantPop)
             {
                 yield return WaitCache.Get(0.08f);
-                if (tile == null) yield break;
+                if (tile == null || tile.Generation != gen) yield break;
             }
 
             // ── t=80ms: pop sound + revert color + start continuous shrink ──
@@ -2447,7 +2863,7 @@ namespace WordDrop
             // parallel. Matches CC where the candy "becomes" the bubble while
             // shrapnel and sparkles burst out simultaneously.
             yield return WaitCache.Get(0.06f);
-            if (tile == null) yield break;
+            if (tile == null || tile.Generation != gen) yield break;
 
             // Lock sr.color + sr.sprite + scale + position before Shatter samples.
             // Drift from background coroutines or a stale/pooled transform could
@@ -3426,6 +3842,34 @@ namespace WordDrop
         /// Screen shake via camera. chainStep=-1 for light word shake, 0+ for explosions.
         /// tileCount scales the intensity — more tiles = bigger shake.
         /// </summary>
+        // ── JOLT SHAKE (2026-10-28, from Spencer's Royal Match/Kingdom clips, ~/Documents/animations/_findings). They never
+        // buzz the camera: line clears and most combos don't shake at all; the area bomb gets ONE jolt of ~3% of the screen
+        // width (2 frames out), a return, one smaller rebound (~1/3), settled in ~250ms. Ours was a 14-48 vibrato buzz up
+        // to ~6.5% of the width on every big word. SHAKE_JOLT = false restores the old shake.
+        public static bool  SHAKE_JOLT          = true;
+        public static float JOLT_MIN_WEIGHT     = 0.30f;   // old shake magnitudes below this (routine words, small chains) don't shake
+        public static float JOLT_SCREEN_FRAC    = 0.030f;  // the biggest jolt, as a fraction of the visible width (RK bomb ~3%)
+        public static float JOLT_REBOUND        = 0.35f;   // the rebound, as a fraction of the jolt
+
+        private void PlayJolt(Transform t, float weight)
+        {
+            if (weight < JOLT_MIN_WEIGHT) { t.position = CAMERA_HOME; return; }
+            Camera cam = t.GetComponent<Camera>();
+            float viewW = cam != null ? cam.orthographicSize * 2f * cam.aspect : 9.2f;
+            // weight runs JOLT_MIN_WEIGHT .. CAMERA_SHAKE_MAX in the old units; map it onto 40%..100% of the full jolt
+            float k = Mathf.InverseLerp(JOLT_MIN_WEIGHT, CAMERA_SHAKE_MAX, weight);
+            float amp = viewW * JOLT_SCREEN_FRAC * Mathf.Lerp(0.4f, 1f, k);
+            Vector2 d = new Vector2(Random.Range(-1f, 1f), Random.Range(-1f, -0.3f)).normalized;   // mostly down, like a thump
+            Vector3 a = CAMERA_HOME + (Vector3)(d * amp), b = CAMERA_HOME - (Vector3)(d * amp * JOLT_REBOUND);
+            DOTween.Sequence().SetTarget(t)
+                .Append(t.DOMove(a, 0.033f).SetEase(Ease.OutQuad))
+                .AppendInterval(0.033f)
+                .Append(t.DOMove(b, 0.08f).SetEase(Ease.InOutQuad))
+                .Append(t.DOMove(CAMERA_HOME, 0.10f).SetEase(Ease.OutQuad))
+                .OnComplete(() => { if (t != null) t.position = CAMERA_HOME; })
+                .OnKill(() => { if (t != null) t.position = CAMERA_HOME; });
+        }
+
         public void PlayBoardShake(int chainStep, int tileCount = 1)
         {
             Camera cam = Camera.main;
@@ -3463,6 +3907,7 @@ namespace WordDrop
             }
 
             mag = Mathf.Min(mag, CAMERA_SHAKE_MAX);   // never past the background's overscan (SceneBootstrap OVERSCAN 1.15)
+            if (SHAKE_JOLT) { PlayJolt(t, mag); return; }
             t.DOShakePosition(dur, mag, vibrato, 90f, false, true)
                 .SetEase(DG.Tweening.Ease.OutQuad)
                 .OnComplete(() => { if (t != null) t.position = CAMERA_HOME; });

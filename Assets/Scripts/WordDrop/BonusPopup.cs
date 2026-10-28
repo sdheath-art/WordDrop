@@ -139,6 +139,7 @@ namespace WordDrop
 
         public void ShowWordScore(string word, int points, Vector3 worldPos, bool isPlayer = true)
         {
+            if (HandManager.BonusBlastRunning) return;   // 2026-10-28 Spencer: no score pop-ups during the end-of-level bonus
             if (!WORD_SCORE_POPUPS) return;
             AccumulateScore(points, worldPos, isPlayer);
         }
@@ -146,12 +147,14 @@ namespace WordDrop
         /// <summary>Show detonation re-score — accumulated.</summary>
         public void ShowDetonation(string word, int points, Vector3 worldPos, int chainDepth = 0, bool isPlayer = true)
         {
+            if (HandManager.BonusBlastRunning) return;   // 2026-10-28 Spencer: no score pop-ups during the end-of-level bonus
             AccumulateScore(points, worldPos, isPlayer, word);
         }
 
         /// <summary>Show heat fuse bonus — accumulated.</summary>
         public void ShowHeatBonus(int points, Vector3 worldPos, bool isPlayer = true)
         {
+            if (HandManager.BonusBlastRunning) return;   // 2026-10-28 Spencer: no score pop-ups during the end-of-level bonus
             if (points <= 0) return;
             AccumulateScore(points, worldPos, isPlayer);
         }
@@ -234,13 +237,53 @@ namespace WordDrop
         public static Color WORD_POP_BOTTOM  = new Color32(0xF7, 0xEF, 0xA5, 0xFF);
         public static Color WORD_POP_STROKE  = new Color32(0x27, 0x39, 0x4B, 0xFF);
         public static Color WORD_POP_HALO    = new Color(1f, 1f, 0.94f, 0.55f);
-        public static float WORD_POP_CAP_CELLS = 0.80f;   // 2026-10-23 Spencer: "double its size" (0.40 still too small)   // 2026-10-23 Spencer: "too small" at 0.25 (RM's measured digit height). RM's +10 sits
+        public static float WORD_POP_CAP_CELLS = 1.10f;   // 2026-10-28 Spencer (v3 lettering): "bigger" (0.80 -> 1.10)   // 2026-10-23 Spencer: "double its size" (0.40 still too small)   // 2026-10-23 Spencer: "too small" at 0.25 (RM's measured digit height). RM's +10 sits
                                                           // on ONE tile with no letters around it; ours sits on a 4-6 tile word among half-tile
                                                           // letters, so the same absolute size read tiny. 0.40 = ~80% of a tile letter.
         public static float WORD_POP_STROKE_W  = 0.16f;   // Nunito units (atlas padding 9 @ 90pt) — ~5-6% of letter height: thin, like RM
         private static Material s_wordPopMat;
+        // V3 WORD POP (2026-10-28 Spencer: "add back letter pop ups but make them match the aesthetic"). The same lettering he
+        // already approved in game: WordSlop Button (the HUD numbers + nav labels), cream gradient (#FFFAE0 -> #FCEEC4), a thin
+        // dark-purple #301050 outline and a small straight-down drop in the same purple (the HUD heart count, scaled down twice
+        // by Spencer: outline ~8% of the cap, drop ~2%). WORD_POP_V3 = false -> the 10-23 Nunito "RM +10" look.
+        public static bool  WORD_POP_V3 = true;
+        public static Color WORD_POP_V3_TOP = new Color32(0xFF, 0xFA, 0xE0, 0xFF), WORD_POP_V3_BOT = new Color32(0xFC, 0xEE, 0xC4, 0xFF);
+        public static Color WORD_POP_V3_INK = new Color32(0x30, 0x10, 0x50, 0xFF);
+        public static float WORD_POP_V3_TRACKING = 9f;   // TMP em/100 units: + = looser
+        private static Material s_wordPopV3Mat;
+        private static bool ApplyWordPopStyleV3(TextMeshPro tmp)
+        {
+            var font = Resources.Load<TMP_FontAsset>("WordSlop Button SDF");
+            if (tmp == null || font == null) return false;
+            tmp.font = font;
+            if (s_wordPopV3Mat == null)
+            {
+                s_wordPopV3Mat = new Material(font.material) { name = "WordPopV3" };
+                s_wordPopV3Mat.EnableKeyword("OUTLINE_ON");
+                s_wordPopV3Mat.SetColor("_OutlineColor", WORD_POP_V3_INK);
+                s_wordPopV3Mat.SetFloat("_OutlineWidth", 0.22f);
+                s_wordPopV3Mat.SetFloat("_FaceDilate", 0.18f);
+                s_wordPopV3Mat.EnableKeyword("UNDERLAY_ON");
+                s_wordPopV3Mat.SetColor("_UnderlayColor", WORD_POP_V3_INK);
+                s_wordPopV3Mat.SetFloat("_UnderlayOffsetX", 0f);
+                s_wordPopV3Mat.SetFloat("_UnderlayOffsetY", -0.3f);
+                s_wordPopV3Mat.SetFloat("_UnderlayDilate", 0.4f);
+                s_wordPopV3Mat.SetFloat("_UnderlaySoftness", 0f);
+                ShaderUtilities.UpdateShaderRatios(s_wordPopV3Mat);
+            }
+            tmp.fontSharedMaterial = s_wordPopV3Mat;
+            tmp.enableVertexGradient = true;
+            tmp.colorGradient = new VertexGradient(WORD_POP_V3_TOP, WORD_POP_V3_TOP, WORD_POP_V3_BOT, WORD_POP_V3_BOT);
+            tmp.color = Color.white;
+            tmp.fontStyle = FontStyles.Normal;
+            tmp.characterSpacing = WORD_POP_V3_TRACKING;   // 2026-10-28 Spencer: "the kerning is so tight" - the face dilate + outline close the gaps
+            tmp.UpdateMeshPadding();
+            return true;
+        }
+
         public static bool ApplyWordPopStyle(TextMeshPro tmp)
         {
+            if (WORD_POP_V3 && ApplyWordPopStyleV3(tmp)) return true;
             var font = GameFont.GetTMP();   // NunitoBlack SDF
             if (tmp == null || font == null) return false;
             tmp.font = font;

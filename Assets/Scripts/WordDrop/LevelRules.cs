@@ -154,6 +154,7 @@ namespace WordDrop
             if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = sim.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
             else sim.ClearGrass();
             sim.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
+            if (!r.Bonus) sim.PlaceTreasures(stage, keep);   // TREASURE (bonus loot) - mirrors Apply
             if (r.Gems > 0) sim.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep);
             if (r.Ducks > 0) sim.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep);
             CrateGoal = crates;
@@ -805,6 +806,7 @@ namespace WordDrop
                     if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = rules2.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
                     else rules2.ClearGrass();
                     int tnt = rules2.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
+                    if (!r.Bonus) rules2.PlaceTreasures(stage, keep);   // TREASURE (2026-10-27): random bonus loot, never a goal
                     WinStreak.Apply(rules2, keep);   // 2026-10-23: streak rockets / bombs / disco (live only — the bot's SetupSimLevel skips it)
                     int gemsPlaced = r.Gems > 0 ? rules2.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep) : 0;
                     // fixed gems: the board can't get more later, so the goal can never ask for more than were placed

@@ -862,6 +862,9 @@ namespace WordDrop
         // Floating "+N" coin popup (a.k.a. floating combat text / score popup) — pops in over the star, rises a
         // little, and fades out, showing the coins earned. Mirrors the in-game BonusPopup but in UI space for the
         // map. 2026-07-14 Spencer.
+        public static bool  COIN_POP_V3 = true;
+        public static float COIN_POP_V3_SCALE = 1.0f;
+        private static Material s_coinPopMat;
         private void SpawnCoinRewardPopup(Vector3 worldPos, int amount)
         {
             if (_canvas == null || amount <= 0 || UIAnimations.ReducedMotion) return;
@@ -900,6 +903,41 @@ namespace WordDrop
                               * (canvasH / (2f * gameCam.orthographicSize));
             }
             float COIN_DIGIT_PX = coinDigitPx;
+            // V3 STYLE (2026-10-28 Spencer: "the +coins when you finish a level text style should match the games aesthetic").
+            // The HUD's own lettering - WordSlop Button, cream gradient, thin dark-purple outline, small straight-down drop
+            // (HudBar heart count / word pop-ups) - instead of the old painted digits + offset brown shadow. COIN_POP_V3 = false
+            // -> the painted digits.
+            if (COIN_POP_V3)
+            {
+                var tgo = new GameObject("CoinPopText", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+                var trt = (RectTransform)tgo.transform; trt.SetParent(rt, false);
+                trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 0.5f); trt.sizeDelta = new Vector2(600f, 200f);
+                var t = tgo.GetComponent<TMPro.TextMeshProUGUI>();
+                var f = Resources.Load<TMPro.TMP_FontAsset>("WordSlop Button SDF");
+                if (f != null) t.font = f;
+                t.text = txt; t.alignment = TMPro.TextAlignmentOptions.CenterGeoAligned; t.raycastTarget = false;
+                t.enableWordWrapping = false; t.overflowMode = TMPro.TextOverflowModes.Overflow;
+                t.fontSize = COIN_DIGIT_PX / 0.70f * COIN_POP_V3_SCALE;   // cap height = the old digit height x scale
+                t.enableVertexGradient = true;
+                t.colorGradient = new TMPro.VertexGradient(new Color32(0xFF, 0xFA, 0xE0, 0xFF), new Color32(0xFF, 0xFA, 0xE0, 0xFF),
+                                                           new Color32(0xFC, 0xEE, 0xC4, 0xFF), new Color32(0xFC, 0xEE, 0xC4, 0xFF));
+                t.color = Color.white;
+                if (s_coinPopMat == null && t.fontSharedMaterial != null)
+                {
+                    var ink = new Color32(0x30, 0x10, 0x50, 0xFF);
+                    s_coinPopMat = new Material(t.fontSharedMaterial) { name = "CoinPopV3" };
+                    s_coinPopMat.EnableKeyword("OUTLINE_ON"); s_coinPopMat.SetColor("_OutlineColor", ink); s_coinPopMat.SetFloat("_OutlineWidth", 0.22f);
+                    s_coinPopMat.SetFloat("_FaceDilate", 0.18f);
+                    s_coinPopMat.EnableKeyword("UNDERLAY_ON"); s_coinPopMat.SetColor("_UnderlayColor", ink);
+                    s_coinPopMat.SetFloat("_UnderlayOffsetX", 0f); s_coinPopMat.SetFloat("_UnderlayOffsetY", -0.3f);
+                    s_coinPopMat.SetFloat("_UnderlayDilate", 0.4f); s_coinPopMat.SetFloat("_UnderlaySoftness", 0f);
+                    TMPro.ShaderUtilities.UpdateShaderRatios(s_coinPopMat);
+                }
+                if (s_coinPopMat != null) t.fontSharedMaterial = s_coinPopMat;
+                t.characterSpacing = 6f;
+            }
+            else
+            {
             var shadowRT = new GameObject("Shadow", typeof(RectTransform)).GetComponent<RectTransform>();
             shadowRT.SetParent(rt, false);
             shadowRT.anchorMin = shadowRT.anchorMax = new Vector2(0.5f, 0.5f);
@@ -919,6 +957,7 @@ namespace WordDrop
                 if (shadowRT != null) Destroy(shadowRT.gameObject);
                 MakePopupLabel(rt, txt, new Vector2(3f, -4f), new Color(0.15f, 0.09f, 0.02f, 1f)); // dark shadow
                 MakePopupLabel(rt, txt, Vector2.zero,          Color.white);                        // white main
+            }
             }
 
             rt.localScale = Vector3.zero;

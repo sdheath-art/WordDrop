@@ -467,11 +467,11 @@ namespace WordDrop
         /// <summary>false = no pop-up leaps off the board at a pop (2026-10-23 Spencer: "can you remove the word pop ups for now?").
         /// The badge still hides on the same frame; score/goals are unaffected. true = back to the word (or "+N" with
         /// BonusPopup.WORD_INSTEAD_OF_SCORE = false).</summary>
-        public static bool PAYOUT_POPUP_ON = false;
+        public static bool PAYOUT_POPUP_ON = true;   // 2026-10-28 Spencer: back ON, in the v3 lettering (BonusPopup.WORD_POP_V3)
 
         public void PopPayout(Vector3 at, int payout, bool group, float fromFontSize = 0f, int badgeIdx = -1, Color? textCol = null, string label = null)
         {
-            if (!PAYOUT_POPUP_ON) { if (badgeIdx >= 0) HideBadge(badgeIdx); return; }
+            if (!PAYOUT_POPUP_ON || HandManager.BonusBlastRunning) { if (badgeIdx >= 0) HideBadge(badgeIdx); return; }   // bonus: no pop-ups (2026-10-28)
             if (payout <= 0 || UIAnimations.ReducedMotion) return;
             // WORD LABEL (2026-10-23 Spencer: "change these to the words that were made instead of the +number score pop ups ...
             // i just want to see what it would look like"). THIS is the "+N" that leaps off the board at a pop. With a label the

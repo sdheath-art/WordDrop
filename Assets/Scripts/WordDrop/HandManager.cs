@@ -1979,6 +1979,7 @@ namespace WordDrop
         /// a word forming and it popping.</summary>
         /// <summary>How long a word shows in its green/gold before it pops, so the player can see
         /// WHICH word it was. 2026-10-20 Spencer: "its not really clear what words are popping off".</summary>
+        public static bool  POPUP_AT_WORD_CENTRE = true;   // word pop-up rises from the middle of the word (false = the tapped/first cell)
         public static float INSTANT_POP_HOLD = 0.35f;
         // QUICK POP (2026-10-23 Spencer: "having the prime sound and that delayed pause and light up of the word is even
         // necessary anymore?"). The 0.35s hold applied to EVERY word, cascade words too — a 3-word cascade spent >1s just
@@ -2190,13 +2191,18 @@ namespace WordDrop
                 // leaves the MOVES counter every BONUS_ROCKET_INTERVAL while earlier ones are still flying; each lands on its
                 // own tile when its flight ends (delayed call), and the loop waits for the last landing before the pre-fire hold.
                 int li = i; var lc = c; int lk = kind;
-                System.Action land = () => { var lt = grid?.GetTile(lc.x, lc.y); lt?.SetSpecial(lk, pop: true); lt?.HideLetterForBonus(); GameAudio.Instance?.PlayScoreTick(1f + 0.06f * li); };
+                Vector3 lto = grid != null ? grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.6f) : Vector3.zero;
+                System.Action land = () => { var lt = grid?.GetTile(lc.x, lc.y); lt?.SetSpecial(lk, pop: true); lt?.HideLetterForBonus(); GameAudio.Instance?.PlayScoreTick(1f + 0.06f * li);
+                                             if (WordDropFX.BONUS_COMET) WordDropFX.Instance?.BonusLandSparkle(lto); };
                 if (grid != null && HUDManager.Instance != null && WordDropFX.Instance != null)
                 {
-                    Vector3 to = grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.6f);
-                    WordDropFX.Instance.FlyIcon(kind, HUDManager.Instance.GetMovesWorldPos(to.z), to, BONUS_ROCKET_FLIGHT);
-                    DOVirtual.DelayedCall(BONUS_ROCKET_FLIGHT, () => land(), ignoreTimeScale: true);
-                    lastLandAt = Time.unscaledTime + BONUS_ROCKET_FLIGHT;
+                    Vector3 to = lto;
+                    // 2026-10-28: Royal Match's comet (white streak + sparkle dust, ~0.2s) instead of flying the rocket icon
+                    float flight = WordDropFX.BONUS_COMET ? BONUS_COMET_FLIGHT : BONUS_ROCKET_FLIGHT;
+                    if (WordDropFX.BONUS_COMET) WordDropFX.Instance.BonusComet(HUDManager.Instance.GetMovesWorldPos(to.z), to, flight);
+                    else WordDropFX.Instance.FlyIcon(kind, HUDManager.Instance.GetMovesWorldPos(to.z), to, flight);
+                    DOVirtual.DelayedCall(flight, () => land(), ignoreTimeScale: true);
+                    lastLandAt = Time.unscaledTime + flight;
                 }
                 else land();
                 float t = 0f; while (t < (fast ? BONUS_FAST_INTERVAL : BONUS_ROCKET_INTERVAL)) { if (Tapped()) { skip = true; break; } t += Time.unscaledDeltaTime; yield return null; }
@@ -2288,6 +2294,7 @@ namespace WordDrop
         public static bool  BONUS_CUT_MUSIC     = true;
         public static float BONUS_MUSIC_FADE    = 0.35f;   // seconds
         public static float BONUS_INTRO_HOLD    = 0.7f;   // "BONUS!" on screen before anything moves
+        public static float BONUS_COMET_FLIGHT  = 0.22f;  // RM comet: ~0.15-0.2s counter -> tile (measured @1:19)
         public static float BONUS_ROCKET_FLIGHT = 0.32f;  // each rocket flying from the MOVES counter to its tile
         public static float BONUS_ROCKET_GAP    = 0.12f;  // (old one-at-a-time pacing; unused since 2026-10-22)
         public static float BONUS_ROCKET_INTERVAL = 0.2f; // 2026-10-22: a new rocket leaves the MOVES counter this often (flights overlap)
@@ -2402,6 +2409,15 @@ namespace WordDrop
                     if (ClusterOutline.Instance.TryGetBadgeAnchor(cell, out var anchor, out var fs, out var bi, out var bc))
                     {
                         Vector3 tapAt = _grid.CellToWorld(cell.x, cell.y);
+                        // CENTRE OF THE WORD (2026-10-28 Spencer: "the pop ups should probably occur central to the word that is
+                        // formed"). Words auto-pop now (InstantPop taps the word's FIRST cell for you), so "under the finger"
+                        // (10-19) put the word at its first letter. Centre of the cluster's cells instead.
+                        if (POPUP_AT_WORD_CENTRE && cl[i].cells.Count > 0)
+                        {
+                            Vector3 sum = Vector3.zero;
+                            foreach (var c in cl[i].cells) sum += _grid.CellToWorld(c.x, c.y);
+                            tapAt = sum / cl[i].cells.Count;
+                        }
                         tapAt.z = anchor.z;      // keep the badge's depth so sorting is unchanged
                         // the word(s) in this cluster, for the word-instead-of-score pop (2026-10-23)
                         var words = new List<string>();
@@ -2409,6 +2425,7 @@ namespace WordDrop
                             if (pw?.Cells != null && pw.Word != null && pw.Word.Length > 1 && pw.Cells.Exists(c => cl[i].cells.Contains(c)) && !words.Contains(pw.Word.ToUpperInvariant()))
                                 words.Add(pw.Word.ToUpperInvariant());
                         string label = words.Count == 0 ? null : words.Count <= BonusPopup.WORD_POPUP_MAX_WORDS ? string.Join("  ", words) : $"{words[0]}  +{words.Count - 1} MORE";
+                        _tapPopWords.Clear(); foreach (var w in words) _tapPopWords.Add(w);   // these already got their pop-up here
                         ClusterOutline.Instance.PopPayout(tapAt, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc, label);
                     }
                     break;
@@ -3552,6 +3569,14 @@ case RulesEngine.ResolutionPhase.Complete:
             if (grid == null || step == null) return;
             if (!BonusBlastRunning && (step.LongestWordLength >= 5 || step.SpecialsFired != null)) _bigPlayThisChain = true;
             _convergeTo.Clear();
+            if (step.GemsCollectedOnSpecials != null)
+                foreach (var gc in step.GemsCollectedOnSpecials)
+                {
+                    var gt = grid.GetTile(gc.x, gc.y);
+                    if (gt == null) continue;
+                    HUDManager.Instance?.FlyCollectLetter(gt.transform.position, gt.Letter);   // gem flies to the goal from the special's cell
+                    gt.SetGem(false);
+                }
             if (step.SpecialsCreated != null)
                 foreach (var kv in step.SpecialsCreated)
                 {
@@ -3580,9 +3605,10 @@ case RulesEngine.ResolutionPhase.Complete:
                 // detonation, so the rocket art flew over letters that were still standing. Each cleared cell now gets the time
                 // the FX reaches it; ExplodeWordsThenSplash pops it then. Rocket head = DOMove over ROCKET_FLIGHT, InQuad.
                 int fj = 0;
+                float windup = StepComboWindup(step);   // 2026-10-28: a combo winds up first; everything in the step waits for its burst
                 foreach (var f in step.SpecialsFired)
                 {
-                    float fire = BonusBlastRunning ? fj * BONUS_FIRE_STAGGER : 0f;
+                    float fire = (BonusBlastRunning ? fj * BONUS_FIRE_STAGGER : 0f) + windup;
                     fj++;
                     if (f.Cleared == null) continue;
                     bool rocket = f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V;
@@ -3595,7 +3621,8 @@ case RulesEngine.ResolutionPhase.Complete:
                         if (comboLine)
                         {   // instant line clear, slight ripple outward (like a rocket)
                             int ddx = Mathf.Abs(c.x - f.Cell.x), ddy = Mathf.Abs(c.y - f.Cell.y);
-                            t = fire + ROCKET_POP_PER_CELL * (ddy <= 1 ? ddx : ddy);
+                            t = fire + (WordDropFX.ROCKET_TRAVEL ? WordDropFX.RocketArriveAt(ddy <= 1 ? ddx : ddy, ddy <= 1 ? RulesEngine.COLS : RulesEngine.ROWS)
+                                                                 : ROCKET_POP_PER_CELL * (ddy <= 1 ? ddx : ddy));
                         }
                         else if (comboBlast)
                             t = fire + 0.008f * Mathf.Max(Mathf.Abs(c.x - f.Cell.x), Mathf.Abs(c.y - f.Cell.y));
@@ -3604,10 +3631,12 @@ case RulesEngine.ResolutionPhase.Complete:
                             bool alongRow = c.y == f.Cell.y && (f.Kind == RulesEngine.SPECIAL_ROCKET_H || c.x != f.Cell.x);
                             float d = alongRow ? Mathf.Abs(c.x - f.Cell.x) : Mathf.Abs(c.y - f.Cell.y);
                             // Royal Match (recording @1:21): the whole line goes at once — just a hint of ripple outward.
-                            t = fire + ROCKET_POP_PER_CELL * d;
+                            // 2026-10-28 (RK clips): the heads TRAVEL (~25-30 tiles/s) and each tile breaks just after its head passes.
+                            t = fire + (WordDropFX.ROCKET_TRAVEL ? WordDropFX.RocketArriveAt(d, alongRow ? RulesEngine.COLS : RulesEngine.ROWS)
+                                                                 : ROCKET_POP_PER_CELL * d);
                         }
                         else if (f.Kind == RulesEngine.SPECIAL_AIRPLANE)
-                            t = fire + (c == f.Target && c != f.Cell ? WordDropFX.AIRPLANE_TAKEOFF + WordDropFX.AIRPLANE_FLIGHT : 0.02f);   // home plus at once; the target when the plane lands
+                            t = fire + f.Delay + (c == f.Target && c != f.Cell ? WordDropFX.AIRPLANE_TAKEOFF + WordDropFX.AIRPLANE_FLIGHT : 0.02f);   // home plus at once; the target when the plane lands
                         else if (RulesEngine.IsBombLike(f.Kind))
                             t = fire + 0.008f * Mathf.Max(Mathf.Abs(c.x - f.Cell.x), Mathf.Abs(c.y - f.Cell.y));   // gone in the first frames — tiles must not stand inside the fireball (2026-10-22 capture)
                         else if (f.Kind == RulesEngine.SPECIAL_DISCO)
@@ -3621,10 +3650,14 @@ case RulesEngine.ResolutionPhase.Complete:
             if (step.SpecialsFired != null && WordDropFX.Instance != null)
             {
                 int fi = 0;
+                float windup = StepComboWindup(step);
+                if (windup > 0f)
+                    foreach (var f in step.SpecialsFired)
+                        if (WordDropFX.ComboWindup(f.Kind) > 0f) WordDropFX.Instance.PlayComboWindup(f, windup);
                 foreach (var f in step.SpecialsFired)
                 {
                     var ff = f;
-                    float delay = BonusBlastRunning ? fi * BONUS_FIRE_STAGGER : 0f;   // bonus: one quick ripple, no pauses
+                    float delay = (BonusBlastRunning ? fi * BONUS_FIRE_STAGGER : 0f) + windup + ff.Delay;   // bonus: one quick ripple, no pauses
                     if (delay <= 0f) WordDropFX.Instance.PlaySpecialFire(ff);
                     else DOVirtual.DelayedCall(delay, () => { if (WordDropFX.Instance != null) WordDropFX.Instance.PlaySpecialFire(ff); }, ignoreTimeScale: true);
                     fi++;
@@ -3641,8 +3674,59 @@ case RulesEngine.ResolutionPhase.Complete:
                 }
         }
 
+        /// <summary>The longest combo wind-up among this step's specials (0 in the bonus blast, which stays one quick ripple).</summary>
+        private static float StepComboWindup(RulesEngine.StepResult step)
+        {
+            if (BonusBlastRunning || step == null || step.SpecialsFired == null) return 0f;
+            float w = 0f;
+            foreach (var f in step.SpecialsFired) w = Mathf.Max(w, WordDropFX.ComboWindup(f.Kind));
+            return w;
+        }
+
+        /// <summary>TREASURE (2026-10-27): each treasure that lost a band this step - repaint to its new state + the band-off FX.</summary>
+        private void HitTreasureTiles(GridManager grid, RulesEngine.StepResult step)
+        {
+            if (grid == null || step == null || step.TreasureHitCells == null) return;
+            var rules = RulesEngine.Instance;
+            foreach (var c in step.TreasureHitCells)
+            {
+                Tile t = null; try { t = grid.GetTile(c.x, c.y); } catch { }
+                if (t == null) continue;
+                var d = rules != null ? rules.GetCell(c.x, c.y) : null;
+                int before = t.TreasureHits, after = d != null ? d.TreasureHits : Mathf.Max(1, before - 1);
+                if (before <= after) before = after + 1;
+                WDLog.Log($"[Treasure] hit at ({c.x},{c.y}) {before}->{after} band={(Tile.TreasureBandSprite(before) != null)}");
+                TreasureFX.Hit(t, before);
+                t.SetTreasureHits(after);
+            }
+        }
+
+        // WORD POP-UPS FOR EVERY WORD (2026-10-28 Spencer: "words made on a cascade need word pop ups ... i think this only
+        // happens during combos"). The pop-up fired only at the TAP, for the one cluster under it; any other word that went in
+        // the same detonation (caught in a blast, chained, or several armed words going at once) got none. Each Exploding
+        // step now lists its PoppedWords; any not already shown at the tap gets its own pop-up at its centre.
+        private readonly HashSet<string> _tapPopWords = new HashSet<string>();
+        public static bool POPUP_EVERY_WORD = true;
+        private void PopUpOtherWords(GridManager grid, RulesEngine.StepResult step)
+        {
+            if (!POPUP_EVERY_WORD || grid == null || step?.PoppedWords == null || ClusterOutline.Instance == null) { _tapPopWords.Clear(); return; }
+            var shown = new HashSet<string>(_tapPopWords);
+            _tapPopWords.Clear();
+            foreach (var kv in step.PoppedWords)
+            {
+                string w = kv.Key?.ToUpperInvariant();
+                if (string.IsNullOrEmpty(w) || w.Length < 2 || kv.Value == null || kv.Value.Count == 0 || !shown.Add(w)) continue;
+                Vector3 sum = Vector3.zero;
+                foreach (var c in kv.Value) sum += grid.CellToWorld(c.x, c.y);
+                Vector3 at = sum / kv.Value.Count; at.z = -0.5f;
+                ClusterOutline.Instance.PopPayout(at, 0, false, 0f, -1, null, w);
+            }
+        }
+
         private void DefrostThawedTiles(GridManager grid, RulesEngine.StepResult step)
         {
+            PopUpOtherWords(grid, step);   // pop-ups for words the tap didn't cover (cascade / combo words)
+            HitTreasureTiles(grid, step);   // TREASURE: same moment as the thaw (survivors of this detonation)
             if (grid == null || step == null || step.ThawedCells == null || step.ThawedCells.Count == 0) return;
             bool anyThawed = false;
             for (int i = 0; i < step.ThawedCells.Count; i++)

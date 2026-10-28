@@ -439,6 +439,7 @@ namespace WordDrop
                               $"gold={t.IsRainGold}, special={t.SpecialKind}) → resting face");
                     t.ForceRestingFace(); fixes++;
                 }
+                if (t.TreasureHits != c.TreasureHits) { t.SetTreasureHits(c.TreasureHits);    fixes++; }   // treasure repaints after a hit
                 if (t.IsStone      != c.IsStone)      { t.SetStoneVisual(c.IsStone);          fixes++; Report(col,row,t,"stone",    c.IsStone); }
                 if (t.IsAnchored   != c.IsAnchored)   { t.SetAnchored(c.IsAnchored);
                                                         t.SetVaultVisual(c.IsAnchored);       fixes++; Report(col,row,t,"vault",    c.IsAnchored); }
@@ -1396,6 +1397,10 @@ namespace WordDrop
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = Sprite.Create(tex, new Rect(0, 0, texW, texH), new Vector2(0.5f, 0.5f), 100f);
             sr.sortingOrder = 1;                     // board panel 0 < grid 1 < tiles 5
+            // GLASS BOARD (2026-10-28 Spencer: "the box indentations on the board are still that blue colour"). The sockets
+            // were opaque navy 113B77 over the see-through panel, covering most of it. With the glass on they become a dark,
+            // partly transparent layer: the socket shape + bevel still read as indentations, the frosted scene still shows.
+            if (BOARD_GLASS) sr.color = new Color(GLASS_SOCKET_MUL.r, GLASS_SOCKET_MUL.g, GLASS_SOCKET_MUL.b, GLASS_SOCKET_ALPHA);
             go.transform.localScale = new Vector3(gw / (texW / 100f), gh / (texH / 100f), 1f);
 
             // Born mid-entry? Park it with everything else, same as the panel does.
@@ -1434,7 +1439,10 @@ namespace WordDrop
         /// <summary>The authored frame as a 9-sliced sprite, or null to fall back.
         /// FRAME_SOURCE_W is the width of the ORIGINAL export the compact cut came from — the
         /// corner must draw at (border / sourceWidth) of the board, not at its texel size.</summary>
-        public static string FRAME_ASSET    = "Tiles/board_frame@2x";
+        // 2026-10-28 Spencer: "reproduce the board golden frame" (Royal Kingdom). board_frame_rk@2x = Spencer's frame cut, SAME
+        // geometry (so it still meets inner_board exactly), band repainted with RK's measured gold ROD profile (dark amber edges ->
+        // gold -> pale #FFE37A ridge in the middle) + a warm seam on the panel side. "Tiles/board_frame@2x" = his original flat band.
+        public static string FRAME_ASSET    = "Tiles/board_frame_rk@2x";
         public static int    FRAME_BORDER_PX = 90;     // matches spriteBorder in the .meta
         public static float  FRAME_SOURCE_W  = 2294f;  // Spencer's export width
         public static int    FRAME_CUT_W      = 188;   // the cut on disk: 90 + 8 + 90
@@ -1474,7 +1482,11 @@ namespace WordDrop
         // Self-checks: the knockout box came out 2284x2828 against a frame of 2294x2838 — 5 px
         // inset on every side, which is the frame's own AA ramp, identical on all four edges.
         // 74 + 2838 + 154 = 3066 and 32 + 2294 + 32 = 2358, both exactly the canvas.
-        public static string FRAME_SHADOW_ASSET     = "Tiles/frame_shadow@2x";
+        // 2026-10-28 Spencer: "we need some shadowing and blending of the board to the background". frame_shadow_std@2x = the
+        // CONTACT SHADOW STANDARD (measured RK): straight down, warm brown #3A1E12, bg 0.51 at the edge -> 0.96 over ~1.2% of the
+        // screen width, short soft sides, nothing on top. Same canvas/pads/9-slice as Spencer's frame_shadow@2x (built by
+        // WordDrop_icon_gen/board_frame/shadow/board_shadow.py). His (dark grey band on the sides, faint below): "Tiles/frame_shadow@2x".
+        public static string FRAME_SHADOW_ASSET     = "Tiles/frame_shadow_std@2x";
         public static int    FRAME_SHADOW_BORDER_PX = 280;
         public static int    FRAME_SHADOW_CUT_W     = 568;   // 280 + 8 + 280
         public static float  FRAME_SHADOW_SRC_W     = 2358f; // his canvas
@@ -1644,6 +1656,7 @@ namespace WordDrop
             }
 
             BuildRefillMask(innerGO, innerW, innerH);
+            BuildBoardGlass(innerGO, isr, innerW, innerH);
 
             // If the entry slide already parked the board off-screen before this panel
             // existed, register + park it now so it does not pop in at rest position.
@@ -1653,6 +1666,45 @@ namespace WordDrop
                 _boardEntryTfs.Add(innerGO.transform); _boardEntryRests.Add(innerGO.transform.position);
                 ApplyBoardEntryOffset(_boardEntryOffX);
             }
+        }
+
+        // ── DARK GLASS BOARD (2026-10-28 Spencer: "tinted very dark and see through where you can slightly see the
+        // background" - chose 80% + light frost from board_spec/compare_glass.png). The panel (inner_board 9-slice) is tinted
+        // toward GLASS_TINT and made GLASS_ALPHA opaque; behind it a FROSTED copy of the scene background (UI/bg_blur = bg@2x
+        // half-res + gaussian, same world size) sits exactly over ScreenBackground, clipped to the panel by a SpriteMask whose
+        // custom sorting range only covers the frosted copy (tiles, refill masks untouched). The frosted copy does NOT move
+        // with the board (it's a window onto the static scene). BOARD_GLASS = false -> the old solid navy panel.
+        public static bool  BOARD_GLASS  = true;
+        public static float GLASS_ALPHA  = 0.80f;
+        // panel texel 1A468E -> tint 0A183E: per-channel ratio computed in LINEAR space (the project is linear), as sRGB
+        public static Color GLASS_PANEL_MUL = new Color(0.578f, 0.422f, 0.459f, 1f);
+        // socket fill 113B77 -> a deep 040A1C, ratio in LINEAR space; drawn at GLASS_SOCKET_ALPHA over the glass panel
+        public static Color GLASS_SOCKET_MUL = new Color(0.503f, 0.292f, 0.278f, 1f);
+        public static float GLASS_SOCKET_ALPHA = 0.35f;
+        private GameObject _glassBgGO;
+        private void BuildBoardGlass(GameObject innerGO, SpriteRenderer panel, float innerW, float innerH)
+        {
+            if (_glassBgGO != null) { Destroy(_glassBgGO); _glassBgGO = null; }
+            if (!BOARD_GLASS || panel == null) return;
+            var c = GLASS_PANEL_MUL; c.a = GLASS_ALPHA; panel.color = c;
+            var blur = Resources.Load<Sprite>("UI/bg_blur");
+            var screenBg = GameObject.Find("ScreenBackground");
+            if (blur == null || screenBg == null) { WDLog.Log($"[Glass] frosted bg skipped (blur {(blur != null)}, ScreenBackground {(screenBg != null)}) - panel is see-through to the plain scene"); return; }
+            _glassBgGO = new GameObject("BoardGlassFrost");
+            _glassBgGO.transform.position = screenBg.transform.position + new Vector3(0f, 0f, -0.01f);
+            _glassBgGO.transform.localScale = screenBg.transform.localScale;
+            var fsr = _glassBgGO.AddComponent<SpriteRenderer>();
+            fsr.sprite = blur; fsr.sortingOrder = -1;
+            fsr.maskInteraction = SpriteMaskInteraction.VisibleInsideMask;
+            // mask = the panel's rounded rect (procedural; SpriteMask can't use a sliced sprite)
+            int mw = 256, mh = Mathf.Max(8, Mathf.RoundToInt(256f * innerH / Mathf.Max(innerW, 0.001f)));
+            int mr = Mathf.Max(2, Mathf.RoundToInt(SPEC_R_INNER / SPEC_PLAY_W * mw));
+            var mSprite = TileRenderer.CreateRoundedRect(mw, mh, mr, Color.white, Color.white, 1);
+            var mGO = new GameObject("BoardGlassMask"); mGO.transform.SetParent(innerGO.transform, false);
+            mGO.transform.localScale = new Vector3(innerW / (mw / 100f), innerH / (mh / 100f), 1f);
+            var mask = mGO.AddComponent<SpriteMask>(); mask.sprite = mSprite;
+            mask.isCustomRangeActive = true; mask.backSortingOrder = -2; mask.frontSortingOrder = -1;   // only the frost (-1)
+            WDLog.Log($"[Glass] panel alpha {GLASS_ALPHA} tint {GLASS_PANEL_MUL} + frosted bg, mask {mw}x{mh} r{mr}");
         }
 
         private void CreateBackgroundPanel(float bgW, float bgH)
@@ -2032,7 +2084,7 @@ namespace WordDrop
                     tile.SetAnchored(rulesCell.IsAnchored);
                     if (rulesCell.IsAnchored) { tile.SetVaultRequirement(rulesCell.RequiredWordLength); tile.SetVaultVisual(true); } // anchored = treasure vault
                     else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                    else if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                    else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetStoneVisual(true); }
                     if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
                     if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                     if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
@@ -2215,6 +2267,7 @@ namespace WordDrop
                         }
                         else if (rulesCell.IsStone && !visualTile.IsStone)
                         {
+                            visualTile.SetTreasureHits(rulesCell.TreasureHits);
                             visualTile.SetStoneVisual(true);
                             fixed_count++;
                         }
@@ -2246,7 +2299,7 @@ namespace WordDrop
                         tile.SetAnchored(rulesCell.IsAnchored);
                         if (rulesCell.IsAnchored) tile.SetVaultVisual(true);   // anchored = treasure vault (chest)
                         else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                        else if (rulesCell.IsStone || rulesCell.Letter == '#') tile.SetStoneVisual(true);
+                        else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetStoneVisual(true); }
                         if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
                         if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                         if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
@@ -2963,7 +3016,7 @@ namespace WordDrop
                         tile.SetAnchored(anchored);
                         if (anchored) { tile.SetVaultRequirement(rockCell != null ? rockCell.RequiredWordLength : 0); tile.SetVaultVisual(true); } // anchored = treasure vault
                         else if (rockCell != null && rockCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                        else          tile.SetStoneVisual(true);
+                        else          { tile.SetTreasureHits(rockCell != null ? rockCell.TreasureHits : 0); tile.SetStoneVisual(true); }
                     }
                     else if (letter == '\0' || letter == '#')
                     {

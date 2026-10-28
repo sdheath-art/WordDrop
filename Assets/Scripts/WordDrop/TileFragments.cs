@@ -64,6 +64,7 @@ namespace WordDrop
         {
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
+            s_activeBits = 0;
             LoadDebrisSprites();
             PrewarmPool();
         }
@@ -128,6 +129,42 @@ namespace WordDrop
                 sr.gameObject.SetActive(true);
                 StartCoroutine(ChunkFallCoroutine(sr, vel, spin, finalBase, cell));
             }
+            // SMALL BITS (2026-10-28, Spencer's RK/RM clips): their debris is TWO sizes - a few big chunks plus a spray of
+            // small bits (~0.1-0.15 of a tile) that fly faster and further, in the piece's own colour plus a lighter
+            // highlight shade. The 4 big chunks stay as they are (Spencer 10-22: "chunkier but less of them").
+            if (CHUNKY_BITS <= 0 || s_activeBits >= CHUNKY_BITS_CAP) return;
+            Color light = Color.Lerp(tint, Color.white, 0.55f);
+            for (int i = 0; i < CHUNKY_BITS && s_activeBits < CHUNKY_BITS_CAP; i++)
+            {
+                SpriteRenderer sr = Checkout();
+                SpriteMask mask = sr.GetComponentInChildren<SpriteMask>(true);
+                sr.sprite = _chunkySprites[(i + 1) % _chunkySprites.Length];
+                sr.color = (i & 1) == 0 ? tint : light;
+                sr.maskInteraction = SpriteMaskInteraction.None;
+                if (mask != null) mask.enabled = false;
+                sr.transform.position = tilePos + new Vector3(Random.Range(-0.2f, 0.2f) * cell, Random.Range(-0.2f, 0.2f) * cell, 0f);
+                sr.transform.rotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
+                float s = CHUNKY_BIT_SIZE * cell / Mathf.Max(0.001f, native) * Random.Range(0.75f, 1.25f) * sizeMultiplier;
+                Vector3 finalBase = new Vector3(s, s, 1f);
+                Vector2 dir = Random.insideUnitCircle.normalized;
+                Vector2 vel = (dir * Random.Range(3.0f, 5.5f) + Vector2.up * Random.Range(1.5f, 3.5f)) * cell;   // wider spray than the chunks
+                float spin = Random.Range(SPIN_MIN, SPIN_MAX) * 1.5f * (Random.value < 0.5f ? -1f : 1f);
+                sr.transform.localScale = finalBase * 0.4f;
+                sr.gameObject.SetActive(true);
+                s_activeBits++;
+                StartCoroutine(BitFallCoroutine(sr, vel, spin, finalBase, cell));
+            }
+        }
+
+        public static int   CHUNKY_BITS     = 6;      // small bits per tile (0 = off, the old look)
+        public static float CHUNKY_BIT_SIZE = 0.13f;  // bit width as a fraction of the tile
+        public static int   CHUNKY_BITS_CAP = 120;    // live bits across the board (big chains stay cheap; frame drops 10-22)
+        private static int  s_activeBits;
+
+        private IEnumerator BitFallCoroutine(SpriteRenderer sr, Vector2 vel, float spin, Vector3 size, float cell)
+        {
+            try { yield return ChunkFallCoroutine(sr, vel, spin, size, cell); }
+            finally { s_activeBits = Mathf.Max(0, s_activeBits - 1); }
         }
 
         public static float CHUNKY_GRAVITY = 26f;   // cells / s^2
