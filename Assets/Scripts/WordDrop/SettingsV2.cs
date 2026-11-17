@@ -336,7 +336,9 @@ namespace WordDrop
                 {
                     // 11-17: monkey run 534391 pressed Reset 5 times in 10 minutes and never got past level 5. A real player has to
                     // mean it (Settings > Terms & Privacy > Reset Progress > Reset); the monkey just mashes. While it runs, Reset closes.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD   // the monkey only exists in the editor / dev builds (a release build failed on this line, 11-17)
                     if (MonkeyTester.Instance != null && MonkeyTester.Instance.Running) { WDLog.Log("[SettingsV2] Reset pressed by the monkey - ignored"); return; }
+#endif
                     CloseHome(); DoResetProgress();
                 }));
             }

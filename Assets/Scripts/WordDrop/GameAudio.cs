@@ -649,7 +649,7 @@ namespace WordDrop
         /// the calling PlayXxx method name. Used for hunting double-fires
         /// and unexpected SFX. Currently ON for the 2026-06-01 audit pass;
         /// flip false once the bugs are pinned down to keep the log clean.</summary>
-        public static bool LogSfxFiring = true;
+        public static bool LogSfxFiring = false;   // 11-17: off for the tester build (was TEMP 11-07, a log line per sound)
 
         private void Play(AudioClip clip, float volumeMult = 1f, float pitch = 1f, [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
         {
