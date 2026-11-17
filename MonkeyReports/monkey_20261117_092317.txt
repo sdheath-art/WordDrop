@@ -1,0 +1,66 @@
+MONKEY TEST  20261117_092317   seed 98181   ran 4.7 min   ended: game stayed stuck - left as it is so you can look
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  463 gestures:  MASH BUTTON 24  TAP ANYWHERE 33  BUTTON 89  TAPPABLE 20  RANDOM SWIPE 33  MASH ANYWHERE 10  CELL TAP 34  REAL MOVE 102  MASH BOARD 26  RANDOM DRAG 32  BOOSTER TAP 11  DOUBLE TAP 15  TAUGHT MOVE 34
+GAME    levels started 5, cleared 3, failed 0;  swaps accepted 25, swiped words 0, boosters used 25;  hearts refilled by the monkey 0x
+FRAMES  worst 305 ms, 1 frame(s) over 250 ms, 16427 frames (59 fps average)
+
+FAULTS  2 different   ERROR 1   STUCK 1
+
+--- 1. [ERROR] [BoosterDbg] Post-cascade FINAL desync count: 4 cell(s) (visual layer drifted from data after SyncToRulesState)
+    first at 00:28, level 19, seen 2x, screenshot fault_20261117_092317_01.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoosterManager/<RunGravityAndCascadeInner>d__48:MoveNext () (at Assets/Scripts/WordDrop/BoosterManager.cs:390)
+      UnityEngine.SetupCoroutine:InvokeMoveNext (System.Collections.IEnumerator,intptr) (at /Users/bokken/build/output/unity/unity/Runtime/Export/Scripting/Coroutines.cs:17)
+    state: level 19, moves left 15, coins 0, hearts 5, timeScale 1.00 | board accepts input=False, resolving a move=True, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      00:25 f3277  CELL TAP  (5,4)   [board idle]
+      00:25 f3290  RANDOM SWIPE  (6,6)->(6,1)   [board idle]
+      00:25 f3296  REAL MOVE  drag (3,2)->(3,3)   [board idle]
+      00:25 f3307  RANDOM DRAG  (4,1)->(5,1)   [board idle]
+      00:26 f3321  BUTTON  Slot_2_Booster   [board idle]
+      00:26 f3330  CELL TAP  (1,0)   [board idle]
+      00:26 f3339  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      00:26 f3359  REAL MOVE  drag (4,7)->(5,7)   [board BUSY]
+      00:26 f3364  REAL MOVE  drag (7,7)->(7,8)   [board BUSY]
+      00:27 f3380  RANDOM DRAG  (7,5)->(7,6)   [board BUSY]
+      00:27 f3397  REAL MOVE  drag (4,7)->(5,7)   [board BUSY]
+      00:28 f3433  CELL TAP  (3,8)   [board BUSY]
+
+--- 2. [STUCK] nothing changed for 30s - a TUTORIAL lesson is waiting for its taught move (the monkey cannot follow lessons; probably not a bug)
+    first at 03:39, level 2, seen 1x, screenshot fault_20261117_092317_02.png
+    state: level 2, moves left 12, coins 281, hearts 5, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=True, splash=False, cards=[]
+    last inputs before it:
+      03:29 f14135  BOOSTER TAP  BoosterHUDSlot   [board idle]
+      03:30 f14171  REAL MOVE  drag (7,6)->(7,7)   [board idle]
+      03:30 f14182  TAUGHT MOVE  drag (1,2)->(4,2)   [board idle]
+      03:31 f14219  CELL TAP  (6,9)   [board idle]
+      03:31 f14227  REAL MOVE  drag (2,4)->(2,5)   [board idle]
+      03:31 f14261  TAUGHT MOVE  drag (1,2)->(4,2)   [board idle]
+      03:32 f14285  TAUGHT MOVE  drag (1,2)->(4,2)   [board idle]
+      03:33 f14325  MASH BUTTON  Slot_2_Booster x13   [board idle]
+      03:33 f14373  REAL MOVE  drag (2,6)->(3,6)   [board idle]
+      03:36 f14528  TAPPABLE  Slot_3_Booster   [board idle]
+      03:38 f14652  RANDOM DRAG  (2,5)->(2,6)   [board idle]
+      03:39 f14691  TAUGHT MOVE  drag (1,2)->(4,2)   [board idle]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       22x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        2x  [BoosterDbg] DESYNC (,): data=null, visual=E
+        2x  [BoosterDbg] DESYNC (,): data=null, visual=S
+        2x  [INVARIANT] (,) 'M' sortingOrder= expected  — a lift outlived its effect
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=M
+        1x  [INVARIANT] GOLD-ART t=. (,) 'A' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'S' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] (,) 'O' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=F
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=A
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=T
+        1x  [INVARIANT] GOLD-ART t=. (,) 'Y' gold-primed but wearing '' (colour=)
+        1x  [RulesEngine] Step chain hit depth cap () — completing.
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261117_092317.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using DG.Tweening;
 using UnityEngine;
 
 namespace WordDrop
@@ -90,6 +91,92 @@ namespace WordDrop
         /// Protects the HeroWord escort drop-targets, frozen ICE tiles, and anchored VAULT chests —
         /// those must be resolved by their intended mechanic (escorted down / worded through / cracked
         /// by a word splash), not smashed. Call this on the to-remove list before ClearCell/RemoveTiles.</summary>
+        /// <summary>MULTI-HIT CRATE (2026-11-03): a booster takes ONE layer off a multi-layer crate. Those cells are removed from the list
+        /// (the booster must not clear them), their data loses a layer and the tile repaints to the next stage with the crate knock.</summary>
+        protected static void PeelCrates(List<Vector2Int> cells)
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || cells == null) return;
+            cells.RemoveAll(c =>
+            {
+                if (!rules.PeelCrateLayer(c.x, c.y)) return false;
+                var t = grid != null ? grid.GetTile(c.x, c.y) : null; var d = rules.GetCell(c.x, c.y);
+                if (t != null && d != null) { WordDropFX.Instance?.PlayCrateDebris(t.transform.position); WordDropFX.Instance?.PlayPlankOff(t, d.CrateHP + 1); t.SetCrateHP(d.CrateHP); }
+                return true;
+            });
+        }
+
+        /// <summary>11-06 Spencer ("when you use the axe ... the crates dont even look like they took a hit"): PeelCrates played the
+        /// plank/debris the instant the booster was TAPPED, before its swing - by the time the axe reached the crates nothing happened.
+        /// This peels the DATA now (same rule) but returns the hits so the caller plays <see cref="KnockCrate"/> as the swing lands.</summary>
+        protected static Dictionary<Vector2Int, Vector2Int> PeelCratesDeferred(List<Vector2Int> cells)
+        {
+            var hits = new Dictionary<Vector2Int, Vector2Int>();   // cell -> (hp before, hp after)
+            var rules = RulesEngine.Instance;
+            if (rules == null || cells == null) return hits;
+            cells.RemoveAll(c =>
+            {
+                if (!rules.PeelCrateLayer(c.x, c.y)) return false;
+                var d = rules.GetCell(c.x, c.y); int after = d != null ? d.CrateHP : 1;
+                hits[c] = new Vector2Int(after + 1, after);
+                return true;
+            });
+            return hits;
+        }
+        /// <summary>The word-hit knock (HandManager Knock): debris, the plank tumbling off, a punch, the damaged crate art, the crate sound.</summary>
+        protected static void KnockCrate(Vector2Int c, Vector2Int hp, string sound = null)
+        {
+            var grid = GridManager.Instance; var t = grid != null ? grid.GetTile(c.x, c.y) : null; if (t == null) return;
+            WordDropFX.Instance?.PlayCrateDebris(t.transform.position);
+            WordDropFX.Instance?.PlayPlankOff(t, hp.x);
+            if (!t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.14f, 0.24f, 6, 0.6f);
+            t.SetCrateHP(hp.y);
+            if (sound != null && GameAudio.Instance != null && GameAudio.Instance.HasKit(sound)) GameAudio.Instance.PlayKit(sound); else GameAudio.Instance?.PlayCrateKnock();
+        }
+
+        /// <summary>11-07 (Spencer: a booster that hits a special should set it off): takes every special out of
+        /// <paramref name="cells"/> so it isn't smashed, and queues it to FIRE once the booster's cascade settles
+        /// (BoosterManager.FireQueuedSpecials). Call after StripObjectiveTiles. Returns the cells taken.</summary>
+        protected static HashSet<Vector2Int> TakeSpecials(List<Vector2Int> cells)
+        {
+            var taken = new HashSet<Vector2Int>();
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || grid == null || cells == null) return taken;
+            cells.RemoveAll(c =>
+            {
+                var d = rules.GetCell(c.x, c.y);
+                if (d == null || d.SpecialKind == RulesEngine.SPECIAL_NONE || d.IsFrozen) return false;   // frozen: the ice takes the hit
+                var t = grid.GetTile(c.x, c.y); if (t == null) return false;
+                BoosterManager.QueueSpecialFire(t); taken.Add(c); return true;
+            });
+            return taken;
+        }
+        /// <summary>The struck look on a special the booster just hit (it fires after the cascade).</summary>
+        protected static void NudgeSpecial(Tile t) { if (t != null && !t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.16f, 0.24f, 6, 0.6f); }
+
+        /// <summary>11-07: the shelf/safe cells in a booster's area. Read BEFORE StripObjectiveTiles drops them (they're anchored).</summary>
+        protected static List<Vector2Int> ShelfCellsIn(List<Vector2Int> cells)
+        {
+            var rules = RulesEngine.Instance; var list = new List<Vector2Int>();
+            if (rules == null || cells == null) return list;
+            foreach (var c in cells) { var d = rules.GetCell(c.x, c.y); if (d != null && d.ShelfPart > 0) list.Add(c); }
+            return list;
+        }
+        /// <summary>11-07: the booster lands on a shelf/safe - knocks ONE book (or lights one lamp) per piece, once per use
+        /// (<paramref name="done"/> holds the ShelfIds already hit). An emptied shelf's tiles are removed here; gravity picks
+        /// the cells up from BoosterManager's before/after snapshot like any other cleared cell.</summary>
+        protected static void HitShelfAt(Vector2Int c, HashSet<int> done)
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance;
+            if (rules == null || grid == null) return;
+            var d = rules.GetCell(c.x, c.y);
+            if (d == null || d.ShelfPart <= 0 || done == null || !done.Add(d.ShelfId)) return;
+            var cleared = new List<Vector2Int>();
+            var hits = rules.BoosterShelfHits(new[] { c }, cleared);
+            HandManager.Instance?.HitShelvesFromBooster(hits);   // FX read the shelf tile, so before it's removed
+            if (cleared.Count > 0) grid.RemoveTiles(cleared);
+        }
+
         protected static void StripObjectiveTiles(List<Vector2Int> cells)
         {
             var rules = RulesEngine.Instance;
@@ -97,7 +184,10 @@ namespace WordDrop
             cells.RemoveAll(c =>
             {
                 var cell = rules.GetCell(c.x, c.y);
-                return cell != null && (cell.IsDropTarget || cell.IsFrozen || cell.IsAnchored);
+                // 2026-10-29 Spencer: "boosters that should have cleared the ice ... eliminated everything but the ice". ICE is a goal you
+                // BREAK, so boosters now hit it like explosions do (DoExplode destroys frozen tiles; the ice goal counts the frozen
+                // cells left). Drop targets + anchored tiles are still protected.
+                return cell != null && (cell.IsDropTarget || cell.IsAnchored);
             });
         }
     }

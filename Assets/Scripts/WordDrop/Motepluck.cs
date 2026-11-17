@@ -78,7 +78,7 @@ namespace WordDrop
 
             StripObjectiveTiles(toRemove); // never smash level objectives. 2026-06-15 Spencer.
             for (int i = 0; i < toRemove.Count; i++)
-                rules.ClearCell(toRemove[i].x, toRemove[i].y);
+                rules.ClearCellCountingGoals(toRemove[i].x, toRemove[i].y);   // counts gems / collect letters (2026-10-29)
             grid.RemoveTiles(toRemove);
 
             WDLog.Log($"[Motepluck L{Level}] Removed {toRemove.Count} tile(s) centered at ({col},{row})");

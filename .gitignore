@@ -80,3 +80,9 @@ Assets/Spase_Word/PSD/
 Screenshots/
 BotReports/
 captures/
+
+# 11-17: generated locally - videos are far too big for GitHub, reports/logs are per-machine
+Recordings/
+Playthroughs/
+MonkeyReports/*.png
+MonkeyReports/*.plist

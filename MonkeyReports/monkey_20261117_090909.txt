@@ -1,0 +1,470 @@
+MONKEY TEST  20261117_090909   seed 718401   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  1072 gestures:  TAPPABLE 52  REAL MOVE 244  BUTTON 229  TAP ANYWHERE 55  BOOSTER TAP 53  RANDOM DRAG 71  CELL TAP 96  RANDOM SWIPE 71  MASH BUTTON 58  MASH BOARD 49  DOUBLE TAP 44  MASH ANYWHERE 36  TAUGHT MOVE 14
+GAME    levels started 12, cleared 9, failed 2;  swaps accepted 122, swiped words 1, boosters used 37;  hearts refilled by the monkey 0x
+FRAMES  worst 306 ms, 2 frame(s) over 250 ms, 35384 frames (59 fps average)
+
+FAULTS  21 different   ERROR 21
+
+--- 1. [ERROR] [BoosterDbg] Post-gravity desync count: 22 cell(s)
+    first at 01:40, level 19, seen 1x, screenshot fault_20261117_090909_01.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoosterManager/<RunGravityAndCascadeCoroutine>d__44:MoveNext () (at Assets/Scripts/WordDrop/BoosterManager.cs:353)
+      UnityEngine.SetupCoroutine:InvokeMoveNext (System.Collections.IEnumerator,intptr) (at /Users/bokken/build/output/unity/unity/Runtime/Export/Scripting/Coroutines.cs:17)
+    state: level 19, moves left 13, coins 10260, hearts 4, timeScale 1.00 | board accepts input=False, resolving a move=True, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:30 f5736  TAP ANYWHERE  377,979   [board idle, under the home screen]
+      01:30 f5743  MASH ANYWHERE  x7   [board idle, under the home screen]
+      01:33 f5884  MASH BOARD  one cell (1,4) x6   [board idle]
+      01:33 f5915  REAL MOVE  drag (0,4)->(1,4)   [board idle]
+      01:36 f6066  BUTTON  Slot_3_Booster   [board idle]
+      01:36 f6069  RANDOM DRAG  (7,6)->(6,6)   [board idle]
+      01:38 f6193  BUTTON  Slot_2_Booster   [board idle]
+      01:38 f6222  REAL MOVE  drag (4,2)->(4,3)   [board idle]
+      01:39 f6238  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:39 f6244  REAL MOVE  drag (4,7)->(5,7)   [board BUSY]
+      01:39 f6278  REAL MOVE  drag (5,7)->(5,8)   [board BUSY]
+      01:40 f6308  CELL TAP  (2,8)   [board BUSY]
+
+--- 2. [ERROR] [Invariant] ORPHAN VISUAL (0,0) 'E' — tile with no data cell
+    first at 01:52, level 19, seen 2x, screenshot fault_20261117_090909_02.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 3. [ERROR] [Invariant] ORPHAN VISUAL (0,2) 'H' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_03.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 4. [ERROR] [Invariant] ORPHAN VISUAL (0,3) 'I' — tile with no data cell
+    first at 01:52, level 19, seen 3x, screenshot fault_20261117_090909_04.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 5. [ERROR] [Invariant] ORPHAN VISUAL (0,4) 'U' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_05.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 6. [ERROR] [Invariant] ORPHAN VISUAL (0,5) 'C' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_06.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 7. [ERROR] [Invariant] ORPHAN VISUAL (0,6) 'R' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_07.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 8. [ERROR] [Invariant] ORPHAN VISUAL (0,7) 'A' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_08.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 9. [ERROR] [Invariant] ORPHAN VISUAL (0,8) 'S' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_09.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 10. [ERROR] [Invariant] ORPHAN VISUAL (0,9) 'O' — tile with no data cell
+    first at 01:52, level 19, seen 8x, screenshot fault_20261117_090909_10.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 11. [ERROR] [Invariant] FLOATING (1,2) 'R' — nothing beneath it
+    first at 01:52, level 19, seen 2x, screenshot fault_20261117_090909_11.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 12. [ERROR] [Invariant] ORPHAN VISUAL (1,3) 'D' — tile with no data cell
+    first at 01:52, level 19, seen 3x, screenshot fault_20261117_090909_12.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 13. [ERROR] [Invariant] FLOATING (1,4) 'M' — nothing beneath it
+    first at 01:52, level 19, seen 2x, screenshot fault_20261117_090909_13.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 14. [ERROR] [Invariant] ORPHAN VISUAL (2,3) 'V' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_14.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 15. [ERROR] [Invariant] FLOATING (2,5) 'E' — nothing beneath it
+    first at 01:52, level 19, seen 3x, screenshot fault_20261117_090909_15.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 16. [ERROR] [Invariant] ORPHAN VISUAL (3,3) 'L' — tile with no data cell
+    first at 01:52, level 19, seen 3x, screenshot fault_20261117_090909_16.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 17. [ERROR] [Invariant] FLOATING (3,4) 'B' — nothing beneath it
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_17.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 18. [ERROR] [Invariant] ORPHAN VISUAL (3,5) 'G' — tile with no data cell
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_18.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:219)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 19. [ERROR] [Invariant] FLOATING (3,7) 'K' — nothing beneath it
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_19.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 20. [ERROR] [Invariant] FLOATING (4,9) 'X' — nothing beneath it
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_20.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+--- 21. [ERROR] [Invariant] FLOATING (7,8) 'G' — nothing beneath it
+    first at 01:52, level 19, seen 1x, screenshot fault_20261117_090909_21.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:278)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:213)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:63)
+    state: level 19, moves left 12, coins 10260, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:47 f6741  CELL TAP  (6,6)   [board idle]
+      01:48 f6780  RANDOM SWIPE  (6,9)->(6,5)   [board idle]
+      01:48 f6790  BUTTON  Slot_4_Booster   [board idle]
+      01:50 f6921  RANDOM SWIPE  (0,2)->(0,0)   [board idle]
+      01:50 f6929  REAL MOVE  drag (1,4)->(2,4)   [board BUSY]
+      01:51 f6941  TAP ANYWHERE  633,875   [board BUSY]
+      01:51 f6962  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:51 f6982  REAL MOVE  drag (0,2)->(0,3)   [board idle]
+      01:51 f6993  REAL MOVE  drag (4,2)->(4,3)   [board BUSY]
+      01:52 f6999  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      01:52 f7004  BUTTON  Slot_4_Booster   [board BUSY]
+      01:52 f7025  REAL MOVE  drag (6,3)->(6,4)   [board idle]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       35x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        8x  [BoosterDbg] Sync FIX (,): data null + visual 'O' → returning to pool
+        5x  [INVARIANT] (,) 'P' sortingOrder= expected  — a lift outlived its effect
+        5x  [BoosterDbg] DESYNC (,): data=null, visual=I
+        5x  [RulesEngine] Step chain hit depth cap () — completing.
+        4x  [BoosterDbg] Sync FIX (,): pos drift (.,.) → (.,.)
+        3x  [INVARIANT] (,) 'A' sortingOrder= expected  — a lift outlived its effect
+        3x  [BoosterDbg] Sync FIX (,): data null + visual 'I' → returning to pool
+        3x  [BoosterDbg] Sync FIX (,): data null + visual 'D' → returning to pool
+        3x  [BoosterDbg] Sync FIX (,): data null + visual 'L' → returning to pool
+        3x  [BoosterDbg] DESYNC (,): data=null, visual=A
+        3x  [BoosterDbg] Sync FIX (,): data 'O' + visual null → checking out from pool
+        3x  [BoosterDbg] Sync FIX (,): data 'E' + visual null → checking out from pool
+        2x  [INVARIANT] (,) 'I' sortingOrder= expected  — a lift outlived its effect
+        2x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261117_090909.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

@@ -30,7 +30,7 @@ namespace WordDrop
         // 1080-wide bar. SELECTED: top at 35.5, fitted fully inside the dome's purple face with a 4px margin (Spencer: "the icon
         // needs to be fully on the purple panel"), label below. FLAT: top at 82, no label. A null key = no icon yet.
         public static readonly string[] ICON_KEYS = { "nav_shop", "nav_daily", "nav_home", "nav_areas", "nav_settings" };
-        public static readonly string[] LABELS = { "Shop", "Daily", "Home", "Areas", "Settings" };   // tab 5 = Settings (Spencer 2026-10-27); Profile = the HUD portrait
+        public static readonly string[] LABELS = { "Shop", "Daily", "Home", "Library", "Settings" };   // 10-30: Areas -> Library (word-book shelf; book-stack icon)   // tab 5 = Settings (Spencer 2026-10-27); Profile = the HUD portrait
         // sprites are FIXED canvases over the slot (navbar/export_nav_icons.py): _sel = SEL_W x 220 from the top, _flat = slot x 203 from y 69
         private const float SEL_CANVAS_H = 220f, FLAT_TOP = 69f, LABEL_BASELINE = 238f, LABEL_CAP = 28f;
         private static readonly Color LABEL_INK = new Color32(0x30, 0x10, 0x50, 0xFF), LABEL_CREAM = new Color32(0xFF, 0xF8, 0xDC, 0xFF);
@@ -200,9 +200,19 @@ namespace WordDrop
                     var t = _icons[tab].transform; t.DOKill(); t.localScale = Vector3.one;
                     t.DOPunchScale(Vector3.one * 0.12f, 0.28f, 6, 0.6f).SetUpdate(true);   // the icon pops as its dome rises
                 }
+                TabShine(tab);   // RK-style glint across the TAB PANEL (2026-10-29 Spencer: "over the panel not the icon")
                 OnTabSelected?.Invoke(tab);
             }
             WDLog.Log($"[NavBar] tab {tab} selected");
+        }
+
+        public static bool TAB_SHINE = false;
+        private RectTransform _shineRT;
+        /// <summary>Sweep the glint over the selected tab's panel: the dome (full height, rounded top) not just its icon.</summary>
+        private void TabShine(int tab)
+        {
+            // the selected tab's REAL face shape, cut from navbar_sel<tab>.png (ShineSweep.PlayMask) - the whole dome
+            if (TAB_SHINE) ShineSweep.PlayMask((RectTransform)transform, "nav_tab" + tab);   // 11-01 Spencer: off on the bottom nav bar
         }
 
         // Tab slots match the art: the selected tab is SEL_W wide, the other four share the rest (navbar_sel.py LAYOUT).

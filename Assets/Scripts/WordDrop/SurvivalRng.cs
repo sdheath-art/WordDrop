@@ -43,6 +43,24 @@ namespace WordDrop
             WDLog.Log($"[SurvivalRng] Seeded with {seed} — gameplay random is now deterministic.");
         }
 
+        /// <summary>11-15 (TestFlight): every player gets the same opening board per level (and a retry deals it again), so
+        /// tester feedback about "L12" means one board. ObjectiveManager.InstallLevel and BotPlaytester both seed with this.
+        /// A level whose board turns out bad gets a new number in <see cref="LevelSeedReroll"/> (bump it, re-run the bot).</summary>
+        public static bool LEVEL_SEEDS = true;
+        // Keyed by INTERNAL stage (player level + LevelMapPanel.TUTORIAL_LEVELS). 11-16 bot run (seeded, 40 games, casual):
+        // L8 trivial (4 moves of 15), L18 'relief' level came out harder (88%), L19 spike too easy (95% vs ~75 target).
+        public static readonly System.Collections.Generic.Dictionary<int, int> LevelSeedReroll = new System.Collections.Generic.Dictionary<int, int>
+        {
+            { LevelMapPanel.TUTORIAL_LEVELS + 8, 1 },
+            { LevelMapPanel.TUTORIAL_LEVELS + 18, 1 },
+            { LevelMapPanel.TUTORIAL_LEVELS + 19, 1 },
+        };
+        public static int LevelSeed(int internalStage)
+        {
+            LevelSeedReroll.TryGetValue(internalStage, out int bump);
+            return 91000 + internalStage * 7919 + bump * 104729;
+        }
+
         /// <summary>Return to passthrough mode (UnityEngine.Random).</summary>
         public static void Reset()
         {

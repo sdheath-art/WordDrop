@@ -34,7 +34,7 @@ namespace WordDrop
         // 2026-10-23 Spencer: "dims out everything in the same style and look as royal match". MEASURED from his RM recording
         // (L3 TNT beat @1:48): every colour drops to ~30% evenly (cream 225/217/176 -> 68/65/53, board bg x0.27-0.36), i.e. plain
         // black at ~70%, no tint. Was 0.84 (June drop-game tutorial).
-        private static readonly Color DIM = new Color(0f, 0f, 0f, 0.70f);
+        private static Color DIM => UISeparation.MODAL_DIM;   // 11-02 shared dim (was black .70)
         private const float CURSOR_PX     = 140f;
         private const float DRAG_SECONDS  = 1.05f;
         private const float HUD_DIM_FALLBACK_TOP = 0.83f; // viewport y if board bounds unavailable

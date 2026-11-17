@@ -92,7 +92,7 @@ namespace WordDrop
             // and DOTween then REALLOCATES its pools mid-explosion — a stall exactly when the
             // game is busiest, which is a strong candidate for the frame drops on big pops.
             // Sized generously; the cost is a one-time allocation at startup, not per frame.
-            DOTween.SetTweensCapacity(tweenersCapacity: 800, sequencesCapacity: 200);
+            DOTween.SetTweensCapacity(tweenersCapacity: 2500, sequencesCapacity: 300);   // 11-16: was 800/200 - a 10-rocket L1 finale (Movie_011) hit the cap and DOTween grew to 2000 MID-PLAY (alloc = possible hitch at the big moment)
             DOTween.defaultEaseType = DG.Tweening.Ease.OutQuad;
         }
 
@@ -1002,7 +1002,7 @@ namespace WordDrop
         private static Material s_specialFxMat;
         private static Sprite s_rocketSprite, s_ringSprite, s_beamSprite;
         public static float AIRPLANE_TAKEOFF = 0.16f;   // lift-off + wobble before it heads off (HandManager adds this to the target's pop time)
-        public static float AIRPLANE_FLIGHT = 0.8f;   // paper-plane glide is unhurried   // seconds the airplane takes to reach its target (HandManager delays that tile to match)
+        public static float AIRPLANE_FLIGHT = 0.45f;   // 11-06 Spencer: the board froze ~1 s while the book flew (gravity waits for the landing) - 0.8 -> 0.45. LATER: let the board fall during the flight (RM)   // paper-plane glide is unhurried   // seconds the airplane takes to reach its target (HandManager delays that tile to match)
         private Material SpecialFxMat()
         {
             if (s_specialFxMat == null)
@@ -1022,14 +1022,118 @@ namespace WordDrop
         /// DOMove over the line's full length (<paramref name="lineCells"/>) in ROCKET_HEAD_FLIGHT with Ease.InQuad, so
         /// progress p = (t/T)^2 and t = T*sqrt(dist/lineCells); +1 frame so the tile breaks just behind the head.</summary>
         public static float RocketArriveAt(float dist, int lineCells)
-            => dist <= 0 ? 0f : ROCKET_HEAD_FLIGHT * Mathf.Sqrt(Mathf.Clamp01(dist / (float)Mathf.Max(1, lineCells))) + 0.033f;
+            => dist <= 0 ? 0f : ROCKET_V2 ? dist / ROCKET_SPEED + 0.017f
+             : ROCKET_HEAD_FLIGHT * Mathf.Sqrt(Mathf.Clamp01(dist / (float)Mathf.Max(1, lineCells))) + 0.033f;
+
+        // ── ROCKET V2 (2026-11-07, Spencer: "rebuild the rocket" - ours read as a thin white laser next to Royal Match's). Measured
+        // RM (royalmatch(1-20).mov 56.69-57.25 s): the rocket tile SPLITS into two big halves that shoot apart (small white puff at
+        // the centre); each half stays clearly visible, nose first, at ~25-30 cells/s from the first frame (no ease-in); a hot
+        // white-yellow streak ~1/3 cell thick joins it back towards the start and burns away from the start end ~0.2 s behind
+        // it, flecked with small sparks; the pieces break as the half reaches them. No full-line flash. ROCKET_V2 = false brings
+        // back the 10-28 look (whole-line HDR beam + glow blob heads, InQuad). Tile pops follow RocketArriveAt either way.
+        public static bool  ROCKET_V2 = true;
+        public static float ROCKET_SPEED = 26f;          // cells per second, constant
+        public static float ROCKET_TRAIL_DELAY = 0.20f;  // the streak's tail leaves the start this long after the head (~5 cells of streak)
+        // 11-07 pass 2 (Movie_007): over the cream tiles the additive streak read as a thin WHITE line - core is now yellower and
+        // thicker, the glow wider and stronger, so it reads warm yellow-white like RM's.
+        public static float ROCKET_TRAIL_CORE_W = 0.30f, ROCKET_TRAIL_GLOW_W = 0.85f;   // thickness, fractions of a cell
+        public static Color ROCKET_TRAIL_CORE = new Color(1.55f, 1.3f, 0.55f, 1f);   // yellow-white, under the bloom blow-out
+        public static Color ROCKET_TRAIL_GLOW = new Color(1.45f, 0.72f, 0.12f, 1f);   // orange-gold glow around it
+        public static Color ROCKET_EXHAUST = new Color(1.3f, 0.75f, 0.25f, 1f);       // was (2.0,1.3,0.45) - bloomed to a white blob
+        public static float ROCKET_EXHAUST_SIZE = 0.34f;                              // x cell (was 0.5)
+        public static float ROCKET_ART_SIZE = 1.05f;     // the flying half, x the board tile size (RM halves are ~a full piece long)
+
+        private void PlayRocketV2(RulesEngine.SpecialFire f, Vector3 origin, float cell, bool horizontal)
+        {
+            var grid = GridManager.Instance; if (grid == null) return;
+            GameAudio.Instance?.PlayRocketFire();
+            // the split: a small white puff where the rocket sat
+            var puff = MakeFxSprite("RocketPuff", SoftDot(), new Color(1.15f, 1.1f, 0.95f, 1f), 47);   // 11-07 pass 2: was 1.6 - bloomed white
+            puff.transform.position = origin; puff.transform.localScale = Vector3.one * cell * 0.6f;
+            puff.transform.DOScale(cell * 1.4f, 0.14f).SetEase(Ease.OutQuad);
+            puff.DOFade(0f, 0.16f).SetEase(Ease.InQuad).OnComplete(() => { if (puff != null) Destroy(puff.gameObject); });
+            for (int sgn = -1; sgn <= 1; sgn += 2)
+            {
+                Vector3 dir = horizontal ? Vector3.right * sgn : Vector3.up * sgn;
+                int at = horizontal ? f.Cell.x : f.Cell.y, n = horizontal ? RulesEngine.COLS : RulesEngine.ROWS;
+                float exitCells = (sgn > 0 ? (n - 1 - at) : at) + 1.2f;   // flies just past the board edge
+                StartCoroutine(RocketHeadV2(origin, dir, exitCells, cell));
+            }
+            GridManager.Instance?.ShakeBoard(0.08f, 0.16f);
+        }
+
+        private System.Collections.IEnumerator RocketHeadV2(Vector3 origin, Vector3 dir, float exitCells, float cell)
+        {
+            float speed = ROCKET_SPEED * cell, travel = exitCells * cell, tHead = travel / speed;
+            // the half: the board's own rocket sprite (crisp, not additive), nose along the travel direction
+            SpriteRenderer art = null; float artUp = Tile.ROCKET_ART_ANGLE;
+            var tsp = Tile.SpecialTileSprite(RulesEngine.SPECIAL_ROCKET_V);
+            if (tsp != null && Tile.NormalSprite != null)
+            {
+                var ago = new GameObject("RocketHalf"); art = ago.AddComponent<SpriteRenderer>(); art.sprite = tsp; art.sortingOrder = 50;
+                ago.transform.localScale = Vector3.one * (cell * Tile.TILE_DISPLAY_RATIO * ROCKET_ART_SIZE / Mathf.Max(0.0001f, Tile.NormalSprite.bounds.size.x));
+                artUp = 90f;
+            }
+            else art = MakeIconSprite("RocketHalf", RulesEngine.SPECIAL_ROCKET_V, cell * ROCKET_ART_SIZE, 50);
+            float dirDeg = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
+            if (art != null) { art.transform.rotation = Quaternion.Euler(0f, 0f, dirDeg - artUp); art.transform.position = origin; }
+            var exhaust = MakeFxSprite("RocketExhaust", SoftDot(), ROCKET_EXHAUST, 49);
+            var beam = SoftBeam();
+            var glow = MakeFxSprite("RocketTrailGlow", beam, ROCKET_TRAIL_GLOW, 46);
+            var core = MakeFxSprite("RocketTrailCore", beam, ROCKET_TRAIL_CORE, 47);
+            glow.transform.rotation = core.transform.rotation = Quaternion.Euler(0f, 0f, dirDeg);
+            Vector3 perp = new Vector3(-dir.y, dir.x, 0f);
+            float t = 0f, nextFleck = 0f, life = tHead + ROCKET_TRAIL_DELAY + 0.05f;
+            while (t < life)
+            {
+                t += Time.deltaTime;
+                float headD = Mathf.Min(travel, speed * t);
+                float tailD = Mathf.Clamp(speed * (t - ROCKET_TRAIL_DELAY), 0f, headD);
+                Vector3 head = origin + dir * headD;
+                if (art != null)
+                {
+                    art.transform.position = head + new Vector3(0f, 0f, -0.02f);
+                    if (t >= tHead) { Destroy(art.gameObject); art = null; }   // gone past the edge
+                }
+                if (exhaust != null)
+                {
+                    exhaust.transform.position = head - dir * cell * 0.42f;
+                    exhaust.transform.localScale = Vector3.one * cell * (ROCKET_EXHAUST_SIZE + 0.08f * Mathf.PerlinNoise(t * 40f, dir.x + 3f));
+                    if (t >= tHead) { Destroy(exhaust.gameObject); exhaust = null; }
+                }
+                // streak from the tail up to just behind the half; the ends taper (SoftBeam), it thins as it burns away
+                float len = Mathf.Max(0.001f, headD - tailD - cell * 0.3f);
+                Vector3 mid = origin + dir * (tailD + len * 0.5f);
+                float burn = Mathf.Clamp01((t - tHead) / Mathf.Max(0.01f, ROCKET_TRAIL_DELAY));   // after the half has left
+                float flick = 0.9f + 0.2f * Mathf.PerlinNoise(t * 30f, dir.y + 7f);
+                core.transform.position = glow.transform.position = mid;
+                core.transform.localScale = new Vector3(len, cell * ROCKET_TRAIL_CORE_W * 2f * (1f - 0.6f * burn), 1f);
+                glow.transform.localScale = new Vector3(len, cell * ROCKET_TRAIL_GLOW_W * 2f * flick * (1f - 0.4f * burn), 1f);
+                core.color = new Color(1f, 1f, 1f, 1f - burn * burn);
+                glow.color = new Color(1f, 1f, 1f, 0.85f * (1f - burn));
+                // flecks: small warm sparks + the odd little white star, shed just behind the half
+                if (t < tHead && t >= nextFleck)
+                {
+                    nextFleck = t + 0.016f;
+                    Vector3 sp = head - dir * cell * 0.5f + perp * Random.Range(-0.22f, 0.22f) * cell;
+                    SpawnSpark(sp, (-dir * Random.Range(0.4f, 1.6f) + perp * Random.Range(-1.4f, 1.4f)) * cell,
+                        cell * Random.Range(0.07f, 0.13f), Random.Range(0.18f, 0.32f), Random.value < 0.55f ? ROCKET_FLAME : new Color(2.4f, 2.2f, 1.6f, 1f));
+                    if (Random.value < 0.25f && GameParticles.Instance != null)
+                        GameParticles.Instance.EmitTrailStar(sp, cell * Random.Range(0.16f, 0.28f), (Vector3)Random.insideUnitCircle * cell * 0.5f);
+                }
+                yield return null;
+            }
+            if (art != null) Destroy(art.gameObject);
+            if (exhaust != null) Destroy(exhaust.gameObject);
+            Destroy(core.gameObject); Destroy(glow.gameObject);
+        }
         public static float ROCKET_LINE_LIFE   = 0.42f;   // measured: the flame lingers ~0.4s
         public static Color ROCKET_CORE  = new Color(3.2f, 3.0f, 2.6f, 1f);   // white-hot
         public static Color ROCKET_FLAME = new Color(2.6f, 1.25f, 0.25f, 1f); // orange-yellow flame
         private static Sprite s_softBeam, s_softDot;
 
         /// <summary>Soft-edged strip: gaussian falloff across its thickness, soft ends — a glow line, not a hard bar.</summary>
-        private static Sprite SoftBeam()
+        public static Sprite SoftBeam()
         {
             if (s_softBeam != null) return s_softBeam;
             int w = 64, h = 32; var t = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
@@ -1044,7 +1148,7 @@ namespace WordDrop
             s_softBeam = Sprite.Create(t, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 64f);   // 1 x 0.5 units
             return s_softBeam;
         }
-        private static Sprite SoftDot()
+        public static Sprite SoftDot()
         {
             if (s_softDot != null) return s_softDot;
             int n = 32; var t = new Texture2D(n, n, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
@@ -1110,6 +1214,11 @@ namespace WordDrop
         }
 
         public static float FIREBALL_LIFE = 0.40f;
+        // 11-07 (Spencer: explosions "confusing cause theres just so much going on" - measured vs Royal Match's TNT, which is one hot
+        // core bursting into chunks): the hollow shock ring is off, and tiles a blast CATCHES no longer each fire their own sparkle
+        // spray (a 20-tile TNT = 20 sparkle bursts over the fireball). Word tiles still sparkle. true = the old look.
+        public static bool BLAST_RING = false;
+        public static bool BLAST_COLLATERAL_SPARKLES = false;
         /// <summary>Camera shake cap (world units). The view is ~9.2 wide; overscan 1.15 leaves ~0.69 per side. Was uncapped up
         /// to 1.2, which slid the background off-screen and showed white (2026-10-22).</summary>
         public static float CAMERA_SHAKE_MAX = 0.6f;
@@ -1198,12 +1307,22 @@ namespace WordDrop
             Destroy(core.gameObject); Destroy(flame.gameObject);
         }
 
+        /// <summary>11-04: gold star sparkles stream off each flying rocket head, on top of the embers. Seconds between stars;
+        /// sizes are fractions of a cell. false = embers only.</summary>
+        public static bool  ROCKET_STAR_TRAIL = true;
+        public static float ROCKET_STAR_EVERY = 0.03f, ROCKET_STAR_MIN = 0.30f, ROCKET_STAR_MAX = 0.62f, ROCKET_STAR_HERO = 0.15f;
         private System.Collections.IEnumerator EmberTrail(Transform head, float life, float cell)
         {
-            float t = 0f;
+            float t = 0f, nextStar = 0f;
             while (head != null && t < life)
             {
                 t += Time.deltaTime;
+                if (ROCKET_STAR_TRAIL && t >= nextStar && GameParticles.Instance != null)
+                {   // left where the head is now, so the moving head draws a line of stars behind it; a few bigger "hero" stars
+                    nextStar = t + ROCKET_STAR_EVERY;
+                    float sz = cell * (Random.value < ROCKET_STAR_HERO ? Random.Range(ROCKET_STAR_MAX, ROCKET_STAR_MAX * 1.5f) : Random.Range(ROCKET_STAR_MIN, ROCKET_STAR_MAX));
+                    GameParticles.Instance.EmitTrailStar(head.position + (Vector3)Random.insideUnitCircle * cell * 0.18f, sz, (Vector3)Random.insideUnitCircle * cell * 0.6f);
+                }
                 if ((Time.frameCount & 1) == 0)   // every other frame
                     SpawnSpark(head.position + (Vector3)Random.insideUnitCircle * cell * 0.12f,
                         (Vector3)Random.insideUnitCircle * cell * 0.8f, cell * Random.Range(0.10f, 0.18f), Random.Range(0.2f, 0.35f),
@@ -1221,7 +1340,7 @@ namespace WordDrop
         private MaterialPropertyBlock _sparkMpb;
         private int _sparkCursor;
 
-        private void SpawnSpark(Vector3 pos, Vector3 vel, float size, float life, Color hdr)
+        public void SpawnSpark(Vector3 pos, Vector3 vel, float size, float life, Color hdr)
         {
             SparkP sp = null;
             for (int n = 0; n < _sparks.Count; n++)
@@ -1261,7 +1380,7 @@ namespace WordDrop
 
         private void LateUpdate() { if (_sparks.Count > 0) TickSparks(); }
 
-        private SpriteRenderer MakeFxSprite(string name, Sprite sprite, Color hdr, int order)
+        public SpriteRenderer MakeFxSprite(string name, Sprite sprite, Color hdr, int order)
         {
             var go = new GameObject(name);
             var sr = go.AddComponent<SpriteRenderer>();
@@ -1308,6 +1427,8 @@ namespace WordDrop
         public static bool  BONUS_COMET = true;
         public static Color COMET_COLOR = new Color(2.4f, 2.35f, 2.2f, 1f);
         private static Sprite s_twinkle, s_star5; private static bool s_starsTried;
+        public static Sprite TwinkleSprite { get { LoadStars(); return s_twinkle; } }
+        public static Sprite Star5Sprite { get { LoadStars(); return s_star5; } }
         private static void LoadStars()
         {
             if (s_starsTried) return; s_starsTried = true;
@@ -1377,7 +1498,7 @@ namespace WordDrop
                 }
         }
         /// <summary>One star: pops 0 -> size -> 0 over life (peak at 35%), slow spin, drifts by vel.</summary>
-        private System.Collections.IEnumerator Twinkle(Vector3 at, float size, float life, float delay, Vector3 vel, int order, Sprite sp = null)
+        public System.Collections.IEnumerator Twinkle(Vector3 at, float size, float life, float delay, Vector3 vel, int order, Sprite sp = null)
         {
             if (delay > 0f) { float w = 0f; while (w < delay) { w += Time.unscaledDeltaTime; yield return null; } }
             var sr = MakeFxSprite("Twinkle", sp ?? s_twinkle, COMET_COLOR, order);
@@ -1411,15 +1532,89 @@ namespace WordDrop
         // Was: scale-up, then DOJump at one fixed angle. Now, Royal-Match-propeller style: LIFT-OFF (rises, swells, wobbles),
         // a SWOOPING curve (cubic bezier bowed to one side) with the nose following the path and a banking squash, a sparkle
         // TRAIL, then a DIVE onto the target (shrink + impact ring + sparks + shake). Timing: AIRPLANE_TAKEOFF + AIRPLANE_FLIGHT. ──
-        private void PlayAirplaneFlight(RulesEngine.SpecialFire f, Vector3 origin, float cell)
+
+        /// <summary>11-03: the airplane power-up is now a PROPELLER BOOK (helicopter): upright flight, rotor spinning. false = the
+        /// paper-plane flight (nose follows the path).</summary>
+        public static bool AIRPLANE_COPTER = true; public static float COPTER_LEAN = 12f, COPTER_ROTOR_HZ = 6f;
+        // the book's opaque height / canvas (430/512) and its centre's offset BELOW the canvas centre (27/512) in Specials/special_airplane
+        public static float COPTER_ART_BOOK_H = 429f / 512f, COPTER_ART_CENTRE_DY = 0.5f / 512f,   /* 11-16 wing-emblem book, centred on its canvas (was 430/27) */ COPTER_FLIGHT_GROW = 1.12f;
+        public static float COPTER_LIFT = 0.55f, COPTER_LIFT_SCALE = 1.3f;   // helicopter flight: rise (cells) + swell while airborne
+        public static float COPTER_DUST_EVERY = 0.025f;   // magic trail: seconds between puffs (2 specks each)
+        public static Color[] COPTER_DUST_COLORS = { new Color(1.9f, 1.5f, 0.5f, 1f), new Color(1.4f, 0.8f, 2.0f, 1f), new Color(0.8f, 1.6f, 2.0f, 1f), new Color(2.0f, 1.9f, 1.6f, 1f) };   // HDR gold / violet / cyan / white (blooms)
+        private static Sprite s_flightRotor;
+        private static void AddFlightRotor(SpriteRenderer plane)
+        {
+            if (Tile.WINGS_ON && Tile.WingSprite != null && plane != null)
+            {   // 11-16 WINGED BOOK (see Tile.WINGS_ON): the wings pop out from board size to full and flap fast while it flies
+                var sp = Tile.WingSprite; float full = Tile.WING_WIDTH / Mathf.Max(sp.bounds.size.x, 1e-4f), small = full * Tile.WING_BOARD_SCALE;
+                for (int side = 1; side >= -1; side -= 2)
+                {
+                    var wgo = new GameObject(side > 0 ? "FlightWingR" : "FlightWingL"); wgo.transform.SetParent(plane.transform, false);
+                    var wsr = wgo.AddComponent<SpriteRenderer>(); wsr.sprite = sp; wsr.flipX = side < 0; wsr.sortingOrder = plane.sortingOrder - 1;
+                    float ux = side > 0 ? Tile.WING_MOUNT_UV.x : 1f - Tile.WING_MOUNT_UV.x;
+                    wgo.transform.localPosition = new Vector3(ux - 0.5f, Tile.WING_MOUNT_UV.y - 0.5f, 0.01f);
+                    wgo.transform.localScale = Vector3.one * small;
+                    wgo.transform.DOScale(full, Tile.WING_GROW_DUR).SetEase(Ease.OutBack, 2.2f).SetTarget(wgo).SetLink(wgo);
+                    int s = side;
+                    DOTween.To(() => 0f, t => { if (wgo != null) wgo.transform.localRotation = Quaternion.Euler(0f, 0f, s * (Tile.WING_BASE_DEG + Tile.WING_FLIGHT_AMP * Mathf.Sin(t * 2f * Mathf.PI))); },
+                               10000f, 10000f / Tile.WING_FLIGHT_HZ).SetEase(Ease.Linear).SetTarget(wgo).SetLink(wgo);
+                }
+                return;
+            }
+            if (Tile.ROTOR_FLIPBOOK && Tile.RotorFlipFrames != null && plane != null)
+            {   // 11-16 flipbook propeller (see Tile.ROTOR_FLIPBOOK), flipped twice as fast in flight
+                var fr = Tile.RotorFlipFrames;
+                var fgo = new GameObject("FlightRotor"); fgo.transform.SetParent(plane.transform, false);
+                var fsr = fgo.AddComponent<SpriteRenderer>(); fsr.sprite = fr[0]; fsr.sortingOrder = plane.sortingOrder + 1;
+                fgo.transform.localPosition = new Vector3(Tile.ROTOR_HUB_UV.x - 0.5f, Tile.ROTOR_HUB_UV.y + Tile.ROTOR_FLIP_LIFT - 0.5f, -0.01f);
+                float fw = Tile.ROTOR_FLIP_WIDTH / Mathf.Max(fr[0].bounds.size.x, 1e-4f);
+                fgo.transform.localScale = new Vector3(fw, fw * Tile.ROTOR_FLIP_SQUASH, 1f);
+                DOTween.To(() => 0f, t => { if (fsr != null) fsr.sprite = fr[((int)t) % fr.Length]; }, 100000f, 100000f / Tile.ROTOR_FLIP_FLIGHT_FPS)
+                       .SetEase(Ease.Linear).SetTarget(fgo).SetLink(fgo);
+                return;
+            }
+            if (s_flightRotor == null) { var t = Resources.Load<Texture2D>("Specials/airplane_rotor"); if (t != null) s_flightRotor = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width); }
+            if (s_flightRotor == null || plane == null) return;
+            var go = new GameObject("FlightRotor"); go.transform.SetParent(plane.transform, false);
+            var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = s_flightRotor; sr.sortingOrder = plane.sortingOrder + 1;
+            // plane sprite is 1 unit wide (ppu = texture width) in its own space; mast top = Tile.ROTOR_HUB_UV of that square
+            go.transform.localPosition = new Vector3(Tile.ROTOR_HUB_UV.x - 0.5f, Tile.ROTOR_HUB_UV.y + Tile.ROTOR_LIFT - 0.5f, -0.01f);
+            float w = Tile.ROTOR_WIDTH;
+            go.transform.localScale = new Vector3(w, w, 1f);
+            DOTween.To(() => 0f, t => { if (go != null) go.transform.localScale = new Vector3(w * Mathf.Max(Tile.ROTOR_MIN_SQUASH, Mathf.Abs(Mathf.Cos(t * Mathf.PI))), w, 1f); }, 200f, 200f / COPTER_ROTOR_HZ)
+                   .SetEase(Ease.Linear).SetTarget(go).SetLink(go);
+            var hubSp = Tile.RotorHubSprite;   // 11-03 the gold hub never squashes
+            if (hubSp != null)
+            {
+                var hub = new GameObject("FlightRotorHub"); hub.transform.SetParent(plane.transform, false);
+                var hsr = hub.AddComponent<SpriteRenderer>(); hsr.sprite = hubSp; hsr.sortingOrder = sr.sortingOrder + 1;
+                hub.transform.localPosition = go.transform.localPosition + new Vector3(0f, 0f, -0.005f);
+                hub.transform.localScale = new Vector3(w, w, 1f);
+            }
+        }
+
+        private void PlayAirplaneFlight(RulesEngine.SpecialFire f, Vector3 origin, float cell, bool carryBomb = false)
         {
             // PAPER-PLANE GLIDE (2026-10-23 Spencer, mid-build: "it should probably have motion like a paper airplane might where
             // it glides"). TOSS up (quick), FLOAT over a high soft arc while it bobs and its nose rocks on the air (the wobble
             // dies away as it steadies), then tips the nose DOWN and glides in. Soft white wisps behind, not sparks.
             var grid = GridManager.Instance; if (grid == null) return;
-            var plane = MakeIconSprite("AirplaneArt", f.Kind, cell * 1.0f, 55);
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("tome_flight")) GameAudio.Instance.PlayKit("tome_flight"); else GameAudio.Instance?.PlayWhooshFast();   // 11-07 pick: Book Page Brush Fast A6 (was silent)
+            var plane = MakeIconSprite("AirplaneArt", carryBomb ? RulesEngine.SPECIAL_AIRPLANE : f.Kind, cell * 1.0f, 55);
             if (plane == null) return;
+            if (AIRPLANE_COPTER) AddFlightRotor(plane);   // 11-03 the propeller book's rotor spins (fast) in flight too
+            // CARRIED BOMB (plane+bomb combo): hangs just under the plane, swinging a little, never rotating with the nose
+            SpriteRenderer bomb = carryBomb ? MakeIconSprite("CarriedBomb", RulesEngine.SPECIAL_BOMB, cell * 0.85f, 54) : null;
+            if (bomb != null) bomb.transform.position = origin + new Vector3(0f, -cell * 0.55f, 0.05f);   // hanging from the start (11-07: no first-frame pop)
             Vector3 to = grid.CellToWorld(f.Target.x, f.Target.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f);
+            {   // BOOKSHELF (11-03): land on the middle of the 2x2 shelf, not on whichever of its cells was picked
+                Tile tt = null; try { tt = grid.GetTile(f.Target.x, f.Target.y); } catch { }
+                if (tt != null && tt.ShelfPart > 0)
+                {
+                    int p = tt.ShelfPart;
+                    to += new Vector3((p == 2 || p == 4 ? -0.5f : 0.5f) * grid.CellSize, (p >= 3 ? -0.5f : 0.5f) * grid.RowPitch, 0f);
+                }
+            }
             Vector3 toss = origin + new Vector3(0f, cell * 0.7f, -0.4f);
             Vector3 d = to - toss; float len = Mathf.Max(0.01f, d.magnitude);
             float apex = Mathf.Clamp(len * 0.35f, cell * 1.4f, cell * 3.5f);            // high, lazy arc
@@ -1428,13 +1623,76 @@ namespace WordDrop
             var tr = plane.transform;
             tr.position = origin; tr.localScale = Vector3.one * cell * 0.9f;
             float baseScale = cell * 1.2f;
+            if (AIRPLANE_COPTER && !carryBomb)
+            {   // 11-03 (Spencer: "it changes smaller ... not a smooth transition"): start at EXACTLY the board tile's size and spot. The board
+                // fits the book's opaque height to the cell (Tile FIT_CELL x SPECIAL_FILL_AIRPLANE); this sprite is the whole 512 canvas, so
+                // scale by canvas/book and lift by the book's offset from the canvas centre. Then it only grows a little.
+                float s0 = cell * Tile.SPECIAL_ICON_CELL_FILL * Tile.SPECIAL_FILL_AIRPLANE / COPTER_ART_BOOK_H;
+                tr.localScale = Vector3.one * s0;
+                tr.position = origin + new Vector3(0f, -COPTER_ART_CENTRE_DY * s0, 0f);
+                baseScale = s0 * COPTER_FLIGHT_GROW;
+            }
             var go = plane.gameObject;
             float dirSign = d.x >= 0f ? 1f : -1f;
             var seq = DOTween.Sequence().SetTarget(plane);
+            bool copter = AIRPLANE_COPTER && !carryBomb;
+            if (copter)
+            {
+                // 11-03 HELICOPTER FLIGHT (Spencer: "more of a helicopter kind of movement", his Royal-Match propeller GIF, read frame by
+                // frame): LIFT straight up and swell (closer to the camera) while a soft SHADOW stays on the board and slides away
+                // (that's the altitude), a short HOVER jitter, a FAST near-straight flight leaning into travel with the shadow tracking
+                // the ground path, then DROP onto the target (shrinks back, shadow meets it) -> the same touch-down burst. Same total
+                // time as the plane (AIRPLANE_TAKEOFF + AIRPLANE_FLIGHT) so the clear lands on cue.
+                float s0 = tr.localScale.x, sUp = s0 * COPTER_LIFT_SCALE;
+                Vector3 start = tr.position, liftV = new Vector3(0f, cell * COPTER_LIFT, -0.4f);
+                Vector3 up = start + liftV, upTo = to + liftV;
+                var shGO = new GameObject("CopterShadow"); var shadow = shGO.AddComponent<SpriteRenderer>();   // plain alpha sprite (the FX material is additive)
+                shadow.sprite = plane.sprite; shadow.color = new Color(0.10f, 0.05f, 0.22f, 0f); shadow.sortingOrder = plane.sortingOrder - 1;
+                var sh = shadow.transform; sh.position = start; sh.localScale = tr.localScale;
+                Vector3 shOff = new Vector3(cell * 0.18f, -cell * 0.12f, 0.1f);
+                float tUp = AIRPLANE_TAKEOFF * 0.75f, tHover = AIRPLANE_TAKEOFF * 0.25f, tFly = AIRPLANE_FLIGHT * 0.78f, tDrop = AIRPLANE_FLIGHT * 0.22f;
+                // lift
+                seq.Append(tr.DOMove(up, tUp).SetEase(Ease.OutCubic));
+                seq.Join(tr.DOScale(sUp, tUp).SetEase(Ease.OutBack, 1.6f));
+                seq.Join(sh.DOMove(start + shOff, tUp).SetEase(Ease.OutCubic));
+                seq.Join(shadow.DOFade(0.32f, tUp));
+                seq.Join(sh.DOScale(s0 * 0.9f, tUp));
+                // hover jitter
+                seq.Append(tr.DOShakePosition(tHover, new Vector3(cell * 0.05f, cell * 0.05f, 0f), 18, 90f, false, true));
+                // fly: near-straight, quick, eased, leaning into travel
+                Vector3 dir = upTo - up; float lean = Mathf.Clamp(-dir.x / Mathf.Max(1e-4f, dir.magnitude), -1f, 1f) * COPTER_LEAN;
+                // 11-03 MAGIC TRAIL (Spencer: "the propeller books need some kind of magical trail around it while it moves"): fairy dust
+                // spills off the book while it flies - gold, violet and soft cyan specks that drift down and fade behind it.
+                float lastDust = -1f; Vector3 prevP = up;
+                seq.Append(tr.DOMove(upTo, tFly).SetEase(Ease.InOutSine).OnUpdate(() =>
+                {
+                    if (go == null) return;
+                    float now = Time.time; if (now - lastDust < COPTER_DUST_EVERY) return; lastDust = now;
+                    Vector3 p = tr.position, vel = p - prevP; prevP = p;
+                    for (int k = 0; k < 2; k++)
+                    {
+                        Color c = COPTER_DUST_COLORS[Random.Range(0, COPTER_DUST_COLORS.Length)];
+                        Vector3 at = p + (Vector3)Random.insideUnitCircle * cell * 0.28f + new Vector3(0f, -cell * 0.1f, 0f);
+                        Vector3 v = -vel.normalized * cell * Random.Range(0.4f, 1.1f) + new Vector3(0f, -cell * Random.Range(0.3f, 0.8f), 0f);
+                        SpawnSpark(at, v, cell * Random.Range(0.10f, 0.22f), Random.Range(0.35f, 0.65f), c);
+                    }
+                }));
+                seq.Join(sh.DOMove(to + shOff, tFly).SetEase(Ease.InOutSine));
+                seq.Join(tr.DORotate(new Vector3(0f, 0f, lean), tFly * 0.3f).SetEase(Ease.OutQuad));
+                seq.Insert(tUp + tHover + tFly * 0.7f, tr.DORotate(Vector3.zero, tFly * 0.3f).SetEase(Ease.InOutQuad));
+                // drop onto the target
+                seq.Append(tr.DOMove(to, tDrop).SetEase(Ease.InQuad));
+                seq.Join(tr.DOScale(s0, tDrop).SetEase(Ease.InQuad));
+                seq.Join(sh.DOMove(to, tDrop).SetEase(Ease.InQuad));
+                seq.Join(shadow.DOFade(0f, tDrop));
+                seq.AppendCallback(() => { if (shadow != null) Destroy(shadow.gameObject); });
+            }
+            else
+            {
             // toss
             seq.Append(tr.DOMove(toss, AIRPLANE_TAKEOFF).SetEase(Ease.OutQuad));
             seq.Join(tr.DOScale(baseScale, AIRPLANE_TAKEOFF).SetEase(Ease.OutBack, 1.8f));
-            seq.Join(tr.DORotate(new Vector3(0f, 0f, dirSign > 0 ? -15f : 105f), AIRPLANE_TAKEOFF).SetEase(Ease.OutQuad));
+            seq.Join(tr.DORotate(new Vector3(0f, 0f, AIRPLANE_COPTER ? 0f : (dirSign > 0 ? -15f : 105f)), AIRPLANE_TAKEOFF).SetEase(Ease.OutQuad));
             // glide
             float lastWisp = 0f;
             seq.Append(DOTween.To(() => 0f, t =>
@@ -1446,9 +1704,18 @@ namespace WordDrop
                 Vector3 pos = P(g) + new Vector3(0f, Mathf.Sin(t * Mathf.PI * 3f) * cell * 0.18f * calm, 0f);   // bobbing on the air
                 Vector3 ahead = P(Mathf.Min(1f, g + 0.02f)) - P(g);
                 tr.position = pos;
-                float ang = Mathf.Atan2(ahead.y, ahead.x) * Mathf.Rad2Deg;
-                ang += Mathf.Sin(t * Mathf.PI * 4f) * 12f * calm;                        // nose rocks
-                tr.rotation = Quaternion.Euler(0f, 0f, ang - 45f);                         // art nose points up-right
+                if (AIRPLANE_COPTER)
+                {   // 11-03 PROPELLER BOOK (Spencer: "it doesnt need to tilt the book towards the tile ... since its a helicopter"): stays
+                    // upright, only a gentle lean into its travel direction and a little sway
+                    float lean = Mathf.Clamp(-ahead.x / Mathf.Max(1e-4f, ahead.magnitude), -1f, 1f) * COPTER_LEAN + Mathf.Sin(t * Mathf.PI * 4f) * 4f * calm;
+                    tr.rotation = Quaternion.Euler(0f, 0f, lean);
+                }
+                else
+                {
+                    float ang = Mathf.Atan2(ahead.y, ahead.x) * Mathf.Rad2Deg;
+                    ang += Mathf.Sin(t * Mathf.PI * 4f) * 12f * calm;                        // nose rocks
+                    tr.rotation = Quaternion.Euler(0f, 0f, ang - 45f);                         // art nose points up-right
+                }
                 float roll = Mathf.Sin(t * Mathf.PI * 2.5f) * 0.08f * calm;
                 tr.localScale = new Vector3(baseScale * (1f - roll), baseScale * (1f + roll), 1f);
                 if (t - lastWisp > 0.05f)
@@ -1459,9 +1726,11 @@ namespace WordDrop
                                cell * Random.Range(0.16f, 0.26f), Random.Range(0.3f, 0.5f), new Color(1.15f, 1.2f, 1.3f, 1f));
                 }
             }, 1f, AIRPLANE_FLIGHT).SetEase(Ease.Linear));
+            }
             // touch-down
             seq.AppendCallback(() =>
             {
+                if (GameAudio.Instance != null && GameAudio.Instance.HasKit("tome_land")) GameAudio.Instance.PlayKit("tome_land", GameAudio.TOME_LAND_VOL);   // 11-07 pick: Book Drop Low A2 (the landing was silent)
                 if (s_ringSprite != null)
                 {
                     var ring = MakeFxSprite("PlaneImpact", s_ringSprite, new Color(1.5f, 1.6f, 2f, 1f), 54);
@@ -1473,9 +1742,29 @@ namespace WordDrop
                 for (int k = 0; k < 8; k++)
                     SpawnSpark(to, (Vector3)(Random.insideUnitCircle.normalized * cell * Random.Range(3f, 6f)), cell * Random.Range(0.14f, 0.24f), Random.Range(0.25f, 0.45f), new Color(1.6f, 1.6f, 1.9f, 1f));
                 GridManager.Instance?.ShakeBoard(0.12f, 0.18f);
+                if (carryBomb)
+                {   // the carried bomb goes off on the target: the normal powered-bomb blast (fireball, ring, shake, sound)
+                    if (bomb != null) Destroy(bomb.gameObject);
+                    PlaySpecialFire(new RulesEngine.SpecialFire { Cell = f.Target, Kind = RulesEngine.SPECIAL_BOMB, Letter = f.Letter, Word = "XX", Target = f.Target });
+                }
             });
             seq.Append(plane.DOFade(0f, 0.06f));
-            seq.OnComplete(() => { if (go != null) Destroy(go); });
+            seq.OnComplete(() => { if (go != null) Destroy(go); if (bomb != null) Destroy(bomb.gameObject); });
+            if (bomb != null) StartCoroutine(CarryBomb(bomb, tr, cell));
+        }
+
+        /// <summary>Plane+bomb combo: the bomb hangs under the flying plane (a little behind, swinging), upright.</summary>
+        private System.Collections.IEnumerator CarryBomb(SpriteRenderer bomb, Transform plane, float cell)
+        {
+            float t = 0f;
+            while (bomb != null && plane != null)
+            {
+                t += Time.deltaTime;
+                float swing = Mathf.Sin(t * 9f) * 10f;
+                bomb.transform.position = plane.position + new Vector3(0f, -cell * 0.55f, 0.05f);
+                bomb.transform.rotation = Quaternion.Euler(0f, 0f, Tile.SpecialIconAngle(RulesEngine.SPECIAL_BOMB) + swing);
+                yield return null;
+            }
         }
 
         // ── LIGHT BALL / DISCO (2026-10-23 Spencer: "at about 26100 in the royalmatch(1-20) video it shows the disco ball
@@ -1483,6 +1772,7 @@ namespace WordDrop
         // white halo + ring pulses, thin white beams to the targets ONE AT A TIME, each hit target keeps a frosty sheen; then
         // POP — a big white flash at the ball and EVERY target pops on the same frame (ring burst + shards); ~0.2s settle.
         // HandManager pops the tiles at DiscoPopAt(n) (all together); the beams land at DiscoBeamAt(k, n). ──
+        public static float ORB_RISE_PEAK = 1.34f;   // seconds into Kit/orb_rise.wav where it peaks (measured)
         public static float DISCO_LEAD = 0.18f;          // ball wind-up before the first beam
         public static float DISCO_CHARGE = 1.0f;         // aim for this long a beam phase (RM ~1.1s)
         public static float DISCO_GAP_MIN = 0.025f, DISCO_GAP_MAX = 0.07f;
@@ -1492,7 +1782,7 @@ namespace WordDrop
         public static float DiscoBeamAt(int k, int n) => DISCO_LEAD + k * DiscoGap(n);
         public static float DiscoPopAt(int n) => DISCO_LEAD + n * DiscoGap(n) + DISCO_POP_HOLD;
         private static Sprite s_glowSprite;
-        private static Sprite GlowSprite()
+        public static Sprite GlowSprite()
         {
             if (s_glowSprite != null) return s_glowSprite;
             var tex = Resources.Load<Texture2D>("Particles/glow") ?? Resources.Load<Texture2D>("Particles/soft_circle");
@@ -1509,7 +1799,8 @@ namespace WordDrop
         public static Color DISCO_BOLT_FRINGE = new Color(0.22f, 0.45f, 1f, 0.85f);   // normal-blend blue under the core                              // bolt amplitude, cells
         private static Sprite[] s_bolts; private static readonly float[] s_boltFill = { 1.3f, 1.79f, 1.08f };   // strip height / bolt height
         private static bool s_boltsTried;
-        private static bool LoadBolts()
+        public static Sprite[] BoltSprites => LoadBolts() ? s_bolts : null;
+        public static bool LoadBolts()
         {
             if (s_boltsTried) return s_bolts != null;
             s_boltsTried = true;
@@ -1579,7 +1870,7 @@ namespace WordDrop
                 s_shockFrames[i] = Sprite.Create(t, new Rect((i % 4) * fw, (1 - i / 4) * fh, fw, fh), new Vector2(0.5f, 0.5f), fw);   // 1 unit wide
             return true;
         }
-        private System.Collections.IEnumerator TileShocks(Vector3 centre, float cell, float dur)
+        public System.Collections.IEnumerator TileShocks(Vector3 centre, float cell, float dur)
         {
             if (dur <= 0.02f || !LoadShocks()) yield break;
             var zaps = new SpriteRenderer[SHOCKS_PER_TILE];
@@ -1621,6 +1912,10 @@ namespace WordDrop
             int n = targets.Count;
             float popAt = DiscoPopAt(f.Cleared.Count);
             Vector3 slide = new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+            // 11-07 Spencer's pick (Rising Pitch C6): a rising musical tone through the charge. The file is trimmed so its peak sits
+            // ~1.34 s in = DISCO_LEAD + DISCO_CHARGE + DISCO_POP_HOLD, so the climax lands on the flash; started so it peaks at popAt.
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("orb_rise"))
+            { float lead = Mathf.Max(0f, popAt - ORB_RISE_PEAK); if (lead > 0.01f) DOVirtual.DelayedCall(lead, () => GameAudio.Instance?.PlayKit("orb_rise")); else GameAudio.Instance.PlayKit("orb_rise"); }
 
             // the ball: spins the whole charge, swells a touch, gone in the flash
             var ball = MakeIconSprite("DiscoBall", f.Kind, cell * 1.1f, 52);
@@ -1708,7 +2003,7 @@ namespace WordDrop
                         SpawnSpark(p, (Vector3)(Random.insideUnitCircle.normalized * cell * Random.Range(3f, 6f)), cell * Random.Range(0.12f, 0.2f), Random.Range(0.25f, 0.4f), new Color(1.4f, 1.5f, 2f, 1f));
                 }
                 g.ShakeBoard(0.16f, 0.30f);
-                GameAudio.Instance?.PlayScorePowerup();
+                if (GameAudio.Instance == null || !GameAudio.Instance.HasKit("orb_rise")) GameAudio.Instance?.PlayScorePowerup();   // the rise's peak is the pop now
             });
         }
 
@@ -1733,6 +2028,7 @@ namespace WordDrop
                 case RulesEngine.SPECIAL_COMBO_MEGA:        return 0.55f;
                 case RulesEngine.SPECIAL_COMBO_DISCO_DISCO: return 0.55f;
                 case RulesEngine.SPECIAL_COMBO_PLANES:      return 0.25f;
+                case RulesEngine.SPECIAL_COMBO_PLANE_BOMB:  return 0.50f;   // the tome swoops in and picks the bomb up (11-07; was: swell + flash)
                 default: return 0f;
             }
         }
@@ -1748,20 +2044,64 @@ namespace WordDrop
             StartCoroutine(ComboWindupRoutine(f.Kind, origin, cell, dur));
         }
 
+        // 11-07 (Spencer: "when you mix the bomb with the flying tome the bomb looks like its about to explode and then gets picked
+        // up and flies away which doesnt really make sense"): the swell + white-hot blinks said "about to blow". PICK-UP instead:
+        // the tome drops in over the bomb with its rotor spinning, the bomb hops up and hooks on, and the pair lifts to where the
+        // flight starts (PlayAirplaneFlight gets origin + PLANE_BOMB_LIFT, so the handoff is seamless). false = the old swell.
+        public static bool  PLANE_BOMB_PICKUP = true;
+        public static float PLANE_BOMB_LIFT = 0.55f;   // cells: the plane's height above the bomb's cell when the flight takes over (CarryBomb hangs the bomb 0.55 under)
+        private System.Collections.IEnumerator PlaneBombPickupRoutine(Vector3 origin, float cell, float dur)
+        {
+            var bomb = MakeIconSprite("ComboPickupBomb", RulesEngine.SPECIAL_BOMB, cell, 59);
+            var plane = MakeIconSprite("ComboPickupTome", RulesEngine.SPECIAL_AIRPLANE, cell, 60);
+            if (plane != null && AIRPLANE_COPTER) AddFlightRotor(plane);
+            float bombRot = bomb != null ? bomb.transform.eulerAngles.z : 0f, planeRot = plane != null ? plane.transform.eulerAngles.z : 0f;
+            Vector3 hover = origin + new Vector3(0f, cell * PLANE_BOMB_LIFT, -0.02f);
+            float t = 0f;
+            while (t < dur)
+            {
+                t += Time.deltaTime; float k = Mathf.Clamp01(t / dur);
+                // tome: drops in from above (0-55%), then holds at the hover point with a small bob
+                float drop = DOVirtual.EasedValue(0f, 1f, Mathf.Clamp01(k / 0.55f), Ease.OutBack);
+                if (plane != null)
+                {
+                    plane.transform.position = Vector3.LerpUnclamped(hover + new Vector3(0f, cell * 0.9f, 0f), hover, drop) + new Vector3(0f, Mathf.Sin(k * 14f) * cell * 0.03f * (1f - k), 0f);
+                    plane.transform.localScale = Vector3.one * cell * Mathf.Lerp(0.6f, 1f, Mathf.Clamp01(k / 0.3f));
+                    plane.color = new Color(1f, 1f, 1f, Mathf.Clamp01(k / 0.15f));
+                    plane.transform.rotation = Quaternion.Euler(0f, 0f, planeRot + Mathf.Sin(k * 22f) * 5f * (1f - k));
+                }
+                // bomb: a crouch as the tome arrives (40-60%), then it hops a touch and hooks on (swings under the tome, like the flight)
+                if (bomb != null)
+                {
+                    float crouch = k < 0.4f ? 0f : k < 0.6f ? Mathf.Sin((k - 0.4f) / 0.2f * Mathf.PI) : 0f;
+                    float hook = Mathf.Clamp01((k - 0.6f) / 0.4f);
+                    float hop = Mathf.Sin(hook * Mathf.PI) * cell * 0.12f;
+                    bomb.transform.position = origin + new Vector3(0f, hop, 0f);
+                    bomb.transform.localScale = new Vector3(cell * 0.85f * (1f + 0.12f * crouch), cell * 0.85f * (1f - 0.16f * crouch), 1f);
+                    bomb.transform.rotation = Quaternion.Euler(0f, 0f, bombRot + Mathf.Sin(hook * 9f) * 10f * hook);
+                }
+                yield return null;
+            }
+            if (plane != null) Destroy(plane.gameObject);
+            if (bomb != null) Destroy(bomb.gameObject);
+        }
+
         private System.Collections.IEnumerator ComboWindupRoutine(int kind, Vector3 origin, float cell, float dur)
         {
+            if (kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB && PLANE_BOMB_PICKUP) { yield return PlaneBombPickupRoutine(origin, cell, dur); yield break; }
             int a = RulesEngine.SPECIAL_ROCKET_H, b = RulesEngine.SPECIAL_ROCKET_H;
             if (kind == RulesEngine.SPECIAL_COMBO_BIGCROSS) { a = RulesEngine.SPECIAL_TNT; b = RulesEngine.SPECIAL_ROCKET_H; }
             else if (kind == RulesEngine.SPECIAL_COMBO_MEGA) { a = b = RulesEngine.SPECIAL_TNT; }
             else if (kind == RulesEngine.SPECIAL_COMBO_DISCO || kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO) { a = b = RulesEngine.SPECIAL_DISCO; }
             else if (kind == RulesEngine.SPECIAL_COMBO_PLANES) { a = b = RulesEngine.SPECIAL_AIRPLANE; }
+            else if (kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB) { a = b = RulesEngine.SPECIAL_BOMB; }
             var art = MakeIconSprite("ComboWindup", a, cell, 60);
             var glow = MakeFxSprite("ComboWindupGlow", SoftDot(), new Color(1.6f, 1.25f, 0.6f, 1f), 59);
             if (glow != null) glow.transform.position = origin + new Vector3(0f, 0f, 0.02f);
             if (art != null) art.transform.position = origin;
             float baseRot = art != null ? art.transform.eulerAngles.z : 0f;
             // peak size per kind (TNT+TNT grows biggest, rocket+rocket just pops)
-            float peak = kind == RulesEngine.SPECIAL_COMBO_MEGA ? 2.4f : kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO ? 2.0f
+            float peak = kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB ? 1.9f : kind == RulesEngine.SPECIAL_COMBO_MEGA ? 2.4f : kind == RulesEngine.SPECIAL_COMBO_DISCO_DISCO ? 2.0f
                        : kind == RulesEngine.SPECIAL_COMBO_CROSS ? 1.35f : 1.6f;
             float t = 0f;
             while (t < dur)
@@ -1792,6 +2132,12 @@ namespace WordDrop
                 {
                     glow.transform.localScale = Vector3.one * cell * (1.2f + 1.4f * k) * s * 0.8f;
                     glow.color = new Color(1f, 1f, 1f, 0.35f + 0.5f * k);
+                }
+                if (kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB)
+                {   // FLASHING (Spencer: "the bomb getting big and flashing"): 3 white-hot blinks, quickening, glow flaring with each
+                    float blink = Mathf.Pow(Mathf.Abs(Mathf.Sin(k * k * Mathf.PI * 3f)), 3f);
+                    if (art != null) art.color = Color.Lerp(Color.white, new Color(1f, 0.55f, 0.45f, 1f), blink);
+                    if (glow != null) { glow.color = new Color(1f, 1f, 1f, Mathf.Clamp01(0.35f + 0.65f * blink)); glow.transform.localScale *= 1f + 0.5f * blink; }
                 }
                 yield return null;
             }
@@ -1916,7 +2262,11 @@ namespace WordDrop
                 return;
             }
 
-            if (f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V)
+            if ((f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V) && ROCKET_V2)
+            {
+                PlayRocketV2(f, origin, cell, f.Kind == RulesEngine.SPECIAL_ROCKET_H);
+            }
+            else if (f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V)
             {
                 bool h = f.Kind == RulesEngine.SPECIAL_ROCKET_H;
                 Vector3 axis = h ? Vector3.right : Vector3.up;
@@ -1940,12 +2290,23 @@ namespace WordDrop
                     head.transform.DOMove(to, ROCKET_HEAD_FLIGHT).SetEase(Ease.InQuad);
                     head.DOFade(0f, 0.12f).SetDelay(ROCKET_HEAD_FLIGHT - 0.08f).OnComplete(() => { if (hs != null) Destroy(hs.gameObject); });
                     StartCoroutine(EmberTrail(head.transform, ROCKET_HEAD_FLIGHT, cell));
-                    // Spencer's rocket art rides the glow: nose along the travel direction (art points up-right).
-                    var art = MakeIconSprite("RocketArt", f.Kind, cell * 0.95f, 49);
+                    // Spencer's rocket art rides the glow: nose along the travel direction (art angle = Tile.ROCKET_ART_ANGLE).
+                    // 11-03 (Spencer: flying rockets "smaller than on the board and angled off"): fly the SAME sprite the board shows (the
+                    // vertical rocket's tile sprite: upright, sized so its visible length = one cell, centred on its body) at the tile's
+                    // own scale, instead of the raw icon canvas (whose empty margins made it ~15-20% smaller).
+                    SpriteRenderer art = null; float artUp = Tile.ROCKET_ART_ANGLE;
+                    var tsp = Tile.SpecialTileSprite(RulesEngine.SPECIAL_ROCKET_V);
+                    if (tsp != null && Tile.NormalSprite != null)
+                    {
+                        var ago = new GameObject("RocketArt"); art = ago.AddComponent<SpriteRenderer>(); art.sprite = tsp; art.sortingOrder = 49;
+                        ago.transform.localScale = Vector3.one * (cell * Tile.TILE_DISPLAY_RATIO / Mathf.Max(0.0001f, Tile.NormalSprite.bounds.size.x));
+                        artUp = 90f;   // the vertical rocket's tile sprite points straight up
+                    }
+                    else art = MakeIconSprite("RocketArt", f.Kind, cell * 0.95f, 49);
                     if (art != null)
                     {
                         float dirDeg = h ? (sgn > 0 ? 0f : 180f) : (sgn > 0 ? 90f : -90f);
-                        art.transform.rotation = Quaternion.Euler(0f, 0f, dirDeg - 45f);
+                        art.transform.rotation = Quaternion.Euler(0f, 0f, dirDeg - artUp);   // nose along the travel direction
                         art.transform.position = origin;
                         var a = art;
                         art.transform.DOMove(to, ROCKET_HEAD_FLIGHT).SetEase(Ease.InQuad);
@@ -1969,24 +2330,38 @@ namespace WordDrop
                 // white-hot core blooming out inside an orange flame sphere, a thin shock ring, and a radial spark burst.
                 float radius = ((powered ? RulesEngine.BOMB_RADIUS_POWERED : RulesEngine.BOMB_RADIUS_BASIC) + 0.5f) * cell;   // fireball matches the cleared square
                 StartCoroutine(Fireball(origin, radius, cell));
-                var ring = MakeFxSprite("BombRing", s_ringSprite, ROCKET_FLAME * 0.8f, 47);
-                ring.transform.position = origin;
-                ring.transform.localScale = Vector3.one * (cell / s_ringSprite.bounds.size.x) * 0.6f;
-                ring.transform.DOScale(Vector3.one * (radius * 2.6f / s_ringSprite.bounds.size.x), 0.32f).SetEase(Ease.OutCubic);
-                ring.DOFade(0f, 0.32f).SetEase(Ease.InQuad).OnComplete(() => { if (ring != null) Destroy(ring.gameObject); });
+                if (BLAST_RING)
+                {
+                    var ring = MakeFxSprite("BombRing", s_ringSprite, ROCKET_FLAME * 0.8f, 47);
+                    ring.transform.position = origin;
+                    ring.transform.localScale = Vector3.one * (cell / s_ringSprite.bounds.size.x) * 0.6f;
+                    ring.transform.DOScale(Vector3.one * (radius * 2.6f / s_ringSprite.bounds.size.x), 0.32f).SetEase(Ease.OutCubic);
+                    ring.DOFade(0f, 0.32f).SetEase(Ease.InQuad).OnComplete(() => { if (ring != null) Destroy(ring.gameObject); });
+                }
                 GridManager.Instance?.ShakeBoard(0.20f * bombScale, 0.28f);
+            }
+            else if (f.Kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB)
+            {
+                GridManager.Instance?.ShakeBoard(0.10f, 0.18f);
+                if (f.Target != f.Cell) PlayAirplaneFlight(f, PLANE_BOMB_PICKUP ? origin + new Vector3(0f, cell * PLANE_BOMB_LIFT, 0f) : origin, cell, carryBomb: true);   // starts where the pick-up left it
             }
             else if (f.Kind == RulesEngine.SPECIAL_AIRPLANE)
             {
                 GridManager.Instance?.ShakeBoard(0.10f, 0.18f);
                 bool hasTarget = f.Target != f.Cell && f.Cleared != null && f.Cleared.Contains(f.Target);
+                // 11-03 (Spencer: "it didnt show the propeller one flying to the bookcase"): a target that SURVIVES the hit - a bookshelf
+                // (loses a book) or a multi-hit crate (loses a layer) - isn't in Cleared, so the flight never played. A stone tile at the
+                // target means the plane really went there.
+                if (!hasTarget && f.Target != f.Cell && GridManager.Instance != null)
+                { Tile tt = null; try { tt = GridManager.Instance.GetTile(f.Target.x, f.Target.y); } catch { } hasTarget = tt != null && tt.IsStone; }
                 if (hasTarget) PlayAirplaneFlight(f, origin, cell);
             }
             else if (f.Kind == RulesEngine.SPECIAL_DISCO && f.Cleared != null)
             {
                 PlayDiscoCharge(f, origin, cell);
             }
-            GameAudio.Instance?.PlayScorePowerup();
+            // 11-07 sound pass: score_powerup played on EVERY power-up firing on top of its own sound (17x in one level) - dropped;
+            // each power-up's own sound carries it now (rocket fireworks, bomb boom, orb charge, tome pages)
             HapticsManager.Strong();
         }
 
@@ -2012,6 +2387,10 @@ namespace WordDrop
             return s_crateChunks;
         }
 
+        /// <summary>11-07 (Spencer: "when the boosters hit crates it should show the crates destruction ... if a mallet hits it just
+        /// dissapears"): a booster-smashed tile gets what an explosion gives it - crate chunks + the break sound, a treasure opening,
+        /// and a gem / goal letter FLYING to its badge (ClearCellCountingGoals already counted it and set CollectAwaitingFly).</summary>
+        public void BoosterBreak(Tile t) => MaybeCrateDebris(t);
         private void MaybeCrateDebris(Tile t)
         {
             if (t == null || !SurvivalManager.FullBoardActive) return;
@@ -2027,6 +2406,7 @@ namespace WordDrop
             if (t.IsGem && LevelRules.HasGemGoal && flyOk)
                 HUDManager.Instance?.FlyCollectLetter(t.transform.position, t.Letter);   // gem flies to the gem icon
             if (!t.IsStone || t.IsDropTargetVisual) return;   // ducks are stone-flagged too — they never "break"
+            if (t.ShelfKind == 1) return;   // SAFE (11-03): its open burst is HandManager.HitSafe, not wood chunks
             if (t.TreasureHits > 0)
             {   // TREASURE OPENS (2026-10-27): pay + the coin fountain instead of crate chunks. Paid here because every explosion path
                 // hides its tiles through these three sites; the bonus blast's treasures pay too (Spencer: extra rewards).
@@ -2040,6 +2420,48 @@ namespace WordDrop
             }
             PlayCrateDebris(t.transform.position);
             GameAudio.Instance?.PlayCrateBreak();   // 2026-10-22 Spencer: crate SFX
+        }
+
+        // ── CRATE PLANK OFF (2026-11-03, Spencer: "show the boards falling off one by one in the debris explosion"). Losing a layer
+        // pops THAT plank off the crate (Blockers/crate_plank_a = the X's back plank, lost 3 -> 2; crate_plank_b = the last diagonal,
+        // lost 2 -> 1). Both are full 512 crate canvases, so drawn at the tile's own scale they start exactly where the plank sat. ──
+        private static Sprite[] s_planks; private static bool s_planksTried;
+        public static float PLANK_FLY_DUR = 0.75f, PLANK_GRAVITY = 14f, PLANK_SPIN = 420f;
+        public void PlayPlankOff(Tile t, int hpBefore)
+        {
+            if (t == null || hpBefore < 2) return;
+            if (!s_planksTried)
+            {
+                s_planksTried = true; s_planks = new Sprite[2];
+                string[] names = { "Blockers/crate_plank_a", "Blockers/crate_plank_b" };
+                for (int i = 0; i < 2; i++) { var tex = Resources.Load<Texture2D>(names[i]); if (tex != null) s_planks[i] = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width); }
+            }
+            var sp = s_planks[hpBefore >= 3 ? 0 : 1]; if (sp == null) return;
+            var go = new GameObject("CratePlank");
+            go.transform.position = t.transform.position + new Vector3(0f, 0f, -0.3f);
+            go.transform.localScale = t.transform.lossyScale;
+            var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = sp; sr.sortingOrder = t.FaceSortingOrder + 6;
+            StartCoroutine(PlankFly(go, sr, hpBefore >= 3 ? -1f : 1f));
+        }
+        private System.Collections.IEnumerator PlankFly(GameObject go, SpriteRenderer sr, float side)
+        {
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
+            // pops UP and out to its side, spins as it tumbles, falls under gravity, fades at the end
+            var vel = new Vector3(side * Random.Range(1.2f, 2.0f), Random.Range(3.2f, 4.2f), 0f) * cell;
+            float spin = side * -PLANK_SPIN * Random.Range(0.8f, 1.2f), t0 = 0f;
+            Vector3 s0 = go.transform.localScale;
+            while (t0 < PLANK_FLY_DUR && go != null)
+            {
+                float dt = Time.deltaTime; t0 += dt;
+                vel.y -= PLANK_GRAVITY * cell * dt;
+                go.transform.position += vel * dt;
+                go.transform.Rotate(0f, 0f, spin * dt);
+                go.transform.localScale = s0 * Mathf.Lerp(1f, 1.15f, Mathf.Clamp01(t0 / 0.2f));   // lifts toward the camera as it pops
+                float f = Mathf.Clamp01((t0 - PLANK_FLY_DUR * 0.6f) / (PLANK_FLY_DUR * 0.4f));
+                sr.color = new Color(1f, 1f, 1f, 1f - f);
+                yield return null;
+            }
+            if (go != null) Destroy(go);
         }
 
         public void PlayCrateDebris(Vector3 pos)
@@ -2314,7 +2736,7 @@ namespace WordDrop
             // Unity logs and stops it; the outer never gets to decrement.
             // For belt-and-suspenders, a max-age safety would reset the count,
             // but for now this matches the lifetime of ExplosionCoroutine.
-            yield return StartCoroutine(ExplosionCoroutine(tiles, chainStep, wordLength));
+            yield return StartCoroutine(ExplosionCoroutine(tiles, chainStep, wordLength, wordFlash));
             ActiveExplosions = Mathf.Max(0, ActiveExplosions - 1);
         }
 
@@ -2448,14 +2870,16 @@ namespace WordDrop
         public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade, float startDelay)
             => PlayTier1Pop(tile, suppressAudio, isCascade, startDelay, instantPop: false);
 
-        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop)
+        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop) => PlayTier1Pop(tile, suppressAudio, isCascade, startDelay, instantPop, false);
+        /// <param name="collateral">11-07: a tile a blast caught (not the word's) - cream chunks, no sparkle spray.</param>
+        public Coroutine PlayTier1Pop(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop, bool collateral)
         {
             if (tile == null) return null;
             // Route through revert toggle. Legacy = 2026-05-03 squeeze→fade.
             // New = 2026-05-04 CC-reference shrink-to-nothing.
             if (FX_UseLegacyTier1Pop)
                 return StartCoroutine(Tier1PopCoroutine_Legacy20260504(tile, suppressAudio, isCascade, startDelay));
-            return StartCoroutine(Tier1PopCoroutine(tile, suppressAudio, isCascade, startDelay, instantPop));
+            return StartCoroutine(Tier1PopCoroutine(tile, suppressAudio, isCascade, startDelay, instantPop, collateral));
         }
 
         // ═══════════════════════════════════════════════════════════════════════════
@@ -2682,7 +3106,7 @@ namespace WordDrop
         // the light-up phase. All color/sprite/HasPermanentGlow/WasInScoredWord
         // preservation is identical to the legacy coroutine.
         // ═══════════════════════════════════════════════════════════════════════════
-        private IEnumerator Tier1PopCoroutine(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop = false)
+        private IEnumerator Tier1PopCoroutine(Tile tile, bool suppressAudio, bool isCascade, float startDelay, bool instantPop = false, bool collateral = false)
         {
             if (tile == null) yield break;
             int gen = tile.Generation;   // recycled into a new letter while we waited? then it isn't ours to pop (2026-10-28)
@@ -2885,8 +3309,8 @@ namespace WordDrop
             if (FlipbookExplosion.Instance != null)
                 FlipbookExplosion.Instance.PlayBubble(tilePos, tileColor, 1.0f, 0.12f);
             if (TileFragments.Instance != null)
-                TileFragments.Instance.Shatter(tile, 1.2f);
-            if (SparkleSpray.Instance != null)
+                TileFragments.Instance.Shatter(tile, 1.2f, collateral);
+            if (SparkleSpray.Instance != null && (!collateral || BLAST_COLLATERAL_SPARKLES))   // 11-07: blast-caught tiles don't sparkle
                 SparkleSpray.Instance.Play(tilePos, intensity: 0.25f); // fewer sparkles per pop tile (was 0.4) — less overlap blow-out
 
             if (keepPulse)
@@ -2938,7 +3362,7 @@ namespace WordDrop
         public static bool FX_MeltdownTilePunch = true;  // tile shrink-to-nothing during meltdown wind-up — tiles flash white then scale to 10% so the spell prefab carries the visual
         public static bool FX_MeltdownWindupShake = true;  // continuous camera shake ramping subtle → assertive over the meltdown windup, paired with earthquake SFX
 
-        private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength)
+        private IEnumerator ExplosionCoroutine(List<Tile> tiles, int chainStep, int wordLength, bool wordFlash = true)
         {
             bool mobile = Application.isMobilePlatform;
             int tileCount = tiles.Count;
@@ -3414,7 +3838,7 @@ namespace WordDrop
                     // feedback during the 50ms hitstop window, masking the
                     // pause and making the initial detonation feel instant.
                     bool tileInstantPop = isCascadePop;
-                    PlayTier1Pop(tiles[i], suppressAudio: true, isCascade: false, startDelay: 0f, instantPop: tileInstantPop);
+                    PlayTier1Pop(tiles[i], suppressAudio: true, isCascade: false, startDelay: 0f, instantPop: tileInstantPop, collateral: !wordFlash);   // 11-07: blast tiles = cream chunks, no sparkles
                 }
                 // Per-word haptic — sync to the visual pop moment:
                 //   - Initial pops have an 80ms light-up preamble, so the
@@ -3588,7 +4012,7 @@ namespace WordDrop
                                 shatterSR.sprite = meltdownOriginalSprites[i];
                         }
                     }
-                    TileFragments.Instance.Shatter(tiles[i]);
+                    TileFragments.Instance.Shatter(tiles[i], 1f, collateral: !wordFlash);   // 11-07: blast collateral = cream chunks, not word green
                 }
                 else if (i == 0) { WDLog.Log("[FX] TileFragments: SKIPPED"); }
 
@@ -3596,7 +4020,8 @@ namespace WordDrop
                 // shatter point also emits sparkle stars. Always fires during
                 // meltdown (matches TileFragments pattern); otherwise gated by
                 // FX_SparkleSpray toggle.
-                bool sparkleSprayThisShot = (FX_SparkleSpray || meltdownActive || isCascade) && SparkleSpray.Instance != null;
+                bool sparkleSprayThisShot = (FX_SparkleSpray || meltdownActive || isCascade) && SparkleSpray.Instance != null
+                                            && (wordFlash || BLAST_COLLATERAL_SPARKLES);   // 11-07: blast collateral doesn't sparkle
                 if (sparkleSprayThisShot)
                 {
                     if (i == 0) WDLog.Log($"[FX] SparkleSpray (per-tile): FIRED (toggle={FX_SparkleSpray}, meltdown={meltdownActive})");

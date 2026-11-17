@@ -193,6 +193,7 @@ namespace WordDrop
             const float TOPOUT_SPEED = 1.4f;
             float dipDur = UIAnimations.DROP_PHASE_DROP_DUR / TOPOUT_SPEED;
             _sequence.Append(UIAnimations.DropInWithBounce(_panel, speedMult: TOPOUT_SPEED));
+            if (_dim != null) { _dim.DOKill(); _dim.color = new Color(DIM_COLOR.r, DIM_COLOR.g, DIM_COLOR.b, 0f); _sequence.Insert(0f, _dim.DOFade(DIM_COLOR.a, 0.25f)); }
             _sequence.InsertCallback(dipDur, () => GameAudio.Instance?.PlayWood2());
 
             // Phase 2 — DWELL static at the rest position.
@@ -200,6 +201,7 @@ namespace WordDrop
 
             // Phase 3 — EXIT downward at 1.4× speed (~0.25s).
             _sequence.Append(UIAnimations.ExitDown(_panel, speedMult: TOPOUT_SPEED));
+            if (_dim != null) _sequence.Join(_dim.DOFade(0f, 0.25f));
 
             _sequence.OnComplete(() =>
             {
@@ -253,6 +255,14 @@ namespace WordDrop
             // banner bleeds off both left and right of the camera. Anchors
             // collapse vertically at canvas Y=0.5 so height is set by the
             // offsetMin/Max gap (139 ref px = ~370 PSD per Spencer spec).
+            if (PLATE_V2 && DIM_ON)
+            {   // 11-16 Spencer: dim the board under the banner (fades in with the drop, out with the exit)
+                var dimGO = new GameObject("Dim", typeof(RectTransform), typeof(Image));
+                dimGO.transform.SetParent(canvasGO.transform, false);
+                var drt = (RectTransform)dimGO.transform; drt.anchorMin = Vector2.zero; drt.anchorMax = Vector2.one; drt.offsetMin = drt.offsetMax = Vector2.zero;
+                _dim = dimGO.GetComponent<Image>(); _dim.color = new Color(DIM_COLOR.r, DIM_COLOR.g, DIM_COLOR.b, 0f); _dim.raycastTarget = false;
+            }
+
             GameObject panelGO = new GameObject("Panel");
             panelGO.transform.SetParent(canvasGO.transform, false);
             _panel = panelGO.AddComponent<RectTransform>();
@@ -306,10 +316,50 @@ namespace WordDrop
             holdRT.anchorMin = holdRT.anchorMax = new Vector2(0.5f, 0.5f);
             holdRT.pivot     = new Vector2(0.5f, 0.5f);
             holdRT.sizeDelta = new Vector2(10f, 10f); // point; the built icon sizes itself
+            if (PLATE_V2) ApplyPlateV2(panelImg);
         }
 
         /// <summary>(Re)build the remaining-objective icon + count inside the cream pill from the live
         /// objective. Hides the pill if there's no icon-type objective. 2026-06-24 Spencer.</summary>
+        /// <summary>11-16 Spencer ("can we style that in our same style"): the cream/pink strip becomes the cards' purple + gold header
+        /// plate (UI/Panel/header) with the RK cream title. Same drop/dwell/exit. False = the old strip.</summary>
+        public static bool PLATE_V2 = true;
+        /// <summary>11-16 Spencer (later same day): "take out the background tint when the out of moves comes down". False = no dim (board stays full brightness).</summary>
+        public static bool DIM_ON = false;
+        public static Color DIM_COLOR = new Color(0.08f, 0.024f, 0.2f, 0.5f);
+        private Image _dim;
+        public static float PLATE_W = 470f;   // ref px (540 wide canvas)
+        private void ApplyPlateV2(Image panelImg)
+        {
+            var tex = Resources.Load<Texture2D>("UI/Panel/header"); if (tex == null) return;
+            panelImg.color = new Color(0f, 0f, 0f, 0f);   // keep it as the tap absorber
+            foreach (Transform ch in _panel) if (ch.name.EndsWith("Stripe")) ch.gameObject.SetActive(false);
+            var plate = new GameObject("Plate", typeof(RectTransform), typeof(Image)).GetComponent<Image>();
+            plate.transform.SetParent(_panel, false); plate.transform.SetAsFirstSibling();
+            // 11-16 Spencer (mock approved): FULL-WIDTH band - "extend the full size of the screen and cut off the golden rim on the
+            // sides". The plate's top is gently arched, so the band is its flat CENTRE column stretched edge to edge (straight rims).
+            plate.sprite = Sprite.Create(tex, new Rect(tex.width / 2 - 1, 0, 2, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            plate.raycastTarget = false;
+            var prt = plate.rectTransform;
+            float k = PLATE_W / tex.width;
+            prt.anchorMin = new Vector2(0f, 0.5f); prt.anchorMax = new Vector2(1f, 0.5f); prt.pivot = new Vector2(0.5f, 0.5f);
+            prt.sizeDelta = new Vector2(8f, tex.height * k);   // 4 px past each edge
+            prt.anchoredPosition = new Vector2(0f, (tex.height * 0.5f - (20f + 331f) * 0.5f) * k);   // centre the visible band (alpha rows 20-331)
+            if (_titleText != null)
+            {
+                var font = Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF");
+                _titleText.fontSize = 56f / 0.594f / HUDManager.RECIPE_MAX_MUL * k;
+                HUDManager.ApplyRecipeCount(_titleText, LevelIntroModal.V2_TITLE_EDGE_RK, LevelIntroModal.V2_TITLE_STROKE_RK, LevelIntroModal.V2_TITLE_DROP_RK, font);
+                _titleText.characterSpacing = 0f; _titleText.alignment = TextAlignmentOptions.Center;
+                _titleText.enableAutoSizing = true; _titleText.fontSizeMax = _titleText.fontSize; _titleText.fontSizeMin = _titleText.fontSize * 0.5f;
+                var trt = _titleText.rectTransform; trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 0.5f);
+                // centred on the PURPLE FACE (rows ~45-267, centre 156), not the whole band - the band's alpha centre (175.5) counts
+                // the bottom gold bevel + shadow (Spencer 11-16: "its currently counting the bottom bevel")
+                trt.sizeDelta = new Vector2(700f * k, 170f * k); trt.anchoredPosition = new Vector2(0f, (175.5f - 156f) * k);
+                _titleText.transform.SetAsLastSibling();
+            }
+        }
+
         private void RefreshObjectivePill()
         {
             // Pill box + objective icon REMOVED per Spencer 2026-07-07 — the banner is title-only now.

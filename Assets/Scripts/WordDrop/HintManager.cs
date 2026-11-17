@@ -101,15 +101,20 @@ namespace WordDrop
         public static bool HINTS_DISABLED = false;   // 2026-10-22: back ON for the swap game (Spencer: idle hint system)
         /// <summary>Seconds idle before the SWAP hint shows (full board). Royal Match is ~5s; a word game wants a little
         /// more think time.</summary>
-        public static float SWAP_IDLE_SECONDS = 15f;          // 2026-10-22: 6 -> 15, a SAFETY NET for the stuck, not a move-by-move crutch
-        public static float SWAP_OUTLINE_EXTRA_SECONDS = 10f; // free hint: lean only, then the word outline this much later
+        public static float SWAP_IDLE_SECONDS = 5f;           // 2026-10-22: 6 -> 15, a SAFETY NET for the stuck, not a move-by-move crutch. 11-04: 15 -> 8, 11-06: 8 -> 5 (L1-20 recording: static boards 10-13.5 s; RM nudges at ~4 s) (Spencer, after a full L1-20 run at ~12 s/move: "its mostly word hunting, finding no words and then waiting for the hint system to kick in" - the WAIT was the boredom; RM hints at ~5 s)
+        public static float SWAP_OUTLINE_EXTRA_SECONDS = 5f;  // free hint: lean only, then the word outline this much later. 11-04: 10 -> 5 (full word shown at 13 s idle, was 25 s)
         private float IdleThreshold => SurvivalManager.FullBoardActive
             ? (HandManager.NoWordStreak >= FISHING_SWAPS ? FISHING_HINT_SECONDS : _staleNow ? STALE_HINT_SECONDS : SWAP_IDLE_SECONDS)
             : IDLE_THRESHOLD;
         /// <summary>FISHING HINT (2026-10-23: Spencer's run — 54% of swaps made no word although the bot measured ~17 common-word
         /// swaps on every board: the words were THERE, he couldn't see them). After FISHING_SWAPS no-word swaps in a row the
         /// goal-aware hint shows after FISHING_HINT_SECONDS instead of 15s.</summary>
-        public static int   FISHING_SWAPS = 2;
+        // 2026-10-30: with bounce-back a miss is FREE, so 2 misses -> a hint in 1.5s showed a word almost on demand (and made the
+        // Spyglass pointless). Now it takes a real fishing run and a few seconds' wait before the nudge.
+        // 10-30 (Spencer: "is the hint supposed to take so long to fire?"): he missed ~20 swaps on L6 and it never came - each swap
+        // restarted the 4s wait, and the goal shuffle reset the miss count at 3. Now 3 misses + a 1.5s pause.
+        public static int   FISHING_SWAPS = 3;
+        public static float GOAL_HELP_WAIT_MAX = 20f;   // safety: never hold the free hint back longer than this
         public static float FISHING_HINT_SECONDS = 1.5f;
 
         // ── STALE BOARD (2026-10-23 Spencer: "when you have a stale board and nothing looks available thats when i feel the fun
@@ -166,7 +171,7 @@ namespace WordDrop
         public void ResetIdleTimer()
         {
             _staleChecked = false;
-            _strongHint = false; _hintCache = null;   // a new board state after the player's move = a new hint later
+            _strongHint = false; _swapOnly = false; _hintCache = null; _swipeCache = null;   // a new board state after the player's move = a new hint later
             _idleTime = 0f;
             _nextLoopTime = -1f;
             if (_activeStage > 0) ClearVisuals();
@@ -176,9 +181,12 @@ namespace WordDrop
         /// Used by the Lantern Trace booster (manual hint as a roguelite pick).</summary>
         public void ForceShowHint() => ForceShowHint(false);
         /// <summary>strong = the Spyglass booster: BEST move, outline at once, until the player touches the board.</summary>
-        public void ForceShowHint(bool strong)
+        public void ForceShowHint(bool strong) => ForceShowHint(strong, false);
+        /// <summary>swapOnly (10-31): the goal-area shuffle's follow-up hint must point at the goal word the shuffle made - the
+        /// swipe preference had it show an unrelated on-board word ("GEAR") a split second after the shuffle.</summary>
+        public void ForceShowHint(bool strong, bool swapOnly)
         {
-            _strongHint = strong; _hintCache = null;
+            _strongHint = strong; _swapOnly = swapOnly; _hintCache = null; _swipeCache = null;
             ClearVisuals();
             _nextLoopTime = -1f;
             RefreshHint();
@@ -210,7 +218,7 @@ namespace WordDrop
         /// </summary>
         public void OnBoardChanged()
         {
-            _hintCache = null;
+            _hintCache = null; _swipeCache = null;
             if (_activeStage > 0) ClearVisuals();
             // Delay next re-fire so the board animation (row rise, cascade)
             // has time to settle before we cache new base positions.
@@ -219,12 +227,21 @@ namespace WordDrop
 
         private void Update()
         {
-            if (!IsEnabled()) { GateDiag(HINTS_DISABLED ? "HINTS_DISABLED" : "player setting hint_enabled=0"); return; }
+            if (!IsEnabled())
+            {
+                GateDiag(HINTS_DISABLED ? "HINTS_DISABLED" : "player setting hint_enabled=0");
+                // 11-17 (monkey 436301 + Spencer's shot: marching ants left around letters that had since fallen in). With Hints OFF
+                // this returned before anything below ran, but the SPYGLASS still shows its word (it is a booster) - so that hint
+                // was never taken down: the outline stayed and its leaning tile kept being pulled back to its old cell (the
+                // checker's MISPLACED x4). A showing hint still goes away on a touch or when the board starts moving.
+                if (_activeStage > 0 && (WDInput.touchCount > 0 || WDInput.GetMouseButton(0) || !GameplayActive())) ResetIdleTimer();
+                return;
+            }
             if (!GameplayActive()) { ResetIdleTimer(); return; }
 
             // Defensive: any input resets the timer. Picks up taps/drags even
             // if some code path forgot to call ResetIdleTimer explicitly.
-            if (Input.touchCount > 0 || Input.GetMouseButton(0))
+            if (WDInput.touchCount > 0 || WDInput.GetMouseButton(0))
             {
                 ResetIdleTimer();
                 return;
@@ -233,6 +250,11 @@ namespace WordDrop
             _idleTime += Time.deltaTime;
 
             if (!_staleChecked && _idleTime >= STALE_CHECK_DELAY) { _staleChecked = true; StaleCheck(); }
+
+            // ONE THING AT A TIME (10-31): the fishing hint and the goal-area shuffle both trigger on 3 misses + a pause, so
+            // the player saw a lean, then letters hopping, then a different hint inside a second. While the shuffle is
+            // pending (goal area dead, help not used this level) the free hint waits; the shuffle shows its own hint after.
+            if (_activeStage == 0 && !_strongHint && BoardShuffle.GoalHelpPending && _idleTime < GOAL_HELP_WAIT_MAX) return;
 
             // Time to fire / refresh hint?
             if (_idleTime >= IdleThreshold && Time.unscaledTime >= _nextLoopTime)
@@ -274,6 +296,7 @@ namespace WordDrop
             var hm = HandManager.Instance;
             if (hm != null && (hm.IsResolvingChain || HandManager.BonusBlastRunning)) { GateDiag("chain / bonus running"); return false; }
             if (MatchController.Instance != null && MatchController.Instance.IsProcessing) { GateDiag("match processing"); return false; }
+            if (BoosterManager.CascadeBusy) { GateDiag("booster resolving"); return false; }   // 11-17: a booster's fall + cascade is the board moving
             return true;
         }
 
@@ -484,7 +507,14 @@ namespace WordDrop
         public static Vector2Int LastHintA = new Vector2Int(-1, -1), LastHintB = new Vector2Int(-1, -1);
         public static string LastHintWord;
         private SwapHintCache _hintCache;   // ONE hint per idle stretch — a random pick must not jump around on every refresh
-        private bool _strongHint;
+        private bool _strongHint, _swapOnly;
+        private List<Vector2Int> _swipeCache; private string _swipeWord;
+        private static bool SwipeStillThere(GridManager grid, List<Vector2Int> cells, string word)
+        {
+            if (cells == null || word == null || cells.Count != word.Length) return false;
+            for (int i = 0; i < cells.Count; i++) { var t = grid.GetTile(cells[i].x, cells[i].y); if (t == null || char.ToUpperInvariant(t.Letter) != char.ToUpperInvariant(word[i])) return false; }
+            return true;
+        }
         private void RefreshSwapHint()
         {
             var rules = RulesEngine.Instance; var grid = GridManager.Instance;
@@ -501,10 +531,19 @@ namespace WordDrop
             // SWIPE HINT, every other free hint (2026-10-23 Spencer: "maybe i didnt drag to make words cause they werent hinted at
             // much"). A word already on the board (held cascade words etc.) gets the hand tracing across it + a letter-by-letter
             // glow — the L2 lesson's gesture — so swiping stays taught after L2. The Spyglass always shows the strongest SWAP.
-            if (_hintCache == null && !_strongHint && SWIPE_HINTS && (_preferSwipeNext || !rules.FindSwapHint(false, out _, out _, out _))
+            // 10-31 (Spencer: "the hints system gives one hint and then quickly gives another"): the swipe hint was never cached,
+            // so the 3.5s refresh swapped it for an unrelated SWAP hint. Now it is re-shown until the player moves or the board
+            // changes, exactly like the cached swap hint.
+            if (_swipeCache != null)
+            {
+                if (SwipeStillThere(grid, _swipeCache, _swipeWord)) { ShowSwipeHint(grid, _swipeCache, _swipeWord); return; }
+                _swipeCache = null;
+            }
+            if (_hintCache == null && !_strongHint && !_swapOnly && SWIPE_HINTS && (_preferSwipeNext || !rules.FindSwapHint(false, out _, out _, out _))
                 && rules.FindSwipeHint(out var swCells, out var swWord))
             {
                 _preferSwipeNext = false;
+                _swipeCache = swCells; _swipeWord = swWord;
                 ShowSwipeHint(grid, swCells, swWord);
                 return;
             }
@@ -545,6 +584,7 @@ namespace WordDrop
             // Free hint shows the WORD only after a further SWAP_OUTLINE_EXTRA_SECONDS of idling; the Spyglass shows it at once.
             bool showWord = _strongHint || _idleTime >= SWAP_IDLE_SECONDS + SWAP_OUTLINE_EXTRA_SECONDS;
             if (showWord) { EnsureOutline(); if (_outline != null) _outline.Show(cells); }
+            if (_strongHint) PlaythroughStats.Spyglass++; else PlaythroughStats.FreeHints++;
             WDLog.Log($"[Hint] {(_strongHint ? "SPYGLASS" : "free")} swap ({a.x},{a.y})<->({b.x},{b.y}) {cells.Count}-letter word, outline={(showWord ? "on" : "not yet")}");
         }
         /// <summary>Empty space between two tiles' drawn edges along the axis joining them (0 if they meet or overlap).</summary>
@@ -594,8 +634,12 @@ namespace WordDrop
             seq.SetLoops(-1);
             _swapSeqs.Add(seq);
         }
-        public static bool SWIPE_HINTS = true;
+        public static bool SWIPE_HINTS = true, SWIPE_HINT_HAND = false;
         public static Color SWIPE_HINT_GLOW = new Color(1.3f, 1.35f, 1.45f, 1f);
+        // 10-31 Spencer: a hinted GEM's letter wasn't readable - the HDR white glow on the bright cyan face pushed it past 1 and the
+        // bloom washed out the tile, letter included. Gems get a soft, non-HDR glow (brightens without blooming).
+        public static Color SWIPE_HINT_GLOW_GEM = new Color(0.55f, 0.6f, 0.65f, 1f);
+        public static float SWIPE_HINT_GEM_ALPHA = 0.35f;
         private bool _preferSwipeNext;
         private void ShowSwipeHint(GridManager grid, List<Vector2Int> cells, string word)
         {
@@ -610,13 +654,15 @@ namespace WordDrop
                 var tt = t;
                 // A WHITE GLOW, never the gold "real word" face (2026-10-23 Spencer: "some letters were glitching out and turning into gems
                 // and then back" — that gold face reads as a GEM). Soft bloom ripple along the word + a small punch; the face never changes.
-                seq.InsertCallback(0.25f + i * 0.09f, () => { if (tt != null && !tt.HasPrimedGlow) { tt.SetBloomGlow(SWIPE_HINT_GLOW, 0.55f, forceDesktop: true); tt.transform.DOPunchScale(Vector3.one * 0.08f, 0.2f, 4, 0.5f).SetUpdate(true); } });
+                seq.InsertCallback(0.25f + i * 0.09f, () => { if (tt != null && !tt.HasPrimedGlow) { if (tt.IsGem) tt.SetBloomGlow(SWIPE_HINT_GLOW_GEM, SWIPE_HINT_GEM_ALPHA, forceDesktop: true); else tt.SetBloomGlow(SWIPE_HINT_GLOW, 0.55f, forceDesktop: true); tt.transform.DOPunchScale(Vector3.one * 0.08f, 0.2f, 4, 0.5f).SetUpdate(true); } });
                 seq.InsertCallback(0.25f + cells.Count * 0.09f + 0.7f, () => { if (tt != null && !tt.HasPrimedGlow) tt.ClearBloomGlow(); });
             }
             seq.AppendInterval(1.2f);
             seq.SetLoops(-1);
             _swapSeqs.Add(seq);
-            TutorialOverlay.Ensure().ShowHandTrace(cells[0], cells[cells.Count - 1], 0.18f * cells.Count);
+            // 10-31 Spencer: "instead of having the glove shown dragging across the letters just have them light up" - the letter
+            // ripple alone is the hint. SWIPE_HINT_HAND = true brings the hand back (the L2 lesson still teaches the gesture).
+            if (SWIPE_HINT_HAND) TutorialOverlay.Ensure().ShowHandTrace(cells[0], cells[cells.Count - 1], 0.18f * cells.Count);
             LastHintA = cells[0]; LastHintB = cells[cells.Count - 1]; LastHintWord = word;
             WDLog.Log($"[Hint] SWIPE '{word}' ({cells[0].x},{cells[0].y})->({cells[cells.Count - 1].x},{cells[cells.Count - 1].y})");
         }

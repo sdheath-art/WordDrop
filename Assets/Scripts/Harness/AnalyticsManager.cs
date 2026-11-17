@@ -51,6 +51,37 @@ public static class AnalyticsManager
     /// Log an analytics event with key-value pairs.
     /// Example: AnalyticsManager.Log("game_over", "score", 500, "wave", 3);
     /// </summary>
+    // ── PLAYTHROUGH LOG (2026-10-30, Spencer: "i havent done a full playthrough yet"): debug_log.txt is overwritten every launch, so a
+    // playthrough over several sessions was lost. Level results (+ continues, boosters) are APPENDED to one file that survives:
+    // <project>/Playthroughs/playthrough_log.txt in the editor, persistentDataPath on a device. Each stage line also carries the
+    // bounce / shuffle / hint counts for that attempt (PlaythroughStats), then resets them. Claude reads it to calibrate the bot.
+    private static readonly HashSet<string> s_playEvents = new HashSet<string> {
+        "stage_clear", "stage_fail", "continue_accepted", "continue_declined", "booster_activate", "run_end", "game_start", "level_start", "app_pause" };
+    private static void Playthrough(string eventName, Dictionary<string, object> evt)
+    {
+        if (!s_playEvents.Contains(eventName)) return;
+        try
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")).Append(" | ").Append(eventName);
+            foreach (var kv in evt) { if (kv.Key == "event" || kv.Key == "session") continue; sb.Append(' ').Append(kv.Key).Append('=').Append(kv.Value); }
+            if (eventName == "stage_clear" || eventName == "stage_fail")
+            {
+                sb.Append($" bounces={PlaythroughStats.Bounces} shuffles={PlaythroughStats.Shuffles} refreshes={PlaythroughStats.Refreshes} free_hints={PlaythroughStats.FreeHints} spyglass={PlaythroughStats.Spyglass}");
+                sb.Append($" think_sec={PlaythroughStats.ThinkSec:0} busy_sec={PlaythroughStats.BusySec:0}");   // 11-04 pace
+                PlaythroughStats.Reset();
+            }
+#if UNITY_EDITOR
+            string dir = Path.Combine(Application.dataPath, "..", "Playthroughs");
+#else
+            string dir = Path.Combine(Application.persistentDataPath, "Playthroughs");
+#endif
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, "playthrough_log.txt"), sb.ToString() + "\n");
+        }
+        catch (Exception e) { Debug.LogWarning("[Playthrough] write failed: " + e.Message); }
+    }
+
     public static void Log(string eventName, params object[] kvPairs)
     {
         var evt = new Dictionary<string, object>();
@@ -66,6 +97,7 @@ public static class AnalyticsManager
         }
 
         _events.Add(evt);
+        Playthrough(eventName, evt);
 
 #if UNITY_EDITOR
         Debug.Log($"[Analytics] {eventName} | {FormatKV(evt)}");
@@ -221,4 +253,30 @@ public static class AnalyticsManager
         }
         return string.Join(" ", parts);
     }
+}
+
+/// <summary>Per-attempt counters for the playthrough log (reset after each stage_clear / stage_fail line).</summary>
+public static class PlaythroughStats
+{
+    public static int Bounces, Shuffles, Refreshes, FreeHints, Spyglass;
+    // 11-04 PACE (Spencer: "i was pretty bored through it but i dont know if it was the game or me"; his run measured ~12 s per move).
+    // THINK = board idle until the player commits a move; BUSY = from the move until the board is idle again (animations, cascades).
+    public static float ThinkSec, BusySec;
+    private static float s_moveAt = -1f, s_idleAt = -1f;
+    public static void Reset() { Bounces = Shuffles = Refreshes = FreeHints = Spyglass = 0; ThinkSec = BusySec = 0f; s_moveAt = -1f; s_idleAt = -1f; }
+    /// <summary>The player committed a move (swap / swipe).</summary>
+    public static void MoveCommitted()
+    {
+        float now = Time.unscaledTime;
+        if (s_idleAt >= 0f) ThinkSec += now - s_idleAt;
+        s_idleAt = -1f; s_moveAt = now;
+    }
+    /// <summary>Every frame: busy = something is still resolving / animating.</summary>
+    public static void Tick(bool busy)
+    {
+        float now = Time.unscaledTime;
+        if (s_moveAt >= 0f && !busy) { BusySec += now - s_moveAt; s_moveAt = -1f; s_idleAt = now; }
+        else if (s_moveAt < 0f && s_idleAt < 0f && !busy) s_idleAt = now;   // first idle frame of the level
+    }
+    public static void PauseClock() { s_idleAt = -1f; }   // app backgrounded / modal: don't count it as thinking
 }

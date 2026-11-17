@@ -129,9 +129,9 @@ namespace WordDrop
             if (grid == null || _cam == null) return;
 
             // Get pointer position (works for both mouse and touch)
-            Vector3 screenPos = Input.mousePosition;
-            if (Input.touchCount > 0)
-                screenPos = Input.GetTouch(0).position;
+            Vector3 screenPos = WDInput.mousePosition;
+            if (WDInput.touchCount > 0)
+                screenPos = WDInput.GetTouch(0).position;
 
             screenPos.z = Mathf.Abs(_cam.transform.position.z);
             Vector3 worldPos = _cam.ScreenToWorldPoint(screenPos);

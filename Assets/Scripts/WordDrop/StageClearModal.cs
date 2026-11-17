@@ -60,6 +60,29 @@ namespace WordDrop
         private Image _starShadeImage;        // soft dark backing directly behind the star (separation from the FX)
         private Image _heroStarShadowImage;   // soft dark DROP SHADOW offset below the star (grounds it, Candy-Crush style)
         private Image _flashImage;            // full-screen white impact flash on the star landing
+        public static Color COIN_FLASH_COLOR = new Color(1f, 0.82f, 0.40f, 0.70f);   // the coin-count landing flash: light off the coins, not a white screen
+        public static float COIN_FLASH_SIZE = 1.5f, COIN_FLASH_DUR = 0.30f;   // glow diameter in screen widths; fade time
+        private static Sprite s_coinGlow;
+        /// <summary>A radial gold glow centred on the coin pile that fades out - light coming off the coins, instead of tinting
+        /// the whole screen. Uses the soft Particles/glow texture (bright centre, soft falloff).</summary>
+        private void CoinLightFlash(Vector2 anchor)
+        {
+            var parent = _flashImage.transform.parent as RectTransform; if (parent == null) return;
+            if (s_coinGlow == null)
+            {
+                var tex = Resources.Load<Texture2D>("Particles/glow");
+                if (tex != null) s_coinGlow = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            if (s_coinGlow == null) return;
+            var go = new GameObject("CoinLightFlash", typeof(RectTransform), typeof(Image));
+            var rt = (RectTransform)go.transform; rt.SetParent(parent, false); rt.SetAsLastSibling();
+            rt.anchorMin = rt.anchorMax = anchor; rt.pivot = new Vector2(0.5f, 0.5f); rt.anchoredPosition = Vector2.zero;
+            float d = parent.rect.width * COIN_FLASH_SIZE; rt.sizeDelta = new Vector2(d, d);
+            var img = go.GetComponent<Image>(); img.sprite = s_coinGlow; img.raycastTarget = false; img.color = COIN_FLASH_COLOR;
+            rt.localScale = Vector3.one * 0.6f;
+            rt.DOScale(1f, COIN_FLASH_DUR).SetEase(Ease.OutQuad).SetUpdate(true);
+            img.DOFade(0f, COIN_FLASH_DUR).SetEase(Ease.OutQuad).SetUpdate(true).OnComplete(() => { if (go != null) Destroy(go); });
+        }
         private Text _titleText;
         private RectTransform   _titleContainer;  // "Well Done!" single-word 3-layer echo container (holds the CanvasGroup)
         private TextMeshProUGUI _titleFace;       // white face layer
@@ -157,7 +180,7 @@ namespace WordDrop
         // 0.45 was too short to see the celebration; 1.25 (2026-09-10) was a "massive delay"
         // and bought nothing, because the checkmark was being hidden every frame anyway. With
         // that fixed, 0.80 covers the tick's 0.45s pop plus a breath, without the dead air.
-        private const float POST_EXPLOSION_BEAT = 0.80f;
+        private const float POST_EXPLOSION_BEAT = 0.45f;   // 11-06: 0.80 -> 0.45 (dead time before Well Done, see HandManager.BONUS_END_HOLD)
         private float _flyUpWaitStartedAt = -1f;         // when we started holding for fly-ups-to-target
         private const float FLY_UP_MAX_WAIT = 3f;        // safety cap so a dropped fly-up callback can't hang the modal
 
@@ -524,7 +547,7 @@ namespace WordDrop
             SetCanvasVisible(true);
 
             // Kick off the choreographed entrance.
-            AnimateEntrance(ctx);
+            if (REVEAL_V2) AnimateReveal(ctx, coinsDelta); else AnimateEntrance(ctx);
         }
 
         /// <summary>
@@ -539,6 +562,9 @@ namespace WordDrop
         {
             _entranceSequence?.Kill();
             _entranceSequence = null;
+            if (_revealWave != null) { StopCoroutine(_revealWave); _revealWave = null; }
+            _confettiOnLand = null;
+            if (_revealRoot != null) foreach (var tr in _revealRoot.GetComponentsInChildren<Transform>(true)) { tr.DOKill(); var g = tr.GetComponent<Graphic>(); if (g != null) g.DOKill(); }   // REVEAL_V2 (incl. the endless tap pulse)
             _scoreCountTween?.Kill();
             _scoreCountTween = null;
             _coinCountTween?.Kill();
@@ -1743,9 +1769,552 @@ namespace WordDrop
             press.Append(t.DOScale(1f, 0.08f).SetEase(Ease.OutQuad));
         }
 
+        // ── REVEAL v2 (11-02, Spencer picked the Royal Match reward-reveal mock over a card: panels/well_done_1102/
+        // well_done_compare.png). No card: the scene dims, a big "Well Done!" + "Level N Complete" on top, the coins pop in as a
+        // pile with a green ribbon count that tallies up, confetti falls, "Tap to Continue". Keeps every bit of the modal's
+        // lifecycle (pause, music, refill, coin payout, tap lockout, map-flow dismiss) - only the picture changes. The old
+        // star/echo content is switched off (not deleted): REVEAL_V2 = false brings it back.
+        public static bool REVEAL_V2 = true;
+        public static bool REVEAL_CHEER = true;   // 11-16: the crowd "yay" as Spellbound appears
+        private GameObject _revealRoot;
+        private TextMeshProUGUI _revealCount;
+        // 11-03 Spencer: "can it tint to almost black for the well done card?" - its own, deeper dim (the shared MODAL_DIM is a deep
+        // purple #1A0B2E at 91%); near-black with a hint of violet so the rays, glow and coins carry all the colour.
+        public static Color REVEAL_DIM_COLOR = new Color32(0x07, 0x03, 0x0E, 0xFD);   // 11-03 v2: alpha 95% -> 99.2%. The project is LINEAR, so a UI dim blends in linear light: 95% left the library at sRGB lum ~30 (measured). 99.2% lands ~13-18 = RM's reveal (9-17), with a faint ghost of the scene
+        private static Color REVEAL_DIM => REVEAL_DIM_COLOR;
+
+        private void AnimateReveal(SurvivalManager.StageClearContext ctx, int coins)
+        {
+            if (_panel == null) return;
+            if (_revealRoot != null) Destroy(_revealRoot);
+            foreach (Transform ch in _panel.transform) ch.gameObject.SetActive(false);   // old star / echo / chips off
+            if (_overlayImage != null) { _overlayImage.sprite = null; _overlayImage.color = new Color(REVEAL_DIM.r, REVEAL_DIM.g, REVEAL_DIM.b, 0f); _overlayImage.DOFade(REVEAL_DIM.a, 0.35f).SetUpdate(true); }
+            if (_panelGroup != null) _panelGroup.alpha = 1f;
+
+            _revealRoot = new GameObject("Reveal", typeof(RectTransform)); _revealRoot.transform.SetParent(_panel.transform, false);
+            var root = (RectTransform)_revealRoot.transform; root.anchorMin = Vector2.zero; root.anchorMax = Vector2.one; root.offsetMin = root.offsetMax = Vector2.zero;
+            Canvas.ForceUpdateCanvases();
+            var crt = (RectTransform)_canvas.transform;
+            float W = Mathf.Max(1f, crt.rect.width), H = Mathf.Max(1f, crt.rect.height), k = W / 1179f;   // mock px -> canvas units
+
+            // title + subtitle (recipe lettering, as the level cards)
+            var title = RevealText(root, HERO_GOLD ? WIN_PHRASE : "Well Done!", (HERO_GOLD ? HERO_CAP : 150f) * k, new Vector2(0f, H * (0.5f - 0.17f)), new Vector2(W, 260f * k));
+            HUDManager.ApplyRecipeCount(title, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, HERO_GOLD ? Resources.Load<TMP_FontAsset>("WordSlop Title SDF") : null);
+            // 11-02 Spencer: "the text doesnt match the mock ... a kerning problem". Measured: same font and size, but the mock's
+            // title has a much heavier stroke (7.5% of cap) and drop (12%), so its letters touch; the HUD recipe left 15 px gaps.
+            // Title-only material: fatter face + stroke + drop, tighter tracking, and the mock's cream face gradient.
+            var tm = new Material(title.fontSharedMaterial) { name = "WellDoneTitle" };
+            tm.SetFloat("_FaceDilate", REVEAL_TITLE_DILATE); tm.SetFloat("_OutlineWidth", REVEAL_TITLE_STROKE); tm.SetFloat("_UnderlayDilate", REVEAL_TITLE_STROKE);
+            tm.SetFloat("_UnderlayOffsetY", -REVEAL_TITLE_DROP);
+            title.fontSharedMaterial = tm; title.characterSpacing = REVEAL_TITLE_TRACK;
+            title.enableVertexGradient = true; title.color = Color.white;
+            title.colorGradient = new VertexGradient(new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF));
+            if (HERO_GOLD) HeroFace(title, tm);
+            var sub = RevealText(root, $"Level {LevelMapPanel.DisplayNum(ctx.ClearedStage)} Complete", 62f * k, new Vector2(0f, H * (0.5f - 0.17f) - 165f * k), new Vector2(W, 120f * k));
+            HUDManager.ApplyRecipeCount(sub, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f);
+            sub.alpha = 0f;
+            // 11-02 Spencer: "text animation maybe staggered by letter like in royal match" - each letter drops in and pops
+            // past full size, one after another (TMP vertex animation; the recipe outline/drop ride along in the SDF material)
+            _revealWave = StartCoroutine(REVEAL_SLAM ? LetterWave(title, SLAM_STAGGER, SLAM_EACH, REVEAL_TITLE_ARCH) : LetterWave(title, 0.05f, 0.42f, REVEAL_TITLE_ARCH));
+            // 11-16 Spencer ("what happened to the people cheering SFX from the well done screen? can we bring it back when spellbound
+            // appears?"): the old Well Done (AnimateEntrance) played SFX/yay 0.6 s in; the REVEAL_V2 rebuild never called it.
+            if (REVEAL_CHEER) GameAudio.Instance?.PlayYay();
+            sub.DOFade(1f, 0.3f).SetDelay(0.25f).SetUpdate(true);
+
+            // soft warm light behind the reward
+            float cy = H * (0.5f - 0.46f);
+            // 11-02 Spencer: "a glow behind it like you have in the splash screens" - the MechanicSplash glow (additive ProgressComet
+            // glow, warm gold, ~1.9x the icon, scales in then breathes .9 <-> .55), behind the coin pile
+            // 11-03 (Spencer: the Layer Lab Item_Food_Glow look "behind whatever they won"): a baked 3-tier glow that HUGS the coin pile
+            // (cream rim -> gold -> wide magenta haze, the measured Neon2 stack; ~/Documents/WordDrop_Art/hero_glow_1103/make_glow.py).
+            // It replaces the round additive glow; REVEAL_PILE_GLOW = false brings that back.
+            if (REVEAL_PILE_GLOW)
+            {
+                var pgTex = Resources.Load<Texture2D>("UI/well_done_pile_glow");
+                if (pgTex != null)
+                {
+                    var pg = NewRevealImage(root, "PileGlow", Sprite.Create(pgTex, new Rect(0, 0, pgTex.width, pgTex.height), new Vector2(0.5f, 0.5f), 100f), Color.white);
+                    pg.raycastTarget = false;
+                    var prt = pg.rectTransform; prt.anchorMin = prt.anchorMax = new Vector2(0.5f, 0.5f); prt.pivot = new Vector2(0.5f, 0.5f);
+                    prt.sizeDelta = new Vector2(pgTex.width, pgTex.height) * k;               // baked at mock px (1179 wide)
+                    prt.anchoredPosition = new Vector2(0f, cy + REVEAL_PILE_GLOW_Y * k);      // centred on the pile's bbox
+                    prt.localScale = Vector3.zero;
+                    prt.DOScale(1f, 0.35f).SetEase(Ease.OutBack, 1.6f).SetDelay(REVEAL_COIN_SLAM ? REVEAL_IMPACT_AT - 0.05f : 0.35f).SetUpdate(true)   // 11-07 sound pass: the glow showed as a lone blob before the coins slammed in
+                        .OnComplete(() => { if (pg != null) pg.DOFade(0.8f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetLink(pg.gameObject); });
+                }
+            }
+            var glow = ProgressComet.AddFx(root, ProgressComet.GlowSprite, new Color(1f, 0.85f, 0.45f, 0.9f), REVEAL_GLOW_SIZE * k);
+            glow.raycastTarget = false; glow.transform.SetAsFirstSibling();
+            if (REVEAL_PILE_GLOW) glow.gameObject.SetActive(false);
+            var grt = glow.rectTransform; grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f); grt.pivot = new Vector2(0.5f, 0.5f);
+            grt.anchoredPosition = new Vector2(0f, cy + REVEAL_RAYS_LIFT * k); grt.sizeDelta = Vector2.one * REVEAL_GLOW_SIZE * k;
+            grt.localScale = Vector3.zero;
+            grt.DOScale(1f, 0.35f).SetEase(Ease.OutQuad).SetDelay(0.3f).SetUpdate(true)
+                .OnComplete(() => { if (glow != null) glow.DOFade(0.55f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetLink(glow.gameObject); });
+
+            // coin pile: the HUD coin (the game's coin ramp), three coins popping in one after another
+            var coinTex = Resources.Load<Texture2D>("UI/HudBar/hud_coin");
+            var coinSpr = coinTex != null ? Sprite.Create(coinTex, new Rect(0, 0, coinTex.width, coinTex.height), new Vector2(0.5f, 0.5f), 100f) : null;
+            var pile = new[] { new Vector3(-120f, -40f, 230f), new Vector3(120f, -40f, 230f), new Vector3(0f, 30f, 300f) };
+            _revealCoins.Clear(); _revealCoinAmount = coins; _coinFlightRunning = false;
+            for (int i = 0; i < pile.Length; i++)
+            {
+                var c = NewRevealImage(root, "Coin", coinSpr, Color.white); c.preserveAspect = true; _revealCoins.Add(c);
+                int coinIdx = i;   // loop variable captured per coin (closures)
+                c.rectTransform.anchoredPosition = new Vector2(pile[i].x * k, cy + pile[i].y * k); c.rectTransform.sizeDelta = Vector2.one * pile[i].z * k;
+                c.transform.localScale = Vector3.zero;
+                if (REVEAL_COIN_SLAM && i == pile.Length - 1)
+                {   // 11-06 (RM 3:04: the star comes in HUGE - bigger than the card - and slams onto its cushion with a sparkle
+                    // burst): the big coin slams from COIN_SLAM_START x, landing exactly on REVEAL_IMPACT_AT (the burst), the small
+                    // coins pop in around it as it lands. Same gesture as the "Spellbound!" letters.
+                    float land = REVEAL_IMPACT_AT, dur = COIN_SLAM_DUR;
+                    var cg = c; cg.color = new Color(1f, 1f, 1f, 0f);
+                    var sq = DOTween.Sequence().SetUpdate(true).SetTarget(c.transform);
+                    sq.AppendInterval(Mathf.Max(0f, land - dur));
+                    sq.AppendCallback(() => { if (cg != null) { cg.transform.localScale = Vector3.one * COIN_SLAM_START; cg.color = Color.white; } GameAudio.Instance?.PlaySparkleWhoosh(); });
+                    sq.Append(c.transform.DOScale(0.9f, dur).SetEase(Ease.InQuad));          // accelerate down onto the pile
+                    sq.Append(c.transform.DOScale(1f, 0.16f).SetEase(Ease.OutBack, 3f));     // impact squash -> settle
+                    continue;
+                }
+                float popAt = REVEAL_COIN_SLAM ? REVEAL_IMPACT_AT + 0.02f + 0.06f * i : 0.35f + 0.12f * i;
+                c.transform.DOScale(1f, 0.35f).SetEase(Ease.OutBack, 2.5f).SetDelay(popAt).SetUpdate(true)
+                    .OnStart(() => { if (GameAudio.Instance != null && GameAudio.Instance.HasKit("win_coin_pop")) GameAudio.Instance.PlayKit("win_coin_pop", 1f, 1f + 0.08f * coinIdx); else GameAudio.Instance?.PlaySparkleWhoosh(); });   // 11-07 Spencer's pick: Short Highlight Coin D3, a little higher per coin
+            }
+
+            // 11-03 Spencer: "the gems have that one sparkle in the top corner for idle animation - add that to the reward". The gem's
+            // twinkle (GemTwinkle: FX/gem_twinkle star pops on the top-left, quarter turn, shrinks away) on a random coin of the pile,
+            // every REVEAL_TWINKLE_PERIOD s while the reveal is up, with an additive warm-gold copy behind it so it reads as light.
+            if (REVEAL_TWINKLE) StartCoroutine(RevealTwinkleLoop(root, k));
+            // 11-06 Spencer (RM full playthrough 3:04, the Well Done star): a continuous field of small 4-point twinkles around the
+            // reward - each pops in, drifts slowly outward and fades, ~8 alive at once. Starts once the pile has landed.
+            if (REVEAL_IDLE_SPARKLES) StartCoroutine(RevealIdleSparkles(root, new Vector2(0f, cy - 5f * k), 250f * k));
+            // 11-02 WOW pass (Spencer "sure lets see what happens"): the old star screen's tuned FX, re-aimed at the coin pile.
+            // (1) god RAYS behind the coins, (2) the landing BURST when the big coin lands (shockwave, gold glare, gold stars,
+            // sparkle streaks, white flash, haptic), (3) coins FLY into the coin counter on Tap to Continue (OnContinuePressed).
+            // centred on the BIG coin (pile offset +30, plus the rays art's own low centre) - 11-02 Spencer: rays read low, behind the ribbon
+            var coinAnchor = new Vector2(0.5f, Mathf.Clamp01(0.5f + (cy + REVEAL_RAYS_LIFT * k) / H));   // the coin pile's visual centre
+            if (!REVEAL_RAYS && _raysRect != null) _raysRect.gameObject.SetActive(false);   // 11-03 Spencer: "i dont like the rays, could you remove them for now"
+            if (REVEAL_RAYS && _raysRect != null && _raysImage != null)
+            {
+                _raysRect.gameObject.SetActive(true); _raysRect.SetSiblingIndex(_revealRoot.transform.GetSiblingIndex()); _revealRoot.transform.SetAsLastSibling();   // 11-02 fix: moving the rays to the reveal's index pushed the reveal BELOW them
+                _raysRect.anchorMin = _raysRect.anchorMax = coinAnchor; _raysRect.pivot = new Vector2(0.5f, REVEAL_RAYS_PIVOT_Y); _raysRect.anchoredPosition = Vector2.zero;   // pivot = where the rays art converges, so it sits AND spins on the coins _raysRect.sizeDelta = Vector2.one * W * REVEAL_RAYS_SIZE;
+                _raysRect.localScale = Vector3.zero; _raysRect.localRotation = Quaternion.identity;
+                var rc0 = _raysImage.color; _raysImage.color = new Color(rc0.r, rc0.g, rc0.b, 0f);
+            }
+            if (_heroStarRect != null) { _heroStarRect.anchorMin = _heroStarRect.anchorMax = coinAnchor; _heroStarRect.anchoredPosition = Vector2.zero; }
+            DOVirtual.DelayedCall(REVEAL_IMPACT_AT, () =>
+            {
+                if (_revealRoot == null || _isDismissing) return;
+                SpawnGlarePop(); SpawnGoldStars(); SpawnBlickBurst();   // 11-02 Spencer: no expanding ring (shockwave) - 'i dont like that circle'
+                if (REVEAL_COIN_SLAM) { if (GameAudio.Instance != null && GameAudio.Instance.HasKit("coin_slam")) GameAudio.Instance.PlayKit("coin_slam"); else GameAudio.Instance?.PlayCoinLand(); }   // 11-07 pick: Impact Treasure A3
+                HapticsManager.MegaImpact();
+                if (_flashImage != null) CoinLightFlash(coinAnchor);   // 11-06 Spencer "b": warm gold LIGHT off the coins. v1 tinted the full-screen flash gold - in the 10:12 recording it read as a flat mustard screen; was white .55 (grey screen)
+                if (_raysRect != null && _raysImage != null)
+                {
+                    _raysRect.DOScale(1f, 0.45f).SetEase(Ease.OutCubic).SetUpdate(true);
+                    _raysImage.DOFade(0.44f, 0.35f).SetEase(Ease.OutQuad).SetUpdate(true)
+                        .OnComplete(() => { if (_raysImage != null) _raysImage.DOFade(0.18f, 0.85f).SetLoops(-1, LoopType.Yoyo).SetEase(Ease.InOutSine).SetUpdate(true); });
+                    _raysRect.DORotate(new Vector3(0f, 0f, 360f), 26f, RotateMode.FastBeyond360).SetLoops(-1, LoopType.Restart).SetEase(Ease.Linear).SetUpdate(true);
+                }
+            }).SetUpdate(true).SetTarget(_revealRoot.transform);
+
+            // green ribbon with the count (tallies up)
+            var ribbon = new GameObject("Ribbon", typeof(RectTransform)).GetComponent<RectTransform>(); ribbon.SetParent(root, false);
+            ribbon.anchoredPosition = new Vector2(0f, cy - (REVEAL_PLAIN_COUNT ? REVEAL_PLAIN_DROP_Y : 185f) * k); ribbon.sizeDelta = new Vector2(380f * k, 110f * k);   // 11-04: the plain count sits a little lower
+            var rs = MenuUI.GetRoundedRectSprite(Mathf.Max(4, Mathf.RoundToInt(REVEAL_BADGE_RADIUS * k)));   // 11-02 Spencer: squared off like the mock, no ribbon ends
+            var rsHi = MenuUI.GetRoundedRectSprite(Mathf.Max(3, Mathf.RoundToInt((REVEAL_BADGE_RADIUS - 4f) * k)));
+            if (REVEAL_PLAIN_COUNT)
+            {   // 11-04 (Spencer chose the mock's right-hand style, ref "100" from his screenshot): no green badge - the count alone,
+                // our HUD number recipe (cream->pale-yellow gradient face, solid purple outline + drop), a bit bigger than it was
+                // on the badge. Same language as "Well Done!" and the HUD. false = the green badge.
+                _revealCount = RevealText(ribbon, "+0", REVEAL_PLAIN_SIZE * k, Vector2.zero, ribbon.sizeDelta);
+                HUDManager.ApplyRecipeCount(_revealCount, HUDManager.HUD_INK, REVEAL_PLAIN_STROKE, REVEAL_PLAIN_DROP);
+            }
+            else
+            {
+            var under = NewRevealImage(ribbon, "Under", rs, new Color32(0x24, 0x4A, 0x0E, 0xFF)); under.type = Image.Type.Sliced; FillRect(under.rectTransform, new Vector2(0f, -9f * k));
+            var face = NewRevealImage(ribbon, "Face", rs, new Color32(0x54, 0xB2, 0x2C, 0xFF)); face.type = Image.Type.Sliced; FillRect(face.rectTransform, Vector2.zero);
+            var hl = NewRevealImage(ribbon, "Hi", rsHi, new Color32(0x7E, 0xD2, 0x4A, 0xFF)); hl.type = Image.Type.Sliced;
+            var hrt = hl.rectTransform; hrt.anchorMin = new Vector2(0f, 0.55f); hrt.anchorMax = Vector2.one; hrt.offsetMin = new Vector2(8f * k, 0f); hrt.offsetMax = new Vector2(-8f * k, -6f * k);
+            _revealCount = RevealText(ribbon, "+0", 70f * k, Vector2.zero, ribbon.sizeDelta);
+            HUDManager.ApplyRecipeCount(_revealCount, new Color32(0x23, 0x4A, 0x0C, 0xFF), 0.19f, -0.9f);
+            }
+            ribbon.localScale = Vector3.zero;
+            ribbon.DOScale(1f, 0.3f).SetEase(Ease.OutBack).SetDelay(0.7f).SetUpdate(true);
+            int shown = 0;
+            _coinCountTween = DOTween.To(() => shown, v => { shown = v; if (_revealCount != null) { _revealCount.text = "+" + v; if (REVEAL_PLAIN_COUNT) CentreOnInk(_revealCount); } }, coins, 0.6f).SetDelay(REVEAL_COIN_SLAM ? REVEAL_IMPACT_AT + 0.05f : 0.8f).SetUpdate(true);
+            if (REVEAL_COIN_SLAM && _revealCount != null)
+            {   // 11-06 (recording #3: "+0" sat under the coin while it was still slamming in) - the count appears as the coin lands
+                _revealCount.alpha = 0f; _revealCount.DOFade(1f, 0.15f).SetDelay(REVEAL_IMPACT_AT).SetUpdate(true);
+            }
+            if (REVEAL_PLAIN_COUNT) CentreOnInk(_revealCount);
+
+            // tap prompt (appears once the tap lockout ends)
+            // 11-06 Spencer: "add a continue button" (RM's card has a green Continue) - the level card's green pill, popping in
+            // when the tap lockout ends. Tapping anywhere still continues too.
+            ArtButton cont = REVEAL_CONTINUE_BUTTON ? ArtButton.Create(root, "pill_play", "Continue", lilita: false, titleMedium: false)   /* 11-06 Spencer: Title Medium, then back to WordSlop Button */ : null;
+            if (cont != null)
+            {
+                cont.name = "BtnContinue";
+                // 11-16 Spencer: "the purple light line doesnt really make sense here since its not sitting on a purple panel" - the Play
+                // frame's light lavender outer ring belongs to the purple card; on the dark win screen use the dark-ring-only frame.
+                if (CONTINUE_DARK_FRAME)
+                {
+                    var fr = cont.transform.Find("Art/Frame") ?? FindDeep(cont.transform, "Frame");
+                    var darkFrame = Resources.Load<Sprite>("UI/Buttons/pill_play_frame_dark");
+                    if (fr != null && darkFrame != null && fr.GetComponent<Image>() is Image fi) fi.sprite = darkFrame;
+                    // 11-16 Spencer: "can you remove the dark purple around the continue button as well?" - no frame at all, just the green pill
+                    if (CONTINUE_NO_FRAME && fr != null && fr.GetComponent<Image>() is Image fi2) fi2.enabled = false;
+                }
+                // 11-07 Spencer: "the continue button needs the same button sounds as the others" - the ArtButton plays its own press
+                // (pointer down) + release like every button; ContinueDismiss skips its release pop when the button triggered it
+                // 11-06 Spencer's screenshot: "Continue is not centered" - it auto-shrinks (the box was fitted to "Play") and sat
+                // ~13 px low on the face; lift it by CONTINUE_LABEL_LIFT of the label's em
+                var lbl = cont.transform.Find("Art/Face/Label") ?? FindDeep(cont.transform, "Label");
+                if (lbl is RectTransform lrt) lrt.anchoredPosition += new Vector2(0f, CONTINUE_LABEL_LIFT * lrt.sizeDelta.y * 0.5f);
+                var crtB = (RectTransform)cont.transform;
+                // 11-16: 25% bigger like Play (was 0.25..0.75 x 0.115..0.215), same centre
+                crtB.anchorMin = new Vector2(0.5f - 0.25f * CONTINUE_SCALE, 0.165f - 0.05f * CONTINUE_SCALE); crtB.anchorMax = new Vector2(0.5f + 0.25f * CONTINUE_SCALE, 0.165f + 0.05f * CONTINUE_SCALE);
+                crtB.offsetMin = crtB.offsetMax = Vector2.zero; crtB.pivot = new Vector2(0.5f, 0.5f);
+                cont.Refit();
+                cont.Button.onClick.AddListener(() => { _continueByButton = true; OnContinuePressed(); _continueByButton = false; });
+                crtB.localScale = Vector3.zero;
+                crtB.DOScale(1f, 0.35f).SetEase(Ease.OutBack, 2f).SetDelay(CONTINUE_LOCKOUT).SetUpdate(true);
+            }
+            else
+            {
+                var tap = RevealText(root, "Tap to Continue", 54f * k, new Vector2(0f, H * (0.5f - 0.82f)), new Vector2(W, 100f * k));
+                HUDManager.ApplyRecipeCount(tap, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f);
+                tap.alpha = 0f; tap.DOFade(1f, 0.3f).SetDelay(CONTINUE_LOCKOUT).SetUpdate(true)
+                    .OnComplete(() => { if (tap != null) tap.DOFade(0.55f, 0.8f).SetLoops(-1, LoopType.Yoyo).SetUpdate(true); });
+            }
+
+            // confetti v2 (11-02 Spencer: side confetti "looked weak", research it). Modelled on canvas-confetti's side-cannon and
+            // 'realistic' presets: per-frame velocity DECAY ~0.9 (= drag ~6/s: a violent burst that stops dead and HANGS), very
+            // light gravity (pieces float down at ~0.25 screen/s instead of dropping), LAYERED bursts per cannon (a tight fast
+            // core, a wider mid, a wide slow spray of bigger pieces), several volleys over ~0.6 s, sideways flutter and a 3D
+            // tumble on two axes (scale by cos of each angle). v1 used drag 1.9 + fall ~1.4 screen/s: it fell out fast = weak.
+            System.Action fireConfetti = () => {
+            var cols = new Color[] { new Color32(0xFF, 0xD2, 0x28, 0xFF), new Color32(0xF5, 0x46, 0x5A, 0xFF), new Color32(0x5A, 0xC8, 0xFF, 0xFF), new Color32(0xA0, 0x6E, 0xFF, 0xFF), Color.white, new Color32(0x4C, 0xD9, 0x7A, 0xFF) };
+            // (share of pieces, spread deg, speed in screen heights/s, size scalar)
+            var layers = new[] { new Vector4(0.25f, 26f, 5.2f, 0.9f), new Vector4(0.30f, 60f, 4.4f, 1f), new Vector4(0.25f, 100f, 3.6f, 0.8f), new Vector4(0.20f, 120f, 2.6f, 1.25f) };
+            float[] volleys = { 0f, 0.22f, 0.5f };
+            int perVolley = Mathf.Max(8, REVEAL_CONFETTI / (2 * volleys.Length));
+            for (int vIdx = 0; vIdx < volleys.Length; vIdx++)
+            for (int side = -1; side <= 1; side += 2)
+            for (int i = 0; i < perVolley; i++)
+            {
+                float r = Random.value, acc = 0f; Vector4 L = layers[layers.Length - 1];
+                foreach (var l in layers) { acc += l.x; if (r <= acc) { L = l; break; } }
+                var p = NewRevealImage(REVEAL_CONFETTI_BEHIND ? ConfettiLayer(root) : root, "Confetti", null, cols[Random.Range(0, cols.Length)]);
+                var prt = p.rectTransform;
+                bool streamer = Random.value < REVEAL_STREAMER_SHARE;
+                prt.sizeDelta = (streamer ? new Vector2(Random.Range(10f, 14f), Random.Range(60f, 90f)) : new Vector2(Random.Range(20f, 30f), Random.Range(28f, 44f))) * k * L.w * (vIdx == 0 ? 1f : 0.85f) * REVEAL_CONFETTI_SIZE;
+                Vector2 p0 = new Vector2(side * W * 0.5f, -H * 0.12f);
+                float ang = (REVEAL_CANNON_ANGLE + Random.Range(-L.y, L.y) * 0.5f) * Mathf.Deg2Rad;    // from horizontal, aimed inward
+                float spd = L.z * H * Random.Range(0.75f, 1.1f) * (vIdx == 0 ? 1f : 0.8f);
+                Vector2 v0 = new Vector2(-side * Mathf.Cos(ang) * spd, Mathf.Sin(ang) * spd);
+                const float drag = 6.0f;                                    // = decay 0.905 per 60fps frame
+                float fall = H * Random.Range(0.18f, 0.30f);                 // terminal float-down speed
+                float dur = Random.Range(3.0f, 4.2f), delay = volleys[vIdx] + Random.Range(0f, 0.06f);
+                float spinZ = Random.Range(-400f, 400f), fx = Random.Range(4f, 9f), fy = Random.Range(3f, 7f), ph = Random.Range(0f, 6.28f);
+                float sway = Random.Range(25f, 55f) * k, swayF = Random.Range(2.5f, 4.5f);
+                prt.anchoredPosition = p0; var col = p.color; p.color = new Color(col.r, col.g, col.b, 0f);
+                DOVirtual.Float(0f, dur, dur, t =>
+                {
+                    if (prt == null) return;
+                    float e = Mathf.Exp(-drag * t), burst = (1f - e) / drag;
+                    Vector2 pos = p0 + v0 * burst;
+                    pos.y -= fall * Mathf.Max(0f, t - burst);                                       // gravity balanced by drag -> constant float
+                    pos.x += Mathf.Sin(ph + t * swayF) * sway * Mathf.Clamp01(t * 1.5f);            // paper sways as it falls
+                    prt.anchoredPosition = pos;
+                    prt.localRotation = Quaternion.Euler(0f, 0f, spinZ * t + ph * 57f);
+                    prt.localScale = new Vector3(Mathf.Cos(ph + t * fx), Mathf.Cos(ph * 0.7f + t * fy), 1f);   // 3D tumble (two axes)
+                    p.color = new Color(col.r, col.g, col.b, t < 0.03f ? t / 0.03f : Mathf.Clamp01((dur - t) / 0.6f));
+                }).SetDelay(delay).SetEase(Ease.Linear).SetUpdate(true).SetTarget(prt);
+            }
+            };
+            // 11-16 (Spencer: "the spellbound screen is missing the cheering sfx"): the cheer (personal_best) rode along with the confetti onto
+            // the last letter and landed on the SAME frame as spellbound_finish + coin_slam + 2 win_coin_pops - masked. It plays at the
+            // screen open again (where it always was); only the confetti waits for the last letter.
+            GameAudio.Instance?.PlayPersonalBest();
+            // 11-16 (Spencer: "can the confetti come out on the last drop of the spellbound word?"): the cannons fire when the title's
+            // LAST letter lands (LetterWave), not when the screen opens. Fallback: fire after CONFETTI_MAX_WAIT if no wave lands it.
+            if (CONFETTI_ON_LAST_LETTER && REVEAL_SLAM && _revealWave != null)
+            {
+                _confettiOnLand = fireConfetti;
+                DOVirtual.DelayedCall(CONFETTI_MAX_WAIT, () => { if (_confettiOnLand == fireConfetti) { _confettiOnLand = null; fireConfetti(); } }, ignoreTimeScale: true).SetTarget(root);
+            }
+            else fireConfetti();
+        }
+        public static bool  CONFETTI_ON_LAST_LETTER = true;
+        public static float CONFETTI_MAX_WAIT = 2.5f;
+        private System.Action _confettiOnLand;
+        public static bool  REVEAL_PLAIN_COUNT = true;
+        public static float REVEAL_PLAIN_DROP_Y = 300f;   // 11-06 Spencer: "inch the +coins text off the glow" (215 -> 265 -> 300 "even further down")   // 11-04 (Spencer: "position the +number a little lower"): mock px below the pile centre (was 185, the badge's spot)
+        /// <summary>11-04 (Spencer: "make sure its centered to the gold coins"): TMP centres the string's ADVANCE box - the '+' and the
+        /// down-right extrusion pull the visible number off the pile's centre line. Shift the text so its drawn glyph bounds sit
+        /// centred on x = 0 (the pile's centre); re-run whenever the count changes.</summary>
+        private static void CentreOnInk(TMP_Text t)
+        {
+            if (t == null) return;
+            var rt = t.rectTransform; var p = rt.anchoredPosition; p.x = 0f; rt.anchoredPosition = p;
+            t.ForceMeshUpdate();
+            var info = t.textInfo; if (info == null || info.characterCount == 0) return;
+            float lo = float.MaxValue, hi = float.MinValue;
+            for (int i = 0; i < info.characterCount; i++)
+            {
+                var ch = info.characterInfo[i]; if (!ch.isVisible) continue;
+                lo = Mathf.Min(lo, ch.bottomLeft.x); hi = Mathf.Max(hi, ch.topRight.x);
+            }
+            if (lo > hi) return;
+            p.x = -(lo + hi) * 0.5f * rt.localScale.x; rt.anchoredPosition = p;
+        }   // 11-04: the coin count without the green badge (see the reveal build)
+        public static float REVEAL_PLAIN_SIZE = 96f, REVEAL_PLAIN_STROKE = 0.22f, REVEAL_PLAIN_DROP = -1.0f;   // mock px / TMP material units
+        public static float REVEAL_BADGE_RADIUS = 18f;   // mock px; was 40 (near-pill)
+        public static float REVEAL_RAYS_SIZE = 1.45f, REVEAL_IMPACT_AT = 0.85f, REVEAL_RAYS_LIFT = 5f, REVEAL_RAYS_PIVOT_Y = 0.5f;   // 11-03: even rays art (VFX_Rays rebuilt symmetric) converges at the centre - was 0.471 for the old lopsided art   // 11-02 v4: measured vfx_rays converges at (0.502, 0.529 from top); centred ON the coins, big enough to reach behind the ribbon   // 11-02 v3: centred on the whole reward (coins + ribbon), Spencer "rays should be behind the badge as well"   // rays width (screen widths); burst time = the big coin's landing
+        private readonly List<Image> _revealCoins = new List<Image>();
+        private int _revealCoinAmount; private bool _coinFlightRunning;
+        public static int REVEAL_FLY_COINS = 8;
+        public static float REVEAL_GLOW_SIZE = 860f;   // mock px (pile ~470 wide; splash = 560 behind a 300 icon)
+        public static bool  REVEAL_TWINKLE = true;
+        public static float REVEAL_TWINKLE_PERIOD = 2.2f, REVEAL_TWINKLE_SIZE = 0.62f;   // seconds between twinkles; star size x the coin
+        public static Vector2 REVEAL_TWINKLE_SPOT = new Vector2(-0.30f, 0.32f);          // from the coin centre, x coin size (top-left, as on the gems)
+        private static Sprite s_twinkleStar;
+        public static bool  REVEAL_IDLE_SPARKLES = true;
+        public static float IDLE_SPARKLE_EVERY = 0.09f, IDLE_SPARKLE_LIFE = 0.9f;
+        private System.Collections.IEnumerator RevealIdleSparkles(RectTransform root, Vector2 centre, float radius)
+        {
+            yield return new WaitForSecondsRealtime(0.9f);
+            var warm = new Color(1f, 0.88f, 0.55f, 1f);
+            while (_revealRoot != null && root != null && !_isDismissing)
+            {
+                float a = Random.value * Mathf.PI * 2f, r = radius * Random.Range(0.55f, 1.2f);
+                Vector2 dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+                Vector3 pos = root.TransformPoint(centre + dir * r);
+                float s = root.lossyScale.x;   // canvas units -> world
+                ProgressComet.Sparkle(root, pos, Random.Range(22f, 46f), Random.value < 0.6f ? warm : Color.white,
+                                      (Vector3)(dir * Random.Range(25f, 70f) * s), IDLE_SPARKLE_LIFE * Random.Range(0.8f, 1.2f));
+                yield return new WaitForSecondsRealtime(IDLE_SPARKLE_EVERY);
+            }
+        }
+
+        private System.Collections.IEnumerator RevealTwinkleLoop(RectTransform root, float k)
+        {
+            if (s_twinkleStar == null)
+            {
+                var tex = Resources.Load<Texture2D>("FX/gem_twinkle"); if (tex == null) yield break;
+                s_twinkleStar = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            }
+            yield return new WaitForSecondsRealtime(1.2f);   // after the pile has landed
+            int last = -1;
+            while (_revealRoot != null && root != null && !_isDismissing && _revealCoins.Count > 0)
+            {
+                int i = Random.Range(0, _revealCoins.Count); if (i == last && _revealCoins.Count > 1) i = (i + 1) % _revealCoins.Count; last = i;
+                var coin = _revealCoins[i];
+                if (coin != null && coin.gameObject.activeInHierarchy)
+                {
+                    var crt = coin.rectTransform; float cs = crt.sizeDelta.x;
+                    var star = NewRevealImage(crt, "CoinTwinkle", s_twinkleStar, Color.white); star.raycastTarget = false; star.preserveAspect = true;
+                    var srt = star.rectTransform; srt.anchorMin = srt.anchorMax = new Vector2(0.5f, 0.5f); srt.pivot = new Vector2(0.5f, 0.5f);
+                    srt.anchoredPosition = REVEAL_TWINKLE_SPOT * cs; srt.sizeDelta = Vector2.one * cs * REVEAL_TWINKLE_SIZE;
+                    var mat = LoadAdditiveGlowMaterial();
+                    if (mat != null)
+                    {   // warm glow copy behind (additive = light, like the gem's HDR glow)
+                        var gl = NewRevealImage(srt, "glow", s_twinkleStar, new Color(1f, 0.85f, 0.45f, 0.9f)); gl.material = mat; gl.raycastTarget = false;
+                        var grt = gl.rectTransform; grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f); grt.sizeDelta = srt.sizeDelta * 1.5f; grt.anchoredPosition = Vector2.zero;
+                        gl.transform.SetAsFirstSibling();
+                    }
+                    srt.localScale = Vector3.zero;
+                    float dur = GemTwinkle.DUR, up = dur * GemTwinkle.PEAK_AT, down = Mathf.Max(0.05f, dur - up - GemTwinkle.HOLD);
+                    var go = star.gameObject;
+                    DOTween.Sequence().SetUpdate(true).SetLink(go)
+                        .Append(srt.DOScale(1f, up).SetEase(Ease.OutBack))
+                        .AppendInterval(GemTwinkle.HOLD)
+                        .Append(srt.DOScale(0f, down).SetEase(Ease.InQuad))
+                        .Insert(0f, srt.DOLocalRotate(new Vector3(0f, 0f, -90f), dur, RotateMode.FastBeyond360).SetEase(Ease.Linear))
+                        .OnComplete(() => { if (go != null) Destroy(go); });
+                }
+                yield return new WaitForSecondsRealtime(REVEAL_TWINKLE_PERIOD + Random.Range(-0.4f, 0.4f));
+            }
+        }
+        public static bool REVEAL_RAYS = false;   // 11-03: rays off on the Well Done reveal (true brings them back)
+        public static bool REVEAL_PILE_GLOW = true; public static float REVEAL_PILE_GLOW_Y = 12.5f;   // 11-03 shape-hugging glow behind the coin pile (mock px offset of the pile's bbox centre)
+        public static bool REVEAL_COIN_FLIGHT = false;   // 11-02 Spencer: "it doesnt need the coin icon animation for this well done screen"
+        /// <summary>REVEAL_V2 tap: the pile's coins fly into the coin counter (the home HudBar coin if it's up, else the in-level
+        /// REWARD coin), then the modal dismisses. Visual only - the wallet was paid by the level. False = nothing to fly to.</summary>
+        private bool TryRevealCoinFlight()
+        {
+            if (_coinFlightRunning) return true;                                   // taps during the flight do nothing
+            var map = LevelMapPanel.Instance; if (map == null || _canvas == null || _revealCoinAmount <= 0 || _revealCoins.Count == 0) return false;
+            RectTransform target = null;
+            var hb = FindObjectOfType<HudBar>(); if (hb != null && hb.CoinIcon != null && hb.CoinIcon.gameObject.activeInHierarchy) target = hb.CoinIcon;
+            if (target == null && HUDManager.Instance != null) target = HUDManager.Instance.RewardCoinRect;
+            if (target == null) return false;
+            _coinFlightRunning = true;
+            int n = Mathf.Clamp(_revealCoinAmount, 1, REVEAL_FLY_COINS), per = _revealCoinAmount / n, rem = _revealCoinAmount - per * n, landed = 0;
+            var srcs = new List<Vector3>(); foreach (var c in _revealCoins) if (c != null) { srcs.Add(c.rectTransform.position); c.DOFade(0f, 0.12f).SetUpdate(true); }
+            if (_revealCount != null) _revealCount.transform.parent.DOScale(0f, 0.2f).SetEase(Ease.InBack).SetUpdate(true);
+            bool done = false;
+            System.Action finish = () => { if (done) return; done = true; _coinFlightRunning = false; ContinueDismiss(); };
+            for (int i = 0; i < n; i++)
+            {
+                int share = per + (i == n - 1 ? rem : 0);
+                StartCoroutine(map.CoinFlyRoutine(_canvas.transform, srcs[i % srcs.Count], target, share, i,
+                    (sh, p) => { map.SpawnCoinHitFXOn(_canvas.transform, target != null ? target.position : p); if (++landed >= n) DOVirtual.DelayedCall(0.15f, () => finish()).SetUpdate(true); }));
+            }
+            DOVirtual.DelayedCall(2.5f, () => finish()).SetUpdate(true);           // safety: never strand the player
+            return true;
+        }
+        public static float REVEAL_STREAMER_SHARE = 0f;   // 11-06 Spencer: remove the long slender pieces (was 0.15)
+        public static float CONTINUE_SCALE = 1.25f;
+        public static bool CONTINUE_NO_FRAME = true;   // 11-16: Continue = the green pill only (beats CONTINUE_DARK_FRAME)
+        public static bool CONTINUE_DARK_FRAME = true;   // 11-16: Continue on the win screen drops the lavender outer ring
+        public static int REVEAL_CONFETTI = 80;   // 11-16 Spencer: "lighten up again on the confetti" (140 -> 80)   // 11-06 Spencer: "there might be too much confetti" (was 240)   // total over 3 volleys x 2 cannons
+        public static float REVEAL_CANNON_ANGLE = 62f;
+        public static float REVEAL_CONFETTI_SIZE = 1.15f;   // 11-03 Spencer: 'make the confetti pieces smaller' (1.8 -> 1.15, ~0.65x)   // 11-02 Spencer: pieces 'a bit bigger' (the 3D tumble shows them ~0.6x on average)
+        private Coroutine _revealWave;
+        /// <summary>Per-letter drop + overshoot pop, staggered (Royal Match title style). Animates the TMP mesh vertices.</summary>
+        public static float REVEAL_TITLE_ARCH = 0.20f;
+        // 11-06 Spencer: "instead of well done ... another word or phrase to set ourselves apart" -> "Spellbound!" (word game +
+        // fairytale). HERO_GOLD = the gold hero style (also MechanicSplash titles). false = cream "Well Done!" as before.
+        public static bool   HERO_GOLD  = true;
+        /// <summary>11-06: THE hero text recipe ("Spellbound!" - Spencer: "perfectly what i like"), shared with the MechanicSplash
+        /// titles. WordSlop Title (bold), gold gradient face, thin warm dark-gold edge, soft drop shadow, tight tracking.</summary>
+        public static void ApplyHeroStyle(TMP_Text t)
+        {
+            if (t == null) return;
+            HUDManager.ApplyRecipeCount(t, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, Resources.Load<TMP_FontAsset>("WordSlop Title SDF"));
+            var tm = new Material(t.fontSharedMaterial) { name = "HeroText" };
+            tm.SetFloat("_UnderlayOffsetY", -REVEAL_TITLE_DROP);
+            t.fontSharedMaterial = tm; t.enableVertexGradient = true; t.color = Color.white;
+            HeroFace(t, tm);
+        }
+        private static void HeroFace(TMP_Text title, Material tm)
+        {   // 11-06 Spencer: gold gradient face, a thin WARM edge (no dark stroke, no bevel), soft drop shadow, WordSlop Title (bold)
+            title.colorGradient = new VertexGradient(HERO_TOP, HERO_TOP, HERO_BOT, HERO_BOT);
+            tm.SetFloat("_FaceDilate", HERO_DILATE); tm.SetFloat("_OutlineWidth", HERO_STROKE);
+            tm.SetColor("_OutlineColor", HERO_OUTLINE);
+            title.characterSpacing = HERO_TRACK;
+            tm.SetColor("_UnderlayColor", new Color(0.04f, 0f, 0.10f, 0.65f));
+            tm.SetFloat("_UnderlayDilate", HERO_STROKE * 0.5f); tm.SetFloat("_UnderlaySoftness", 0.35f);
+            tm.SetFloat("_UnderlayOffsetY", -REVEAL_TITLE_DROP * 0.7f);
+        }
+        // 11-06 Spencer: confetti BEHIND everything on the win screen except the dark tint (it covered the +coins and Continue)
+        public static bool   REVEAL_CONFETTI_BEHIND = true;
+        private static RectTransform ConfettiLayer(RectTransform root)
+        {
+            var t = root.Find("ConfettiLayer") as RectTransform;
+            if (t == null)
+            {
+                t = new GameObject("ConfettiLayer", typeof(RectTransform)).GetComponent<RectTransform>(); t.SetParent(root, false);
+                t.anchorMin = Vector2.zero; t.anchorMax = Vector2.one; t.offsetMin = t.offsetMax = Vector2.zero;
+            }
+            t.SetAsFirstSibling();   // first child of the reveal = drawn first = behind the title, coins, count and button
+            return t;
+        }
+        public static bool   REVEAL_COIN_SLAM = true; public static float COIN_SLAM_START = 2.6f, COIN_SLAM_DUR = 0.22f;   // 11-06 big coin slams in (RM star)
+        public static float  REVEAL_CONTENT_OUT = 0.16f;   // win content fade-out on Continue (before the tint)
+        public static float  LETTER_SLAM_STEP = 0.035f;   // pitch rise per letter (11 letters -> +35%)
+        public static bool   REVEAL_SLAM = true;   // RM letter slam (false = the 11-02 drop + pop wave)
+        public static float  SLAM_STAGGER = 0.07f, SLAM_EACH = 0.22f, SLAM_START = 1.8f, SLAM_TILT = 9f;
+        public static bool   REVEAL_CONTINUE_BUTTON = true;
+        public static float  CONTINUE_LABEL_LIFT = 0.10f;   // em (label box is 2 em tall)
+        private static Transform FindDeep(Transform t, string n) { foreach (Transform c in t) { if (c.name == n) return c; var r = FindDeep(c, n); if (r != null) return r; } return null; }   // green Continue pill (false = "Tap to Continue" text)
+        public static string WIN_PHRASE = "Spellbound!";
+        public static Color32 HERO_TOP = new Color32(0xFF, 0xE4, 0x5C, 0xFF), HERO_BOT = new Color32(0xFF, 0x8A, 0x00, 0xFF);   // 11-06 v2: richer (v1 read pale peach)
+        public static Color32 HERO_OUTLINE = new Color32(0x96, 0x3E, 0x06, 0xFF);   // 11-06 Spencer: no dark stroke - warm dark-gold edge (was #1A0C38)
+        public static float HERO_CAP = 128f, HERO_STROKE = 0.07f, HERO_DILATE = 0.02f, HERO_TRACK = -3f;   // 11-06 Spencer: "tighten the kerning" (was +3)   // v1 150 cap ran edge to edge
+        public static float REVEAL_TITLE_DILATE = 0.08f, REVEAL_TITLE_STROKE = 0.27f, REVEAL_TITLE_DROP = 1.3f, REVEAL_TITLE_TRACK = -2f;   // 11-02 v2: -9 / .16 'too close'   // tune vs well_done_open_mock.png   // 11-02 Spencer: arched like the mock (middle sits this many cap-heights above the ends)
+        private IEnumerator LetterWave(TMP_Text t, float stagger, float each, float arch)
+        {
+            if (t == null) yield break;
+            t.ForceMeshUpdate(); var info = t.textInfo; int n = info.characterCount;
+            var src = new Vector3[info.meshInfo.Length][];
+            for (int m = 0; m < info.meshInfo.Length; m++) src[m] = (Vector3[])info.meshInfo[m].vertices.Clone();
+            float t0 = Time.unscaledTime, total = stagger * n + each, drop = t.fontSize * 0.9f;
+            float x0 = float.MaxValue, x1 = float.MinValue;
+            for (int i = 0; i < n; i++) { var c0 = info.characterInfo[i]; if (!c0.isVisible) continue; x0 = Mathf.Min(x0, c0.bottomLeft.x); x1 = Mathf.Max(x1, c0.topRight.x); }
+            float hw = Mathf.Max(1f, (x1 - x0) * 0.5f), xc = (x0 + x1) * 0.5f, rise = arch * t.fontSize * 0.594f * HUDManager.RECIPE_MAX_MUL;
+            // 11-07 sound pass: each letter's landing makes a small "thup" (Spencer's pick Mouth Tight B4), pitch climbing letter by
+            // letter; the last one lands with the finish shimmer (Star Burst C1). Only for the win title (REVEAL_SLAM).
+            var landed = new bool[n]; int nLanded = 0, nVisible = 0; bool finished = false;
+            for (int i = 0; i < n; i++) if (info.characterInfo[i].isVisible) nVisible++;
+            while (t != null)
+            {
+                // re-generate the flat mesh every frame and work from it: RecipeFit's first LateUpdate (and any other rebuild) would
+                // otherwise replace our arched vertices with a flat line (11-02: the arch didn't show in game)
+                t.ForceMeshUpdate(); info = t.textInfo;
+                for (int m = 0; m < info.meshInfo.Length && m < src.Length; m++) src[m] = (Vector3[])info.meshInfo[m].vertices.Clone();
+                float now = Time.unscaledTime - t0; int vis = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    var ci = info.characterInfo[i]; if (!ci.isVisible) continue;
+                    int mi = ci.materialReferenceIndex, vi = ci.vertexIndex; var dst = info.meshInfo[mi].vertices;
+                    float u = Mathf.Clamp01((now - i * stagger) / each);
+                    float sc = u <= 0f ? 0f : 1f + 0.35f * Mathf.Sin(u * Mathf.PI) * (1f - u) * 2.2f - (1f - u) * (1f - u) * 0.6f;   // pop past 1, settle
+                    float dy = (1f - Mathf.SmoothStep(0f, 1f, Mathf.Min(1f, u * 1.6f))) * drop;
+                    float tilt = 0f;
+                    if (REVEAL_SLAM)
+                    {   // 11-06 RM "Well Done!" (15 fps frames): each letter APPEARS oversized + tilted and SLAMS down to size in ~0.2 s,
+                        // a tiny dip under 1 on landing; no drop from above. Left to right, ~0.07 s apart.
+                        float e = 1f - (1f - u) * (1f - u) * (1f - u);                  // ease-out cubic
+                        sc = u <= 0f ? 0f : Mathf.Lerp(SLAM_START, 1f, e) - 0.06f * Mathf.Sin(Mathf.Clamp01((u - 0.7f) / 0.3f) * Mathf.PI);
+                        dy = 0f; tilt = (i % 2 == 0 ? -1f : 1f) * SLAM_TILT * (1f - e);
+                    }
+                    Vector3 mid = (src[mi][vi] + src[mi][vi + 2]) * 0.5f;
+                    float xn = (mid.x - xc) / hw;                                      // -1..1 across the word
+                    float ay = rise * (1f - xn * xn);                                   // arch: middle up
+                    var rot = Quaternion.Euler(0f, 0f, Mathf.Atan(-2f * rise * xn / hw) * Mathf.Rad2Deg + tilt);   // turned to the arc's tangent
+                    for (int j = 0; j < 4; j++) dst[vi + j] = mid + rot * ((src[mi][vi + j] - mid) * Mathf.Max(0f, sc)) + new Vector3(0f, dy + ay, 0f);
+                    if (u >= 1f) vis++;
+                    if (REVEAL_SLAM && !landed[i] && u >= 0.62f)
+                    {
+                        landed[i] = true; nLanded++;
+                        GameAudio.Instance?.PlayKit("letter_slam", 0.7f, 1f + LETTER_SLAM_STEP * (nLanded - 1));
+                        if (nLanded >= nVisible && !finished) { finished = true; GameAudio.Instance?.PlayKit("spellbound_finish"); var fire = _confettiOnLand; _confettiOnLand = null; fire?.Invoke(); }   // 11-16 confetti on the last letter
+                    }
+                }
+                for (int m = 0; m < info.meshInfo.Length; m++) { info.meshInfo[m].mesh.vertices = info.meshInfo[m].vertices; t.UpdateGeometry(info.meshInfo[m].mesh, m); }
+                // keep holding the arch after the wave (a TMP mesh rebuild would otherwise flatten it); cheap - one word
+                yield return null;
+            }
+            _revealWave = null;
+        }
+
+        private static TextMeshProUGUI RevealText(Transform parent, string s, float capPx, Vector2 pos, Vector2 size)
+        {
+            var go = new GameObject("Text", typeof(RectTransform)); go.transform.SetParent(parent, false);
+            var t = go.AddComponent<TextMeshProUGUI>(); t.text = s; t.alignment = TextAlignmentOptions.Center; t.raycastTarget = false;
+            t.textWrappingMode = TextWrappingModes.NoWrap; t.fontSize = capPx / 0.594f / HUDManager.RECIPE_MAX_MUL;
+            var rt = t.rectTransform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f); rt.anchoredPosition = pos; rt.sizeDelta = size; return t;
+        }
+        private static Image NewRevealImage(Transform parent, string name, Sprite s, Color c)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image)); go.transform.SetParent(parent, false);
+            var im = go.GetComponent<Image>(); im.sprite = s; im.color = c; im.raycastTarget = false;
+            var rt = im.rectTransform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f); return im;
+        }
+        private static void FillRect(RectTransform rt, Vector2 offset) { rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = offset; rt.offsetMax = offset; }
+        private static Sprite s_revealGlow;
+        private static Sprite RevealGlowSprite()
+        {
+            if (s_revealGlow != null) return s_revealGlow;
+            const int N = 128; var t = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[N * N]; float c = (N - 1) * 0.5f;
+            for (int y = 0; y < N; y++) for (int x = 0; x < N; x++)
+            {
+                float d = Mathf.Clamp01(Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) / c);
+                px[y * N + x] = new Color32(255, 255, 255, (byte)(255f * (1f - d) * (1f - d)));
+            }
+            t.SetPixels32(px); t.Apply(false, true);
+            return s_revealGlow = Sprite.Create(t, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), 100f);
+        }
+
         /// <summary>Continue is ignored this long after the modal appears (2026-10-21: frantic end-of-level clicking pressed
         /// Continue ~1s after Well Done showed, so the celebration flew past unseen).</summary>
         public static float CONTINUE_LOCKOUT = 1.0f;
+        private bool _continueByButton;
         private float _shownAtUnscaled = -10f;
 
         private void OnContinuePressed()
@@ -1774,11 +2343,16 @@ namespace WordDrop
             // intermediate scale during the parent shrink (read as a "frame drop"
             // even though it was just a held interpolation). Drop the press
             // squash on the dismiss path; modal is going away anyway.
+            if (REVEAL_V2 && REVEAL_COIN_FLIGHT && TryRevealCoinFlight()) return;   // 11-02: coins fly to the counter first, then ContinueDismiss
+            ContinueDismiss();
+        }
+        private void ContinueDismiss()
+        {
             StopContinuePulse();
             // Release half of the split multi-pop — paired with the press
             // half fired from the EventTrigger.PointerDown listener wired
             // up in the Continue-button construction block.
-            GameAudio.Instance?.PlayMultiPopRelease();
+            if (!_continueByButton) GameAudio.Instance?.PlayMultiPopRelease();   // the ArtButton already played its release
             Dismiss();
         }
 
@@ -1805,6 +2379,9 @@ namespace WordDrop
             if (LevelMapPanel.MapFlowEnabled)
             {
                 if (_overlayImage != null) _overlayImage.raycastTarget = false;
+                // 11-06 (recording #3: the faded "Spellbound!", coins and Continue hung over the home screen while its coins flew in) -
+                // the win CONTENT leaves first and fast; only the dark tint waits for the map, as before
+                if (REVEAL_V2 && _panelGroup != null) { _panelGroup.DOKill(); _panelGroup.DOFade(0f, REVEAL_CONTENT_OUT).SetEase(Ease.OutQuad).SetUpdate(true); }
                 DOVirtual.DelayedCall(0.38f, () => // wait for the map to finish fading in behind the beige (~0.30s)
                 {
                     if (_overlayImage != null) _overlayImage.DOKill();

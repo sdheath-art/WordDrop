@@ -88,7 +88,7 @@ namespace WordDrop
 
             var toRemove = new List<Vector2Int>(cellSet);
             for (int i = 0; i < toRemove.Count; i++)
-                rules.ClearCell(toRemove[i].x, toRemove[i].y);
+                rules.ClearCellCountingGoals(toRemove[i].x, toRemove[i].y);   // counts gems / collect letters (2026-10-29)
             grid.RemoveTiles(toRemove);
 
             WDLog.Log($"[Mooncall L{Level}] Detonated {registry.Count} primed words, cleared {toRemove.Count} cells");

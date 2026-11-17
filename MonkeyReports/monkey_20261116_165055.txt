@@ -1,0 +1,50 @@
+MONKEY TEST  20261116_165055   seed 904251   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.  PLAY BADLY mode.
+
+INPUTS  1115 gestures:  BUTTON 240  MASH BOARD 73  CELL TAP 86  RANDOM SWIPE 71  REAL MOVE 246  MASH BUTTON 61  RANDOM DRAG 70  TAP ANYWHERE 85  DOUBLE TAP 46  TAPPABLE 64  MASH ANYWHERE 38  BOOSTER TAP 35
+GAME    levels started 12, cleared 2, failed 24;  swaps accepted 129, swiped words 0, boosters used 46;  hearts refilled by the monkey 0x;  PLAY BADLY: cut 9 level(s) down to a few moves
+FRAMES  worst 309 ms, 1 frame(s) over 250 ms, 35541 frames (59 fps average)
+
+FAULTS  1 different   ERROR 1
+
+--- 1. [ERROR] [BoosterDbg] Post-cascade FINAL desync count: 5 cell(s) (visual layer drifted from data after SyncToRulesState)
+    first at 04:27, level 17, seen 1x, screenshot fault_20261116_165055_01.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoosterManager/<RunGravityAndCascadeCoroutine>d__44:MoveNext () (at Assets/Scripts/WordDrop/BoosterManager.cs:376)
+      UnityEngine.SetupCoroutine:InvokeMoveNext (System.Collections.IEnumerator,intptr) (at /Users/bokken/build/output/unity/unity/Runtime/Export/Scripting/Coroutines.cs:17)
+    state: level 17, moves left 2, coins 17299, hearts 5, timeScale 1.00 | board accepts input=False, resolving a move=True, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      04:21 f16810  RANDOM DRAG  (6,5)->(6,6)   [board idle]
+      04:22 f16853  TAP ANYWHERE  55,1287   [board idle]
+      04:22 f16863  MASH BUTTON  Slot_1_Booster x11   [board idle]
+      04:23 f16925  MASH BUTTON  Slot_2_Booster x11   [board idle]
+      04:24 f16968  MASH BOARD  board x10   [board idle]
+      04:24 f17016  MASH BOARD  one cell (4,0) x11   [board BUSY]
+      04:25 f17073  BUTTON  Slot_2_Booster   [board idle]
+      04:25 f17077  TAP ANYWHERE  570,1108   [board idle]
+      04:26 f17087  REAL MOVE  drag (1,0)->(1,1)   [board BUSY]
+      04:26 f17097  REAL MOVE  drag (3,6)->(3,7)   [board BUSY]
+      04:26 f17139  REAL MOVE  drag (3,6)->(3,7)   [board BUSY]
+      04:27 f17156  MASH BOARD  one cell (2,7) x12   [board BUSY]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+        7x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        1x  [INVARIANT] (,) 'V' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'O' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'N' sortingOrder= expected  — a lift outlived its effect
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=P
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=D
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=N
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=I
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=H
+        1x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'H' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'I' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'R' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'T' sortingOrder= expected  — a lift outlived its effect
+        1x  [RulesEngine] Step chain hit depth cap () — completing.
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_165055.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

@@ -78,7 +78,17 @@ namespace WordDrop
 
             // Don't compete with a resolution in flight, a rising row, or a locked board.
             if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { Cancel(); _queued = false; return; }   // home screen covers the board (2026-10-23)
-            bool busy = (MatchController.Instance != null && MatchController.Instance.IsProcessing) || !hand.IsInteractable;
+            // A CARD IS UP (Settings, level card, win card ...) - no drag is tracked, remembered or committed under it. 11-16, found
+            // by the monkey test: with Settings open, a drag on the board was "remembered while busy" and then COMMITTED as a real
+            // move behind the card ([DragSwap] (3,2)->(3,3) swapped, 2.3 s after Settings opened). The overlay check further down
+            // sat BELOW the busy-drag tracking, so it never saw those drags.
+            { var cover = SurvivalManager.Instance; if (cover != null && (cover.IsOverlayPaused || cover.OutOfMovesLocked)) { Cancel(); _queued = false; _busyDown = false; _qA = _qB = null; return; } }
+            // BOOSTER LESSON UP ("Tap on COMET to select it!") - the dimmed board takes no moves (11-16 Spencer's shot: a word made
+            // behind the dim). The lesson switches HandManager.IsInteractable off, but every finished move switches it back on, and a
+            // drag made in between was remembered and committed. The lesson's own taps go through the booster aim, not through here.
+            if (BoosterIntro.Running || TutorialBeats.Pending) { Cancel(); _queued = false; _busyDown = false; _qA = _qB = null; return; }   // 11-17: + the moment before a lesson appears
+            if (PreBoosters.BlocksBoard) { Cancel(); _queued = false; _busyDown = false; _qA = _qB = null; return; }   // pre-level power-ups still to drop in (11-16)
+            bool busy = (MatchController.Instance != null && MatchController.Instance.IsProcessing) || !hand.IsInteractable || BoosterManager.CascadeBusy;   // 11-17: a booster's fall + cascade counts as busy
             // REMEMBER A DRAG MADE WHILE BUSY (2026-10-23 Spencer: "when i try to click to move another tile it feels like its stuck and
             // its waiting for something to complete" -> option 1). The board still can't resolve two things at once, but a swap
             // dragged during a pop / fall is no longer thrown away: it's remembered (the TILES, which may still be moving) and
@@ -86,7 +96,7 @@ namespace WordDrop
             if (busy) { TrackBusyDrag(grid); return; }
             if (_queued) { CommitQueued(grid, hand); return; }
             // still holding a drag that began while busy -> hand it to the normal tracker as if it started now
-            if (_busyDown && _qA != null && Input.GetMouseButton(0))
+            if (_busyDown && _qA != null && WDInput.GetMouseButton(0))
             {
                 _busyDown = false; _path.Clear(); _abortedSwapSelection = false; _didHighlight = false;
                 _anchor = new Vector2Int(_qA.Col, _qA.Row); _path.Add(_anchor); _active = true; _qA = _qB = null;
@@ -119,14 +129,14 @@ namespace WordDrop
             // fully playable and still banking score. Nothing should land in that gap.
             if (SurvivalManager.AwaitingNextLevel) { Cancel(); return; }
 
-            bool down = Input.GetMouseButtonDown(0);
-            bool held = Input.GetMouseButton(0);
-            bool up   = Input.GetMouseButtonUp(0);
-            Vector3 screenPos = Input.mousePosition;
+            bool down = WDInput.GetMouseButtonDown(0);
+            bool held = WDInput.GetMouseButton(0);
+            bool up   = WDInput.GetMouseButtonUp(0);
+            Vector3 screenPos = WDInput.mousePosition;
 
-            if (Input.touchCount > 0)
+            if (WDInput.touchCount > 0)
             {
-                Touch t = Input.GetTouch(0);
+                Touch t = WDInput.GetTouch(0);
                 screenPos = t.position;
                 down = t.phase == TouchPhase.Began;
                 held = t.phase == TouchPhase.Moved || t.phase == TouchPhase.Stationary || down;
@@ -139,6 +149,7 @@ namespace WordDrop
                 _abortedSwapSelection = false;
                 _didHighlight = false;
                 Vector2Int c = CellUnder(screenPos, grid);
+                if (c.x >= 0 && !TutorialBeats.AllowsCell(c)) return;   // lesson up: the dimmed tiles don't answer (11-16)
                 if (c.x >= 0) { _anchor = c; _path.Add(c); _active = true; PressGlow(grid.GetTile(c.x, c.y)); }
                 return;
             }
@@ -316,7 +327,7 @@ namespace WordDrop
             if (match == null)
             {
                 WDLog.Log($"[Swipe] rejected ({reject}) — {_path.Count} cells");
-                GameAudio.Instance?.PlayButtonClick();
+                if (GameAudio.Instance != null && GameAudio.Instance.HasKit("swipe_reject")) GameAudio.Instance.PlayKit("swipe_reject"); else GameAudio.Instance?.PlayButtonClick();   // 11-07 Spencer's pick: Squeeze Tight C1 (was a plain button click)
                 // Not a word: the traced letters shake "no" (2026-10-20) — a refusal the player can SEE.
                 var g = GridManager.Instance;
                 if (g != null) for (int i = 0; i < _path.Count; i++) g.GetTile(_path[i].x, _path[i].y)?.ShakeNo();
@@ -350,11 +361,11 @@ namespace WordDrop
         private void TrackBusyDrag(GridManager grid)
         {
             if (!QUEUE_BUSY_SWAPS || SurvivalManager.AwaitingNextLevel) { Cancel(); _busyDown = false; return; }
-            bool down = Input.GetMouseButtonDown(0), held = Input.GetMouseButton(0), up = Input.GetMouseButtonUp(0);
-            Vector3 sp = Input.mousePosition;
-            if (Input.touchCount > 0)
+            bool down = WDInput.GetMouseButtonDown(0), held = WDInput.GetMouseButton(0), up = WDInput.GetMouseButtonUp(0);
+            Vector3 sp = WDInput.mousePosition;
+            if (WDInput.touchCount > 0)
             {
-                var tc = Input.GetTouch(0); sp = tc.position;
+                var tc = WDInput.GetTouch(0); sp = tc.position;
                 down = tc.phase == TouchPhase.Began; held = tc.phase == TouchPhase.Moved || tc.phase == TouchPhase.Stationary || down;
                 up = tc.phase == TouchPhase.Ended || tc.phase == TouchPhase.Canceled;
             }
@@ -380,6 +391,15 @@ namespace WordDrop
                 if (_qB != null) { _queued = true; _queuedAt = Time.unscaledTime; WDLog.Log($"[Swipe] swap remembered while the board is busy: ({_qA.Col},{_qA.Row})->({_qB.Col},{_qB.Row})"); }
                 else PressGlow(null);
             }
+        }
+        /// <summary>Forget any drag remembered while the board was busy (2026-10-30: a shuffle re-letters the SAME tiles, so a
+        /// drag made during it would commit on letters the player never chose - Spencer: "it interupted while i was trying to make
+        /// a move"). BoardShuffle calls this when it starts and when it ends.</summary>
+        public void DropRemembered()
+        {
+            _queued = false; _busyDown = false; _qA = _qB = null;
+            PressGlow(null);
+            Cancel();
         }
         private void CommitQueued(GridManager grid, HandManager hand)
         {

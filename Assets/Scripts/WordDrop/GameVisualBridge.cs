@@ -260,7 +260,7 @@ namespace WordDrop
             //         task: record a dedicated 7-letter jingle)
             if (len >= 5)
             {
-                GameAudio.Instance?.PlayScorePowerup();
+                if (GameAudio.Instance != null && GameAudio.Instance.HasKit("powerup_created")) GameAudio.Instance.PlayKit("powerup_created"); else GameAudio.Instance?.PlayScorePowerup();   // 11-07 pick: Short Highlight Sparkle Layer Impact A6
                 HapticsManager.Medium();
             }
             if (len >= 6)

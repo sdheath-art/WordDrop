@@ -61,6 +61,33 @@ namespace WordDrop
         private const float SLOT_SIZE   = 198f;
         private const float MK_BOOSTER_SIZE = 176f, MK_SETTINGS_SIZE = 150f;
         private const float MK_BOOSTER_X0 = 370f, MK_BOOSTER_STEP = 227.7f;
+        // 2026-10-29 (Spencer: "the boosters need to be resized at the bottom so that it can fit" - the Axe made 5): the boosters
+        // fill the span between the Settings button and the right margin, sized by how many there are. 4 boosters keep the
+        // mockup's 176 size and 51.7 gap ratio; 5 shrink to fit (~147). Right edge = the mockup's (1053 + 88).
+        private const float MK_ROW_LEFT = 232f, MK_ROW_RIGHT = 1141f, MK_GAP_RATIO = 51.7f / 176f;
+        private static int MkBoosterCount() { int n = 0; foreach (var sp in DISPLAY_ORDER) if (sp.Type == SlotType.Booster) n++; return Mathf.Max(1, n); }
+        // RK PROPORTIONS (2026-10-29, Spencer: "should we make the booster buttons a bit bigger?" - measured on his Royal Kingdom
+        // level GIF, fractions of screen width): booster 13.75%, settings 10.3% (smaller = secondary), ~1% gaps, whole row 83%
+        // centred. Ours were 12.5% / 12.7% / 3.7% / 94%. Used with the round art; Settings stays on the LEFT (Spencer's mockup).
+        public static float RK_ROW_W = 0.83f, RK_BOOSTER = 0.1375f, RK_SETTINGS = 0.103f, RK_ROW_Y = 2390f;
+        private static bool RkRow => UseRoundArt;
+        // RK ROW v2 (2026-11-02, Spencer + his Royal Kingdom level screenshots: "our boosters should be as big as these ... and layed out
+        // the same way"). MEASURED on ref_rk_boosters.jpg (587 px wide screen), fractions of screen width: booster 15.5% (ours 13.8%),
+        // pitch 16.95% (ours 14.5%), first booster centre 9.1%, SETTINGS on the RIGHT at 92.5%, 12.5% across. Row ~97% of the width.
+        // Vertical unchanged (RK_ROW_Y; both sit 93% down). false = the v1 RK row above (settings left, 83% row).
+        public static bool RK2_LAYOUT = true;
+        public static float RK2_BOOSTER = 0.155f, RK2_PITCH = 0.1695f, RK2_FIRST_X = 0.091f, RK2_SETTINGS = 0.125f, RK2_SETTINGS_X = 0.925f;
+        private static float RkLeft => (CANVAS_W - RK_ROW_W * CANVAS_W) * 0.5f;
+        private static float RkGap { get { int n = MkBoosterCount(); return Mathf.Max(0f, (RK_ROW_W * CANVAS_W - RK_SETTINGS * CANVAS_W - n * RK_BOOSTER * CANVAS_W) / n); } }
+        private static float MkBoosterSize() { if (RkRow && RK2_LAYOUT) return RK2_BOOSTER * CANVAS_W; if (RkRow) return RK_BOOSTER * CANVAS_W; int n = MkBoosterCount(); return Mathf.Min(MK_BOOSTER_SIZE, (MK_ROW_RIGHT - MK_ROW_LEFT) / (n + (n - 1) * MK_GAP_RATIO)); }
+        private static float MkBoosterCentre(int idx)
+        {
+            if (RkRow && RK2_LAYOUT) return (RK2_FIRST_X + idx * RK2_PITCH) * CANVAS_W;
+            if (RkRow) { float b = RK_BOOSTER * CANVAS_W; return RkLeft + RK_SETTINGS * CANVAS_W + RkGap + idx * (b + RkGap) + b * 0.5f; }
+            int n = MkBoosterCount(); float size = MkBoosterSize(), step = size * (1f + MK_GAP_RATIO);
+            if (n <= 4) return MK_BOOSTER_X0 + idx * MK_BOOSTER_STEP;           // the original mockup positions
+            return MK_ROW_RIGHT - size * 0.5f - (n - 1 - idx) * step;            // right-aligned, packed to fit
+        }
         private const float SLOT_STEP   = 135f + 26.34f;   // 161.34
         private const float SLOT_LEFT_X = 37.98f;
         private const float SLOT_TOP_Y  = 2270.31f;       // unchanged — keeps the "pops above bench" silhouette
@@ -170,12 +197,91 @@ namespace WordDrop
             }
         }
 
+        // ── ROUND BLUE SLOT ART (2026-10-29, Spencer picked round blue: "the top panel is going to be purple") ──
+        // Photoshop v3 recipe as a circle (~/Documents/WordDrop_Art/vector_buttons/photoshop/build_booster.sh + booster/
+        // make_slot_sprites.py). Every sprite shares one padded canvas: ART_W x ART_H, the gold rim's centre at (ART_CX, ART_CY)
+        // and ART_D across (sprite px, y down). The slot rect = the rim; the art child is placed so the rim fills it.
+        // States: ready / armed (brighter + baked gold glow, scale 1.06) / locked (desaturated). Badge = the round GREEN build.
+        // false = the old squircle + flat badge.
+        public static bool ROUND_ART = true;
+        public static bool SETTINGS_RIMLESS = true; public static float SETTINGS_GEAR_FILL = 0.66f;   /* 11-16 ivory gear (flat, fills its canvas more than the old tilted one): .95 filled the disc edge to edge (Spencer "too big") */   // 0.66 x 640/512: the white gear sprite carries its recipe shadow on a padded 640 canvas (10-29)   // 2026-10-29 rimless purple disc + cream 3D gear
+        private const float ART_W = 498f, ART_H = 534f, ART_CX = 248.97f, ART_CY = 247.15f, ART_D = 294f, ART_FACE_CY = 244.2f;
+        public static float ART_LOCK_FILL = 0.58f;
+        public static float ART_LOCK_CORNER = 0.46f;   // locked v2: padlock as a corner badge (10-29)
+        // 11-16 (Spencer, RM screenshot: "the lock is centered on the button until the booster is unlocked"): a locked slot shows ONLY a
+        // big gold padlock in the middle of the face - no faded booster icon. The icon appears for the first time at the unlock.
+        // false = locked v2 (ghost icon + corner badge).
+        public static bool  LOCK_CENTRED = true;
+        public static float LOCK_CENTRED_SIZE = 0.60f;   // padlock size vs the slot
+        // 11-02 (Spencer: "the lock badge should be positioned in the same place as well as the unlock"): the padlock - locked slot AND the
+        // unlock moment, both read these - sits on the count badge's spot. Was (0.20, -0.18).
+        public static float ART_LOCK_CX => ART_BADGE_POS_X;
+        public static float ART_LOCK_CY => -ART_BADGE_POS_Y;
+        /// <summary>Padlock art: the edged copy (Boosters/lock_*_gold_edge.png, 288 canvas = 256 + 16 pad, edge "B", 2026-10-29
+        /// Spencer: "should we put this recipe on the locks too?") when present - mul = its box vs the 256 art.</summary>
+        public static bool LOCK_SEPARATION = true;
+        private static Sprite LockArt(bool open, out float mul)
+        {
+            string n = open ? "lock_open_gold" : "lock_closed_gold";
+            // 10-29 Spencer: "separation between the gold lock and the gold rim so you can tell its above the rim" - the badge copy
+            // adds a dark separation line + a contact shadow cast on the rim (composition/make_lock_badge.py), 352 canvas
+            var bd = LOCK_SEPARATION ? LoadBoostersSprite(n + "_badge") : null;
+            if (bd != null) { mul = 352f / 256f; return bd; }
+            var e = LoadBoostersSprite(n + "_edge");
+            mul = e != null ? 288f / 256f : 1f;
+            return e != null ? e : LoadBoostersSprite(n);
+        }
+        private const float LOCK_ART_LOW = (133.5f - 128f) / 256f;   // the closed padlock's outline sits 5.5/256 low in its image; the open one shares the body position
+        public static float ART_ICON_FILL = 0.70f, ART_BADGE_FRAC = 0.40f, ART_BADGE_POS = 0.31f, ART_ARMED_SCALE = 1.06f;
+        // BADGE CLEAR OF THE ART (2026-11-02, Spencer: "the bottom badge it cutting off the art"). MEASURED on his RK screenshots: badge
+        // centre +0.34 right / +0.40 down of the button (it hangs ~1/3 below it), and RK icons sit up-left, off that corner. Was .31/.31,
+        // icons centred. Fractions of the slot size; the icon's shadow moves with it.
+        public static float ART_BADGE_POS_X = 0.34f, ART_BADGE_POS_Y = 0.40f;
+        // 11-02 v2 (Spencer: "some of the icons are off center now"): the uniform up-left shift pushed the mallet/axe off centre. MEASURED
+        // per icon (badge-circle overlap of its alpha at the new badge spot): glove/mallet/bolt 0% at no shift; axe + spyglass 2% -> a
+        // small straight-UP shift clears them (<0.5%). Fractions of the slot size, (x right, y UP).
+        private static readonly Dictionary<string, Vector2> ART_ICON_SHIFT = new Dictionary<string, Vector2>
+        {
+            { "1axe", new Vector2(0f, 0.030f) },
+            { "2spyglass", new Vector2(0f, 0.025f) },
+        };
+        private static Vector2 IconShift(string boosterId) { var f = BoosterIconFile(boosterId); return f != null && ART_ICON_SHIFT.TryGetValue(f, out var v) ? v : Vector2.zero; }
+        public static float BADGE_OUTLINE = 0.12f, BADGE_TEXT_MARGIN = 0.17f;   // 11-02: was outline 0.25 (closed the 9's counter), no margin
+        private static Sprite ButtonArt(string n) => Resources.Load<Sprite>("UI/Buttons/" + n);
+        /// <summary>11-17: the settings gear's slot (SettingsV2 stacks its flyout above it). Null before the row is built.</summary>
+        public RectTransform SettingsSlotRT
+        {
+            get
+            {
+                if (_slotButtons == null) return null;
+                for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+                    if (DISPLAY_ORDER[i].Type == SlotType.Settings && _slotButtons[i] != null) return _slotButtons[i].transform as RectTransform;
+                return null;
+            }
+        }
+        // 11-16 LOOK PASS (Spencer, back after a week: "doesnt seem bright and inviting"; picked mock B): locked slots wore a dark
+        // grey face - three of the darkest shapes on screen. Now they keep the blue READY face (RM: locked boosters stay in colour
+        // with a gold padlock) and the ghost icon is tinted blue. false = the grey locked art.
+        public static bool  LOCKED_IN_COLOUR = true;
+        public static Color LOCKED_GHOST_TINT = new Color(0.62f, 0.78f, 1f, 1f);
+        private static Sprite LockedSlotArt() => ButtonArt(LOCKED_IN_COLOUR ? "booster_slot_ready" : "booster_slot_locked");
+        private static bool UseRoundArt => ROUND_ART && HUDManager.MOCKUP_HUD && ButtonArt("booster_slot_ready") != null;
+        private Image[] _slotArt;
+        /// <summary>Places a padded-canvas art image so its rim fills a rect of size d centred on the parent.</summary>
+        private static void PlaceArt(RectTransform rt, float d)
+        {
+            float s = d / ART_D;
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = new Vector2(ART_W * s, ART_H * s);
+            rt.anchoredPosition = new Vector2((ART_W * 0.5f - ART_CX) * s, -(ART_H * 0.5f - ART_CY) * s);
+        }
+
         // ── BOOSTER ICONS + UNLOCK MOMENT (2026-10-23) ──
         public static float BOOSTER_ICON_FILL = 0.72f;
         private static readonly Dictionary<string, Sprite> s_boosterIcons = new Dictionary<string, Sprite>();
         private static string BoosterIconFile(string id) =>
             id == BoosterManager.ID_FREE_SWAP ? "2glove" : id == BoosterManager.ID_MALLET ? "1hammer"
-          : id == BoosterManager.ID_BRAMBLE_SWEEP ? "1goldlightning" : id == BoosterManager.ID_SPYGLASS ? "2spyglass" : null;
+          : id == BoosterManager.ID_BRAMBLE_SWEEP ? "1goldlightning" : id == BoosterManager.ID_SPYGLASS ? "2spyglass" : id == BoosterManager.ID_AXE ? "1axe" : null;
         private static Sprite LoadBoostersSprite(string file)
         {
             if (file == null) return null;
@@ -185,12 +291,101 @@ namespace WordDrop
             s_boosterIcons[file] = sp;
             return sp;
         }
-        private static Sprite BoosterIcon(string id) => LoadBoostersSprite(BoosterIconFile(id));
+        public static Sprite BoosterIcon(string id) => LoadBoostersSprite(BoosterIconFile(id));
+        /// <summary>The booster slot's RectTransform (null if the row isn't built / the booster isn't in it).</summary>
+        public RectTransform SlotRect(string boosterId)
+        {
+            if (_slotButtons == null) return null;
+            for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+                if (DISPLAY_ORDER[i].Type == SlotType.Booster && DISPLAY_ORDER[i].BoosterId == boosterId && _slotButtons[i] != null)
+                    return (RectTransform)_slotButtons[i].transform;
+            return null;
+        }
+        /// <summary>World position (game camera) of a booster slot, at depth z - where booster art launches from.</summary>
+        public Vector3 SlotWorldPos(string boosterId, float z = 0f)
+        {
+            var rt = SlotRect(boosterId); var cam = Camera.main;
+            if (rt == null || cam == null) return cam != null ? cam.ViewportToWorldPoint(new Vector3(0.5f, 0.08f, 10f)) : Vector3.zero;
+            var c = rt.GetComponentInParent<Canvas>();
+            Camera uiCam = c != null && c.renderMode != RenderMode.ScreenSpaceOverlay ? c.worldCamera : null;
+            Vector2 sp = RectTransformUtility.WorldToScreenPoint(uiCam, rt.position);
+            var w = cam.ScreenToWorldPoint(new Vector3(sp.x, sp.y, Mathf.Abs(cam.transform.position.z - z)));
+            w.z = z; return w;
+        }
 
         /// <summary>Slots opened since the player last saw the row: the closed padlock swaps to the OPEN one (same pack,
         /// 1lock_03), pops and fades, and the icon scales in. Seen count persists (PlayerPrefs "booster_slots_seen").</summary>
         private const string SLOTS_SEEN_PREF = "booster_slots_seen";
         public static void ResetSlotsSeen() { PlayerPrefs.DeleteKey(SLOTS_SEEN_PREF); }
+        /// <summary>FX menu: replay the unlock moment on this booster's slot (2026-10-29).</summary>
+        public void TestUnlock(string boosterId)
+        {
+            if (_slotButtons == null || _slotArt == null) return;
+            for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+                if (DISPLAY_ORDER[i].Type == SlotType.Booster && DISPLAY_ORDER[i].BoosterId == boosterId && _slotArt[i] != null && _slotButtons[i].activeInHierarchy)
+                    StartCoroutine(ArtUnlockRoutine(i, 0f));
+        }
+        /// <summary>UNLOCK MOMENT for the round art (2026-10-29, Spencer: "should we have some kind of unlock animation seeing as we
+        /// have a locked image and an unlock image?"). Locked slot + closed gold padlock -> padlock rattles -> CLICK: swaps to the
+        /// open padlock with a gold flash, the slot cross-fades from locked to ready with a punch -> padlock floats up and fades ->
+        /// icon (+ shadow) springs in -> badge pops.</summary>
+        private System.Collections.IEnumerator ArtUnlockRoutine(int i, float delay)
+        {
+            var slot = _slotButtons[i].transform; var art = _slotArt[i];
+            float d = ((RectTransform)slot).sizeDelta.x;
+            var icon = slot.Find("BoosterIcon"); var sh = slot.Find("IconShadow");
+            var badge = _chargeBadgeContainers[i] != null ? _chargeBadgeContainers[i].transform : null;
+            foreach (var t in new[] { sh, badge }) if (t != null) { t.DOKill(); t.localScale = Vector3.zero; }
+            art.sprite = LockedSlotArt();
+            Image iconImg = icon != null ? icon.GetComponent<Image>() : null; Sprite fullIcon = iconImg != null ? iconImg.sprite : null;
+            var ghost = LoadBoostersSprite("slot_" + BoosterIconFile(DISPLAY_ORDER[i].BoosterId) + "_ghost");
+            if (icon != null) { icon.DOKill(); icon.localScale = LOCK_CENTRED ? Vector3.zero : Vector3.one; icon.gameObject.SetActive(true); if (ghost != null && iconImg != null) { if (fullIcon == ghost) fullIcon = LoadBoostersSprite("slot_" + BoosterIconFile(DISPLAY_ORDER[i].BoosterId)); iconImg.sprite = ghost; } }   // 11-16 centred lock: the icon is hidden until it springs in
+            var lockGO = new GameObject("UnlockFx", typeof(RectTransform), typeof(Image));
+            lockGO.transform.SetParent(slot, false);
+            var lrt = (RectTransform)lockGO.transform;
+            lrt.anchorMin = lrt.anchorMax = lrt.pivot = new Vector2(0.5f, 0.5f);
+            var closedLock = LockArt(false, out float lmul);
+            lrt.sizeDelta = Vector2.one * d * (LOCK_CENTRED ? LOCK_CENTRED_SIZE : ART_LOCK_CORNER) * lmul;
+            lrt.anchoredPosition = LOCK_CENTRED ? new Vector2(0f, (ART_CY - ART_FACE_CY) * d / ART_D) : new Vector2(ART_LOCK_CX, ART_LOCK_CY) * d;
+            var limg = lockGO.GetComponent<Image>(); limg.sprite = closedLock; limg.preserveAspect = true; limg.raycastTarget = false;
+            if (delay > 0f) yield return new WaitForSecondsRealtime(delay);
+            if (lockGO == null || slot == null) yield break;   // 11-16: the row was rebuilt mid-unlock (MissingReferenceException x4 at launch on L19)
+            // 1 RATTLE: the padlock shakes against its shackle
+            lrt.DOScale(1.1f, 0.12f).SetUpdate(true);
+            yield return lrt.DOPunchRotation(new Vector3(0, 0, 14f), 0.38f, 9, 0.6f).SetUpdate(true).WaitForCompletion();
+            // 2 CLICK: open padlock + gold flash; the slot lights up from locked to ready
+            if (lockGO == null || slot == null || limg == null) yield break;   // row rebuilt during the rattle
+            limg.sprite = LockArt(true, out _);
+            lrt.localScale = Vector3.one * 1.3f; lrt.DOScale(1f, 0.22f).SetEase(Ease.OutBack).SetUpdate(true);
+            var flashGO = new GameObject("UnlockFlash", typeof(RectTransform), typeof(Image));
+            flashGO.transform.SetParent(slot, false); flashGO.transform.SetSiblingIndex(lockGO.transform.GetSiblingIndex());
+            var frt = (RectTransform)flashGO.transform; frt.anchorMin = frt.anchorMax = frt.pivot = new Vector2(0.5f, 0.5f); frt.sizeDelta = Vector2.one * d;
+            var fimg = flashGO.GetComponent<Image>(); fimg.sprite = GetCircleSpriteBig(); fimg.raycastTarget = false; fimg.color = new Color(1f, 0.92f, 0.45f, 0.85f);
+            frt.localScale = Vector3.one * 0.5f; frt.DOScale(1.5f, 0.4f).SetEase(Ease.OutQuad).SetUpdate(true);
+            fimg.DOFade(0f, 0.4f).SetUpdate(true).OnComplete(() => { if (flashGO != null) Destroy(flashGO); });
+            var readyGO = new GameObject("ReadyFade", typeof(RectTransform), typeof(Image));
+            readyGO.transform.SetParent(art.transform, false);
+            var rrt = (RectTransform)readyGO.transform; rrt.anchorMin = Vector2.zero; rrt.anchorMax = Vector2.one; rrt.offsetMin = rrt.offsetMax = Vector2.zero;
+            var rimg = readyGO.GetComponent<Image>(); rimg.sprite = ButtonArt("booster_slot_ready"); rimg.raycastTarget = false; rimg.color = new Color(1, 1, 1, 0);
+            rimg.DOFade(1f, 0.25f).SetUpdate(true);
+            art.transform.DOKill(true); art.transform.DOPunchScale(Vector3.one * 0.12f, 0.35f, 6, 0.6f).SetUpdate(true);
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("slot_unlock")) GameAudio.Instance.PlayKit("slot_unlock"); else GameAudio.Instance?.PlayScorePowerup();   // 11-07 pick: Suitcase Latch Snap B1
+            yield return new WaitForSecondsRealtime(0.25f);
+            art.sprite = ButtonArt("booster_slot_ready"); if (readyGO != null) Destroy(readyGO);
+            // 3 the padlock floats up and fades; the icon springs in
+            lrt.DOAnchorPosY(lrt.anchoredPosition.y + d * 0.45f, 0.4f).SetEase(Ease.InQuad).SetUpdate(true);
+            limg.DOFade(0f, 0.4f).SetUpdate(true).OnComplete(() => { if (lockGO != null) Destroy(lockGO); });
+            yield return new WaitForSecondsRealtime(0.08f);
+            if (sh != null) sh.DOScale(1f, 0.45f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+            if (icon != null)
+            {   // the ghost turns into the full-colour icon with a pop (locked v2, 10-29)
+                if (iconImg != null && fullIcon != null) { iconImg.sprite = fullIcon; iconImg.color = Color.white; }   // 11-16: drop the locked blue tint
+                icon.localScale = Vector3.one * (LOCK_CENTRED ? 0.3f : 0.7f); icon.DOScale(1f, 0.45f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+            }
+            yield return new WaitForSecondsRealtime(0.3f);
+            if (badge != null) badge.DOScale(1f, 0.3f).SetEase(Ease.OutBack, 2.5f).SetUpdate(true);
+        }
+
         private void PlayUnlocksIfAny()
         {
             if (!SurvivalManager.FullBoardActive || _slotButtons == null) return;
@@ -205,15 +400,19 @@ namespace WordDrop
                 int ord = BoosterOrdinal(spec.BoosterId);
                 if (ord < seen || ord >= open || _slotButtons[i] == null) continue;
                 WDLog.Log($"[Booster] slot {ord} UNLOCKED ({spec.BoosterId})");
+                if (_slotArt[i] != null) { StartCoroutine(ArtUnlockRoutine(i, 0.35f)); continue; }   // round art: the full unlock moment
                 var slot = _slotButtons[i].transform;
                 var icon = slot.Find("BoosterIcon");
                 if (icon != null) { icon.localScale = Vector3.zero; icon.DOScale(1f, 0.45f).SetEase(Ease.OutBack, 2.2f).SetDelay(0.55f).SetUpdate(true); }
+                var iconSh = slot.Find("IconShadow");
+                if (iconSh != null) { iconSh.localScale = Vector3.zero; iconSh.DOScale(1f, 0.45f).SetEase(Ease.OutBack, 2.2f).SetDelay(0.55f).SetUpdate(true); }
+                if (_slotArt[i] != null) _slotArt[i].sprite = ButtonArt("booster_slot_ready");
                 if (openLock == null) continue;
                 var lockGO = new GameObject("UnlockFx", typeof(RectTransform), typeof(Image));
                 lockGO.transform.SetParent(slot, false);
                 var rt = lockGO.GetComponent<RectTransform>();
                 rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
-                rt.sizeDelta = new Vector2(SLOT_SIZE * 0.62f, SLOT_SIZE * 0.62f);
+                float slotW = ((RectTransform)slot).sizeDelta.x; rt.sizeDelta = Vector2.one * (HUDManager.MOCKUP_HUD ? slotW * 0.70f : SLOT_SIZE * 0.62f);
                 var img = lockGO.GetComponent<Image>(); img.sprite = openLock; img.preserveAspect = true; img.raycastTarget = false;
                 var seq = DOTween.Sequence().SetUpdate(true);
                 seq.Append(rt.DOScale(1.25f, 0.18f).SetEase(Ease.OutQuad));
@@ -222,7 +421,7 @@ namespace WordDrop
                 seq.Append(rt.DOAnchorPosY(SLOT_SIZE * 0.35f, 0.35f).SetEase(Ease.InQuad));
                 seq.Join(img.DOFade(0f, 0.35f));
                 seq.OnComplete(() => { if (lockGO != null) Destroy(lockGO); });
-                GameAudio.Instance?.PlayScorePowerup();
+                if (GameAudio.Instance != null && GameAudio.Instance.HasKit("slot_unlock")) GameAudio.Instance.PlayKit("slot_unlock"); else GameAudio.Instance?.PlayScorePowerup();   // 11-07 pick: Suitcase Latch Snap B1
             }
         }
 
@@ -281,6 +480,9 @@ namespace WordDrop
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BRAMBLE_SWEEP, PlaceholderChar = "C" },
             // 2026-10-22 Spencer: "the paid booster can be the spyglass one in my mock up" — his mockup's 4th booster is a
             // spyglass. Bloomburst moves out of the row (code intact; swap this line back to restore it).
+            // 2026-10-30 Spencer: axe and spyglass swapped places - AXE 4th (opens L19, next to the lightning row-clear it pairs
+            // with), SPYGLASS last (opens L22). Slots unlock left to right, so the unlock levels follow the position.
+            new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_AXE,           PlaceholderChar = "A" },
             new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_SPYGLASS,      PlaceholderChar = "?" },
             // new SlotSpec { Type = SlotType.Booster,  BoosterId = BoosterManager.ID_BLOOMBURST,    PlaceholderChar = "B" },
             // 2026-09-11 (Spencer): row cut to FOUR boosters + Settings. Wispwhirl parked as the
@@ -294,7 +496,7 @@ namespace WordDrop
         // Bench row now holds 6 slots (5 boosters + Settings) evenly spaced across the
         // SAME usable span the old 7-slot row used (left margin 37.98, span 1103.04),
         // so the bench backdrop still frames them.
-        private const int   BENCH_SLOT_COUNT = 5;   // 2026-09-11: 4 boosters + Settings (was 5 + Settings)
+        private const int   BENCH_SLOT_COUNT = 6;   // 2026-10-29: 5 boosters (+ Axe) + Settings. 2026-09-11 was 4 + Settings
         // Margins tightened to match Royal Match too — its row spans 95% of the screen width
         // (~2.5% either side) where WordDrop used 3.2%. 1179 - 2*29 = 1121.
         private const float BENCH_ROW_SPAN   = 1121f;
@@ -394,6 +596,9 @@ namespace WordDrop
         private Canvas _slotCanvas;
         private Canvas _aimCanvas;
         private TextMeshProUGUI _aimBanner;
+        /// <summary>The June "TAP A TILE" aim banner. Off (11-07): the rebuilt HUD is taller, so it sat over the Goals panel, and the
+        /// booster lessons already teach each booster (RM-style: cut the text).</summary>
+        public static bool AIM_BANNER = false;
         private Button _aimCancelButton;
 
         // Bench panel + group-animation rest state for the
@@ -516,12 +721,15 @@ namespace WordDrop
 
             // Aim-mode board-tap polling.
             if (BoosterManager.Instance == null || !BoosterManager.Instance.AimMode) return;
-            if (!Input.GetMouseButtonDown(0) && Input.touchCount == 0) return;
+            // armed when the level was won -> put it away, no charge used (11-16)
+            if (SurvivalManager.AwaitingNextLevel) { BoosterManager.Instance.CancelAim(); return; }
+            { var own = SurvivalManager.Instance; if (own != null && (own.IsOverlayPaused || own.OutOfMovesLocked)) { BoosterManager.Instance.CancelAim(); return; } }
+            if (!WDInput.GetMouseButtonDown(0) && WDInput.touchCount == 0) return;
             if (Camera.main == null) return;
 
-            Vector3 screenPos = Input.touchCount > 0
-                ? (Vector3)Input.GetTouch(0).position
-                : Input.mousePosition;
+            Vector3 screenPos = WDInput.touchCount > 0
+                ? (Vector3)WDInput.GetTouch(0).position
+                : WDInput.mousePosition;
 
             if (_aimCancelButton != null)
             {
@@ -677,6 +885,7 @@ namespace WordDrop
             _slotLabels            = new TextMeshProUGUI[slotCount];
             _chargeBadges          = new TextMeshProUGUI[slotCount];
             _chargeBadgeContainers = new GameObject[slotCount];
+            _slotArt               = new Image[slotCount];
 
             var displayFont = GameFont.GetDisplayTMP();
 
@@ -712,12 +921,22 @@ namespace WordDrop
                     {
                         slotSize = MK_SETTINGS_SIZE; slotDim = new Vector2(slotSize, slotSize);
                         anchored = PsdAnchoredCenter(114f - slotSize * 0.5f, 2405f - slotSize * 0.5f, slotSize, slotSize);
+                        if (RkRow)
+                        {   // RK proportions: smaller than a booster, first in the centred row, centres level with the boosters
+                            slotSize = RK_SETTINGS * CANVAS_W; slotDim = new Vector2(slotSize, slotSize);
+                            anchored = PsdAnchoredCenter(RkLeft, RK_ROW_Y - slotSize * 0.5f, slotSize, slotSize);
+                            if (RK2_LAYOUT)
+                            {   // v2: Settings at the RIGHT end of the row (RK)
+                                slotSize = RK2_SETTINGS * CANVAS_W; slotDim = new Vector2(slotSize, slotSize);
+                                anchored = PsdAnchoredCenter(RK2_SETTINGS_X * CANVAS_W - slotSize * 0.5f, RK_ROW_Y - slotSize * 0.5f, slotSize, slotSize);
+                            }
+                        }
                     }
                     else
                     {
-                        slotSize = MK_BOOSTER_SIZE; slotDim = new Vector2(slotSize, slotSize);
-                        float cx = MK_BOOSTER_X0 + Mathf.Min(benchIdx, 3) * MK_BOOSTER_STEP;
-                        anchored = PsdAnchoredCenter(cx - slotSize * 0.5f, 2390f - slotSize * 0.5f, slotSize, slotSize);
+                        slotSize = MkBoosterSize(); slotDim = new Vector2(slotSize, slotSize);
+                        float cx = MkBoosterCentre(benchIdx);
+                        anchored = PsdAnchoredCenter(cx - slotSize * 0.5f, (RkRow ? RK_ROW_Y : 2390f) - slotSize * 0.5f, slotSize, slotSize);
                         benchIdx++;
                     }
                 }
@@ -762,6 +981,21 @@ namespace WordDrop
                     grt.anchorMin = new Vector2(0.22f, 0.22f); grt.anchorMax = new Vector2(0.78f, 0.78f); grt.offsetMin = grt.offsetMax = Vector2.zero;
                     var gimg = gearGO.GetComponent<Image>(); gimg.sprite = GearSprite(); gimg.preserveAspect = true; gimg.raycastTarget = false;
                     gimg.color = new Color32(0xFB, 0xF2, 0xE2, 0xFF);
+                    if (UseRoundArt && ButtonArt("settings_round") != null)
+                    {   // 2026-10-29 Spencer: "the settings gear should probably be a purple button" - round purple v3 art, same family.
+                        // Later: RIMLESS ("lets go rimless") - the purple disc without the gold, so it reads secondary to the boosters,
+                        // and the AssetsCrafters 3D gear gradient-mapped to cream (the drawn gear "looks pretty cheap").
+                        _slotImages[i].sprite = null; _slotImages[i].color = new Color(1f, 1f, 1f, 0f);
+                        var artGO = new GameObject("SlotArt", typeof(RectTransform), typeof(Image));
+                        artGO.transform.SetParent(slot.transform, false); artGO.transform.SetAsFirstSibling();
+                        PlaceArt((RectTransform)artGO.transform, slotSize);
+                        var rimless = SETTINGS_RIMLESS ? ButtonArt("settings_rimless") : null;
+                        _slotArt[i] = artGO.GetComponent<Image>(); _slotArt[i].sprite = rimless != null ? rimless : ButtonArt("settings_round"); _slotArt[i].raycastTarget = false;
+                        var gearArt = ButtonArt("settings_gear");
+                        if (gearArt != null) { gimg.sprite = gearArt; gimg.color = Color.white; }
+                        grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f); grt.sizeDelta = Vector2.one * slotSize * (rimless != null ? SETTINGS_GEAR_FILL : 0.52f);
+                        grt.anchoredPosition = new Vector2(0f, (ART_CY - ART_FACE_CY) * slotSize / ART_D);
+                    }
                 }
                 else
                 {
@@ -770,7 +1004,15 @@ namespace WordDrop
                     var sq = Resources.Load<Sprite>("UI/booster_squircle");
                     _slotImages[i].sprite = sq != null ? sq : GetCircleSpriteBig();
                 }
-                _slotImages[i].color  = SlotBaseColor(spec.Type);
+                if (_slotArt[i] == null) _slotImages[i].color  = SlotBaseColor(spec.Type);   // round-art slots keep their alpha-0 hit area
+                if (spec.Type == SlotType.Booster && UseRoundArt)
+                {   // the slot's own Image stays as an invisible hit area (alpha 0 still takes taps); the art is a child
+                    _slotImages[i].sprite = null; _slotImages[i].color = new Color(1f, 1f, 1f, 0f);
+                    var artGO = new GameObject("SlotArt", typeof(RectTransform), typeof(Image));
+                    artGO.transform.SetParent(slot.transform, false);
+                    PlaceArt((RectTransform)artGO.transform, slotSize);
+                    _slotArt[i] = artGO.GetComponent<Image>(); _slotArt[i].sprite = ButtonArt("booster_slot_ready"); _slotArt[i].raycastTarget = false;
+                }
 
                 var slotBtn = slot.GetComponent<Button>();
                 slotBtn.onClick.AddListener(() => OnSlotTapped(slotIndex));
@@ -789,6 +1031,7 @@ namespace WordDrop
                 cb.disabledColor    = Color.white;
                 cb.colorMultiplier  = 1f;
                 slotBtn.colors = cb;
+                if (_slotArt[i] != null) slotBtn.targetGraphic = _slotArt[i];   // press tint shows on the art
 
                 // Settings slot gets a two-stage click feel: PointerDown
                 // fires the press half (otherpop_press), release fires the
@@ -857,14 +1100,34 @@ namespace WordDrop
                 {
                     // ICON ART (2026-10-23): the row only ever drew a placeholder letter. Icons from Spencer's licensed pack
                     // (Assets/AssetsCrafters/... 256x256, copied to Resources/Boosters). No icon file = the letter, as before.
+                    bool art = _slotArt[i] != null;
+                    float iconSz = slotSize * (art ? ART_ICON_FILL : BOOSTER_ICON_FILL);
+                    Vector2 iconAt = art ? new Vector2(0f, (ART_CY - ART_FACE_CY) * slotSize / ART_D) + IconShift(spec.BoosterId) * slotSize : Vector2.zero;   // face centre (a hair high) + per-icon badge clearance (11-02)
+                    var shSprite = art ? LoadBoostersSprite("shadow_" + BoosterIconFile(spec.BoosterId)) : null;
+                    if (shSprite != null)
+                    {   // two-layer recipe shadow (contact + ambient), pre-baked by make_slot_sprites.py: icon + 2L padding each side
+                        var shGO = new GameObject("IconShadow", typeof(RectTransform), typeof(Image));
+                        shGO.transform.SetParent(slot.transform, false);
+                        var shImg = shGO.GetComponent<Image>(); shImg.sprite = shSprite; shImg.raycastTarget = false;
+                        var shRT = (RectTransform)shGO.transform;
+                        shRT.anchorMin = shRT.anchorMax = shRT.pivot = new Vector2(0.5f, 0.5f);
+                        shRT.sizeDelta = Vector2.one * iconSz * (1f + 4f * 14f / 91f);
+                        shRT.anchoredPosition = iconAt;   // the recipe's drop distance is baked into the sprite (make_slot_sprites.py, 10-29)
+                    }
                     var iconGO = new GameObject("BoosterIcon", typeof(RectTransform), typeof(Image));
                     iconGO.transform.SetParent(slot.transform, false);
                     var iconImg = iconGO.GetComponent<Image>();
                     iconImg.sprite = BoosterIcon(spec.BoosterId); iconImg.preserveAspect = true; iconImg.raycastTarget = false;
+                    // EDGED HUD ICON (2026-10-29, Spencer picked "B"): Boosters/slot_<icon>.png = the icon with a thin dark
+                    // icon-coloured core + short halo (vector_buttons/edge/icon_edge.py), on a 288 canvas (256 + 16 each side) so the
+                    // art keeps its size and centre. HUD only - the booster animations use the original (measured) icons.
+                    float iconBox = iconSz;
+                    var edged = art ? LoadBoostersSprite("slot_" + BoosterIconFile(spec.BoosterId)) : null;
+                    if (edged != null) { iconImg.sprite = edged; iconBox = iconSz * 288f / 256f; }
                     var iconRT = iconGO.GetComponent<RectTransform>();
                     iconRT.anchorMin = iconRT.anchorMax = iconRT.pivot = new Vector2(0.5f, 0.5f);
-                    iconRT.sizeDelta = new Vector2(slotSize * BOOSTER_ICON_FILL, slotSize * BOOSTER_ICON_FILL);
-                    iconRT.anchoredPosition = Vector2.zero;
+                    iconRT.sizeDelta = new Vector2(iconBox, iconBox);
+                    iconRT.anchoredPosition = iconAt;
                     _slotLabels[i] = null;
                 }
                 else
@@ -900,11 +1163,23 @@ namespace WordDrop
                     badgeRT.anchorMax = new Vector2(0.5f, 0.5f);
                     badgeRT.pivot     = new Vector2(0.5f, 0.5f);
                     badgeRT.sizeDelta = new Vector2(BADGE_SIZE, BADGE_SIZE);
-                    badgeRT.anchoredPosition = new Vector2(BADGE_OFFSET_X, BADGE_OFFSET_Y);
+                    badgeRT.anchoredPosition = new Vector2(BADGE_OFFSET_X, BADGE_OFFSET_Y) * (HUDManager.MOCKUP_HUD ? slotSize / MK_BOOSTER_SIZE : 1f);   // 2026-10-29: tracks the slot size
                     var badgeImg = badgeGO.GetComponent<Image>();
                     badgeImg.sprite = GetCircleSpriteSmall();
                     badgeImg.color  = new Color(0.20f, 0.58f, 0.14f, 1f); // 2026-06-24 Spencer: darker green than SCORED_TINT so the white number reads (bright green washed it out)
                     badgeImg.raycastTarget = false;
+                    bool badgeArt = _slotArt[i] != null && ButtonArt("booster_badge") != null;
+                    if (badgeArt)
+                    {   // round green v3 badge on the rim's lower right (2026-10-29)
+                        float bd = slotSize * ART_BADGE_FRAC;
+                        badgeRT.sizeDelta = new Vector2(bd, bd);
+                        badgeRT.anchoredPosition = new Vector2(ART_BADGE_POS_X, -ART_BADGE_POS_Y) * slotSize;
+                        badgeImg.color = new Color(1f, 1f, 1f, 0f);
+                        var baGO = new GameObject("BadgeArt", typeof(RectTransform), typeof(Image));
+                        baGO.transform.SetParent(badgeGO.transform, false);
+                        PlaceArt((RectTransform)baGO.transform, bd);
+                        var baImg = baGO.GetComponent<Image>(); baImg.sprite = ButtonArt("booster_badge"); baImg.raycastTarget = false;
+                    }
 
                     var chargeGO = new GameObject("Charge", typeof(RectTransform));
                     chargeGO.transform.SetParent(badgeGO.transform, false);
@@ -915,6 +1190,19 @@ namespace WordDrop
                     _chargeBadges[i].alignment = TextAlignmentOptions.Center;
                     _chargeBadges[i].color = Color.white;
                     _chargeBadges[i].raycastTarget = false;
+                    if (badgeArt)
+                    {   // cream number with a dark-green ink ring, like the button labels
+                        float bd = slotSize * ART_BADGE_FRAC;
+                        _chargeBadges[i].fontSize = bd * 0.62f;
+                        // 11-02 (Spencer: "somethings going on with the numbers in the badge"): the 0.25 ink ring grew INTO the heavy
+                        // glyphs and closed the counters (the 9's hole became a dot) -> BADGE_OUTLINE; and two digits (97) crowded the
+                        // rim -> auto-size inside a side margin, so one digit keeps the full size and two digits shrink to fit.
+                        _chargeBadges[i].enableAutoSizing = true; _chargeBadges[i].fontSizeMax = bd * 0.62f; _chargeBadges[i].fontSizeMin = bd * 0.30f;
+                        _chargeBadges[i].margin = new Vector4(bd * BADGE_TEXT_MARGIN, 0f, bd * BADGE_TEXT_MARGIN, 0f);
+                        _chargeBadges[i].color = new Color32(0xFF, 0xF8, 0xD3, 0xFF);
+                        _chargeBadges[i].outlineWidth = BADGE_OUTLINE;
+                        _chargeBadges[i].outlineColor = new Color32(0x46, 0x04, 0x0C, 0xFF);   // dark crimson ink on the red badge (10-29, Spencer: red)
+                    }
                     var chargeRT = chargeGO.GetComponent<RectTransform>();
                     chargeRT.anchorMin = Vector2.zero;
                     chargeRT.anchorMax = Vector2.one;
@@ -927,20 +1215,33 @@ namespace WordDrop
                 // ignore taps. Added last so it renders above the icon/badge. 2026-06-09.
                 if (IsSlotLocked(spec))
                 {
-                    slotBtn.interactable = false;
+                    slotBtn.interactable = spec.Type == SlotType.Booster;   // 10-29: a locked BOOSTER is tappable -> 'Unlocks at Level N'
                     // Locked tools show ONLY the lock — hide the icon/letter/badge beneath it.
                     for (int ch = slot.transform.childCount - 1; ch >= 0; ch--)
-                        slot.transform.GetChild(ch).gameObject.SetActive(false);
+                        if (slot.transform.GetChild(ch).name != "SlotArt") slot.transform.GetChild(ch).gameObject.SetActive(false);   // the round art stays (locked sprite)
+                    if (_slotArt[i] != null) _slotArt[i].sprite = LockedSlotArt();
+                    // LOCKED v2 (2026-10-29, Spencer OK'd composition mock): a greyscale GHOST of the booster's icon stays on the light
+                    // grey-lavender face ("coming soon"), the padlock shrinks to a corner badge
+                    var ghostIcon = slot.transform.Find("BoosterIcon");
+                    var ghostSp = spec.Type == SlotType.Booster && _slotArt[i] != null ? LoadBoostersSprite("slot_" + BoosterIconFile(spec.BoosterId) + "_ghost") : null;
+                    if (ghostIcon != null && ghostSp != null && !LOCK_CENTRED) { ghostIcon.gameObject.SetActive(true); var gi = ghostIcon.GetComponent<Image>(); gi.sprite = ghostSp; if (LOCKED_IN_COLOUR) gi.color = LOCKED_GHOST_TINT; }
 
                     var lockGO = new GameObject("LockOverlay", typeof(RectTransform), typeof(Image));
                     lockGO.transform.SetParent(slot.transform, false);
                     var lockRT = lockGO.GetComponent<RectTransform>();
                     lockRT.anchorMin = lockRT.anchorMax = new Vector2(0.5f, 0.5f);
                     lockRT.pivot     = new Vector2(0.5f, 0.5f);
-                    lockRT.sizeDelta = new Vector2(SLOT_SIZE * 0.62f, SLOT_SIZE * 0.62f);
+                    float lockSz = HUDManager.MOCKUP_HUD ? slotSize * 0.70f : SLOT_SIZE * 0.62f;   // 2026-10-29: scales with the (now count-sized) slot
+                    lockRT.sizeDelta = new Vector2(lockSz, lockSz);
                     lockRT.anchoredPosition = Vector2.zero;
                     var lockImg = lockGO.GetComponent<Image>();
                     lockImg.sprite         = GetLockSprite();
+                    if (_slotArt[i] != null && LoadBoostersSprite("lock_closed_gold") != null)
+                    {   // round art: the GOLD padlock pair (closed 1lock / open 1lock_01) reads on the blue face; centred by its outline
+                        lockImg.sprite = LockArt(false, out float lockMul);
+                        lockRT.sizeDelta = Vector2.one * slotSize * (LOCK_CENTRED ? LOCK_CENTRED_SIZE : ART_LOCK_CORNER) * lockMul;
+                        lockRT.anchoredPosition = LOCK_CENTRED ? new Vector2(0f, (ART_CY - ART_FACE_CY) * slotSize / ART_D) : new Vector2(ART_LOCK_CX, ART_LOCK_CY) * slotSize;
+                    }
                     lockImg.preserveAspect = true;
                     lockImg.raycastTarget  = false;
                 }
@@ -1219,6 +1520,7 @@ namespace WordDrop
             _aimBanner.alignment = TextAlignmentOptions.Center;
             _aimBanner.color = new Color(1f, 0.84f, 0.42f, 1f);
             _aimBanner.raycastTarget = false;
+            if (!AIM_BANNER) labelGO.SetActive(false);   // 11-07 Spencer "whats this tap a tile thing?" - June banner now lands on the Goals panel
             var labelRT = labelGO.GetComponent<RectTransform>();
             labelRT.anchorMin = Vector2.zero;
             labelRT.anchorMax = Vector2.one;
@@ -1565,10 +1867,50 @@ namespace WordDrop
 
         // ── Refresh ─────────────────────────────────────────────────────────────
 
+        // GROWING BOOSTER ROW (2026-11-01, Spencer picked option 1: "five grey padlocked slots ... dead heavy shapes"). Only unlocked
+        // boosters + the NEXT locked one (a teaser) show; the visible group (Settings + boosters) is re-centred, so the row grows as
+        // slots open (Royal Match). ROW_GROWS = false -> every slot, locked or not, as before.
+        public static bool ROW_GROWS = false;   // 11-02 Spencer: "go back to all the spots please" (seeing the new HUD) - every slot shows, locked ones padlocked
+        private int _rowVisibleCount = -1; private float[] _slotBaseX;
+        private void ApplyGrowingRow()
+        {
+            if (_slotButtons == null || _slotRestPositions == null || !_restPositionsCached) return;
+            int open = TutorialLocks.BoosterSlotsOpen();
+            int visible = 0;
+            for (int i = 0; i < DISPLAY_ORDER.Length && i < _slotButtons.Length; i++)
+            {
+                var spec = DISPLAY_ORDER[i]; if (_slotButtons[i] == null || spec.Type != SlotType.Booster) continue;
+                bool show = !ROW_GROWS || BoosterOrdinal(spec.BoosterId) <= open;   // unlocked + the next one
+                if (_slotButtons[i].activeSelf != show) _slotButtons[i].SetActive(show);
+                if (show) visible++;
+            }
+            if (visible == _rowVisibleCount) return;
+            _rowVisibleCount = visible;
+            if (_slotBaseX == null || _slotBaseX.Length != _slotRestPositions.Length)
+            { _slotBaseX = new float[_slotRestPositions.Length]; for (int i = 0; i < _slotBaseX.Length; i++) _slotBaseX[i] = _slotRestPositions[i].x; }
+            // centre the visible group (Settings + shown boosters) on the screen
+            float minX = float.MaxValue, maxX = float.MinValue, allMin = float.MaxValue, allMax = float.MinValue;
+            for (int i = 0; i < _slotButtons.Length && i < _slotBaseX.Length; i++)
+            {
+                if (_slotButtons[i] == null || _slotButtons[i] == _editPanelSlot) continue;
+                float x = _slotBaseX[i]; allMin = Mathf.Min(allMin, x); allMax = Mathf.Max(allMax, x);
+                if (!_slotButtons[i].activeSelf) continue; minX = Mathf.Min(minX, x); maxX = Mathf.Max(maxX, x);
+            }
+            if (minX > maxX) return;
+            float dx = ROW_GROWS ? ((allMin + allMax) * 0.5f - (minX + maxX) * 0.5f) : 0f;
+            for (int i = 0; i < _slotButtons.Length && i < _slotBaseX.Length; i++)
+            {
+                if (_slotButtons[i] == null || _slotButtons[i] == _editPanelSlot) continue;
+                _slotRestPositions[i].x = _slotBaseX[i] + dx;
+                var rt = _slotButtons[i].GetComponent<RectTransform>(); if (rt != null) rt.anchoredPosition = new Vector2(_slotRestPositions[i].x, rt.anchoredPosition.y);
+            }
+        }
+
         private void RefreshDisplay()
         {
             var bm = BoosterManager.Instance;
             bool isAim = bm != null && bm.AimMode;
+            ApplyGrowingRow();
 
             for (int i = 0; i < DISPLAY_ORDER.Length; i++)
             {
@@ -1611,6 +1953,7 @@ namespace WordDrop
                 }
 
                 if (_slotButtons[i] != null)
+                    if (ROW_GROWS && spec.Type == SlotType.Booster && BoosterOrdinal(spec.BoosterId) > TutorialLocks.BoosterSlotsOpen()) slotActive = false;   // growing row: hidden past the teaser
                     _slotButtons[i].SetActive(slotActive);
                 if (!slotActive) continue;
 
@@ -1618,6 +1961,19 @@ namespace WordDrop
                 // "+" when 0 (acts as a buy-more indicator). Settings has none.
                 if (_chargeBadges[i] != null)
                     _chargeBadges[i].text = charges > 0 ? charges.ToString() : "+";
+                // round art: RED count badge, DARK GREEN "+" (out of charges -> shop) badge (2026-10-29 Spencer)
+                if (_chargeBadgeContainers[i] != null && _chargeBadges[i] != null)
+                {
+                    var ba = _chargeBadgeContainers[i].transform.Find("BadgeArt");
+                    if (ba != null)
+                    {
+                        bool plus = charges <= 0;
+                        var img = ba.GetComponent<Image>();
+                        var want = ButtonArt(plus ? "booster_badge_plus" : "booster_badge");
+                        if (img != null && want != null && img.sprite != want) img.sprite = want;
+                        _chargeBadges[i].outlineColor = plus ? new Color32(0x08, 0x22, 0x06, 0xFF) : new Color32(0x46, 0x04, 0x0C, 0xFF);
+                    }
+                }
                 if (_chargeBadgeContainers[i] != null)
                 {
                     bool showBadge = (spec.Type == SlotType.Booster
@@ -1639,7 +1995,7 @@ namespace WordDrop
 
                 if (btn != null)
                 {
-                    if (IsSlotLocked(spec))         btn.interactable = false; // onboarding lock
+                    if (IsSlotLocked(spec))         btn.interactable = spec.Type == SlotType.Booster && !isAim; // onboarding lock (boosters: tappable for the unlock tooltip)
                     else if (isEditSlot)            btn.interactable = IsSwapAdEligible(); // tappable only to offer the swap-refill ad
                     else if (isAim && !isArmedSlot) btn.interactable = false;
                     else                            btn.interactable = true;
@@ -1649,7 +2005,12 @@ namespace WordDrop
                 // red bg + ✕ glyph (same look as the tile-bag swap-mode X).
                 // Every other booster slot dims to its base color and is
                 // non-interactable.
-                if (_slotImages[i] != null)
+                if (spec.Type == SlotType.Booster && _slotArt != null && i < _slotArt.Length && _slotArt[i] != null)
+                {   // round art: the STATE is the sprite (armed = brighter + gold glow, a touch bigger), not a tint
+                    _slotArt[i].sprite = IsSlotLocked(spec) ? LockedSlotArt() : ButtonArt(isArmedSlot ? "booster_slot_armed" : "booster_slot_ready");
+                    _slotArt[i].transform.localScale = Vector3.one * (isArmedSlot ? ART_ARMED_SCALE : 1f);
+                }
+                else if (_slotImages[i] != null && (_slotArt == null || i >= _slotArt.Length || _slotArt[i] == null))
                 {
                     _slotImages[i].color = isArmedSlot
                         ? new Color(0.55f, 0.18f, 0.18f, 1f)
@@ -1930,15 +2291,148 @@ namespace WordDrop
 
         // ── Input handlers ──────────────────────────────────────────────────────
 
+        // ── UNLOCK TOOLTIP (2026-10-29, Spencer + his Royal Kingdom screenshot: "add an unlocks at level number panel when you tap
+        // on a locked booster"). A cream speech bubble above the row with a tail pointing at the tapped slot: "Unlocks at Level N"
+        // (dark purple ink, "Level N" in our red accent), WordSlop. Pops in, holds UNLOCK_TIP_HOLD s (or until another tap), pops out.
+        public static float UNLOCK_TIP_HOLD = 2.2f;
+        private GameObject _unlockTip; private Sequence _unlockTipSeq;
+        /// <summary>The run level a booster slot opens on (full-board: TutorialLocks.BOOSTER_SLOT_UNLOCKS by row order).</summary>
+        private static int UnlockLevelFor(SlotSpec spec)
+        {
+            int ord = BoosterOrdinal(spec.BoosterId);
+            if (SurvivalManager.FullBoardActive && ord >= 0 && ord < TutorialLocks.BOOSTER_SLOT_UNLOCKS.Length) return TutorialLocks.BOOSTER_SLOT_UNLOCKS[ord];
+            return TutorialLocks.BOOSTER_UNLOCK_LEVEL;
+        }
+        /// <summary>11-16 Spencer: "make the unlock at whatever level bubbles match the tutorial ones". The tutorial's gold-rimmed
+        /// cream bubble (UI/Panel/tut_bubble), WordSlop Button text at the lessons' size and ink, "Level N" in the lessons' blue.
+        /// One line, as wide as its text; no tail (the lesson bubbles have none) - it sits over the tapped slot. False = the old
+        /// cream bubble with the purple outline and tail.</summary>
+        public static bool UNLOCK_TIP_GOLD = true;
+        private bool ShowGoldUnlockTip(int slotIndex, RectTransform slotRT, RectTransform canvasRT, int lvl)
+        {
+            var btex = Resources.Load<Texture2D>("UI/Panel/tut_bubble");
+            var font = Resources.Load<TMP_FontAsset>("WordSlop Button SDF");
+            if (btex == null || font == null) return false;   // art or font missing -> the old bubble
+            var rootCanvas = canvasRT.GetComponentInParent<Canvas>(); if (rootCanvas != null) rootCanvas = rootCanvas.rootCanvas;
+            float scale = rootCanvas != null && rootCanvas.scaleFactor > 0.001f ? rootCanvas.scaleFactor : 1f;
+            float W = Screen.width / scale;                                   // screen width in this canvas's units
+            float pxPerUnit = (Camera.main != null ? Screen.height / (2f * Camera.main.orthographicSize) : 100f) / scale;   // canvas units per world unit
+
+            var tip = new GameObject("UnlockTip", typeof(RectTransform), typeof(Image)); tip.transform.SetParent(canvasRT, false); tip.transform.SetAsLastSibling();
+            _unlockTip = tip;
+            var trt = (RectTransform)tip.transform;
+            trt.anchorMin = trt.anchorMax = slotRT.anchorMin; trt.pivot = new Vector2(0.5f, 0f);
+            var img = tip.GetComponent<Image>(); img.raycastTarget = false; img.type = Image.Type.Sliced;
+            float bb = TutorialOverlay.GOLD_BORDER;
+            img.sprite = Sprite.Create(btex, new Rect(0, 0, btex.width, btex.height), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(bb, bb, bb, bb));
+            img.pixelsPerUnitMultiplier = TutorialOverlay.GOLD_PPU / Mathf.Max(1f, pxPerUnit);   // rim as thick as the lesson bubble's
+
+            var lgo = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI)); lgo.transform.SetParent(tip.transform, false);
+            var tmp = lgo.GetComponent<TextMeshProUGUI>();
+            tmp.font = font; tmp.fontSharedMaterial = font.material; tmp.raycastTarget = false; tmp.richText = true;
+            tmp.alignment = TextAlignmentOptions.Center; tmp.textWrappingMode = TextWrappingModes.NoWrap; tmp.enableAutoSizing = false;
+            tmp.color = LevelIntroModal.V2_LABEL_INK;
+            float capEm = font.faceInfo.capLine / Mathf.Max(1f, font.faceInfo.pointSize);
+            tmp.fontSize = TutorialOverlay.RM_CAP_FRAC * W / Mathf.Max(0.1f, capEm);
+            tmp.text = $"Unlocks at <color=#{ColorUtility.ToHtmlStringRGB(TutorialOverlay.WORD_COLOR)}>Level {lvl}</color>";
+            float textW = tmp.GetPreferredValues(tmp.text).x;
+            float lh = font.faceInfo.lineHeight / Mathf.Max(1f, font.faceInfo.pointSize);
+            float pitch = tmp.fontSize * (lh + TutorialOverlay.LESSON_LINE_SPACING * 0.01f);
+            // the lessons' padding: top/bottom RM_PAD_FRAC each; sides = (bubble 76% - text 64%) / 2 of the screen width
+            float sidePad = (TutorialOverlay.RM_BUBBLE_W_FRAC - TutorialOverlay.RM_TEXT_W_FRAC) * 0.5f * W;
+            float pw = Mathf.Min(textW + 2f * sidePad, TutorialOverlay.RM_BUBBLE_W_FRAC * W);
+            float ph = Mathf.Max(pitch + 2f * TutorialOverlay.RM_PAD_FRAC * W, 2f * bb / TutorialOverlay.GOLD_PPU * pxPerUnit + 4f);
+            trt.sizeDelta = new Vector2(pw, ph);
+            var lrt = (RectTransform)lgo.transform; lrt.anchorMin = lrt.anchorMax = new Vector2(0.5f, 0.5f); lrt.pivot = new Vector2(0.5f, 0.5f);
+            lrt.sizeDelta = new Vector2(pw, ph);
+            lrt.anchoredPosition = new Vector2(0f, TutorialOverlay.TEXT_RIM_LIFT / TutorialOverlay.GOLD_PPU * pxPerUnit);   // centred on the cream, not the bevel
+
+            // over the tapped slot, kept on screen
+            float canvasW = canvasRT.rect.width > 1f ? canvasRT.rect.width : W;
+            float minX = -canvasW * 0.5f + pw * 0.5f + 20f, maxX = canvasW * 0.5f - pw * 0.5f - 20f;
+            trt.anchoredPosition = new Vector2(Mathf.Clamp(slotRT.anchoredPosition.x, minX, maxX), slotRT.anchoredPosition.y + slotRT.sizeDelta.y * 0.5f + 18f);
+
+            trt.localScale = Vector3.one * 0.4f;
+            _unlockTipSeq = DOTween.Sequence().SetUpdate(true);
+            _unlockTipSeq.Append(trt.DOScale(1.06f, 0.16f).SetEase(Ease.OutQuad)).Append(trt.DOScale(1f, 0.1f))
+                .AppendInterval(UNLOCK_TIP_HOLD).Append(trt.DOScale(0f, 0.16f).SetEase(Ease.InBack))
+                .OnComplete(() => { if (tip != null) Destroy(tip); if (_unlockTip == tip) _unlockTip = null; });
+            WDLog.Log($"[Booster] locked tap -> 'Unlocks at Level {lvl}' gold bubble ({DISPLAY_ORDER[slotIndex].BoosterId}) {pw:F0}x{ph:F0} font {tmp.fontSize:F0}");
+            return true;
+        }
+        private void ShowUnlockTip(int slotIndex)
+        {
+            if (_slotButtons == null || slotIndex < 0 || slotIndex >= _slotButtons.Length || _slotButtons[slotIndex] == null) return;
+            var slotRT = (RectTransform)_slotButtons[slotIndex].transform;
+            var canvasRT = slotRT.parent as RectTransform; if (canvasRT == null) return;
+            if (_unlockTip != null) { _unlockTipSeq?.Kill(); Destroy(_unlockTip); }
+            int lvl = UnlockLevelFor(DISPLAY_ORDER[slotIndex]);
+            if (UNLOCK_TIP_GOLD && ShowGoldUnlockTip(slotIndex, slotRT, canvasRT, lvl)) return;
+
+            var tip = new GameObject("UnlockTip", typeof(RectTransform)); tip.transform.SetParent(canvasRT, false); tip.transform.SetAsLastSibling();
+            _unlockTip = tip;
+            var trt = (RectTransform)tip.transform;
+            trt.anchorMin = trt.anchorMax = slotRT.anchorMin; trt.pivot = new Vector2(0.5f, 0f);
+            float slotH = slotRT.sizeDelta.y, W = 520f, H = 132f;
+            // keep the bubble on screen: centred over the slot, clamped to the canvas width; the tail stays on the slot
+            float canvasW = canvasRT.rect.width > 1f ? canvasRT.rect.width : 1179f;
+            float wantX = slotRT.anchoredPosition.x;
+            float minX = -canvasW * 0.5f + W * 0.5f + 20f, maxX = canvasW * 0.5f - W * 0.5f - 20f;
+            float bx = Mathf.Clamp(wantX, minX, maxX);
+            trt.anchoredPosition = new Vector2(bx, slotRT.anchoredPosition.y + slotH * 0.5f + 34f);
+            trt.sizeDelta = new Vector2(W, H);
+            // body: dark purple outline -> cream face (rounded), soft drop below
+            Image Rect(string n, Transform parent, Color c, float inset, float r)
+            {
+                var go = new GameObject(n, typeof(RectTransform), typeof(Image)); go.transform.SetParent(parent, false);
+                var rt = (RectTransform)go.transform; rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = new Vector2(inset, inset); rt.offsetMax = new Vector2(-inset, -inset);
+                var im = go.GetComponent<Image>(); im.sprite = MenuUI.GetRoundedRectSprite(Mathf.RoundToInt(r)); im.type = Image.Type.Sliced; im.color = c; im.raycastTarget = false; return im;
+            }
+            var shadow = Rect("Shadow", tip.transform, new Color32(0x3A, 0x1E, 0x12, 0x55), 0f, 40f); ((RectTransform)shadow.transform).anchoredPosition = new Vector2(0f, -8f);
+            var outline = Rect("Outline", tip.transform, new Color32(0x38, 0x0B, 0x6A, 0xFF), 0f, 40f);
+            Rect("Face", tip.transform, new Color32(0xFF, 0xF4, 0xDE, 0xFF), 7f, 34f);
+            // tail: a rotated square in the outline colour + a smaller cream one on top, pointing at the slot
+            float tailX = Mathf.Clamp(wantX - bx, -W * 0.5f + 50f, W * 0.5f - 50f);
+            foreach (var (n, c, sz, dy) in new[] { ("TailOut", (Color)new Color32(0x38, 0x0B, 0x6A, 0xFF), 46f, -12f), ("TailIn", (Color)new Color32(0xFF, 0xF4, 0xDE, 0xFF), 32f, -6f) })
+            {
+                var go = new GameObject(n, typeof(RectTransform), typeof(Image)); go.transform.SetParent(tip.transform, false);
+                var rt = (RectTransform)go.transform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f); rt.sizeDelta = new Vector2(sz, sz);
+                rt.anchoredPosition = new Vector2(tailX, dy); rt.localRotation = Quaternion.Euler(0, 0, 45f);
+                var im = go.GetComponent<Image>(); im.color = c; im.raycastTarget = false;
+            }
+            outline.transform.SetSiblingIndex(1);
+            // label: "Unlocks at <Level N>"
+            var lgo = new GameObject("Label", typeof(RectTransform)); lgo.transform.SetParent(tip.transform, false);
+            var lrt = (RectTransform)lgo.transform; lrt.anchorMin = Vector2.zero; lrt.anchorMax = Vector2.one; lrt.offsetMin = new Vector2(24f, 14f); lrt.offsetMax = new Vector2(-24f, -14f);
+            var tmp = lgo.AddComponent<TextMeshProUGUI>();
+            var f = Resources.Load<TMP_FontAsset>(GameFont.WORDSLOP_FONT); if (f != null) tmp.font = f;
+            tmp.text = $"Unlocks at <color=#C2132F>Level {lvl}</color>";
+            tmp.color = new Color32(0x2B, 0x0A, 0x5A, 0xFF);
+            tmp.alignment = TextAlignmentOptions.Center; tmp.enableAutoSizing = true; tmp.fontSizeMin = 20f; tmp.fontSizeMax = 54f; tmp.raycastTarget = false;
+            // pop in, hold, pop out
+            trt.localScale = Vector3.one * 0.4f;
+            _unlockTipSeq = DOTween.Sequence().SetUpdate(true);
+            _unlockTipSeq.Append(trt.DOScale(1.06f, 0.16f).SetEase(Ease.OutQuad)).Append(trt.DOScale(1f, 0.1f))
+                .AppendInterval(UNLOCK_TIP_HOLD).Append(trt.DOScale(0f, 0.16f).SetEase(Ease.InBack))
+                .OnComplete(() => { if (tip != null) Destroy(tip); if (_unlockTip == tip) _unlockTip = null; });
+            WDLog.Log($"[Booster] locked tap -> 'Unlocks at Level {lvl}' ({DISPLAY_ORDER[slotIndex].BoosterId})");
+        }
+
         private void OnSlotTapped(int slotIndex)
         {
             if (TutorialBeats.BlocksInput) return;   // tutorial beat up: boosters wait
+            if (BoosterManager.CascadeBusy) return;   // 11-17: the last booster is still resolving
             if (slotIndex < 0 || slotIndex >= DISPLAY_ORDER.Length) return;
             var spec = DISPLAY_ORDER[slotIndex];
 
             // Locked during early onboarding — ignore the tap (defensive; the button is also
             // interactable=false). 2026-06-09.
-            if (IsSlotLocked(spec)) { GameAudio.Instance?.PlayInvalidDrop(); return; }
+            if (IsSlotLocked(spec))
+            {
+                if (spec.Type == SlotType.Booster) { ShowUnlockTip(slotIndex); GameAudio.Instance?.PlayUIClick(); }
+                else GameAudio.Instance?.PlayInvalidDrop();
+                return;
+            }
 
             // Aim-mode cancel: tapping the armed booster's slot (now styled
             // as a red ✕) cancels aim. Same multi-pop release sound as the
@@ -1952,6 +2446,13 @@ namespace WordDrop
                 bm.CancelAim();
                 return;
             }
+
+            // THE LEVEL IS WON - the row is closed until the next level (11-16, found by the monkey test: during the end-of-level
+            // rocket bonus a booster could still be armed, and Settings > Quit would have cost a life on a level already won).
+            if (SurvivalManager.AwaitingNextLevel) return;
+            // 11-16 (play-badly monkey): a card or the Out of Moves banner owns the screen, or the moves are gone - no boosters and
+            // no Settings gear. Settings opened over the banner used to un-pause the board under the Continue card when it closed.
+            { var own = SurvivalManager.Instance; if (own != null && (own.IsOverlayPaused || own.OutOfMovesLocked)) return; }
 
             // 2026-06-01: every non-Settings slot click plays the same
             // settings-tab release sound per Spencer ("the sound played in the
@@ -2006,6 +2507,8 @@ namespace WordDrop
                     break;
                 }
                 case SlotType.Settings:
+                    // 11-17 settings revamp: in a level the gear fans out round buttons (exit / music / sound / vibration), no card.
+                    if (SettingsV2.ENABLED && SettingsV2.ShowFlyout()) { GameAudio.Instance?.PlaySettingsRelease(); suppressClick = true; break; }
                     if (SettingsModal.Instance == null)
                     {
                         var modalGO = new GameObject("SettingsModalRoot");

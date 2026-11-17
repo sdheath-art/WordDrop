@@ -32,7 +32,7 @@ namespace WordDrop
         private ReturnContext _returnContext = ReturnContext.LevelSelect;
 
         /// <summary>Cost of the "refill to full hearts" shortcut.</summary>
-        public const int REFILL_COIN_COST = 50;
+        public const int REFILL_COIN_COST = 400;   // 11-16 launch economy: was 50 (less than one win) - lives meant nothing
 
         /// <summary>Simulated rewarded-ad duration used for the "+1 heart" path.</summary>
         private const float REWARDED_AD_STUB_SECONDS = 3f;

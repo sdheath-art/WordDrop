@@ -498,6 +498,15 @@ namespace WordDrop
         /// variation. Used by BigBurstFlash so the blast line has big, varied stars
         /// traveling with it — not a uniform grid of small dots.
         /// </summary>
+        /// <summary>11-04 (Spencer: "can we have stars or sparkles trail the rockets when they fire?"): ONE star sparkle at
+        /// <paramref name="pos"/> with its own size + drift, left behind by a moving rocket head (WordDropFX.EmberTrail).</summary>
+        public void EmitTrailStar(Vector3 pos, float size, Vector3 vel)
+        {
+            if (_sparkleSystem == null) return;
+            var e = new ParticleSystem.EmitParams { applyShapeToPosition = false, position = pos, startSize = size, velocity = vel, rotation = Random.Range(0f, 360f) };
+            _sparkleSystem.Emit(e, 1);
+        }
+
         public void PlaySparkleLine(Vector3 start, Vector3 end, int totalCount)
         {
             if (_sparkleSystem == null || totalCount <= 0) return;

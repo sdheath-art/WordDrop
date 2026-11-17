@@ -61,7 +61,7 @@ namespace WordDrop
 
             // Sync RulesEngine + GridManager (same pattern as ApplyContinueRescue).
             for (int i = 0; i < toRemove.Count; i++)
-                rules.ClearCell(toRemove[i].x, toRemove[i].y);
+                rules.ClearCellCountingGoals(toRemove[i].x, toRemove[i].y);   // counts gems / collect letters (2026-10-29)
             grid.RemoveTiles(toRemove);
 
             // BoosterDbg: full cleared-cell dump so we can verify the bomb hit

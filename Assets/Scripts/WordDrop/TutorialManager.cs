@@ -1183,7 +1183,7 @@ namespace WordDrop
             ShowInstruction("The board rises as you play. Clear words before it fills up!");
             ShowTapToSkip();
             yield return null; // don't let the current frame's input instantly dismiss the pause
-            while (!(Input.GetMouseButtonDown(0) || (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)))
+            while (!(WDInput.GetMouseButtonDown(0) || (WDInput.touchCount > 0 && WDInput.GetTouch(0).phase == TouchPhase.Began)))
                 yield return null;
             HideTapToSkip();
             HideInstruction();
@@ -1234,7 +1234,7 @@ namespace WordDrop
             ShowInstruction("The board's almost full! Clear words fast or you'll top out.", 3.5f); // bubble low, below the top rows
             ShowTapToSkip();
             yield return null;
-            while (!(Input.GetMouseButtonDown(0) || (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)))
+            while (!(WDInput.GetMouseButtonDown(0) || (WDInput.touchCount > 0 && WDInput.GetTouch(0).phase == TouchPhase.Began)))
                 yield return null;
             HideTapToSkip();
             HideInstruction();
@@ -1283,7 +1283,7 @@ namespace WordDrop
             ShowInstruction("Charged words fade fast. Pop them before they lose their charge!", 3.5f);
             ShowTapToSkip();
             yield return null; // don't let the triggering frame's input instantly dismiss the pause
-            while (!(Input.GetMouseButtonDown(0) || (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)))
+            while (!(WDInput.GetMouseButtonDown(0) || (WDInput.touchCount > 0 && WDInput.GetTouch(0).phase == TouchPhase.Began)))
                 yield return null;
             HideTapToSkip();
             HideInstruction();

@@ -52,10 +52,21 @@ namespace WordDrop
 
             PlayerPrefs.SetInt(COUNT_KEY, current - 1);
             PlayerPrefs.Save();
+            LivesNotifier.Reschedule();
             return true;
         }
 
         /// <summary>Time until next heart regenerates. Zero if already full.</summary>
+        /// <summary>When the LAST missing heart arrives (zero if full) - for the "lives are full" notification.</summary>
+        public static TimeSpan TimeUntilFull
+        {
+            get
+            {
+                int current = Current; if (current >= MAX_HEARTS) return TimeSpan.Zero;
+                return TimeUntilNextHeart + TimeSpan.FromSeconds((double)REGEN_SECONDS_PER_HEART * (MAX_HEARTS - current - 1));
+            }
+        }
+
         public static TimeSpan TimeUntilNextHeart
         {
             get
@@ -77,6 +88,7 @@ namespace WordDrop
             PlayerPrefs.SetInt(COUNT_KEY, MAX_HEARTS);
             PlayerPrefs.DeleteKey(LAST_REGEN_KEY);
             PlayerPrefs.Save();
+            LivesNotifier.Reschedule();
         }
 
         /// <summary>
@@ -94,6 +106,7 @@ namespace WordDrop
             if (next >= MAX_HEARTS)
                 PlayerPrefs.DeleteKey(LAST_REGEN_KEY);
             PlayerPrefs.Save();
+            LivesNotifier.Reschedule();
         }
 
         public static void ResetAll()

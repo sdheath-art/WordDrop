@@ -45,7 +45,7 @@ namespace WordDrop
             // pattern as the other destructive boosters (ClearCell on rules, RemoveTiles on grid).
             var toRemove = CollectCrushableRocks();
             for (int i = 0; i < toRemove.Count; i++)
-                rules.ClearCell(toRemove[i].x, toRemove[i].y);
+                rules.ClearCellCountingGoals(toRemove[i].x, toRemove[i].y);   // counts gems / collect letters (2026-10-29)
             grid.RemoveTiles(toRemove);
 
             WDLog.Log($"[StoneSplitter] Shattered {toRemove.Count} rock(s) board-wide");

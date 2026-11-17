@@ -232,15 +232,15 @@ namespace WordDrop
         // 2026-09-22: Spencer's authored socket (rectangle_pattern@2x, re-centred on import).
         // When present it REPLACES the procedural rounded rect and the A/B checkerboard — his
         // art is one design, drawn identically in every cell. Clear the string to go back.
-        public static string CELL_SOCKET_ASSET  = "Tiles/cell_socket@2x";
+        public static string CELL_SOCKET_ASSET  = Tile.BOARD_C ? "" : "Tiles/cell_socket@2x";   // 11-02 board C: procedural flat checker instead
         // Fraction of the CELL the socket occupies. His export is 226 px against a 245 px cell
         // pitch at 2x (0.922), which is the size he drew it — but tiles butt edge-to-edge at
         // TILE_DISPLAY_RATIO = 1.0, so at 0.922 an empty cell was 8% smaller than the tile that
         // fills it and the grid changed rhythm as the board filled. 1.0 makes the empty slot the
         // exact footprint of its tile. Back to 226f/245f for his authored gutter.
         public static float  CELL_SOCKET_W_FRAC = 1.0f;
-        public static float CELL_GRID_INSET   = 0.05f;   // gap around each cell, as a fraction of the cell
-        public static float CELL_GRID_RADIUS  = 0.20f;   // corner radius, as a fraction of the cell
+        public static float CELL_GRID_INSET   = Tile.BOARD_C ? 0f : 0.05f;   // board C: full-cell checker squares   // gap around each cell, as a fraction of the cell
+        public static float CELL_GRID_RADIUS  = Tile.BOARD_C ? 0f : 0.20f;   // corner radius, as a fraction of the cell
         /// <summary>The two checkerboard shades. Both start from BOARD_INNER (#453860) nudged
         /// lighter, so the board still reads plum. Push them apart for a stronger check.</summary>
         // 2026-09-10: on the old DARK plum board these were LIGHTER than it. On the new mid-blue
@@ -252,8 +252,8 @@ namespace WordDrop
         // With no panel behind them the sockets carry the grid structure on their own, so they
         // need a touch more presence than they did over the smoked slab.
         // Sockets: also pure black, a touch more alpha so they read as recesses.
-        public static Color CELL_GRID_A = new Color(0f, 0f, 0f, 0.16f);
-        public static Color CELL_GRID_B = new Color(0f, 0f, 0f, 0.07f);
+        public static Color CELL_GRID_A = Tile.BOARD_C ? new Color(0f, 0f, 0f, 0f) : new Color(0f, 0f, 0f, 0.16f);
+        public static Color CELL_GRID_B = Tile.BOARD_C ? new Color(0.10f, 0.08f, 0.30f, 0f) : new Color(0f, 0f, 0f, 0.07f);   // board C: checker OFF (11-02 Spencer: 'i dont really like it'); alpha .10 = the mock's 6066AE check
         private GameObject _cellGridGO;
         private GameObject _specShadowGO;
 
@@ -440,9 +440,11 @@ namespace WordDrop
                     t.ForceRestingFace(); fixes++;
                 }
                 if (t.TreasureHits != c.TreasureHits) { t.SetTreasureHits(c.TreasureHits);    fixes++; }   // treasure repaints after a hit
+                if (t.CrateHP      != c.CrateHP)      { t.SetCrateHP(c.CrateHP);              fixes++; }   // 11-03 multi-hit crate repaints after a hit
                 if (t.IsStone      != c.IsStone)      { t.SetStoneVisual(c.IsStone);          fixes++; Report(col,row,t,"stone",    c.IsStone); }
+                if (c.ShelfPart > 0 && (t.ShelfPart != c.ShelfPart || t.ShelfBooks != c.ShelfBooks || t.ShelfStyle != c.ShelfStyle || t.ShelfKind != c.ShelfKind)) { t.SetShelf(c.ShelfPart, c.ShelfBooks, c.ShelfStyle, c.ShelfKind); t.SetStoneVisual(true); fixes++; }   // BOOKSHELF (11-03)
                 if (t.IsAnchored   != c.IsAnchored)   { t.SetAnchored(c.IsAnchored);
-                                                        t.SetVaultVisual(c.IsAnchored);       fixes++; Report(col,row,t,"vault",    c.IsAnchored); }
+                                                        if (c.ShelfPart > 0) t.SetStoneVisual(true); else t.SetVaultVisual(c.IsAnchored);   fixes++; Report(col,row,t,"vault",    c.IsAnchored); }
                 if (t.IsWild       != c.IsWild)       { t.SetWild(c.IsWild);                  fixes++; Report(col,row,t,"wild",     c.IsWild); }
                 if (t.IsSwapRefill != c.IsSwapRefill) { t.SetSwapRefillVisual(c.IsSwapRefill);fixes++; Report(col,row,t,"swapfill", c.IsSwapRefill); }
                 if (t.IsEditRefill != c.IsEditRefill) { t.SetEditRefillVisual(c.IsEditRefill);fixes++; Report(col,row,t,"editfill", c.IsEditRefill); }
@@ -881,9 +883,9 @@ namespace WordDrop
         // its designed proportions on any phone aspect (a taller phone just leaves
         // more room above/below; a wider one scales the whole board down).
         public const float SPEC_SCREEN_W = 1179f;
-        public const float SPEC_BOARD_W  = 1143f;
+        public const float SPEC_BOARD_W  = 1161f;   // 2026-11-06: 1143 -> 1161, side gap 18 -> 9 px to match Royal Match (~0.8%); tiles +1.6%
         public const float SPEC_BOARD_H  = 1415f;
-        public const float SPEC_PLAY_W   = 1121f;
+        public const float SPEC_PLAY_W   = 1139f;   // 2026-11-06: 1121 -> 1139 with SPEC_BOARD_W (rim stays 11 px)
         public const float SPEC_PLAY_H   = 1395f;
         public const float SPEC_R_OUTER  = 38f;
         public const float SPEC_R_INNER  = 27f;
@@ -1323,6 +1325,57 @@ namespace WordDrop
         /// Aligned off the real grid geometry (GridLeft/GridBottom/CellSize, and RowPitch ==
         /// CellSize) rather than by dividing the panel up, so it cannot drift out of register
         /// with the tiles. 2026-09-10.</summary>
+        /// <summary>Re-bake the sockets for the current level's board shape (voids get none). Called after a level installs.</summary>
+        public void RebuildCellGridForShape()
+        {
+            if (_cellGridGO != null) { UnregisterEntry(_cellGridGO.transform); Destroy(_cellGridGO); _cellGridGO = null; }
+            CreateCellGridOverlay();
+            RebuildShapeCover();
+        }
+
+        private void UnregisterEntry(Transform t)
+        {
+            int i = _boardEntryTfs.IndexOf(t);
+            if (i >= 0) { _boardEntryTfs.RemoveAt(i); if (i < _boardEntryRests.Count) _boardEntryRests.RemoveAt(i); }
+        }
+
+        // ── SHAPED BOARD COVER (2026-10-28): on a level with void cells the rectangular frame / panel / shadow are hidden and ONE
+        // pre-rendered picture takes their place: Resources/Boards/shape_<name>.png, made by WordDrop_icon_gen/board_frame/
+        // render_shapes.py from the same mask (frame.py: RK gold rod round the real cells, rounded convex + concave corners,
+        // dark-glass panel at GLASS_ALPHA with its inner shade, soft shadow). The picture covers the cell grid plus
+        // SHAPE_PAD_CELLS of a cell on every side; the frosted background is clipped to its alpha. Rectangles keep the old art.
+        public const float SHAPE_PAD_CELLS = 0.35f;
+        private GameObject _shapeGO;
+        private void RebuildShapeCover()
+        {
+            if (_shapeGO != null) { UnregisterEntry(_shapeGO.transform); Destroy(_shapeGO); _shapeGO = null; }
+            bool shaped = RulesEngine.HasVoids && !string.IsNullOrEmpty(RulesEngine.BoardShape);
+            Texture2D tex = shaped ? Resources.Load<Texture2D>("Boards/shape_" + RulesEngine.BoardShape + (RulesEngine.BOARD_PRESET == 1 ? "_8x10" : "")) : null;   // 11-02: 8x10 art
+            if (shaped && tex == null) WDLog.Log($"[Shape] no art Boards/shape_{RulesEngine.BoardShape} - keeping the rectangular frame");
+            bool use = tex != null;
+            void Show(GameObject go, bool on) { if (go == null) return; var r = go.GetComponent<SpriteRenderer>(); if (r != null) r.enabled = on; }
+            Show(_specFrameGO, !use); Show(_specInnerGO, !use); Show(_specShadowGO, !use);
+            SpriteMask oldMask = _specInnerGO != null ? _specInnerGO.GetComponentInChildren<SpriteMask>(true) : null;
+            if (oldMask != null && oldMask.gameObject.name == "BoardGlassMask") oldMask.enabled = !use;
+            ApplyRefillMaskShape();   // 11-02: the fall clip follows the real cells on a shaped board
+            if (!use) return;
+            float gw = COLS * CellSize, gh = ROWS * RowPitch, padX = SHAPE_PAD_CELLS * CellSize, padY = SHAPE_PAD_CELLS * RowPitch;
+            _shapeGO = new GameObject("ShapedBoard");
+            _shapeGO.transform.SetParent(_gridRoot.transform, false);
+            _shapeGO.transform.position = new Vector3(GridLeft + gw * 0.5f, GridBottom + gh * 0.5f, 0f);   // rest position (the entry slide offsets it, like CellGrid)
+            var sp = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
+            var sr = _shapeGO.AddComponent<SpriteRenderer>(); sr.sprite = sp; sr.sortingOrder = 0;   // panel slot: frost -1 < this < sockets 1
+            _shapeGO.transform.localScale = new Vector3((gw + 2 * padX) / (tex.width / 100f), (gh + 2 * padY) / (tex.height / 100f), 1f);
+            if (BOARD_GLASS)
+            {   // frost shows through the shaped panel only
+                var mGO = new GameObject("ShapedGlassMask"); mGO.transform.SetParent(_shapeGO.transform, false);
+                var m = mGO.AddComponent<SpriteMask>(); m.sprite = sp; m.alphaCutoff = 0.3f;
+                m.isCustomRangeActive = true; m.backSortingOrder = -2; m.frontSortingOrder = -1;
+            }
+            if (_boardEntryPrepped) { _boardEntryTfs.Add(_shapeGO.transform); _boardEntryRests.Add(_shapeGO.transform.position); ApplyBoardEntryOffset(_boardEntryOffX); }
+            WDLog.Log($"[Shape] board cover '{RulesEngine.BoardShape}' {tex.width}x{tex.height}");
+        }
+
         private void CreateCellGridOverlay()
         {
             if (!CELL_GRID_ENABLED || _gridRoot == null) return;
@@ -1355,6 +1408,7 @@ namespace WordDrop
                 for (int col = 0; col < COLS; col++)
                     for (int row = 0; row < ROWS; row++)
                     {
+                        if (RulesEngine.IsVoid(col, row)) continue;   // shaped board: no socket on a void
                         int ox = col * PX + ox0, oy = row * PX + oy0;
                         for (int y = 0; y < sh; y++)
                             System.Array.Copy(cell, y * sw, px, (oy + y) * texW + ox, sw);
@@ -1371,6 +1425,7 @@ namespace WordDrop
                 for (int col = 0; col < COLS; col++)
                     for (int row = 0; row < ROWS; row++)
                     {
+                        if (RulesEngine.IsVoid(col, row)) continue;
                         Color c = (((col + row) & 1) == 0) ? CELL_GRID_A : CELL_GRID_B;
                         int ox = col * PX + inset, oy = row * PX + inset;
                         for (int y = 0; y < side; y++)
@@ -1382,6 +1437,7 @@ namespace WordDrop
                                 px[(oy + y) * texW + (ox + x)] = cc;
                             }
                     }
+                if (Tile.BOARD_C && TILE_CONTACT_SHADOW) BakeTileContactShadows(px, texW, texH, PX);
                 WDLog.Log("[Grid] cell sockets = procedural checkerboard (no authored asset)");
             }
 
@@ -1413,6 +1469,50 @@ namespace WordDrop
 
         /// <summary>2x2-supersampled coverage of a rounded square — antialiases the socket
         /// corners so they do not read as stair-steps when the sprite is scaled.</summary>
+        // ── BOARD C CONTACT SHADOW (11-02 Spencer: "the mock up had a bit more depth with the letter tiles"). The mock drew a
+        // soft dark-violet shadow under every tile (offset below the base, blurred) - the board's hue, not black. Baked into the
+        // cell grid (one sprite, no per-tile renderers), so it sits under each RESTING cell; while a cell is empty mid-refill it
+        // reads as a soft recess. Numbers are fractions of the tile width (mock: 100px tile, offset 12, blur 4, alpha .55).
+        public static bool  TILE_CONTACT_SHADOW = false;   // 11-06 Spencer: OFF - static per-cell shadow reads as an off-shaped smudge behind specials/moving tiles. true = back
+        public static float TCS_OFFSET = 0.11f, TCS_BLUR = 0.05f, TCS_ALPHA = 0.50f, TCS_RADIUS = 0.22f;
+        public static Color TCS_COLOR = new Color(0.165f, 0.141f, 0.408f, 1f);   // #2A2468
+        private static void BakeTileContactShadows(Color[] px, int texW, int texH, int PX)
+        {
+            float tw = PX * Tile.TILE_DISPLAY_RATIO, half = tw * 0.5f, rad = tw * TCS_RADIUS, blur = Mathf.Max(0.5f, tw * TCS_BLUR);
+            float off = tw * TCS_OFFSET;
+            int pad = Mathf.CeilToInt(blur * 2f + off);
+            int sw = PX + 2 * pad;
+            var stamp = new float[sw * sw];   // stamp centred on the cell centre, shadow shape shifted DOWN (texture y is up)
+            for (int y = 0; y < sw; y++)
+                for (int x = 0; x < sw; x++)
+                {
+                    float dx = Mathf.Abs(x + 0.5f - sw * 0.5f) - (half - rad);
+                    float dy = Mathf.Abs(y + 0.5f - (sw * 0.5f - off)) - (half - rad);
+                    float sd = new Vector2(Mathf.Max(dx, 0f), Mathf.Max(dy, 0f)).magnitude + Mathf.Min(Mathf.Max(dx, dy), 0f) - rad;
+                    stamp[y * sw + x] = TCS_ALPHA * (1f - Mathf.SmoothStep(0f, 1f, (sd + blur) / (2f * blur)));
+                }
+            for (int col = 0; col < COLS; col++)
+                for (int row = 0; row < ROWS; row++)
+                {
+                    if (RulesEngine.IsVoid(col, row)) continue;
+                    int ox = col * PX - pad, oy = row * PX - pad;
+                    for (int y = 0; y < sw; y++)
+                    {
+                        int ty = oy + y; if (ty < 0 || ty >= texH) continue;
+                        for (int x = 0; x < sw; x++)
+                        {
+                            int tx = ox + x; if (tx < 0 || tx >= texW) continue;
+                            float sa = stamp[y * sw + x]; if (sa <= 0.002f) continue;
+                            int i = ty * texW + tx; Color d = px[i];
+                            float oa = sa + d.a * (1f - sa);
+                            if (oa <= 0f) continue;
+                            float k = d.a * (1f - sa);
+                            px[i] = new Color((TCS_COLOR.r * sa + d.r * k) / oa, (TCS_COLOR.g * sa + d.g * k) / oa, (TCS_COLOR.b * sa + d.b * k) / oa, oa);
+                        }
+                    }
+                }
+        }
+
         private static float SocketCoverage(int x, int y, int side, int r)
         {
             float acc = 0f;
@@ -1448,7 +1548,13 @@ namespace WordDrop
         public static int    FRAME_CUT_W      = 188;   // the cut on disk: 90 + 8 + 90
         private static Sprite s_slicedFrame; private static float s_slicedFrameW;
 
-        public static string INNER_ASSET     = "Tiles/inner_board@2x";
+        // 11-16 LOOK PASS (Spencer picked mock B): the lavender panel (107,111,184, S .42) was 36% of the board and read as dusk.
+        // inner_board_royal@2x = the same 9-slice, every texel scaled to (64,104,226). BOARD_TINT is declared ABOVE INNER_ASSET:
+        // static initializers run in file order, so below it INNER_ASSET read it as false (11-16 shot: still lavender).
+        // 11-16 Spencer: "can we try the sky blue board?" -> BOARD_TINT picks the panel: "royal" (64,104,226), "sky" (88,160,238,
+        // inner_board_sky@2x, same per-channel scaling), "lavender" (the original). Watch ice on sky - the mock showed it losing contrast.
+        public static string BOARD_TINT = "sky";
+        public static string INNER_ASSET     = Tile.BOARD_C ? "Tiles/inner_board_" + BOARD_TINT + "@2x" : "Tiles/inner_board@2x";   // 11-02 board C
         public static int    INNER_BORDER_PX  = 120;   // clears the 47px corner arc with room to spare
         public static int    INNER_CUT_W      = 248;   // the cut on disk: 120 + 8 + 120
         public static float  INNER_SOURCE_W   = 2242f; // Spencer's export width (= SPEC_PLAY_W x2)
@@ -1490,7 +1596,7 @@ namespace WordDrop
         public static int    FRAME_SHADOW_BORDER_PX = 280;
         public static int    FRAME_SHADOW_CUT_W     = 568;   // 280 + 8 + 280
         public static float  FRAME_SHADOW_SRC_W     = 2358f; // his canvas
-        public static float  FRAME_SHADOW_PAD_X     = 32f;   // frame inset inside that canvas
+        public static float  FRAME_SHADOW_PAD_X     = 80f;   // frame inset inside that canvas. 11-02: 32 -> 80, the STRONGER shadow (board_shadow_strong.py) needs room for its blur at the sides
         public static float  FRAME_SHADOW_PAD_TOP   = 74f;
         public static float  FRAME_SHADOW_PAD_BOT   = 154f;  // => a 40 texel drop at 2x
         private static Sprite s_slicedShadow; private static float s_slicedShadowW;
@@ -1674,7 +1780,7 @@ namespace WordDrop
         // half-res + gaussian, same world size) sits exactly over ScreenBackground, clipped to the panel by a SpriteMask whose
         // custom sorting range only covers the frosted copy (tiles, refill masks untouched). The frosted copy does NOT move
         // with the board (it's a window onto the static scene). BOARD_GLASS = false -> the old solid navy panel.
-        public static bool  BOARD_GLASS  = true;
+        public static bool  BOARD_GLASS  = !Tile.BOARD_C;   // 11-02 board C = an opaque lavender panel, no glass
         public static float GLASS_ALPHA  = 0.80f;
         // panel texel 1A468E -> tint 0A183E: per-channel ratio computed in LINEAR space (the project is linear), as sRGB
         public static Color GLASS_PANEL_MUL = new Color(0.578f, 0.422f, 0.459f, 1f);
@@ -2082,9 +2188,10 @@ namespace WordDrop
 
                     // Special tile visuals
                     tile.SetAnchored(rulesCell.IsAnchored);
-                    if (rulesCell.IsAnchored) { tile.SetVaultRequirement(rulesCell.RequiredWordLength); tile.SetVaultVisual(true); } // anchored = treasure vault
+                    if (rulesCell.ShelfPart > 0) { tile.SetShelf(rulesCell.ShelfPart, rulesCell.ShelfBooks, rulesCell.ShelfStyle, rulesCell.ShelfKind); tile.SetStoneVisual(true); }   // BOOKSHELF (11-03): anchored, but not a vault
+                    else if (rulesCell.IsAnchored) { tile.SetVaultRequirement(rulesCell.RequiredWordLength); tile.SetVaultVisual(true); } // anchored = treasure vault
                     else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                    else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetStoneVisual(true); }
+                    else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetCrateHP(rulesCell.CrateHP); tile.SetStoneVisual(true); }
                     if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
                     if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                     if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
@@ -2254,7 +2361,12 @@ namespace WordDrop
                         // Vaults: a live letter tile can be converted into a vault in-place
                         // (SeedVaultBoard flips IsStone+IsAnchored on an existing cell). Reflect it —
                         // anchored → treasure chest, plain stone → grey.
-                        if (rulesCell.IsAnchored && !visualTile.IsVault)
+                        if (rulesCell.ShelfPart > 0)
+                        {   // BOOKSHELF (11-03): anchored, but drawn as the shelf - never the vault chest
+                            if (visualTile.ShelfPart != rulesCell.ShelfPart || visualTile.ShelfBooks != rulesCell.ShelfBooks || visualTile.ShelfStyle != rulesCell.ShelfStyle || visualTile.ShelfKind != rulesCell.ShelfKind || !visualTile.IsStone)
+                            { visualTile.SetShelf(rulesCell.ShelfPart, rulesCell.ShelfBooks, rulesCell.ShelfStyle, rulesCell.ShelfKind); visualTile.SetStoneVisual(true); fixed_count++; }
+                        }
+                        else if (rulesCell.IsAnchored && !visualTile.IsVault)
                         {
                             visualTile.SetVaultRequirement(rulesCell.RequiredWordLength);
                             visualTile.SetVaultVisual(true); // also sets IsStone
@@ -2267,7 +2379,7 @@ namespace WordDrop
                         }
                         else if (rulesCell.IsStone && !visualTile.IsStone)
                         {
-                            visualTile.SetTreasureHits(rulesCell.TreasureHits);
+                            visualTile.SetTreasureHits(rulesCell.TreasureHits); visualTile.SetCrateHP(rulesCell.CrateHP);
                             visualTile.SetStoneVisual(true);
                             fixed_count++;
                         }
@@ -2297,9 +2409,10 @@ namespace WordDrop
                         tile.transform.position = worldPos;
 
                         tile.SetAnchored(rulesCell.IsAnchored);
-                        if (rulesCell.IsAnchored) tile.SetVaultVisual(true);   // anchored = treasure vault (chest)
+                        if (rulesCell.ShelfPart > 0) { tile.SetShelf(rulesCell.ShelfPart, rulesCell.ShelfBooks, rulesCell.ShelfStyle, rulesCell.ShelfKind); tile.SetStoneVisual(true); }   // BOOKSHELF (11-03)
+                        else if (rulesCell.IsAnchored) tile.SetVaultVisual(true);   // anchored = treasure vault (chest)
                         else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                        else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetStoneVisual(true); }
+                        else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetCrateHP(rulesCell.CrateHP); tile.SetStoneVisual(true); }
                         if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
                         if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                         if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
@@ -2428,6 +2541,74 @@ namespace WordDrop
         /// Yields until all animations complete.
         /// Preserves permanent/primed glow on tiles that move.
         /// </summary>
+        /// <summary>Visual mirror of RulesEngine.IsFixedCell (anchored, or a crate with FIXED_CRATES on the full board; ducks fall).</summary>
+        /// <summary>11-04: falls follow the plan's route (down, diagonal round a crate, down). false = straight line to the end cell.</summary>
+        public static bool FALL_ROUTES = true;
+        private float _routedFallSince = -1f;
+        /// <summary>A booster's routed fall is still stepping through its waves (self-clears after 12 s so a lost coroutine can
+        /// never silence the integrity checker for good).</summary>
+        public bool RoutedFallPlaying => _routedFallSince >= 0f && Time.unscaledTime - _routedFallSince < 12f;
+        public static bool FALL_ROUTE_LOG = true;   // TEMP DIAG 11-04 - see PlayFallWaves
+        /// <summary>TEMP (11-04): slow-motion for routed falls so an odd path can be watched (FX menu toggle). 1 = normal.</summary>
+        public static float FALL_SLOWMO = 1f;
+        private readonly Dictionary<Vector2Int, List<Vector2Int>> _refillRoutes = new Dictionary<Vector2Int, List<Vector2Int>>();
+        private readonly Dictionary<Vector2Int, List<int>> _refillPhases = new Dictionary<Vector2Int, List<int>>();
+        private readonly List<(Tile tile, List<Vector3> pts, List<int> phase, float delay)> _waveFalls = new List<(Tile, List<Vector3>, List<int>, float)>();
+        private bool _wavesOn;
+        private readonly HashSet<Tile> _waveClip = new HashSet<Tile>();
+        /// <summary>11-04: play a routed fall in its plan's waves - each wave every piece takes its ONE step for that wave (a fall
+        /// into the slot, or a diagonal step), then the next wave starts once they've all arrived. Wave 0 keeps the column stagger.</summary>
+        private IEnumerator PlayFallWaves()
+        {
+            var falls = new List<(Tile tile, List<Vector3> pts, List<int> phase, float delay)>(_waveFalls); _waveFalls.Clear();
+            int maxPh = 0; foreach (var f in falls) foreach (var p in f.phase) maxPh = Mathf.Max(maxPh, p);
+            // TEMP DIAG (11-04, Spencer: a letter "seemed to thread between a crate in a very odd pattern"): every routed piece's
+            // cells + waves, so the odd one can be read back from the log. Strip once the slide is signed off.
+            if (FALL_ROUTE_LOG)
+                foreach (var f in falls)
+                {
+                    if (f.tile == null) continue;
+                    var sb = new System.Text.StringBuilder($"[FallRoute] '{f.tile.Letter}'");
+                    for (int k = 0; k < f.pts.Count; k++) { var cxy = WorldToCell(f.pts[k]); sb.Append(k == 0 ? " " : $" -w{f.phase[k - 1]}-> ").Append($"({cxy.x},{cxy.y})"); }
+                    WDLog.Log(sb.ToString());
+                }
+            for (int ph = 0; ph <= maxPh; ph++)
+            {
+                var moving = new List<Tile>();
+                foreach (var f in falls)
+                {
+                    if (f.tile == null) continue;
+                    int k = f.phase.IndexOf(ph); if (k < 0) continue;
+                    var a = f.pts[k]; var b = f.pts[k + 1];
+                    bool diag = Mathf.Abs(a.x - b.x) > 0.01f;
+                    f.tile.AnimateFallStep(b, diag, k + 1 == f.pts.Count - 1, ph == 0 ? f.delay : 0f);
+                    moving.Add(f.tile);
+                }
+                for (int guard = 0; guard < 600; guard++)
+                {
+                    bool any = false; foreach (var t in moving) if (t != null && t.IsFalling) { any = true; break; }
+                    if (!any) break;
+                    ClusterOutline.Instance?.Refresh();
+                    yield return null;
+                }
+            }
+            foreach (var t in _waveClip) if (t != null) SetRefillClip(t, false);
+            _waveClip.Clear();
+        }
+        private List<Vector3> RouteToWorld(List<Vector2Int> cells, float z)
+        {
+            var pts = new List<Vector3>(cells.Count);
+            foreach (var c in cells) { var w = CellToWorld(c.x, c.y); w.z = z; pts.Add(w); }
+            return pts;
+        }
+        /// <summary>Any board tile still in a gravity fall (pace tracking).</summary>
+        public bool AnyTileFalling()
+        {
+            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) { var t = _tiles[c, r]; if (t != null && t.IsFalling) return true; }
+            return false;
+        }
+        public static bool IsFixedTile(Tile t) => t != null && (t.IsAnchored || (RulesEngine.FIXED_CRATES && SurvivalManager.FullBoardActive && t.IsStone && !t.IsDropTargetVisual));
+
         public IEnumerator ApplyGravity()
         {
             // Per-column stagger — cascades feel organic instead of synchronized.
@@ -2445,90 +2626,58 @@ namespace WordDrop
             List<Tile> animatingTiles = new List<Tile>();
             int totalMoved = 0;
 
+            // 11-04: the SAME plan as the data (RulesEngine.PlanFall) - fixed crates + the diagonal slide. Before, this method
+            // re-derived the fall column by column on its own, which is the desync landmine (HANDOFF 4.2) once pieces can move
+            // sideways. A tile here without its CellData (or the reverse) is dropped from the arrays, as the old repack did.
+            var occ = new bool[COLS, ROWS]; var fix = new bool[COLS, ROWS];
             for (int col = 0; col < COLS; col++)
+                for (int row = 0; row < ROWS; row++)
+                {
+                    if (_tiles[col, row] == null || _cells[col, row] == null) { _tiles[col, row] = null; _cells[col, row] = null; continue; }
+                    // Fixed pieces never move in the data, so the data cell at the same spot says whether this one is fixed - more
+                    // reliable than the tile's own flags (a stone face not yet synced). The tile flags are the fallback.
+                    var rc = RulesEngine.Instance != null ? RulesEngine.Instance.GetCell(col, row) : null;
+                    occ[col, row] = true; fix[col, row] = rc != null ? RulesEngine.IsFixedCell(rc) : IsFixedTile(_tiles[col, row]);
+                }
+            var plan = RulesEngine.PlanFall(occ, fix, RulesEngine.FallSpawnRows);
+            _refillRoutes.Clear();
+            for (int i = plan.Count - 1; i >= 0; i--) if (plan[i].from.y >= ROWS) { _refillRoutes[plan[i].to] = plan[i].path; _refillPhases[plan[i].to] = plan[i].phase; plan.RemoveAt(i); }   // new pieces: SpawnRefillTiles
+            // A diagonal step anywhere in this fall -> play it in WAVES (fall, slide, fall, ...), RM style; else the plain falls.
+            bool phased = false;
+            if (FALL_ROUTES) foreach (var m in plan) if (m.path != null) for (int k = 1; k < m.path.Count; k++) if (m.path[k].x != m.path[k - 1].x) phased = true;
+            if (FALL_ROUTES) foreach (var kv in _refillRoutes) for (int k = 1; k < kv.Value.Count; k++) if (kv.Value[k].x != kv.Value[k - 1].x) phased = true;
+            _waveFalls.Clear(); _wavesOn = phased;
+            var mTiles = new Tile[plan.Count]; var mCells = new CellData[plan.Count];
+            for (int i = 0; i < plan.Count; i++)
             {
-                // Collect all surviving tiles in this column, bottom to top,
-                // tracking the actual row each was found at (needed for anchored rocks).
-                List<Tile>     columnTiles = new List<Tile>();
-                List<CellData> columnCells = new List<CellData>();
-                List<int>      columnRows  = new List<int>();
+                var f = plan[i].from;
+                mTiles[i] = _tiles[f.x, f.y]; mCells[i] = _cells[f.x, f.y];
+                _tiles[f.x, f.y] = null; _cells[f.x, f.y] = null;
+            }
+            for (int i = 0; i < plan.Count; i++)
+            {
+                var t = plan[i].to; Tile tile = mTiles[i]; CellData cell = mCells[i];
+                cell.Row = t.y; cell.Col = t.x;
+                _tiles[t.x, t.y] = tile; _cells[t.x, t.y] = cell;
+                tile.UpdateGridPosition(t.x, t.y);
 
-                for (int row = 0; row < ROWS; row++)
+                Vector3 targetPos = CellToWorld(t.x, t.y);
+                float   dist      = Vector3.Distance(tile.transform.position, targetPos);
+                if (dist > 0.02f)
                 {
-                    if (_tiles[col, row] != null && _cells[col, row] != null)
-                    {
-                        columnTiles.Add(_tiles[col, row]);
-                        columnCells.Add(_cells[col, row]);
-                        columnRows.Add(row);
-                    }
+                    float fallDuration = levelUniform ? UNIFORM_FALL_DURATION : dist / FallSpeed;
+                    float colDelay = levelUniform ? 0f : plan[i].from.x * STAGGER_PER_COL;
+                    if (phased) _waveFalls.Add((tile, RouteToWorld(plan[i].path, targetPos.z), plan[i].phase, colDelay));   // played in waves below
+                    else tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
+                    if (GRAVITY_CLIP && REFILL_CLIP && RulesEngine.HasVoids) StartCoroutine(ClipWhileFalling(tile));   // 11-02: hidden while crossing a gap (GRAVITY_CLIP off: suspected in the row-of-specials bug)
+                    animatingTiles.Add(tile);
+                    totalMoved++;
                 }
-
-                if (columnTiles.Count == ROWS)
-                    continue; // Column is fully packed — no gravity needed
-
-                // Clear the entire column first
-                for (int row = 0; row < ROWS; row++)
-                {
-                    _tiles[col, row] = null;
-                    _cells[col, row] = null;
-                }
-
-                // Repack from row 0 (floor) upward. Break-Rocks: anchored rocks DON'T fall —
-                // they stay at their found row and act as a fixed floor; other tiles compact
-                // into the free rows around them. Mirrors RulesEngine.ApplyGravityInData so the
-                // visual array stays index-aligned with the data layer (no desync). 2026-06-09.
-                int writeRow = 0;
-                for (int i = 0; i < columnTiles.Count; i++)
-                {
-                    Tile     tile   = columnTiles[i];
-                    CellData cell   = columnCells[i];
-                    int      oldRow = columnRows[i];
-                    int      newRow;
-
-                    if (tile.IsAnchored)
-                    {
-                        newRow   = oldRow;     // fixed — never moves
-                        writeRow = oldRow + 1; // following tiles stack on top of it
-                    }
-                    else
-                    {
-                        newRow   = writeRow;
-                        writeRow++;
-                    }
-
-                    // Update grid position tracking
-                    cell.Row = newRow;
-                    cell.Col = col;
-
-                    _tiles[col, newRow] = tile;
-                    _cells[col, newRow] = cell;
-
-                    // Update the tile's internal position info
-                    tile.UpdateGridPosition(col, newRow);
-
-                    // Animate to new world position if it actually moved
-                    Vector3 targetPos = CellToWorld(col, newRow);
-                    float   dist      = Vector3.Distance(tile.transform.position, targetPos);
-
-                    if (dist > 0.02f)
-                    {
-                        float fallDuration = levelUniform
-                            ? UNIFORM_FALL_DURATION
-                            : dist / FallSpeed;
-                        float colDelay = levelUniform ? 0f : col * STAGGER_PER_COL;
-                        tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
-                        animatingTiles.Add(tile);
-                        totalMoved++;
-                    }
-                    else
-                    {
-                        // Already in place — snap to exact position
-                        tile.transform.position = targetPos;
-                    }
-                }
+                else tile.transform.position = targetPos;
             }
 
             totalMoved += SpawnRefillTiles(animatingTiles);   // full board: new letters fall in with the rest
+            if (_wavesOn) { _wavesOn = false; yield return StartCoroutine(PlayFallWaves()); }
 
             if (totalMoved > 0)
             {
@@ -2601,7 +2750,8 @@ namespace WordDrop
                     Tile tile = CreateSingleTile(col, row, d.Letter);
                     if (tile == null) continue;
                     Vector3 target = CellToWorld(col, row);
-                    Vector3 start  = CellToWorld(col, row + newCount); start.z = target.z;
+                    int voidTop = RulesEngine.HasVoids ? Mathf.Max(0, ROWS - 1 - RulesEngine.TopRealRow(col)) : 0;   // shaped board: start above the BOARD top, not inside a void corner
+                    Vector3 start  = CellToWorld(col, row + newCount + voidTop); start.z = target.z;
                     tile.transform.position = start;
                     if (d.IsRainGold) { tile.SetRainGold(true); anyGold = true; }
                     // ALWAYS set the gem state, both ways (2026-10-23: "a bunch of letters just turned into gems" — a whole refilled
@@ -2610,12 +2760,23 @@ namespace WordDrop
                     tile.SetGem(d.HasGem);
                     if (!d.IsRainGold) tile.ForceRestingFace();   // SetGem is a no-op when the flag already matches — the stale FACE is the bug
                     if (d.IsDropTarget) tile.SetDropTargetVisual(true);   // duck (2026-10-22)
-                    tile.AnimateGravityFall(target, Vector3.Distance(start, target) / FallSpeed, col * STAGGER_PER_COL);
-                    if (REFILL_CLIP) StartCoroutine(ClipWhileFalling(tile));   // hidden above the board, clipped at the rim
+                    if (_wavesOn && _refillRoutes.TryGetValue(new Vector2Int(col, row), out var rr) && rr.Count >= 2 && _refillPhases.TryGetValue(new Vector2Int(col, row), out var rp))
+                    {   // 11-04: the plan's route, played in waves with the rest (it may step diagonally into a gap under a crate)
+                        var pts = RouteToWorld(rr, target.z);
+                        tile.transform.position = pts[0];
+                        _waveFalls.Add((tile, pts, rp, rr[0].x * STAGGER_PER_COL));
+                        if (REFILL_CLIP) { SetRefillClip(tile, true); _waveClip.Add(tile); }   // clipped for ALL its waves (it can wait above the rim between them)
+                    }
+                    else
+                    {
+                        tile.AnimateGravityFall(target, Vector3.Distance(start, target) / FallSpeed, col * STAGGER_PER_COL);
+                        if (REFILL_CLIP) StartCoroutine(ClipWhileFalling(tile));   // hidden above the board, clipped at the rim
+                    }
                     animating?.Add(tile);
                     spawned++;
                 }
             }
+            _refillRoutes.Clear(); _refillPhases.Clear();   // the routes belong to this one fall
             if (anyGold) BonusPopup.Instance?.Show("GOLDEN LETTERS!", new Color(1f, 0.85f, 0.3f, 1f), Vector3.zero, 1.1f);
             return spawned;
         }
@@ -2675,6 +2836,7 @@ namespace WordDrop
         // untouched. The letters (TextMeshPro) don't take SpriteMask, so their material stencil is set to read the same
         // stencil the mask writes (ref 1, LessEqual) for the duration of the fall.
         public static bool REFILL_CLIP = true;
+        public static bool GRAVITY_CLIP = false;   // 11-02: clip falling board tiles on shaped boards - OFF while the 'row turned into rockets' bug is open
         private GameObject _refillMaskGO;
         private static Sprite s_refillMaskSprite;
         private void BuildRefillMask(GameObject innerGO, float innerW, float innerH)
@@ -2695,6 +2857,44 @@ namespace WordDrop
             var m = _refillMaskGO.AddComponent<SpriteMask>();
             m.sprite = s_refillMaskSprite;
             WDLog.Log($"[Grid] refill clip mask {innerW:F2}x{innerH:F2}");
+            _refillMaskRectSaved = false;   // a new mask: remember ITS rectangle
+            ApplyRefillMaskShape();
+        }
+
+        // ── SHAPED FALL CLIP (2026-11-02, Spencer: "i can see the letters dropping through the openings of the board ... the letters
+        // need to not be visible outside the board when they are falling or being added"). On a board with void cells the clip mask
+        // is the REAL CELLS only (one texel per cell, point-filtered), not the panel rectangle - so a tile falling through a gap, or
+        // arriving above a notched column, is hidden until it is inside a cell. Rectangular boards keep the panel rectangle.
+        private Vector3 _refillMaskRectPos, _refillMaskRectScale; private bool _refillMaskRectSaved;
+        private static Sprite s_rectMaskSprite;
+        private void ApplyRefillMaskShape()
+        {
+            if (_refillMaskGO == null) return;
+            var m = _refillMaskGO.GetComponent<SpriteMask>(); if (m == null) return;
+            if (!_refillMaskRectSaved) { _refillMaskRectPos = _refillMaskGO.transform.localPosition; _refillMaskRectScale = _refillMaskGO.transform.localScale; s_rectMaskSprite = m.sprite; _refillMaskRectSaved = true; }
+            if (!RulesEngine.HasVoids)
+            {
+                m.sprite = s_rectMaskSprite;
+                _refillMaskGO.transform.localPosition = _refillMaskRectPos; _refillMaskGO.transform.localScale = _refillMaskRectScale;
+                return;
+            }
+            var tex = new Texture2D(COLS, ROWS, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) tex.SetPixel(c, r, RulesEngine.IsVoid(c, r) ? Color.clear : Color.white);
+            tex.Apply();
+            // FullRect: the default Tight mesh is traced from the alpha, which is unreliable on a 9x11 texture (11-02: tiles vanished)
+            m.sprite = Sprite.Create(tex, new Rect(0, 0, COLS, ROWS), new Vector2(0.5f, 0.5f), 1f, 0, SpriteMeshType.FullRect);   // 1 world unit per cell before scaling
+            m.alphaCutoff = 0.5f;
+            Vector3 lo = CellToWorld(0, 0), hi = CellToWorld(COLS - 1, ROWS - 1);
+            var centre = new Vector3((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, _refillMaskGO.transform.position.z);
+            // CellToWorld is the REST layout; if the board is parked off-screen for its entry slide, shift by the parent's offset
+            var par = _refillMaskGO.transform.parent;
+            int pi = par != null ? _boardEntryTfs.IndexOf(par) : -1;
+            if (pi >= 0 && pi < _boardEntryRests.Count) { var dlt = par.position - _boardEntryRests[pi]; centre.x += dlt.x; centre.y += dlt.y; }
+            float pitchY = ROWS > 1 ? (hi.y - lo.y) / (ROWS - 1) : RowPitch;
+            _refillMaskGO.transform.position = centre;
+            var pls = _refillMaskGO.transform.parent != null ? _refillMaskGO.transform.parent.lossyScale : Vector3.one;
+            _refillMaskGO.transform.localScale = new Vector3(CellSize / Mathf.Max(0.0001f, pls.x), pitchY / Mathf.Max(0.0001f, pls.y), 1f);
+            WDLog.Log($"[Grid] fall clip = the shape's {COLS}x{ROWS} real cells (shaped board) - TEMP DIAG mask bounds {m.bounds.min:F2}..{m.bounds.max:F2} | cells {lo:F2}..{hi:F2} | parent lossy {pls:F3} pos {_refillMaskGO.transform.position:F2}");
         }
 
         private IEnumerator ClipWhileFalling(Tile tile)
@@ -2760,6 +2960,52 @@ namespace WordDrop
 
             List<Tile> animatingTiles = new List<Tile>();
 
+            // 11-17 (Spencer's axe recording, L19: after the chop, tiles from TWO columns away flew in straight diagonal lines THROUGH
+            // other tiles to fill the cells under the crates). This path only knew each tile's start and end cell and tweened a
+            // straight line; a normal move's fall (ApplyGravity) follows the plan's route in waves - down, one diagonal step round a
+            // crate, down. Same thing here now: re-run the plan on the picture as it stands (read-only) and, ONLY if it agrees with
+            // the data's moves cell for cell, give each tile its route. Any disagreement -> the old straight falls, nothing else changes.
+            Dictionary<Vector2Int, RulesEngine.FallMove> routeOf = null; bool phased = false;
+            if (FALL_ROUTES && RulesEngine.DIAGONAL_SLIDE && SurvivalManager.FullBoardActive && tileMoves.Count > 0)
+            {
+                var occ = new bool[COLS, ROWS]; var fix = new bool[COLS, ROWS];
+                for (int col = 0; col < COLS; col++)
+                    for (int row = 0; row < ROWS; row++)
+                    {
+                        if (_tiles[col, row] == null || _cells[col, row] == null) continue;
+                        var rc = RulesEngine.Instance != null ? RulesEngine.Instance.GetCell(col, row) : null;
+                        occ[col, row] = true; fix[col, row] = rc != null ? RulesEngine.IsFixedCell(rc) : IsFixedTile(_tiles[col, row]);
+                    }
+                var plan = RulesEngine.PlanFall(occ, fix, RulesEngine.FallSpawnRows);
+                routeOf = new Dictionary<Vector2Int, RulesEngine.FallMove>();
+                var refR = new Dictionary<Vector2Int, List<Vector2Int>>(); var refP = new Dictionary<Vector2Int, List<int>>();
+                bool agree = true;
+                foreach (var m in plan)
+                {
+                    if (m.from.y >= ROWS) { refR[m.to] = m.path; refP[m.to] = m.phase; continue; }   // a new piece (SpawnRefillTiles)
+                    if (tileMoves.TryGetValue(m.from, out var mto) && mto == m.to) routeOf[m.from] = m; else agree = false;
+                }
+                foreach (var kv in tileMoves) if (!routeOf.ContainsKey(kv.Key)) agree = false;
+                if (!agree) { routeOf = null; WDLog.Log($"[Fall] booster fall: the picture's plan differs from the data's {tileMoves.Count} move(s) - straight falls"); }
+                else
+                {
+                    foreach (var m in routeOf.Values) if (m.path != null) for (int k = 1; k < m.path.Count; k++) if (m.path[k].x != m.path[k - 1].x) phased = true;
+                    foreach (var kv in refR) if (kv.Value != null) for (int k = 1; k < kv.Value.Count; k++) if (kv.Value[k].x != kv.Value[k - 1].x) phased = true;
+                    if (phased)
+                    {
+                        _refillRoutes.Clear(); _refillPhases.Clear();
+                        foreach (var kv in refR) { _refillRoutes[kv.Key] = kv.Value; _refillPhases[kv.Key] = refP[kv.Key]; }
+                    }
+                }
+            }
+            _waveFalls.Clear(); _wavesOn = phased;
+
+            // 11-04 TWO-PHASE: lift every moving tile first, then place. With the diagonal slide a move's destination can be another
+            // move's source in any order; one-at-a-time placing (fine for straight-down falls packed bottom-up) would collide.
+            var lifted = new Dictionary<Vector2Int, (Tile tile, CellData cell)>();
+            foreach (var kvp in tileMoves) lifted[kvp.Key] = (_tiles[kvp.Key.x, kvp.Key.y], _cells[kvp.Key.x, kvp.Key.y]);
+            foreach (var kvp in tileMoves) if (lifted[kvp.Key].tile != null) { _tiles[kvp.Key.x, kvp.Key.y] = null; _cells[kvp.Key.x, kvp.Key.y] = null; }
+
             foreach (var kvp in tileMoves)
             {
                 int fromCol = kvp.Key.x;
@@ -2767,8 +3013,8 @@ namespace WordDrop
                 int toCol   = kvp.Value.x;
                 int toRow   = kvp.Value.y;
 
-                Tile tile = _tiles[fromCol, fromRow];
-                CellData cell = _cells[fromCol, fromRow];
+                Tile tile = lifted[kvp.Key].tile;
+                CellData cell = lifted[kvp.Key].cell;
 
                 if (tile == null)
                 {
@@ -2792,9 +3038,7 @@ namespace WordDrop
                                    $"Existing tile will be orphaned.");
                 }
 
-                // Clear old position
-                _tiles[fromCol, fromRow] = null;
-                _cells[fromCol, fromRow] = null;
+                // (old position already cleared in the lift pass)
 
                 // Set new position
                 if (cell != null)
@@ -2815,7 +3059,10 @@ namespace WordDrop
                 {
                     float fallDuration = dist / FallSpeed;
                     float colDelay = toCol * STAGGER_PER_COL;
-                    tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
+                    if (phased && routeOf != null && routeOf.TryGetValue(kvp.Key, out var fm) && fm.path != null && fm.path.Count >= 2)
+                        _waveFalls.Add((tile, RouteToWorld(fm.path, targetPos.z), fm.phase, fromCol * STAGGER_PER_COL));   // 11-17: its route, in waves
+                    else tile.AnimateGravityFall(targetPos, fallDuration, colDelay);
+                    if (GRAVITY_CLIP && REFILL_CLIP && RulesEngine.HasVoids) StartCoroutine(ClipWhileFalling(tile));   // 11-02: hidden while crossing a gap (GRAVITY_CLIP off: suspected in the row-of-specials bug)
                     animatingTiles.Add(tile);
                 }
                 else
@@ -2825,6 +3072,13 @@ namespace WordDrop
             }
 
             SpawnRefillTiles(animatingTiles);   // full board: new letters fall in with the rest
+            if (_wavesOn)
+            {   // 11-17: routed booster falls. Between waves a tile rests on a cell that is not its own yet - tell the integrity
+                // checker (a booster cascade is not "processing", so it kept checking and logged MISPLACED all the way down).
+                _wavesOn = false; _routedFallSince = Time.unscaledTime;
+                yield return StartCoroutine(PlayFallWaves());
+                _routedFallSince = -1f;
+            }
 
             if (animatingTiles.Count > 0)
             {
@@ -3016,7 +3270,7 @@ namespace WordDrop
                         tile.SetAnchored(anchored);
                         if (anchored) { tile.SetVaultRequirement(rockCell != null ? rockCell.RequiredWordLength : 0); tile.SetVaultVisual(true); } // anchored = treasure vault
                         else if (rockCell != null && rockCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                        else          { tile.SetTreasureHits(rockCell != null ? rockCell.TreasureHits : 0); tile.SetStoneVisual(true); }
+                        else          { tile.SetTreasureHits(rockCell != null ? rockCell.TreasureHits : 0); tile.SetCrateHP(rockCell != null ? rockCell.CrateHP : 0); tile.SetStoneVisual(true); }
                     }
                     else if (letter == '\0' || letter == '#')
                     {

@@ -247,7 +247,9 @@ namespace WordDrop
         // dark-purple #301050 outline and a small straight-down drop in the same purple (the HUD heart count, scaled down twice
         // by Spencer: outline ~8% of the cap, drop ~2%). WORD_POP_V3 = false -> the 10-23 Nunito "RM +10" look.
         public static bool  WORD_POP_V3 = true;
-        public static Color WORD_POP_V3_TOP = new Color32(0xFF, 0xFA, 0xE0, 0xFF), WORD_POP_V3_BOT = new Color32(0xFC, 0xEE, 0xC4, 0xFF);
+        // 11-02 Spencer: SKY BLUE face (D of typography/tile_fonts_1101/word_pop_ivory.png) - the cream face (FFFAE0 -> FCEEC4) sank
+        // into the board-C ivory tiles. Gold goal-word pops unchanged.
+        public static Color WORD_POP_V3_TOP = new Color32(0xE6, 0xF7, 0xFF, 0xFF), WORD_POP_V3_BOT = new Color32(0x7F, 0xCB, 0xFF, 0xFF);
         public static Color WORD_POP_V3_INK = new Color32(0x30, 0x10, 0x50, 0xFF);
         public static float WORD_POP_V3_TRACKING = 9f;   // TMP em/100 units: + = looser
         private static Material s_wordPopV3Mat;
@@ -261,13 +263,16 @@ namespace WordDrop
                 s_wordPopV3Mat = new Material(font.material) { name = "WordPopV3" };
                 s_wordPopV3Mat.EnableKeyword("OUTLINE_ON");
                 s_wordPopV3Mat.SetColor("_OutlineColor", WORD_POP_V3_INK);
-                s_wordPopV3Mat.SetFloat("_OutlineWidth", 0.22f);
-                s_wordPopV3Mat.SetFloat("_FaceDilate", 0.18f);
+                // 10-31 TEXT RECIPE D (Spencer: "also make the change for the word pop ups"): the HUD count values - stroke ~5% of
+                // cap, hard drop ~7% - instead of the 10-28 outline 0.22 / dilate 0.18 / drop -0.3. Plus a soft shadow copy
+                // (AddWordPopSoftShadow) so the cream word lifts off the white tiles.
+                s_wordPopV3Mat.SetFloat("_OutlineWidth", HUDManager.D_STROKE);
+                s_wordPopV3Mat.SetFloat("_FaceDilate", HUDManager.D_STROKE * 0.5f);
                 s_wordPopV3Mat.EnableKeyword("UNDERLAY_ON");
                 s_wordPopV3Mat.SetColor("_UnderlayColor", WORD_POP_V3_INK);
                 s_wordPopV3Mat.SetFloat("_UnderlayOffsetX", 0f);
-                s_wordPopV3Mat.SetFloat("_UnderlayOffsetY", -0.3f);
-                s_wordPopV3Mat.SetFloat("_UnderlayDilate", 0.4f);
+                s_wordPopV3Mat.SetFloat("_UnderlayOffsetY", HUDManager.D_DROP);
+                s_wordPopV3Mat.SetFloat("_UnderlayDilate", HUDManager.D_STROKE);
                 s_wordPopV3Mat.SetFloat("_UnderlaySoftness", 0f);
                 ShaderUtilities.UpdateShaderRatios(s_wordPopV3Mat);
             }
@@ -279,6 +284,72 @@ namespace WordDrop
             tmp.characterSpacing = WORD_POP_V3_TRACKING;   // 2026-10-28 Spencer: "the kerning is so tight" - the face dilate + outline close the gaps
             tmp.UpdateMeshPadding();
             return true;
+        }
+
+        /// <summary>SOFT SHADOW behind a word pop (10-31, same as the home +coins pop): a child copy with an invisible face and a
+        /// soft, grown, slightly dropped underlay in the plate dark. Returns it so the caller can fade it with the word.</summary>
+        public static bool WORD_POP_SOFT_SHADOW = true;
+        private static Material s_wordPopShadowMat;
+        public static TextMeshPro AddWordPopSoftShadow(TextMeshPro main)
+        {
+            if (!WORD_POP_SOFT_SHADOW || main == null || s_wordPopV3Mat == null || (main.fontSharedMaterial != s_wordPopV3Mat && main.fontSharedMaterial != s_wordPopGoldMat)) return null;
+            if (s_wordPopShadowMat == null)
+            {
+                s_wordPopShadowMat = new Material(s_wordPopV3Mat) { name = "WordPopSoftShadow" };
+                s_wordPopShadowMat.DisableKeyword("OUTLINE_ON"); s_wordPopShadowMat.SetFloat("_OutlineWidth", 0f);
+                s_wordPopShadowMat.SetColor("_FaceColor", new Color(1f, 1f, 1f, 0f));
+                s_wordPopShadowMat.SetColor("_UnderlayColor", LevelMapPanel.COIN_POP_SHADOW);
+                s_wordPopShadowMat.SetFloat("_UnderlayOffsetY", LevelMapPanel.COIN_POP_SHADOW_Y);
+                s_wordPopShadowMat.SetFloat("_UnderlayDilate", LevelMapPanel.COIN_POP_SHADOW_DILATE);
+                s_wordPopShadowMat.SetFloat("_UnderlaySoftness", LevelMapPanel.COIN_POP_SHADOW_SOFT);
+                ShaderUtilities.UpdateShaderRatios(s_wordPopShadowMat);
+            }
+            var go = new GameObject("WordPopSoftShadow");
+            go.transform.SetParent(main.transform, false);
+            var sh = go.AddComponent<TextMeshPro>();
+            sh.font = main.font; sh.fontSharedMaterial = s_wordPopShadowMat;
+            sh.text = main.text; sh.fontSize = main.fontSize; sh.fontStyle = main.fontStyle; sh.characterSpacing = main.characterSpacing;
+            sh.alignment = main.alignment; sh.enableWordWrapping = false; sh.overflowMode = main.overflowMode;
+            sh.rectTransform.sizeDelta = main.rectTransform.sizeDelta;
+            sh.enableVertexGradient = false; sh.color = Color.white; sh.alpha = main.alpha;
+            sh.sortingOrder = main.sortingOrder - 1;
+            sh.UpdateMeshPadding();
+            return sh;
+        }
+
+        // GOAL WORD = GOLD + LONG WORD = BIGGER (10-31): HandManager sets these just before the pop is built; ClusterOutline reads
+        // and clears them. Gold: gold face (#FFF2A0 -> #F5D147), orange rim (outline #C9600C), dark lip (underlay #6E2A05) - the TMP
+        // approximation of the mocked tier-1 gold (composition/library_home/goal_word_pop.png).
+        public static bool  GOAL_WORD_GOLD = true;
+        public static bool  NextPopGold; public static int NextPopLength;
+        public static float GOLD_POP_SCALE = 1.15f, LONG_POP_STEP = 0.10f;   // +10% size per letter past 4 (cap 3 steps)
+        public static Color GOLD_TOP = new Color32(0xFF, 0xF2, 0xA0, 0xFF), GOLD_BOT = new Color32(0xF5, 0xD1, 0x47, 0xFF);
+        public static Color GOLD_RIM = new Color32(0xC9, 0x60, 0x0C, 0xFF), GOLD_LIP = new Color32(0x6E, 0x2A, 0x05, 0xFF);
+        private static Material s_wordPopGoldMat;
+        public static void ApplyWordPopGold(TextMeshPro tmp)
+        {
+            if (tmp == null || s_wordPopV3Mat == null || tmp.fontSharedMaterial != s_wordPopV3Mat) return;
+            if (s_wordPopGoldMat == null)
+            {
+                s_wordPopGoldMat = new Material(s_wordPopV3Mat) { name = "WordPopGold" };
+                s_wordPopGoldMat.SetColor("_OutlineColor", GOLD_RIM);
+                s_wordPopGoldMat.SetFloat("_OutlineWidth", HUDManager.D_STROKE * 1.4f);
+                s_wordPopGoldMat.SetFloat("_FaceDilate", HUDManager.D_STROKE * 0.7f);
+                s_wordPopGoldMat.SetColor("_UnderlayColor", GOLD_LIP);
+                s_wordPopGoldMat.SetFloat("_UnderlayDilate", HUDManager.D_STROKE * 1.4f);
+                ShaderUtilities.UpdateShaderRatios(s_wordPopGoldMat);
+            }
+            tmp.fontSharedMaterial = s_wordPopGoldMat;
+            tmp.enableVertexGradient = true;
+            tmp.colorGradient = new VertexGradient(GOLD_TOP, GOLD_TOP, GOLD_BOT, GOLD_BOT);
+            tmp.UpdateMeshPadding();
+        }
+        /// <summary>Size multiplier for the next pop: gold words a touch bigger, long words bigger per letter.</summary>
+        public static float NextPopScale()
+        {
+            float k = 1f + LONG_POP_STEP * Mathf.Clamp(NextPopLength - 4, 0, 3);
+            if (NextPopGold) k *= GOLD_POP_SCALE;
+            return k;
         }
 
         public static bool ApplyWordPopStyle(TextMeshPro tmp)
@@ -481,7 +552,7 @@ namespace WordDrop
             tmp.fontStyle = FontStyles.Normal;
             tmp.color = Color.white; // Start white — will flash to final color
             tmp.alignment = TextAlignmentOptions.Center;
-            tmp.sortingOrder = 47;  // 2026-10-21: 46->47, above the refill lid (44/45) // was 30; re-based above the row bands (tiles reach 37) 2026-10-20
+            tmp.sortingOrder = 60;  // 11-06: 47 -> 60, ABOVE the board FX glows (<=57): the L1-20 recording showed the label unreadable for ~0.2 s under the power-up birth flash. 2026-10-21: 46->47, above the refill lid (44/45) // was 30; re-based above the row bands (tiles reach 37) 2026-10-20
             tmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
             tmp.enableWordWrapping = false;
             tmp.overflowMode = TextOverflowModes.Overflow;
@@ -507,7 +578,7 @@ namespace WordDrop
                 ghostTmp.fontStyle = FontStyles.Normal;
                 ghostTmp.color = new Color(color.r, color.g, color.b, 0.4f);
                 ghostTmp.alignment = TextAlignmentOptions.Center;
-                ghostTmp.sortingOrder = 46; // behind main text (45 tied the refill lid)  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
+                ghostTmp.sortingOrder = 59; // 11-06: 46 -> 59 (stays just behind the main text). behind main text (45 tied the refill lid)  // was 29; re-based above the row bands (tiles reach 37) 2026-10-20
                 ghostTmp.rectTransform.sizeDelta = new Vector2(14f, 2f);
                 ghostTmp.enableWordWrapping = false;
                 ghostTmp.overflowMode = TextOverflowModes.Overflow;

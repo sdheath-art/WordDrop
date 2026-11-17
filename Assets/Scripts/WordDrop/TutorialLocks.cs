@@ -37,9 +37,12 @@ namespace WordDrop
         /// <summary>FULL-BOARD booster slots unlock ONE AT A TIME (2026-10-23, Royal Match's L8 / L14 / L17 / L19 — Spencer's
         /// recording). Slot N of the booster row opens at BOOSTER_SLOT_UNLOCKS[N] (display level). Replaces the old drop-game
         /// all-at-L41 rule on the full board; other modes keep BoostersLocked.</summary>
-        public static readonly int[] BOOSTER_SLOT_UNLOCKS = { 8, 14, 17, 19 };
+        public static readonly int[] BOOSTER_SLOT_UNLOCKS = { 8, 12, 15, 17, 19 };   // 11-17 (was 8,14,17,19,22 then ..,20): all five on real levels inside the 20-level build, bonus L20 lesson-free;   // row order: swap, mallet, comet, axe, spyglass. 11-17 Spencer: spyglass 22 -> 20 so testers meet it (the build ends at L20). RM has 4 slots (8/14/17/19); the 5th is ours.
+        /// <summary>FX menu cheat (2026-11-02, Spencer: levels only go to 20, so the L22 spyglass never opens): every booster slot open.</summary>
+        public static bool DEBUG_ALL_BOOSTERS;
         public static int BoosterSlotsOpen()
         {
+            if (DEBUG_ALL_BOOSTERS) return BOOSTER_SLOT_UNLOCKS.Length;
             if (!SurvivalManager.FullBoardActive) return BoostersLocked ? 0 : BOOSTER_SLOT_UNLOCKS.Length;
             var sm = SurvivalManager.Instance; if (sm == null) return 0;
             int lvl = LevelMapPanel.RunLevel(sm.CurrentStageIndex), n = 0;

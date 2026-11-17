@@ -41,6 +41,7 @@ namespace WordDrop
 
         private const int   HALO_ORDER   = 128;    // IN FRONT of every tile, per the reference
         private const int   BADGE_ORDER  = 130;    // above tiles
+        public static int   WORD_POP_ORDER = 230;   // word pop-ups: over the goal flights (HUDManager 200-205)
         private const float THIN         = 0.035f; // single-word outline thickness (world units)
         private const float BOLD         = 0.075f; // 2+ words
         // CellToWorld returns where the tile SPRITE is centred, and the sprite is ~20% taller
@@ -327,6 +328,7 @@ namespace WordDrop
         /// DIGIT_CELL_WORLD * POP_GROW. Public because the level map has to match that final
         /// size, and comparing against the base size made the map digits look 1.8x too small.
         /// 2026-10-19.</summary>
+        public static float FOUND_POP_SCALE = 1.3f;   // 10-31: a DRAGGED word's pop-up is this much bigger (found it)
         public const  float POP_GROW           = 1.8f;
 
         public static float DIGIT_CELL_WORLD   = 0.40f;   // 1.30 -> 0.65 -> 0.325 -> 0.36 -> 0.40
@@ -429,8 +431,76 @@ namespace WordDrop
         /// paths. `halfW`/`halfH` are the number's half-extents at scale 1, used to keep the
         /// whole flight inside the camera; the TMP path measures them off textBounds, the
         /// sprite path off the laid-out children.</summary>
+        /// <summary>PUNCHY WORD POP (2026-10-29, Spencer: "can we make the word pop up when you explode a word a little more
+        /// punchier?"). Was a smooth 0.3s grow + slow drift. Now: SLAM in from 35% to an overshoot (x stretched, y squashed),
+        /// snap back through a squash, a small tilt wobble, a white-gold flash + sparks behind it, HOLD still so it reads, then a
+        /// quick lift-and-fade. false = the old soft pop.</summary>
+        public static bool WORD_POP_PUNCH = true;
+        public static float PUNCH_IN = 0.11f, PUNCH_SETTLE = 0.16f, PUNCH_HOLD = 0.34f, PUNCH_OUT = 0.26f, PUNCH_OVER = 1.32f, PUNCH_TILT = 7f;
+        private System.Collections.IEnumerator PunchPop(GameObject go, Vector3 at, float halfW, float halfH, System.Action<float> setAlpha)
+        {
+            float G = POP_GROW;
+            var tr = go.transform;
+            float tilt = (UnityEngine.Random.value < 0.5f ? -1f : 1f) * PUNCH_TILT;
+            // flash + sparks behind the word
+            var fx = WordDropFX.Instance;
+            SpriteRenderer flash = null;
+            if (fx != null)
+            {
+                flash = fx.MakeFxSprite("WordPopFlash", WordDropFX.SoftDot(), new Color(2.0f, 1.8f, 1.2f, 1f), BADGE_ORDER + 39);
+                flash.transform.position = at + new Vector3(0f, 0f, 0.05f);
+                for (int i = 0; i < 8; i++)
+                {
+                    float a = (i / 8f + UnityEngine.Random.Range(-0.04f, 0.04f)) * Mathf.PI * 2f;
+                    var dir = new Vector3(Mathf.Cos(a) * 1.6f, Mathf.Sin(a), 0f);
+                    fx.SpawnSpark(at + new Vector3(Mathf.Cos(a) * halfW * G * 0.6f, Mathf.Sin(a) * halfH * G * 0.6f, 0f), dir * _lastCellSize * UnityEngine.Random.Range(2.5f, 4.5f),
+                                  _lastCellSize * UnityEngine.Random.Range(0.10f, 0.16f), UnityEngine.Random.Range(0.30f, 0.45f), new Color(2.2f, 1.7f, 0.6f, 1f));
+                }
+            }
+            // 1 SLAM in: 35% -> overshoot, stretched wide
+            float t = 0f;
+            while (t < PUNCH_IN && go != null)
+            {
+                t += Time.unscaledDeltaTime; float k = Mathf.Clamp01(t / PUNCH_IN); float e = 1f - (1f - k) * (1f - k);
+                float sc = Mathf.Lerp(0.35f, PUNCH_OVER, e) * G;
+                tr.localScale = new Vector3(sc * (1f + 0.12f * e), sc * (1f - 0.10f * e), 1f);
+                tr.localRotation = Quaternion.Euler(0, 0, tilt * e);
+                if (flash != null) { flash.transform.localScale = Vector3.one * halfW * 2f * G * (0.6f + 1.0f * e); flash.color = new Color(1, 1, 1, 0.9f); }
+                yield return null;
+            }
+            // 2 SETTLE: snap back through a squash (tall), wobble the tilt out
+            t = 0f;
+            while (t < PUNCH_SETTLE && go != null)
+            {
+                t += Time.unscaledDeltaTime; float k = Mathf.Clamp01(t / PUNCH_SETTLE);
+                float sc = Mathf.Lerp(PUNCH_OVER, 1f, k) * G;
+                float sq = Mathf.Sin(k * Mathf.PI) * 0.10f;   // tall squash mid-settle
+                tr.localScale = new Vector3(sc * (1f - sq), sc * (1f + sq), 1f);
+                tr.localRotation = Quaternion.Euler(0, 0, tilt * Mathf.Cos(k * Mathf.PI * 1.5f) * (1f - k));
+                if (flash != null) { flash.transform.localScale = Vector3.one * halfW * 2f * G * (1.6f + 0.5f * k); flash.color = new Color(1, 1, 1, 0.9f * (1f - k)); }
+                yield return null;
+            }
+            if (flash != null) Destroy(flash.gameObject);
+            if (go == null) yield break;
+            tr.localScale = Vector3.one * G; tr.localRotation = Quaternion.identity;
+            // 3 HOLD: still, readable
+            yield return new WaitForSecondsRealtime(PUNCH_HOLD);
+            // 4 OUT: quick lift + slight grow + fade
+            float rise = _lastCellSize * 0.6f;
+            t = 0f; float y0 = tr.position.y;
+            while (t < PUNCH_OUT && go != null)
+            {
+                t += Time.unscaledDeltaTime; float k = Mathf.Clamp01(t / PUNCH_OUT); float e = k * k;
+                var p = tr.position; p.y = y0 + rise * e; tr.position = p;
+                tr.localScale = Vector3.one * G * (1f + 0.12f * k);
+                setAlpha(1f - e);
+                yield return null;
+            }
+            if (go != null) { go.transform.DOKill(); Destroy(go); }
+        }
+
         private void AnimatePopTransform(GameObject go, Vector3 at, float halfW, float halfH,
-                                         System.Action<float> setAlpha)
+                                         System.Action<float> setAlpha, bool punch = false)
         {
             const float GROW = POP_GROW;
             float rise = _lastCellSize * 0.95f;
@@ -453,6 +523,7 @@ namespace WordDrop
                 go.transform.position = at;
             }
 
+            if (punch && WORD_POP_PUNCH) { StartCoroutine(PunchPop(go, at, halfW / GROW, halfH / GROW, setAlpha)); return; }
             go.transform.localScale = Vector3.one;
             go.transform.DOScale(GROW, 0.30f).SetEase(DG.Tweening.Ease.OutBack, 1.6f);
             if (rise > 0.001f)
@@ -472,7 +543,9 @@ namespace WordDrop
         public void PopPayout(Vector3 at, int payout, bool group, float fromFontSize = 0f, int badgeIdx = -1, Color? textCol = null, string label = null)
         {
             if (!PAYOUT_POPUP_ON || HandManager.BonusBlastRunning) { if (badgeIdx >= 0) HideBadge(badgeIdx); return; }   // bonus: no pop-ups (2026-10-28)
-            if (payout <= 0 || UIAnimations.ReducedMotion) return;
+            // payout 0 = a cascade/combo word from HandManager.PopUpOtherWords: it has a LABEL and must still pop (2026-10-29: this
+            // early-out was silently dropping every one of them - Spencer asked 10-28 for every popped word to get a pop-up)
+            if ((payout <= 0 && (string.IsNullOrEmpty(label) || !BonusPopup.WORD_INSTEAD_OF_SCORE)) || UIAnimations.ReducedMotion) return;   // never a "+0"
             // WORD LABEL (2026-10-23 Spencer: "change these to the words that were made instead of the +number score pop ups ...
             // i just want to see what it would look like"). THIS is the "+N" that leaps off the board at a pop. With a label the
             // pop draws the word(s) in the HUD number style instead of the digit art. BonusPopup.WORD_INSTEAD_OF_SCORE drives both.
@@ -549,11 +622,16 @@ namespace WordDrop
                 wt.enableWordWrapping = false;
                 wt.overflowMode = TextOverflowModes.Overflow;
                 BonusPopup.ApplyWordPopStyle(wt);   // RM "+10" look in Nunito Black (2026-10-23)
-                BonusPopup.SizeWordPop(wt, POP_GROW);   // RM size: letters ~1/4 of a tile tall at the end of the swell
-                wt.sortingOrder = BADGE_ORDER + 40;
+                bool gold = BonusPopup.NextPopGold;
+                if (gold) BonusPopup.ApplyWordPopGold(wt);   // 10-31: the word made goal progress
+                float lenScale = BonusPopup.NextPopScale(); BonusPopup.NextPopGold = false; BonusPopup.NextPopLength = 0;
+                bool found = RulesEngine.DRAG_REWARD && label != null && RulesEngine.SwipedWords.Remove(label.Trim().ToUpperInvariant());
+                BonusPopup.SizeWordPop(wt, POP_GROW * lenScale * (found ? FOUND_POP_SCALE : 1f));   // RM size; long / gold / dragged words pop bigger (10-31)
+                wt.sortingOrder = WORD_POP_ORDER;   // 11-01 Spencer: above the goal pieces flying to the HUD (200-205); was BADGE_ORDER + 40 = 170
+                var wsh = BonusPopup.AddWordPopSoftShadow(wt);   // 10-31: soft shadow so the cream word lifts off the white tiles
                 wt.ForceMeshUpdate();
                 Vector3 wext = wt.textBounds.extents;
-                AnimatePopTransform(go, at, Mathf.Max(wext.x, 0.05f), Mathf.Max(wext.y, 0.05f), v => { if (wt != null) wt.alpha = v; });
+                AnimatePopTransform(go, at, Mathf.Max(wext.x, 0.05f), Mathf.Max(wext.y, 0.05f), v => { if (wt != null) wt.alpha = v; if (wsh != null) wsh.alpha = v; }, true);
                 return;
             }
 

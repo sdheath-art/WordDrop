@@ -117,6 +117,9 @@ namespace WordDrop
         // right. In home mode the node/avatar/hop machinery is simply SKIPPED — none of it
         // is deleted, so flipping HomeMode off brings the walking map straight back.
         public static bool HomeMode = true;
+        /// <summary>11-16: set by SurvivalManager.RetryCurrentLevel (Try Again) - the home screen opens the level card itself.</summary>
+        public static bool AutoOpenCardOnce;
+        public static bool LIVES_GATE = true;
         private RectTransform   _playBtnRT;
         private TextMeshProUGUI _playBtnLabel;
         private TextMeshProUGUI _playBtnShadow;
@@ -544,6 +547,7 @@ namespace WordDrop
                 tex = Resources.Load<Texture2D>("Coins/VFX_Coin_rotation");
             }
             if (tex == null) return null;
+            if (COLS == 8 && tex.width != 1024 && tex.width % 128 == 0) COLS = tex.width / 128;   // 11-03: the thick crown coin sheet is 6x4 (24 frames) of 128 px
             int fw = tex.width / COLS, fh = tex.height / ROWS;
             _coinFrames = new Sprite[COLS * ROWS];
             int idx = 0;
@@ -671,15 +675,20 @@ namespace WordDrop
         private const float COIN_FADE_FROM = 0.93f;
 
         private System.Collections.IEnumerator CoinCascadeCoroutine(Vector3 sourceWorld, int share, int index)
-            => CoinFlyRoutine(_canvas != null ? _canvas.transform : null, sourceWorld, _coinsIconRT, share, index, OnCoinCascadeLanded);
+            => CoinFlyRoutine(_canvas != null ? _canvas.transform : null, sourceWorld, _coinsIconRT, share, index, OnCoinCascadeLanded, glowFx: true);   // 10-31: glow + sparkles on the home pop
 
         /// <summary>THE home-screen coin flight (burst + gravity arc + shadow + 3D spin + magnet swoop + shrink-in), reusable on
         /// any overlay canvas with any target and landing callback. 2026-10-21 Spencer: the in-level bonus coins should use
         /// "the same animation as the homescreen when the coins fly up" — so both callers share this one routine. Run it with
         /// the CALLER's StartCoroutine; it only reads this panel's coin art and tuning.</summary>
+        public static bool  COIN_GLOW_FX = true;
+        public static Color COIN_GLOW = new Color(1f, 0.78f, 0.28f, 0.75f), COIN_SPARK = new Color(1f, 0.86f, 0.4f, 1f);
+        public static float COIN_GLOW_SIZE = 2.0f, COIN_SPARK_RATE = 26f;
+        public static int   COIN_BURST_SPARKS = 16;
         public System.Collections.IEnumerator CoinFlyRoutine(Transform parent, Vector3 sourceWorld, RectTransform target, int share, int index,
-                                                             System.Action<int, Vector3> landed)
+                                                             System.Action<int, Vector3> landed, bool glowFx = false, float sizeMul = 1f)
         {
+            float coinSize = CoinFlySize * sizeMul;   // 11-16: the bonus finale flies fewer, bigger coins
             if (parent == null) { landed?.Invoke(share, sourceWorld); yield break; }
             // Container we animate (position + scale). A dark drop-SHADOW child sits behind an offset, and the COIN
             // child rides in front — so the shadow reads under the coin the whole flight.
@@ -687,19 +696,45 @@ namespace WordDrop
             go.transform.SetParent(parent, false);
             go.transform.SetAsLastSibling(); // above the map + nodes
             var rt = go.GetComponent<RectTransform>();
-            rt.sizeDelta = new Vector2(CoinFlySize, CoinFlySize);
+            rt.sizeDelta = new Vector2(coinSize, coinSize);
             rt.position = sourceWorld;
 
             var frames = LoadCoinFrames();
             bool flip = frames != null && frames.Length > 0;
             Sprite frame0 = flip ? frames[0] : CoinIcon();
 
+            // GLOW + SPARKLES (10-31, Spencer: "the animations where there is a glow behind an object and the particle sparkles
+            // emitting" - RM 50-100 ~22:20, the Well Done star): a warm additive glow BEHIND each coin while it bursts out of the
+            // Level button, sparkles shed from it as it flies, and one bright bloom + sparkle burst at the button (first coin).
+            Image glowImg = null; var fxLayer = parent as RectTransform;
+            if (glowFx && COIN_GLOW_FX && fxLayer != null)
+            {
+                var g = ProgressComet.AddFx(rt, ProgressComet.GlowSprite, COIN_GLOW, coinSize * COIN_GLOW_SIZE);
+                g.transform.SetAsFirstSibling(); glowImg = g;
+                if (index == 0)
+                {
+                    float scl = fxLayer.lossyScale.x;
+                    var bloom = ProgressComet.AddFx(fxLayer, ProgressComet.GlowSprite, new Color(1f, 0.92f, 0.6f, 0.95f), coinSize * 2.2f);
+                    bloom.rectTransform.position = sourceWorld; bloom.rectTransform.localScale = Vector3.one * 0.4f;
+                    bloom.rectTransform.DOScale(2.4f, 0.45f).SetEase(Ease.OutCubic).SetUpdate(true);
+                    bloom.DOFade(0f, 0.55f).SetEase(Ease.InQuad).SetUpdate(true).OnComplete(() => { if (bloom != null) Destroy(bloom.gameObject); });
+                    for (int i = 0; i < COIN_BURST_SPARKS; i++)
+                    {
+                        Vector2 d = UnityEngine.Random.insideUnitCircle.normalized;
+                        ProgressComet.Sparkle(fxLayer, sourceWorld + (Vector3)(d * coinSize * 0.3f * scl), coinSize * UnityEngine.Random.Range(0.35f, 0.7f),
+                            UnityEngine.Random.value < 0.4f ? Color.white : COIN_SPARK, (Vector3)(d * coinSize * scl * UnityEngine.Random.Range(1.6f, 3.2f)) + Vector3.up * coinSize * scl,
+                            UnityEngine.Random.Range(0.45f, 0.7f), UnityEngine.Random.Range(0f, 0.08f));
+                    }
+                }
+            }
+            float sparkAcc = 0f;
+
             var shadowGO = new GameObject("Shadow", typeof(RectTransform), typeof(Image));
             shadowGO.transform.SetParent(go.transform, false);
             var shRT = shadowGO.GetComponent<RectTransform>();
             shRT.anchorMin = shRT.anchorMax = new Vector2(0.5f, 0.5f);
-            shRT.sizeDelta = new Vector2(CoinFlySize, CoinFlySize);
-            shRT.anchoredPosition = new Vector2(3f, -6f) * (CoinFlySize / 46f); // soft offset down-right, scaled with the coin
+            shRT.sizeDelta = new Vector2(coinSize, coinSize);
+            shRT.anchoredPosition = new Vector2(3f, -6f) * (coinSize / 46f); // soft offset down-right, scaled with the coin
             var shImg = shadowGO.GetComponent<Image>();
             shImg.sprite = frame0; shImg.color = new Color(0f, 0f, 0f, 0.32f);
             shImg.raycastTarget = false; shImg.preserveAspect = true;
@@ -708,7 +743,7 @@ namespace WordDrop
             coinGO.transform.SetParent(go.transform, false);
             var coinRT = coinGO.GetComponent<RectTransform>();
             coinRT.anchorMin = coinRT.anchorMax = new Vector2(0.5f, 0.5f);
-            coinRT.sizeDelta = new Vector2(CoinFlySize, CoinFlySize);
+            coinRT.sizeDelta = new Vector2(coinSize, coinSize);
             var img = coinGO.GetComponent<Image>();
             img.sprite = frame0; img.raycastTarget = false; img.preserveAspect = true;
             var coinHsv = UIConfig.CoinIconMaterial;   // tunable in UIConfig
@@ -756,9 +791,23 @@ namespace WordDrop
                 float ob = 1f + 2.7f * Mathf.Pow(sc - 1f, 3f) + 1.7f * Mathf.Pow(sc - 1f, 2f); // OutBack pop
                 rt.localScale = Vector3.one * ob;
                 Spin(COIN_SPIN_AIR);                 // fast tumble through the air
+                if (glowImg != null)
+                {   // glow pulses while it bursts out; sparkles shed behind the coin
+                    var gc = COIN_GLOW; gc.a *= 1f - 0.5f * Mathf.Clamp01(t / flightDur); gc.a *= 0.85f + 0.15f * Mathf.Sin(t * 22f); glowImg.color = gc;
+                    sparkAcc += COIN_SPARK_RATE * dt;
+                    float scl = fxLayer.lossyScale.x;
+                    while (sparkAcc >= 1f)
+                    {
+                        sparkAcc -= 1f;
+                        ProgressComet.Sparkle(fxLayer, pos + (Vector3)(UnityEngine.Random.insideUnitCircle * coinSize * 0.35f * scl), coinSize * UnityEngine.Random.Range(0.25f, 0.5f),
+                            UnityEngine.Random.value < 0.35f ? Color.white : COIN_SPARK, (Vector3)(UnityEngine.Random.insideUnitCircle * coinSize * scl * 0.8f) - (Vector3)(vel * 0.15f),
+                            UnityEngine.Random.Range(0.3f, 0.5f));
+                    }
+                }
                 yield return null;
             }
             if (go != null) rt.localScale = Vector3.one;
+            if (glowImg != null) glowImg.DOFade(0f, 0.25f).SetUpdate(true);   // the glow lets go as the coin heads for the counter
 
             // No wait here — the stagger already happened as extra airtime above.
 
@@ -864,7 +913,11 @@ namespace WordDrop
         // map. 2026-07-14 Spencer.
         public static bool  COIN_POP_V3 = true;
         public static float COIN_POP_V3_SCALE = 1.0f;
-        private static Material s_coinPopMat;
+        public static float COIN_POP_TRACKING = -4f;   // 2026-10-28 Spencer: tighter (was +6)
+        private static Material s_coinPopMat, s_coinShadowMat;
+        public static bool  COIN_POP_SOFT_SHADOW = true;
+        public static Color COIN_POP_SHADOW = new Color32(0x1A, 0x0B, 0x2E, 0x8C);   // plate dark @ 55%
+        public static float COIN_POP_SHADOW_Y = -0.45f, COIN_POP_SHADOW_DILATE = 0.3f, COIN_POP_SHADOW_SOFT = 0.45f;   // TMP units, first guess - check on screen
         private void SpawnCoinRewardPopup(Vector3 worldPos, int amount)
         {
             if (_canvas == null || amount <= 0 || UIAnimations.ReducedMotion) return;
@@ -926,15 +979,36 @@ namespace WordDrop
                 {
                     var ink = new Color32(0x30, 0x10, 0x50, 0xFF);
                     s_coinPopMat = new Material(t.fontSharedMaterial) { name = "CoinPopV3" };
-                    s_coinPopMat.EnableKeyword("OUTLINE_ON"); s_coinPopMat.SetColor("_OutlineColor", ink); s_coinPopMat.SetFloat("_OutlineWidth", 0.22f);
-                    s_coinPopMat.SetFloat("_FaceDilate", 0.18f);
+                    // 10-31 TEXT RECIPE D (Spencer: "D + soft shadow on the coins pop up looks great. lock that in"): the HUD count
+                    // values - stroke ~5% of cap, hard drop ~7% - instead of the 10-28 outline 0.22 / drop -0.3.
+                    s_coinPopMat.EnableKeyword("OUTLINE_ON"); s_coinPopMat.SetColor("_OutlineColor", ink); s_coinPopMat.SetFloat("_OutlineWidth", HUDManager.D_STROKE);
+                    s_coinPopMat.SetFloat("_FaceDilate", HUDManager.D_STROKE * 0.5f);
                     s_coinPopMat.EnableKeyword("UNDERLAY_ON"); s_coinPopMat.SetColor("_UnderlayColor", ink);
-                    s_coinPopMat.SetFloat("_UnderlayOffsetX", 0f); s_coinPopMat.SetFloat("_UnderlayOffsetY", -0.3f);
-                    s_coinPopMat.SetFloat("_UnderlayDilate", 0.4f); s_coinPopMat.SetFloat("_UnderlaySoftness", 0f);
+                    s_coinPopMat.SetFloat("_UnderlayOffsetX", 0f); s_coinPopMat.SetFloat("_UnderlayOffsetY", HUDManager.D_DROP);
+                    s_coinPopMat.SetFloat("_UnderlayDilate", HUDManager.D_STROKE); s_coinPopMat.SetFloat("_UnderlaySoftness", 0f);
                     TMPro.ShaderUtilities.UpdateShaderRatios(s_coinPopMat);
                 }
                 if (s_coinPopMat != null) t.fontSharedMaterial = s_coinPopMat;
-                t.characterSpacing = 6f;
+                t.characterSpacing = COIN_POP_TRACKING;
+                // SOFT SHADOW (10-31, locked): a copy behind with an invisible face and only a soft, grown, slightly dropped underlay
+                // in the plate dark - the callouts' contact shadow. Mock: silhouette +12% of cap, down 6%, blur 9%, #1A0B2E @ 55%.
+                if (COIN_POP_SOFT_SHADOW && s_coinPopMat != null)
+                {
+                    var sgo = Instantiate(tgo, rt); sgo.name = "CoinPopSoftShadow"; sgo.transform.SetAsFirstSibling();
+                    var st = sgo.GetComponent<TMPro.TextMeshProUGUI>();
+                    if (s_coinShadowMat == null)
+                    {
+                        s_coinShadowMat = new Material(s_coinPopMat) { name = "CoinPopSoftShadow" };
+                        s_coinShadowMat.DisableKeyword("OUTLINE_ON"); s_coinShadowMat.SetFloat("_OutlineWidth", 0f);
+                        s_coinShadowMat.SetColor("_FaceColor", new Color(1f, 1f, 1f, 0f));
+                        s_coinShadowMat.SetColor("_UnderlayColor", COIN_POP_SHADOW);
+                        s_coinShadowMat.SetFloat("_UnderlayOffsetY", COIN_POP_SHADOW_Y);
+                        s_coinShadowMat.SetFloat("_UnderlayDilate", COIN_POP_SHADOW_DILATE);
+                        s_coinShadowMat.SetFloat("_UnderlaySoftness", COIN_POP_SHADOW_SOFT);
+                        TMPro.ShaderUtilities.UpdateShaderRatios(s_coinShadowMat);
+                    }
+                    st.fontSharedMaterial = s_coinShadowMat; st.enableVertexGradient = false; st.color = Color.white;
+                }
             }
             else
             {
@@ -1120,8 +1194,9 @@ namespace WordDrop
             // resolves, but the height is derived from that resolved width — so it has to be
             // read after the layout system has run at least once.
             StartCoroutine(LayoutPlayButtonDeferred());
-            string lvlText = $"LEVEL {DisplayNum(toLevel)}";
-            if (_artBtn != null) _artBtn.Label = $"Level {DisplayNum(toLevel)}";   // the art's mixed-case label
+            bool pastContent = ChapterEndCard.IsPastContent(toLevel);   // 10-30: end of the TestFlight chapter
+            string lvlText = pastContent ? "COMING SOON" : $"LEVEL {DisplayNum(toLevel)}";
+            if (_artBtn != null) _artBtn.Label = pastContent ? "Coming Soon" : $"Level {DisplayNum(toLevel)}";   // the art's mixed-case label
             if (_playBtnLabel  != null) _playBtnLabel.text  = lvlText;
             if (_playBtnShadow != null) _playBtnShadow.text = lvlText;   // twin must track it
 
@@ -1150,7 +1225,17 @@ namespace WordDrop
                     if (b != null) b.interactable = true;
                     PulsePlayButton();
                 }
+                if (AutoOpenCardOnce) { AutoOpenCardOnce = false; OnPlayPressed(); return; }
+                bool justWon = _pendingCoinReward > 0;
                 RunHomeCoinCascade();
+                // PROGRESS COMET test (10-30): RM's Area-button glow (gold comet -> button -> glitter burst), flown from the castle into the
+                // Level button after a win so Spencer can judge the feel; it moves to the word-book widget in Milestone 2.
+                if (justWon && ProgressComet.TEST_ON_LEVEL_BUTTON && _playBtnRT != null)
+                    DOVirtual.DelayedCall(COINS_FIRST_BEAT + 1.3f, () =>
+                    {
+                        if (_playBtnRT == null) return;
+                        ProgressComet.Play(new Vector3(Screen.width * 0.5f, Screen.height * 0.58f, _playBtnRT.position.z), _playBtnRT);
+                    }).SetUpdate(true);
             });
         }
 
@@ -1167,12 +1252,16 @@ namespace WordDrop
 
             if (USE_ART_BUTTON)
             {
-                _artBtn = ArtButton.Create(_canvas.transform, ART_BUTTON_KEY, "Level 1");
+                _artBtn = ArtButton.Create(_canvas.transform, ART_BUTTON_KEY, "Level 1", lilita: false);   // 10-31 Spencer: WordSlop on the Level button
                 if (_artBtn != null)
                 {
                     _artBtn.name = "PlayButton";
                     _playBtnRT = (RectTransform)_artBtn.transform;
                     LayoutPlayButton();
+                    // 11-01 (Spencer: "the drop shadow behind the level button might be a bit much"; measured: carpet 110 -> ~51 under the
+                    // button, fading over ~120px, on top of the art's own baked contact shadow - the style guide's is ~1.2% of the screen).
+                    // The art's contact shadow alone; the extra soft shadow is off (LEVEL_BTN_EXTRA_SHADOW).
+                    if (LEVEL_BTN_EXTRA_SHADOW) UISeparation.AddShadow(_playBtnRT, Vector4.zero, 0.16f, 0.07f, 0.5f, 0.25f);
                     _artBtn.Button.interactable = false;      // armed once the screen has faded in
                     _artBtn.Button.onClick.AddListener(OnPlayPressed);
                     return;
@@ -1464,11 +1553,40 @@ namespace WordDrop
             LayoutPlayButton();
         }
 
+        // IDLE INVITE (11-01, Spencer: "does the level button glow and pulsate between levels ... to encourage people to start
+        // another level?" - it didn't: this was an empty stub). While the home screen waits: a slow breathe (scale 1 -> 1+BREATHE,
+        // BREATHE_PERIOD s) and a shine sweep across the button face every SHINE_EVERY s. Starts BREATHE_DELAY s after the screen
+        // settles (after the coin pop), yields to any tween on the button (press squeeze, comet punch), stops when it's pressed.
+        public static bool  IDLE_INVITE = true;
+        public static bool  LEVEL_BTN_EXTRA_SHADOW = false;
+        public static float BREATHE = 0.04f, BREATHE_PERIOD = 1.6f, SHINE_EVERY = 3.5f, BREATHE_DELAY = 1.2f, BREATHE_DELAY_AFTER_WIN = 3.2f;
+        private Coroutine _inviteCo;
         private void PulsePlayButton()
         {
             if (_playBtnRT == null) return;
             _playBtnRT.DOKill();
             _playBtnRT.localScale = Vector3.one;
+            if (_inviteCo != null) StopCoroutine(_inviteCo);
+            if (IDLE_INVITE) _inviteCo = StartCoroutine(IdleInvite(_pendingCoinReward > 0 ? BREATHE_DELAY_AFTER_WIN : BREATHE_DELAY));
+        }
+        private System.Collections.IEnumerator IdleInvite(float delay)
+        {
+            float t = -delay, nextShine = SHINE_EVERY * 0.5f;
+            var btn = _playBtnRT != null ? _playBtnRT.GetComponent<Button>() : null;
+            Image face = null;
+            if (_artBtn != null && _artBtn.Face != null) { var fa = _artBtn.Face.Find("FaceArt"); if (fa != null) face = fa.GetComponent<Image>(); }
+            while (_playBtnRT != null && _playBtnRT.gameObject.activeInHierarchy)
+            {
+                if (btn != null && !btn.interactable) { _playBtnRT.localScale = Vector3.one; yield break; }   // pressed / leaving
+                t += Time.unscaledDeltaTime;
+                if (t >= 0f && !DOTween.IsTweening(_playBtnRT))
+                {
+                    float k = 0.5f - 0.5f * Mathf.Cos(t * Mathf.PI * 2f / BREATHE_PERIOD);   // 0 -> 1 -> 0, eased
+                    _playBtnRT.localScale = Vector3.one * (1f + BREATHE * k);
+                    if (t >= nextShine) { nextShine = t + SHINE_EVERY; if (face != null) ShineSweep.Play(face); else ShineSweep.PlayRect(_playBtnRT); }
+                }
+                yield return null;
+            }
         }
 
 
@@ -1496,6 +1614,16 @@ namespace WordDrop
                 if (_artBtn == null) UIAnimations.ButtonPress(_playBtnRT);
             }
             if (_artBtn == null) GameAudio.Instance?.PlayMultiPopRelease();
+            // 11-16 launch item: hearts gate play. 0 lives -> the "No lives left!" card (refill for coins, or close and wait).
+            if (LIVES_GATE && HeartsManager.Current <= 0 && ContinueModal.Instance != null)
+            {
+                ContinueModal.Instance.ShowOutOfLives(refilled =>
+                {
+                    SurvivalManager.Instance?.SetOverlayPaused(true);   // the card's hide un-pauses; home keeps play frozen
+                    if (refilled) ShowIntroOverMap(); else RearmPlayButton();
+                });
+                return;
+            }
             ShowIntroOverMap();   // the SAME hand-off a node tap used: home -> level card -> play
         }
 
@@ -1505,6 +1633,10 @@ namespace WordDrop
         {
             WDLog.Log($"[HomeTap] ShowIntroOverMap {HomeTapTrace()}");   // TEMP DIAG
             if (_onEntered == null) return;
+            // END OF CONTENT (10-30, TestFlight chapter): past the last finished level, don't open the level card (the next level
+            // would be the OLD generator's) - show "Chapter complete! More levels coming soon" and keep the home screen live.
+            int nextLevel = SurvivalManager.Instance != null ? SurvivalManager.Instance.CurrentStageIndex : _homeLevel;
+            if (ChapterEndCard.IsPastContent(nextLevel)) { ChapterEndCard.Show(RearmPlayButton); return; }
             _group.blocksRaycasts = false;                       // intro (higher canvas) takes input; map is backdrop
             if (_currentNodeButton != null) _currentNodeButton.interactable = false;
             LevelIntroModal.OnPlayStarted -= HandleIntroPlayed;    LevelIntroModal.OnPlayStarted += HandleIntroPlayed;
@@ -1562,6 +1694,9 @@ namespace WordDrop
         {
             WDLog.Log($"[HomeTap] OnTapEnter (full-screen tap) busy={_busy} {HomeTapTrace()}");   // TEMP DIAG
             if (!_busy) return;
+            // 10-31: HOME MODE has no "tap anywhere to enter" - only the Level button. A stray full-screen tap here faded the
+            // home out and left the player on a bare board (Spencer, after OK on "Chapter complete").
+            if (HomeMode) { SetTapEnabled(false); return; }
             SetTapEnabled(false);
             GameAudio.Instance?.PlayButtonClick();
 
@@ -1706,6 +1841,12 @@ namespace WordDrop
             new Vector2(0.5475f, 0.4170f),  // 10 top of the stairs, at the observatory doors
         };
 
+        /// <summary>HOME COMPOSITION (2026-10-29, Spencer picked 1.2x from the now/1.1/1.2 mock): the cover-fitted painting
+        /// is zoomed and pinned at its BOTTOM edge, so the castle rises toward the top bar and the empty sky band goes; the
+        /// path and stairs under the Level button stay where they were. 1 = the plain cover fit.</summary>
+        public static float MAP_ZOOM = 1.0f;   // 10-31: 1.0 for the library hall (castle used 1.2)
+        private static Vector2 MapArtOffset(Vector2 cover, Rect canvasRect) => new Vector2(0f, (cover.y - canvasRect.height) * 0.5f);
+
         private System.Collections.IEnumerator VerifyMapFit()
         {
             yield return null;
@@ -1725,10 +1866,11 @@ namespace WordDrop
 
             bgRT.anchorMin = bgRT.anchorMax = new Vector2(0.5f, 0.5f);
             bgRT.pivot = new Vector2(0.5f, 0.5f);
-            bgRT.anchoredPosition = Vector2.zero;
+            cover *= MAP_ZOOM;
             bgRT.sizeDelta = cover;
+            bgRT.anchoredPosition = MapArtOffset(cover, canvasRect);
             _mapArtSize = cover;
-            if (_nodesRoot != null) _nodesRoot.sizeDelta = cover;
+            if (_nodesRoot != null) { _nodesRoot.sizeDelta = cover; _nodesRoot.anchoredPosition = bgRT.anchoredPosition; }
 
             WDLog.Log($"[LevelMap] AFTER LAYOUT — canvas {canvasRect.width:F0}x{canvasRect.height:F0}, " +
                       $"scale {_canvas.scaleFactor:F3}, bg rect {bgRT.rect.width:F0}x{bgRT.rect.height:F0}, " +
@@ -1835,7 +1977,9 @@ namespace WordDrop
                 Vector2 cover = artAspect > scrAspect
                     ? new Vector2(canvasRect.height * artAspect, canvasRect.height) // match height, overflow width
                     : new Vector2(canvasRect.width, canvasRect.width / artAspect);  // match width, overflow height
+                cover *= MAP_ZOOM;
                 bgRT.sizeDelta = cover;
+                bgRT.anchoredPosition = MapArtOffset(cover, canvasRect);
                 _mapArtSize = cover;
 
                 WDLog.Log($"[LevelMap] map art {mapArt.rect.width}x{mapArt.rect.height} " +
@@ -1846,6 +1990,7 @@ namespace WordDrop
                 // silently undo the sizing above. Logging the rect we actually END UP with
                 // turns "it looks zoomed" into a number. 2026-10-19.
                 StartCoroutine(VerifyMapFit());
+                UISeparation.AddScrim(_bgBottomImg);   // 10-31: darken top/edges so the HUD + button separate from the library
             }
 
             // Full-screen tap-to-enter button (transparent). Enabled only after the hop.
@@ -2061,6 +2206,8 @@ namespace WordDrop
                 _hudBar = HudBar.Create(parent);
                 if (_hudBar != null)
                 {
+                    // 10-31 soft shadow under the bar body (hud_bar.png: body 56..400 of 500 px tall, 24..2334 of 2358 wide)
+                    UISeparation.AddShadow((RectTransform)_hudBar.transform, new Vector4(0.01f, 0.20f, 0.01f, 0.112f), 0.20f, 0.08f, 0.5f, 0.5f);
                     _heartsText = null;                       // the bar shows LIVES itself (HeartsManager), not continues
                     _coinsText = _hudBar.CoinLabel;
                     _coinsIconRT = _hudBar.CoinIcon;          // the coin cascade still flies into the coin
@@ -2292,6 +2439,7 @@ namespace WordDrop
         private void OpenSettings()
         {
             GameAudio.Instance?.PlaySettingsPress();
+            if (SettingsV2.ENABLED) { SettingsV2.ShowHome(); return; }   // 11-17 settings revamp: the kit card with round toggles
             if (SettingsModal.Instance == null)
             {
                 var modalGO = new GameObject("SettingsModalRoot");

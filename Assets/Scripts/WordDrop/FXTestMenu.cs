@@ -316,6 +316,10 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            // TEMP (11-04): watch the crate slide slowly (Spencer saw a letter "thread between a crate in a very odd pattern")
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"FALL SLOW-MO: x{GridManager.FALL_SLOWMO:0}  (tap to toggle x4)", _btnStyle))
+                GridManager.FALL_SLOWMO = GridManager.FALL_SLOWMO > 1f ? 1f : 4f;
+            innerY += BTN_H + GAP;
             // ── SPECIAL TILE TESTS (2026-10-21 Spencer: "give me an opportunity to test each of the animations") ──
             // Each puts that special on a tile near the middle of the board, shows it for a beat, then fires it through
             // the REAL pipeline (rules clear + FX + gravity + cascades) — what you see is what play produces.
@@ -325,7 +329,33 @@ namespace WordDrop
             innerY += BTN_H + GAP;
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Bomb (3x3)", _btnStyle))           StartCoroutine(TestSpecial(RulesEngine.SPECIAL_BOMB));
             innerY += BTN_H + GAP;
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Disco (same letter)", _btnStyle))  StartCoroutine(TestSpecial(RulesEngine.SPECIAL_DISCO));
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Royal Orb / disco (most common letter)", _btnStyle))  StartCoroutine(TestSpecial(RulesEngine.SPECIAL_DISCO));
+            innerY += BTN_H + GAP;
+            // 11-03: single-fire tests for the new art (propeller book flight + trail, dynamite)
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Flying Tome (flies to a goal)", _btnStyle)) StartCoroutine(TestSpecial(RulesEngine.SPECIAL_AIRPLANE));
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"BACKGROUND: next (now {SceneBootstrap.BACKGROUND_NAMES[SceneBootstrap.BackgroundIndex]})", _btnStyle)) SceneBootstrap.CycleBackground();   // 11-03
+            innerY += BTN_H + GAP;
+            // 11-03: SAFE tests - the door blow-off (anywhere, no safe needed) and one lamp hit on a safe on the board (L18)
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SAFE: door blow-off", _btnStyle)) { if (HandManager.Instance != null) HandManager.Instance.TestSafeBlowOff(); else Debug.LogWarning("[FXTest] safe: start a level first"); }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SAFE: lamp hit (needs a safe on the board - L18)", _btnStyle)) { if (HandManager.Instance == null || !HandManager.Instance.TestSafeHit()) Debug.LogWarning("[FXTest] safe hit: no safe on the board (play L18)"); }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SPECIAL: Dynamite", _btnStyle)) StartCoroutine(TestSpecial(RulesEngine.SPECIAL_TNT));
+            innerY += BTN_H + GAP;
+            // 11-03 COINS (Spencer: "give me a button to test the coins animation"): the new crown-coin spin sheet, two ways
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COINS: burst in level (fly to the coin counter)", _btnStyle))
+            {
+                var g = GridManager.Instance; var hud = HUDManager.Instance;
+                if (hud != null && g != null) hud.SpawnTreasureCoins(g.CellToWorld(RulesEngine.COLS / 2, RulesEngine.ROWS / 2) + new Vector3(g.BoardSlideOffsetX, 0f, -0.5f), 25);
+                else Debug.LogWarning("[FXTest] coins: start a level first");
+            }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COINS: level-map cascade (+250)", _btnStyle))
+            {
+                if (LevelMapPanel.Instance != null) { _open = false; LevelMapPanel.Instance.CoinCascadeForDebug(250); }
+                else Debug.LogWarning("[FXTest] LevelMapPanel.Instance missing - open the map once first.");
+            }
             innerY += BTN_H + GAP;
 
             // ── SWAP COMBOS (2026-10-22) — two specials placed side by side, then swapped together ──
@@ -339,12 +369,109 @@ namespace WordDrop
             innerY += BTN_H + GAP;
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: Disco + Disco (board)", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_DISCO, RulesEngine.SPECIAL_DISCO));
             innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "COMBO: Flying Tome + Flying Tome", _btnStyle)) StartCoroutine(TestCombo(RulesEngine.SPECIAL_AIRPLANE, RulesEngine.SPECIAL_AIRPLANE));
+            innerY += BTN_H + GAP;
+            // ── BOOSTER UNLOCK INTROS + USE ANIMATIONS (2026-10-29): replays the full tutorial, then the booster's animation ──
+            {
+                string[] bids = { BoosterManager.ID_FREE_SWAP, BoosterManager.ID_MALLET, BoosterManager.ID_BRAMBLE_SWEEP, BoosterManager.ID_AXE, BoosterManager.ID_SPYGLASS };
+                string[] bnames = { "Swap", "Mallet", "Lightning", "Axe", "Spyglass" };
+                float bw = (PANEL_W - 20 - 4 * 4) / 5f;
+                GUI.Label(new Rect(0, innerY, PANEL_W - 20, BTN_H), "BOOSTER INTRO (tutorial + animation):", _btnStyle);
+                innerY += BTN_H + GAP;
+                for (int bi = 0; bi < bids.Length; bi++)
+                    if (GUI.Button(new Rect(bi * (bw + 4), innerY, bw, BTN_H), bnames[bi], _btnStyle)) BoosterIntro.Instance?.Play(bids[bi]);
+                innerY += BTN_H + GAP;
+            }
+            // ── HUD PROGRESS RING test (2026-10-29): drive the ring without playing; 'Real' hands it back to goal progress ──
+            {
+                float[] vals = { 0f, 0.3f, 0.6f, 1f, -1f }; string[] nm = { "0%", "30%", "60%", "100%", "Real" };
+                float rw = (PANEL_W - 20 - 4 * 4) / 5f;
+                GUI.Label(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"HUD RING (now {(HUDManager.RING_TEST < 0 ? "real" : (HUDManager.RING_TEST * 100f).ToString("0") + "%")}):", _btnStyle);
+                innerY += BTN_H + GAP;
+                for (int ri = 0; ri < vals.Length; ri++)
+                    if (GUI.Button(new Rect(ri * (rw + 4), innerY, rw, BTN_H), nm[ri], _btnStyle)) HUDManager.RING_TEST = vals[ri];
+                innerY += BTN_H + GAP;
+            }
+            // ── UNLOCK ALL BOOSTERS (2026-11-02): levels stop at 20, the spyglass opens at L22 ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"UNLOCK ALL BOOSTERS: {(TutorialLocks.DEBUG_ALL_BOOSTERS ? "ON (tap for normal)" : "OFF (tap to unlock)")}", _btnStyle))
+            { TutorialLocks.DEBUG_ALL_BOOSTERS = !TutorialLocks.DEBUG_ALL_BOOSTERS; if (TutorialLocks.DEBUG_ALL_BOOSTERS) RefillAllBoosters(3); }
+            innerY += BTN_H + GAP;
+            // ── BOOSTER SLOT UNLOCK MOMENT (2026-10-29): replays it on the live slot ──
+            {
+                string[] uids = { BoosterManager.ID_FREE_SWAP, BoosterManager.ID_MALLET, BoosterManager.ID_BRAMBLE_SWEEP, BoosterManager.ID_SPYGLASS, BoosterManager.ID_AXE };
+                string[] unames = { "Swap", "Mallet", "Lightning", "Spyglass", "Axe" };
+                float uw = (PANEL_W - 20 - 4 * 4) / 5f;
+                GUI.Label(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SLOT UNLOCK animation (slot must be open):", _btnStyle);
+                innerY += BTN_H + GAP;
+                for (int ui = 0; ui < uids.Length; ui++)
+                    if (GUI.Button(new Rect(ui * (uw + 4), innerY, uw, BTN_H), unames[ui], _btnStyle)) BoosterHUDSlot.Instance?.TestUnlock(uids[ui]);
+                innerY += BTN_H + GAP;
+            }
+            // ── SHINE A/B (2026-11-01): the dodge shine vs the old white band ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"SHINE: {(ShineSweep.V4 ? "NEW researched (tap for OLD white)" : "OLD white (tap for NEW researched)")}", _btnStyle)) { ShineSweep.V4 = !ShineSweep.V4; ShineSweep.V2 = ShineSweep.V3 = false; }
+            innerY += BTN_H + GAP;
+            // ── OWL moods (2026-11-01): play each mascot expression ──
+            {
+                int per = 4; float ow = (PANEL_W - 20 - 4 * (per - 1)) / per;
+                for (int oi = 0; oi < OwlPortrait.MOODS.Length; oi++)
+                {
+                    if (oi > 0 && oi % per == 0) innerY += BTN_H + GAP;
+                    if (GUI.Button(new Rect((oi % per) * (ow + 4), innerY, ow, BTN_H), "OWL " + OwlPortrait.MOODS[oi], _btnStyle)) OwlPortrait.Play(OwlPortrait.MOODS[oi]);
+                }
+                innerY += BTN_H + GAP;
+            }
+            // ── LEVEL CARD v2 preview (2026-11-01): drop the new card in for this level, plain or with the booster row ──
+            {
+                float cw = (PANEL_W - 20 - 4) / 2f;
+                if (GUI.Button(new Rect(0, innerY, cw, BTN_H), "CARD: this level", _btnStyle)) { _open = false; LevelIntroModal.Instance?.PreviewV2(false); }
+                if (GUI.Button(new Rect(cw + 4, innerY, cw, BTN_H), "CARD: + boosters", _btnStyle)) { _open = false; LevelIntroModal.Instance?.PreviewV2(true); }
+                innerY += BTN_H + GAP;
+                if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "CARD: chapter complete", _btnStyle)) { _open = false; ChapterEndCard.Show(); }
+                innerY += BTN_H + GAP;
+                if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "WELL DONE (reveal)", _btnStyle)) { _open = false; FireStageClearShow(); }   // 11-02
+                innerY += BTN_H + GAP;
+            }
+            // ── MECHANIC SPLASH (2026-11-01): preview each power-up splash (doesn't mark it seen) ──
+            {
+                float sw = (PANEL_W - 20 - 12) / 4f;
+                for (int si = 0; si < MechanicSplash.KEYS.Length; si++)
+                    if (GUI.Button(new Rect(si * (sw + 4), innerY, sw, BTN_H), "SPLASH " + MechanicSplash.KEYS[si], _btnStyle))
+                    {   // collapse the menu: it draws over the splash and a tap on its header would also close the splash
+                        _open = false;
+                        MechanicSplash.Show(MechanicSplash.KEYS[si], null, markDone: false);
+                    }
+                innerY += BTN_H + GAP;
+            }
+            // ── PRE-LEVEL BOOSTERS (2026-10-29) ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "BOOSTERS: test drop-in (rocket + bomb + disco)", _btnStyle)) PreBoosters.TestDropIn();
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"BOOSTERS: +3 each  (now {PreBoosters.Count(0)}/{PreBoosters.Count(1)}/{PreBoosters.Count(2)})", _btnStyle))
+            { for (int bi = 0; bi < PreBoosters.KINDS.Length; bi++) PreBoosters.Add(bi, 3); }
+            innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── settled / not being tested (hidden 2026-10-29) ──
             // ── BOARD MODE (2026-10-21 Spencer: "as long as we can easily go back to the whole row rise game") ──
             // Remembered between sessions. Restarts the current level with the matching board.
             string modeLabel = SurvivalManager.FullBoardEnabled ? "BOARD: FULL (Candy Crush) — tap for RISING ROWS" : "BOARD: RISING ROWS — tap for FULL";
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), modeLabel, _btnStyle)) SurvivalManager.Instance?.ToggleFullBoardAndRestart();
             innerY += BTN_H + GAP;
+
+            }   // ── end hidden ──
+
+            // ── MONKEY TEST (2026-11-16) — a fake finger hammers the REAL game (taps, drags, mashing, buttons) and logs faults; report in MonkeyReports/ ──
+            {
+                var monkey = MonkeyTester.Instance;
+                string mLabel = monkey != null && monkey.Running ? monkey.Status
+                              : $"MONKEY TEST: slam inputs for {MonkeyTester.MINUTES:F0} min" + (monkey != null && !string.IsNullOrEmpty(monkey.Status) ? $"  ({monkey.Status})" : "");
+                if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), mLabel, _btnStyle) && monkey != null) { if (!monkey.Running) MonkeyTester.PLAY_BADLY = false; monkey.Toggle(); }
+                innerY += BTN_H + GAP;
+                // same monkey, but it runs itself out of moves on most levels so the lose screens get hammered too
+                if (monkey != null && !monkey.Running)
+                {
+                    if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"MONKEY TEST (PLAY BADLY): lose levels for {MonkeyTester.MINUTES:F0} min", _btnStyle)) { MonkeyTester.PLAY_BADLY = true; monkey.Toggle(); }
+                    innerY += BTN_H + GAP;
+                }
+            }
 
             // ── BOT PLAYTEST (2026-10-23) — plays levels FIRST..LAST x TRIALS on a hidden engine; report in BotReports/ ──
             {
@@ -354,6 +481,10 @@ namespace WordDrop
                                   + (bot != null && !string.IsNullOrEmpty(bot.Status) ? $"  ({bot.Status})" : "");
                 if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), botLabel, _btnStyle) && bot != null && !bot.Running) bot.Run();
                 innerY += BTN_H + GAP;
+                // SELECTED LEVELS (10-30): type the levels, then run just those with more games each
+                BotPlaytester.SELECTED = GUI.TextField(new Rect(0, innerY, (PANEL_W - 20) * 0.32f, BTN_H), BotPlaytester.SELECTED);
+                if (GUI.Button(new Rect((PANEL_W - 20) * 0.34f, innerY, (PANEL_W - 20) * 0.66f, BTN_H), $"BOT: ONLY THESE x{BotPlaytester.SELECTED_TRIALS}", _btnStyle) && bot != null && !bot.Running) bot.RunSelected();
+                innerY += BTN_H + GAP;
             }
 
             // ── SCREENSHOT FOR CLAUDE (2026-10-23) — same as pressing F8: saves Screenshots/claude_latest.png ──
@@ -361,6 +492,7 @@ namespace WordDrop
                 ClaudeScreenshot.Instance?.Take();
             innerY += BTN_H + GAP;
 
+            if (SHOW_LEGACY_TOOLS) {   // ── settled / not being tested (hidden 2026-10-29) ──
             // ── MULTI-WORD POP (2026-10-22): several words detonating together — word by word, or all at once ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), HandManager.MULTI_WORD_STAGGER ? "MULTI-WORD POP: WORD BY WORD — tap for all at once" : "MULTI-WORD POP: ALL AT ONCE — tap for word by word", _btnStyle))
             { HandManager.MULTI_WORD_STAGGER = !HandManager.MULTI_WORD_STAGGER; WDLog.Log($"[WordPop] multiStagger={HandManager.MULTI_WORD_STAGGER}"); }
@@ -382,6 +514,8 @@ namespace WordDrop
                 WDLog.Log($"[TileSize] ratio -> {Tile.TILE_DISPLAY_RATIO:F2}");
             }
             innerY += BTN_H + GAP;
+
+            }   // ── end hidden ──
 
             if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             // ── SCORED FLASH VARIANTS (2026-09-10 Spencer) ─────────────────────────────
@@ -434,6 +568,7 @@ namespace WordDrop
             innerY += BTN_H + GAP;
             }   // ── end legacy tools ──
 
+            if (SHOW_LEGACY_TOOLS) {   // ── settled / not being tested (hidden 2026-10-29) ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Show", _btnStyle))
                 FireStageClearShow();
             innerY += BTN_H + GAP;
@@ -441,6 +576,8 @@ namespace WordDrop
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Clear Modal — Hide", _btnStyle))
                 FireStageClearHide();
             innerY += BTN_H + GAP;
+
+            }   // ── end hidden ──
 
             if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Unlock Modal — Show", _btnStyle))
@@ -474,6 +611,7 @@ namespace WordDrop
                 SurvivalManager.TutorialDone = false;
                 TutorialManager.ResetTutorial();            // clears tutorial_complete + hint_rewrite/hint_swap
                 TutorialBeats.ResetAll();                   // 2026-10-23 rebuilt tutorial beats
+                SurvivalManager.ClearSavedProgress();       // 11-16 saved level: "as if never played" starts at level 1 again
                 BoosterHUDSlot.ResetSlotsSeen();            // 2026-10-23 booster unlock moments replay
                 PlayerPrefs.DeleteKey("wild_unlock_taught"); // wild-unlock tutorial re-arms
                 PlayerPrefs.Save();
@@ -487,15 +625,25 @@ namespace WordDrop
             innerY += BTN_H + GAP;
             }   // ── end legacy tools ──
 
-            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Continue Modal — Show", _btnStyle))
+            // 11-16: back in the visible menu - the Continue card was rebuilt (ContinueModal.CARD_V2) and needs checking
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "CONTINUE SCREEN — show (out of moves)", _btnStyle))
                 FireContinueModalShow();
             innerY += BTN_H + GAP;
+
+            // 11-16: the Out of Moves banner (full-width band + dim) needs checking too
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "OUT OF MOVES BANNER — drop", _btnStyle))
+                FireTopOutPanel();
+            innerY += BTN_H + GAP;
+
+            if (SHOW_LEGACY_TOOLS) {   // ── settled / not being tested (hidden 2026-10-29) ──
 
             // ── Target completion celebration (icon pop + white spark burst + check) ──
             // Needs an active objective on screen (the Target panel) to celebrate.
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Target Completion (celebrate + check)", _btnStyle))
                 HUDManager.Instance?.FlashObjectiveComplete();
             innerY += BTN_H + GAP;
+
+            }   // ── end hidden ──
 
             if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             // ── MVP P5 turn-based playtest toggle ────────────────────────────────
@@ -522,6 +670,7 @@ namespace WordDrop
             innerY += BTN_H + GAP;
 
             // ── Between-level progression map (preview the avatar hop in isolation) ──
+            if (SHOW_LEGACY_TOOLS) {   // ── settled / not being tested (hidden 2026-10-29) ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Map — Show (avatar hop)", _btnStyle))
                 LevelMapPanel.Instance?.ShowForDebug();
             innerY += BTN_H + GAP;
@@ -545,6 +694,8 @@ namespace WordDrop
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Level Entry — Test spring-in (board + HUD)", _btnStyle))
                 HUDManager.Instance?.PlayLevelEntry();
             innerY += BTN_H + GAP;
+
+            }   // ── end hidden ──
 
             if (SHOW_LEGACY_TOOLS) {   // ── legacy tools (drop / armed-word era, one-off tuning) — hidden 2026-10-23 ──
             // ── Force a WILD into the hand (to test the iridescent wild tile) ────
@@ -765,6 +916,7 @@ namespace WordDrop
                 BoosterManager.ID_BRAMBLE_SWEEP,
                 BoosterManager.ID_WISPWHIRL,
                 BoosterManager.ID_ROCK_CRUSHER,
+                BoosterManager.ID_FREE_SWAP, BoosterManager.ID_MALLET, BoosterManager.ID_AXE, BoosterManager.ID_SPYGLASS,   // the current row (11-02)
             };
 
             int refilled = 0;
@@ -832,7 +984,7 @@ namespace WordDrop
                 Debug.LogWarning("[FXTest] TopOutPanel.Instance missing — not bootstrapped?");
                 return;
             }
-            TopOutPanel.Instance.SetText("TOP OUT!");
+            TopOutPanel.Instance.SetText("Out of Moves!");
             TopOutPanel.Instance.Show();
         }
 

@@ -24,6 +24,27 @@ namespace WordDrop
     /// </summary>
     public class SceneBootstrap : MonoBehaviour
     {
+        // ── BACKGROUND OPTIONS (2026-11-03, Spencer: "might as well have some background options"). The in-level room art; the
+        // choice is saved per device (PlayerPrefs) and the FX test menu cycles it live. Both arts are 2358x5110 @ 100 ppu, so the
+        // cover fit is identical. 0 = the reading room (bg@2x), 1 = the observatory (bg_observatory@2x, ChatGPT, calm centre). ──
+        public static readonly string[] BACKGROUNDS = { "UI/bg@2x" };          // 11-03: observatory removed (Spencer: lanterns peeking out) - art kept in WordDrop_Art/room_1103
+        public static readonly string[] BACKGROUND_NAMES = { "Reading room" };
+        private const string BG_PREF = "wd_bg_choice";
+        public static int BackgroundIndex
+        {
+            get { return Mathf.Clamp(PlayerPrefs.GetInt(BG_PREF, 0), 0, BACKGROUNDS.Length - 1); }
+            set { PlayerPrefs.SetInt(BG_PREF, Mathf.Clamp(value, 0, BACKGROUNDS.Length - 1)); PlayerPrefs.Save(); }
+        }
+        public static string BackgroundPath => BACKGROUNDS[BackgroundIndex];
+        /// <summary>FX menu: switch to the next background now (swaps the live ScreenBackground sprite).</summary>
+        public static void CycleBackground()
+        {
+            BackgroundIndex = (BackgroundIndex + 1) % BACKGROUNDS.Length;
+            var go = GameObject.Find("ScreenBackground"); var sr = go != null ? go.GetComponent<SpriteRenderer>() : null;
+            var sp = Resources.Load<Sprite>(BackgroundPath);
+            if (sr != null && sp != null) sr.sprite = sp;
+            WDLog.Log($"[Background] now '{BACKGROUND_NAMES[BackgroundIndex]}' ({BackgroundPath})");
+        }
         private Camera _mainCamera;
 
         // 2026-06-08 Spencer: TEMP on-screen bloom/HDR diagnostic for the iOS build (can't
@@ -80,8 +101,14 @@ namespace WordDrop
                 CoinWallet.Add(PLAYTEST_COIN_FLOOR - CoinWallet.Balance);
 #endif
 
+            // 11-16: no title screen - straight to the home screen, one frame later so every manager's Start has run.
+            if (GameManager.SKIP_TITLE && GameManager.Instance != null)
+            {
+                if (MenuUI.Instance != null) MenuUI.Instance.SetVisible(false);
+                StartCoroutine(StartGameNextFrame());
+            }
             // Show menu instead of auto-starting — let the player choose when to play
-            if (MenuUI.Instance != null)
+            else if (MenuUI.Instance != null)
             {
                 MenuUI.Instance.SetVisible(true);
 //                 WDLog.Log("[SceneBootstrap] Start — showing menu");
@@ -91,6 +118,12 @@ namespace WordDrop
                 // Fallback if MenuUI doesn't exist
                 GameManager.Instance.TransitionTo(GameState.Playing);
             }
+        }
+
+        private System.Collections.IEnumerator StartGameNextFrame()
+        {
+            yield return null;
+            if (GameManager.Instance != null) GameManager.Instance.StartGameDirect();
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -179,7 +212,7 @@ namespace WordDrop
             // IMPORT GOTCHA: its .meta must carry nPOTScale: 0 — the default (1) silently
             // resamples non-power-of-two textures to the nearest POT and has cost this
             // project hours before (see the 2026-09-11 session note).
-            Sprite bgArt = Resources.Load<Sprite>("UI/bg@2x");
+            Sprite bgArt = Resources.Load<Sprite>(BackgroundPath);   // 11-03: selectable (FX menu "BACKGROUND")
             if (bgArt == null) bgArt = Resources.Load<Sprite>("bg@2x");
 
             GameObject bgGO = new GameObject(bgArt != null ? "ScreenBackground" : "BackgroundGradient");
@@ -200,6 +233,16 @@ namespace WordDrop
                                       (halfH * 2f * OVERSCAN) / nativeH);
                 bgGO.transform.localScale = new Vector3(fit, fit, 1f);
                 bgGO.transform.position   = new Vector3(0f, 0f, 4f);
+                if (UISeparation.GAME_SCRIM_ON)   // 10-31: darken behind the Goals/Moves bar (reading-room chandelier sits there)
+                {
+                    var sGO = new GameObject("ScreenScrim");
+                    var ssr = sGO.AddComponent<SpriteRenderer>();
+                    ssr.sprite = UISeparation.ScrimSprite(OVERSCAN, UISeparation.GAME_TOP_ALPHA, UISeparation.GAME_VIG_ALPHA, UISeparation.GAME_BOT_ALPHA);
+                    ssr.sortingOrder = -9;
+                    float sw = ssr.sprite.rect.width / ssr.sprite.pixelsPerUnit, sh = ssr.sprite.rect.height / ssr.sprite.pixelsPerUnit;
+                    sGO.transform.localScale = new Vector3(halfW * 2f * OVERSCAN / sw, halfH * 2f * OVERSCAN / sh, 1f);
+                    sGO.transform.position = new Vector3(0f, 0f, 3.9f);
+                }
                 WDLog.Log($"[SceneBootstrap] screen background '{bgArt.name}' " +
                           $"{bgArt.rect.width}x{bgArt.rect.height}px → fit {fit:F3} " +
                           $"(view {halfW * 2f:F2}x{halfH * 2f:F2} world units)");

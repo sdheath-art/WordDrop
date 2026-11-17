@@ -1,0 +1,38 @@
+MONKEY TEST  20261116_163735   seed 903861   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.  PLAY BADLY mode.
+
+INPUTS  1065 gestures:  CELL TAP 66  RANDOM DRAG 63  TAUGHT MOVE 3  BUTTON 303  REAL MOVE 157  DOUBLE TAP 33  MASH BUTTON 70  MASH ANYWHERE 37  TAP ANYWHERE 73  RANDOM SWIPE 50  MASH BOARD 68  BOOSTER TAP 43  TAPPABLE 99
+GAME    levels started 13, cleared 6, failed 13;  swaps accepted 88, swiped words 1, boosters used 0;  hearts refilled by the monkey 1x;  PLAY BADLY: cut 9 level(s) down to a few moves
+FRAMES  worst 278 ms, 1 frame(s) over 250 ms, 35655 frames (59 fps average)
+
+FAULTS  1 different   STUCK 1
+
+--- 1. [STUCK] nothing changed for 30s while the monkey kept tapping
+    first at 01:24, level 2, seen 1x, screenshot fault_20261116_163735_01.png
+    state: level 2, moves left 5, coins 54, hearts 5, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=True, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:14 f5044  RANDOM DRAG  (1,5)->(1,6)   [board idle, under a full-screen card]
+      01:14 f5060  TAPPABLE  Panel   [board idle, under a full-screen card]
+      01:15 f5071  CELL TAP  (4,8)   [board idle, under a full-screen card]
+      01:15 f5079  BUTTON  Tab_Haptics   [board idle, under a full-screen card]
+      01:15 f5083  TAP ANYWHERE  111,518   [board idle, under a full-screen card]
+      01:15 f5108  BUTTON  Tab_SFX   [board idle, under a full-screen card]
+      01:16 f5175  TAPPABLE  Scrim   [board idle, under a full-screen card]
+      01:17 f5208  RANDOM DRAG  (2,8)->(1,8)   [board idle, under a full-screen card]
+      01:19 f5346  TAPPABLE  Scrim   [board idle, under a full-screen card]
+      01:21 f5454  REAL MOVE  drag (6,7)->(7,7)   [board idle, under a full-screen card]
+      01:21 f5471  BUTTON  Tab_Haptics   [board idle, under a full-screen card]
+      01:22 f5499  BUTTON  HintsToggle   [board idle, under a full-screen card]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       46x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        2x  [RulesEngine] Step chain hit depth cap () — completing.
+        1x  [INVARIANT] GOLD-ART t=. (,) 'Y' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'R' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] GOLD-ART t=. (,) 'S' gold-primed but wearing '' (colour=)
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_163735.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

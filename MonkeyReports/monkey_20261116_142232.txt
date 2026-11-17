@@ -1,0 +1,27 @@
+MONKEY TEST  20261116_142232   seed 99251   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  1014 gestures:  MASH BUTTON 58  REAL MOVE 174  BOOSTER TAP 36  RANDOM DRAG 73  BUTTON 260  RANDOM SWIPE 44  MASH ANYWHERE 35  TAPPABLE 78  MASH BOARD 68  TAP ANYWHERE 95  CELL TAP 62  DOUBLE TAP 31
+GAME    levels started 12, cleared 10, failed 0;  swaps accepted 106, swiped words 1, boosters used 2;  hearts refilled by the monkey 0x
+FRAMES  worst 1033 ms, 3 frame(s) over 250 ms, 35438 frames (59 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       17x  The character with Unicode value \uB was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+       17x  The character with Unicode value \uC was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+       17x  The character with Unicode value \u was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+        6x  [RulesEngine] Step chain hit depth cap () — completing.
+        5x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        2x  [BoosterDbg] Sync FIX (,): pos drift (-.,-.) → (-.,-.)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'O' gold-primed but wearing '' (colour=)
+        1x  <color=#bc><b>DOTWEEN ► </b></color>Tween startup failed (NULL target/property - Void TryThrowEditorNullExceptionObject(UnityEngine.Obje
+        1x  [INVARIANT] (,) 'N' sortingOrder= expected  — a lift outlived its effect
+        1x  [BoosterDbg] Sync FIX (,): pos drift (-.,.) → (-.,.)
+        1x  [BoosterDbg] Sync FIX (,): pos drift (.,-.) → (.,-.)
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_142232.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

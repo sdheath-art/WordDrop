@@ -1,0 +1,77 @@
+MONKEY TEST  20261116_163232   seed 355101   ran 1.8 min   ended: game stayed stuck - left as it is so you can look
+Screen 720x1560.  One fake finger, real game, Play mode.  PLAY BADLY mode.
+
+INPUTS  183 gestures:  TAPPABLE 3  BUTTON 28  MASH BOARD 17  RANDOM DRAG 18  MASH BUTTON 9  TAP ANYWHERE 6  REAL MOVE 46  DOUBLE TAP 9  BOOSTER TAP 9  CELL TAP 21  RANDOM SWIPE 10  MASH ANYWHERE 7
+GAME    levels started 0, cleared 0, failed 0;  swaps accepted 1, swiped words 0, boosters used 0;  hearts refilled by the monkey 0x;  PLAY BADLY: cut 0 level(s) down to a few moves
+FRAMES  worst 310 ms, 1 frame(s) over 250 ms, 6394 frames (59 fps average)
+
+FAULTS  3 different   ERROR 2   STUCK 1
+
+--- 1. [ERROR] [Invariant] MISPLACED (4,1) 'O' — drawn 0.70 world units (0.6 cells) from its own cell. want (0.55, -4.82, -0.01) have (1.25, -4.82, -0.01)
+    first at 00:42, level 1, seen 1x, screenshot fault_20261116_163232_01.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:277)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:249)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:62)
+    state: level 1, moves left 14, coins 9999, hearts 5, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=True, splash=False, cards=[]
+    last inputs before it:
+      00:35 f2297  MASH BUTTON  Slot_5_Booster x7   [board idle]
+      00:35 f2325  MASH BOARD  one cell (0,8) x8   [board idle]
+      00:36 f2384  BOOSTER TAP  BoosterHUDSlot   [board idle]
+      00:37 f2392  MASH ANYWHERE  x14   [board idle]
+      00:38 f2506  MASH BUTTON  Slot_3_Booster x4   [board idle]
+      00:39 f2521  TAPPABLE  Slot_5_Booster   [board idle]
+      00:39 f2532  CELL TAP  (0,1)   [board idle]
+      00:39 f2560  CELL TAP  (3,6)   [board idle]
+      00:39 f2567  MASH BOARD  board x11   [board idle]
+      00:41 f2640  REAL MOVE  drag (6,5)->(6,6)   [board idle]
+      00:41 f2651  MASH BOARD  one cell (4,1) x12   [board idle]
+      00:42 f2707  REAL MOVE  drag (4,5)->(4,6)   [board idle]
+
+--- 2. [STUCK] nothing changed for 30s - a TUTORIAL lesson is waiting for its taught move (the monkey cannot follow lessons; probably not a bug)
+    first at 00:48, level 1, seen 1x, screenshot fault_20261116_163232_02.png
+    state: level 1, moves left 14, coins 9999, hearts 5, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=True, splash=False, cards=[]
+    last inputs before it:
+      00:41 f2640  REAL MOVE  drag (6,5)->(6,6)   [board idle]
+      00:41 f2651  MASH BOARD  one cell (4,1) x12   [board idle]
+      00:42 f2707  REAL MOVE  drag (4,5)->(4,6)   [board idle]
+      00:43 f2746  REAL MOVE  drag (4,5)->(4,6)   [board idle]
+      00:44 f2842  REAL MOVE  drag (4,4)->(4,5)   [board idle]
+      00:44 f2853  REAL MOVE  drag (5,5)->(5,6)   [board idle]
+      00:45 f2865  BOOSTER TAP  BoosterHUDSlot   [board idle]
+      00:45 f2891  DOUBLE TAP  (2,1)   [board idle]
+      00:45 f2907  REAL MOVE  drag (6,5)->(7,5)   [board idle]
+      00:47 f2998  BUTTON  Slot_5_Booster   [board idle]
+      00:47 f3003  BUTTON  Slot_5_Booster   [board idle]
+      00:47 f3030  MASH BOARD  one cell (5,9) x5   [board idle]
+
+--- 3. [ERROR] [Invariant] MISPLACED (0,7) 'B' — drawn 0.61 world units (0.6 cells) from its own cell. want (-3.84, 1.73, -0.07) have (-3.23, 1.73, -0.07)
+    first at 01:05, level 1, seen 1x, screenshot fault_20261116_163232_03.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoardInvariants:ReportIntegrity (string) (at Assets/Scripts/WordDrop/BoardInvariants.cs:277)
+      WordDrop.BoardInvariants:CheckBoardIntegrity (WordDrop.GridManager,WordDrop.RulesEngine) (at Assets/Scripts/WordDrop/BoardInvariants.cs:249)
+      WordDrop.BoardInvariants:Update () (at Assets/Scripts/WordDrop/BoardInvariants.cs:62)
+    state: level 1, moves left 14, coins 9999, hearts 5, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=True, splash=False, cards=[]
+    last inputs before it:
+      00:56 f3554  MASH BOARD  board x4   [board idle]
+      00:58 f3690  CELL TAP  (7,1)   [board idle]
+      00:59 f3724  MASH ANYWHERE  x12   [board idle]
+      01:00 f3778  MASH ANYWHERE  x4   [board idle]
+      01:00 f3799  REAL MOVE  drag (6,5)->(7,5)   [board idle]
+      01:01 f3832  REAL MOVE  drag (6,5)->(7,5)   [board idle]
+      01:01 f3865  CELL TAP  (6,7)   [board idle]
+      01:02 f3904  BOOSTER TAP  BoosterHUDSlot   [board idle]
+      01:03 f3976  RANDOM DRAG  (5,9)->(5,8)   [board idle]
+      01:04 f4004  RANDOM SWIPE  (3,0)->(1,0)   [board idle]
+      01:04 f4016  MASH BOARD  one cell (0,7) x14   [board idle]
+      01:05 f4105  DOUBLE TAP  (5,5)   [board idle]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+        1x  [INVARIANT] GOLD-ART t=. (,) 'Y' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] (,) 'G' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_163232.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

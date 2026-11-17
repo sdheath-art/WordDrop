@@ -157,8 +157,8 @@ namespace WordDrop
 
 //             WDLog.Log($"[GameManager] {CurrentState} → {newState}");
 
-            // Use slide transition for Menu↔Playing
-            bool useSlide = ScreenTransition.Instance != null
+            // Use slide transition for Menu↔Playing (never INTO the menu when the title screen is skipped - the slide shows it)
+            bool useSlide = ScreenTransition.Instance != null && !(SKIP_TITLE && newState == GameState.Menu)
                 && ((CurrentState == GameState.Menu && newState == GameState.Playing)
                  || (CurrentState == GameState.Playing && newState == GameState.Menu));
 
@@ -193,6 +193,24 @@ namespace WordDrop
             }
         }
 
+        /// <summary>11-16 Spencer: "is there any way to just completely delete this red play button screen ... it should just take
+        /// you to the main screen menu". True = the old title screen (MenuUI: WordDrop + red PLAY) is never shown: launch goes
+        /// straight to the home screen, and every "back to menu" path does too. False = the old title screen is back.</summary>
+        public static bool SKIP_TITLE = true;
+
+        /// <summary>What the title screen's PLAY button did (MenuUI.OnSurvivalClicked), without the title screen or its slide.</summary>
+        public void StartGameDirect()
+        {
+            BlitzManager.IsBlitzMode = false;
+            DailyDropManager.IsDailyMode = false;
+            SurvivalManager.IsSurvivalMode = true;
+            CurrentMode = GameMode.Survival;
+            HideAllScreens();
+            AnalyticsManager.ScreenView("playing_survival");
+            CurrentState = GameState.Playing;
+            OnStateEntered(GameState.Playing, deferHand: false);
+        }
+
         private void HideAllScreens()
         {
             if (MenuUI.Instance         != null) MenuUI.Instance.SetVisible(false);
@@ -225,6 +243,9 @@ namespace WordDrop
                     BlitzManager.Reset();
                     SurvivalManager.Reset();
                     DailyDropManager.IsDailyMode = false;
+
+                    // 11-16: no title screen - anything that still asks for "the menu" lands on the home screen instead.
+                    if (SKIP_TITLE) { StartGameDirect(); break; }
 
                     if (MenuUI.Instance != null)
                         MenuUI.Instance.SetVisible(true);

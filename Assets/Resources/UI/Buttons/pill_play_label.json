@@ -11,15 +11,15 @@
  ],
  "textBox": [
   284.36,
-  114.12,
+  125.3,
   240,
   120
  ],
  "label": "Play",
  "style": "cream",
  "ink": "#264108",
- "creamTop": "#FFF8D3",
- "creamBottom": "#FFF4BD",
+ "creamTop": "#FFFBE6",
+ "creamBottom": "#F3EBAB",
  "outlinePx": 3.2,
  "extrudePx": [
   4.03,
@@ -31,9 +31,9 @@
  "inkTopUnits": 637,
  "inkBottomUnits": -166,
  "frameBox": [
-  42,
-  45,
-  724,
-  277
+  29,
+  38,
+  750,
+  275
  ]
 }

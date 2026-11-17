@@ -241,6 +241,33 @@ namespace WordDrop
         public static bool LEGACY_TUTORIAL_ENABLED = false;
         private static int RunStartStage => (TutorialDone || !LEGACY_TUTORIAL_ENABLED) ? (LevelMapPanel.TUTORIAL_LEVELS + 1) : 1;
 
+        // ── SAVED LEVEL PROGRESS (11-16 Spencer: "it will bring them back to where they left off right?"). Until now every launch
+        // started the run at RunStartStage (Level 1). The furthest level reached is stored the moment a level is WON (so closing
+        // the app on the Well Done screen still counts) and a launch opens the home screen on that level. Only ever moves
+        // FORWARD: debug jumps and retries never write it. Not used for the Daily run or by the bot. A level in progress is not
+        // saved - reopening mid-level starts that level again. False = the old behaviour.
+        public static bool SAVE_PROGRESS = true;
+        private const string SAVED_STAGE_KEY = "wd_saved_stage";
+        public static int SavedStage => PlayerPrefs.GetInt(SAVED_STAGE_KEY, 0);
+        public static void ClearSavedProgress() { PlayerPrefs.DeleteKey(SAVED_STAGE_KEY); PlayerPrefs.Save(); WDLog.Log("[Progress] saved level cleared"); }
+        private static void SaveProgress(int nextStage)
+        {
+            if (!SAVE_PROGRESS || RulesEngine.Simulating || DailyDropManager.IsDailyMode || nextStage <= SavedStage) return;
+            PlayerPrefs.SetInt(SAVED_STAGE_KEY, nextStage); PlayerPrefs.Save();
+            WDLog.Log($"[Progress] saved: next launch opens on stage {nextStage} (level {LevelMapPanel.DisplayNum(nextStage)})");
+        }
+        /// <summary>Where a run starts: the saved level, never before the normal start.</summary>
+        private static int ResumeStage
+        {
+            get
+            {
+                int start = RunStartStage;
+                if (!SAVE_PROGRESS || DailyDropManager.IsDailyMode || SavedStage <= start) return start;
+                WDLog.Log($"[Progress] resuming on stage {SavedStage} (level {LevelMapPanel.DisplayNum(SavedStage)})");
+                return SavedStage;
+            }
+        }
+
         // ── Stage chip target state ───────────────────────────────────────────────
         private int _currentStageIndex = 1;        // stage number (1, 2, 3, …)
         private int _stageStartScore = 0;           // PlayerScore snapshot at stage start
@@ -377,6 +404,13 @@ namespace WordDrop
             StageStats.GoldMoves += n;
             WDLog.Log($"[MoveLimit] +{n} move(s) from {why} -> {CurrentStageMovesRemaining} left");
         }
+
+        /// <summary>OUT OF MOVES = HANDS OFF (11-16, found by the play-badly monkey). The lose check waits for the last move to
+        /// land and settle, and in that gap the board, the boosters and the Settings gear were all still live: a 23rd move on a
+        /// 22-move level, a swap under the Continue card, and "Play On +5" that gave only 3 because the extra moves were charged.
+        /// True while a move-limit level has no moves left; a gold letter's +1 or Play On lifts it.</summary>
+        public static bool OUT_OF_MOVES_LOCK = true;
+        public bool OutOfMovesLocked => OUT_OF_MOVES_LOCK && MoveLimitMode && !AwaitingNextLevel && CurrentStageMovesRemaining <= 0;
 
         private void StartMoveLimitLoseCheck()
         {
@@ -950,7 +984,11 @@ namespace WordDrop
                     // CRATE GOAL (full board, 2026-10-21): the level is won when every crate is broken — score doesn't gate it.
                     if (LevelRules.BonusLevelActive)
                     {
-                        if (resolving || CurrentStageMovesRemaining > 0) return;   // bonus level: no goals, it ends when the moves do
+                        // v6: every safe open = done early. ONLY on the Gold Rush level's own stage - 11-03 bug: after L20 the check re-ran
+                        // on the next stages (still flagged bonus, no safes on the board) and cleared L21..L51 in one frame.
+                        bool vaultsDone = LevelRules.GOLD_RUSH_SAFES && LevelRules.GoldRushSafesPlaced > 0 && LevelRules.GoldRushSafesStage == _currentStageIndex
+                                          && RulesEngine.Instance != null && RulesEngine.Instance.CountSafes() == 0;
+                        if (resolving || (CurrentStageMovesRemaining > 0 && !vaultsDone)) return;   // bonus level: no goals, it ends when the moves do
                     }
                     else if (LevelRules.GoalsActiveFor(_currentStageIndex))
                     {
@@ -998,17 +1036,26 @@ namespace WordDrop
                 if (MoveLimitMode && BONUS_BLAST_ENABLED && HandManager.Instance != null)
                 {
                     coinsEarned = LevelRules.BaseCoinsFor(LevelMapPanel.RunLevel(clearedStage));
-                    PendingBonusCoins = 0;
+                    // GOLD RUSH fix (2026-10-30, Spencer: "the amount of rewards changed to 35 ... when i was at like 300 something"):
+                    // the bonus level's coins are ALREADY in PendingBonusCoins (paid as they were earned). Zeroing it here, and starting
+                    // the blast's counter at the base alone, dropped the readout from 300+ to base 30 + blast 5 - and the Well Done
+                    // screen showed the same 35. Keep them, and count the blast on top of them.
+                    int earnedInLevel = LevelRules.BonusLevelActive ? PendingBonusCoins : 0;
+                    PendingBonusCoins = earnedInLevel;
+                    if (LevelRules.BonusLevelActive) WDLog.Log($"[GoldRush] earned {earnedInLevel} in play (+{coinsEarned} clear + finale) - {LevelRules.GoldRushSpecialsFired} specials fired");
                     int rockets = Mathf.Min(BONUS_MAX_ROCKETS, movesLeftAtClear);
                     HUDManager.MovesDisplayOverride = movesLeftAtClear;   // the counter shows what is left, not the next level
-                    HandManager.Instance.BeginBonusBlast(rockets, movesLeftAtClear, coinsEarned);
+                    HandManager.Instance.BeginBonusBlast(rockets, movesLeftAtClear, coinsEarned + earnedInLevel, earnedInLevel);
                 }
                 WDLog.Log($"[Coins] LEVEL {LevelMapPanel.DisplayNum(clearedStage)} cleared: {coinsEarned} coins " +
                           $"(base {LevelRules.BaseCoinsFor(LevelMapPanel.RunLevel(clearedStage))} + {movesLeftAtClear} moves left x {COINS_PER_LEFTOVER_MOVE})");
                 CoinWallet.Add(coinsEarned);
                 // Hand the reward to the map so its coins FLY from the just-cleared node's star into the coins pill
                 // (Royal-Match cascade) when the map shows. 2026-07-14 Spencer.
-                LevelMapPanel.Instance?.SetPendingCoinReward(coinsEarned);
+                // 11-04 (Spencer: "i won 341 coins and it only popped out 30 from the button"): ADD, don't SET - coins earned IN the
+                // level (safes, treasure, Gold Rush) were already queued here and this wiped them, so only the base 30 flew in
+                // (the wallet was right; the pill pre-counted the rest).
+                LevelMapPanel.Instance?.AddPendingCoinReward(coinsEarned);
 
                 // ── OBJECTIVE-COMPLETE CELEBRATION (2026-09-10 Spencer) ───────────────
                 // The checkmark drop + "bing" that used to fire when an objective completed.
@@ -1021,13 +1068,14 @@ namespace WordDrop
                     // Land the score on its true total BEFORE celebrating — it was still
                     // counting up as the win screen took over. 2026-09-10 Spencer.
                     HUDManager.Instance?.SnapScoreToTarget();
-                    GameAudio.Instance?.PlayBing();
+                    if (!HUDManager.BING_ON_STAR) GameAudio.Instance?.PlayBing();   // 11-01: the bing now lands on the star pop (HUDManager.StarCelebrate)
                     HUDManager.Instance?.FlashObjectiveComplete();
                 }
 
                 // Advance stage state FIRST — before any external callbacks — so that
                 // even if the event handler blows up, state machine is consistent.
                 _currentStageCleared = true;
+                SaveProgress(_currentStageIndex + 1);   // 11-16: won = the next level is where a relaunch opens
                 AwaitingNextLevel    = true;   // locks input + pins the HUD until the next level starts
                 _stagesCleared++;
                 AdvanceToNextStage();
@@ -1042,6 +1090,7 @@ namespace WordDrop
                 // MVP P4: refill booster charge on stage clear ("1 charge per stage").
                 BoosterManager.Instance?.RefillForStage();
 
+                OwlPortrait.Play("cheer");   // 11-01 owl
                 WDLog.Log($"[Stage] CLEARED stage {clearedStage}: target {clearedTarget}, scored {clearedScore}, overshoot {overshoot}, coins +{coinsEarned}, moves {clearedMoves}/{clearedBudget}, rises {clearedRises}");
 
                 // Safe to fire analytics now — state is already advanced
@@ -1150,6 +1199,8 @@ namespace WordDrop
             // does NOT carry forward.
             int justClearedTarget = (ScoreManager.Instance != null ? ScoreManager.Instance.PlayerScore : _stageStartScore) - _stageStartScore;
             _currentStageIndex++;
+            SaveProgress(_currentStageIndex);
+            _continuesThisLevel = 0;
             _stageStartScore       += justClearedTarget;
             _currentStageMovesUsed = 0;
             _currentStageCleared   = false;
@@ -1175,6 +1226,7 @@ namespace WordDrop
         public void DebugJumpToStage(int stage)
         {
             _currentStageIndex      = Mathf.Max(1, stage);
+            _continuesThisLevel     = 0;
             _currentStageMovesUsed  = 0;
             _currentStageCleared    = false;
             AwaitingNextLevel       = false;
@@ -1565,6 +1617,10 @@ namespace WordDrop
 
         private void Update()
         {
+            // 11-04 PACE for the playthrough log: think vs busy time per level
+            if (!RulesEngine.Simulating)
+                PlaythroughStats.Tick((HandManager.Instance != null && HandManager.Instance.IsResolvingChain) || (MatchController.Instance != null && MatchController.Instance.IsProcessing)
+                                      || (GridManager.Instance != null && GridManager.Instance.AnyTileFalling()));
             // Global debug keyboard shortcut — works in menu OR gameplay
             if (Input.GetKeyDown(KeyCode.N))
                 ToggleNoAssistMode();
@@ -1682,6 +1738,7 @@ namespace WordDrop
         private void OnApplicationPause(bool pause)
         {
             _appPaused = pause;
+            if (pause && FullBoardActive && !AwaitingNextLevel) { AnalyticsManager.Log("app_pause", "stage", _currentStageIndex, "moves_used", StageStats.MovesMade); PlaythroughStats.PauseClock(); }   // 11-04: a tester backgrounding mid-level = a possible quit point
         }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -1919,7 +1976,7 @@ namespace WordDrop
             _postClearBoostTime     = 0f;
 
             // Reset stage chip-target state. Fresh runs start AT the first real Area once the tutorial's been done.
-            _currentStageIndex      = RunStartStage;
+            _currentStageIndex      = ResumeStage;
             // Clear any objective left over from the previous run / a debug stage-jump, so the level-1
             // objective re-installs fresh. The auto-installer (ObjectiveManager.Update) only fires when
             // Active == null, so without this the stale objective sticks while the level number shows 1.
@@ -1948,6 +2005,7 @@ namespace WordDrop
 
             // MVP P3 Path B: continue ladder resets on each new run.
             _continuesInRun         = 0;
+            _continuesThisLevel     = 0;
             _continueOffered        = false;
 
             // MVP P5: Glade Stillness rise-skip counter resets each run.
@@ -2059,7 +2117,7 @@ namespace WordDrop
                 Instance._isOverlayPaused       = false;
 
                 // Reset stage chip-target state (fresh run starts at the first real Area once the tutorial's done)
-                Instance._currentStageIndex     = RunStartStage;
+                Instance._currentStageIndex     = ResumeStage;
                 Instance._stageStartScore       = 0;
                 Instance._currentStageMovesUsed = 0;
                 Instance._currentStageCleared   = false;
@@ -2187,7 +2245,7 @@ namespace WordDrop
                         || (HandManager.Instance != null && HandManager.Instance.IsResolvingChain)
                         || HandManager.BonusBlastRunning || IsBoardAnimating();
             bool gap = false;
-            for (int c = 0; c < RulesEngine.COLS && !gap; c++) if (StackTop(rules, c) < RulesEngine.ROWS) gap = true;
+            for (int c = 0; c < RulesEngine.COLS && !gap; c++) if (StackTop(rules, c) < RulesEngine.TopRealRow(c) + 1) gap = true;   // shaped board: a void column top is not a gap
             if (busy || !gap) { _fullIdleFor = 0f; return; }
             _fullIdleFor += Time.unscaledDeltaTime;
             if (_fullIdleFor < FULL_REFILL_SETTLE) return;
@@ -2533,7 +2591,7 @@ namespace WordDrop
         // TOP-OUT / GAME OVER
         // ══════════════════════════════════════════════════════════════════════════
 
-        private void TriggerTopOut(string announce = "Out Of Moves!")
+        private void TriggerTopOut(string announce = "Out of Moves!")
         {
             if (_isGameOver) return;
             if (_continueOffered) return;  // Already mid-continue flow — don't re-fire
@@ -2565,6 +2623,7 @@ namespace WordDrop
                 }
                 if (ContinueModal.Instance != null)
                 {
+                    OwlPortrait.Play("teary");   // 11-01 owl: level lost, Continue on offer
                     ContinueModal.Instance.Show(this);
                 }
                 else
@@ -2618,6 +2677,11 @@ namespace WordDrop
         private int _continuesInRun;
         public const int MAX_CONTINUES_PER_RUN = 3; // 2026-07-13 Spencer: 3 continues per run (map hearts show ♥ 3/3)
         public const int CONTINUE_BASE_COST = 50;
+        /// <summary>11-16 launch economy (Spencer: "if you can just pay coins to continue then whats the reason for the hearts?"):
+        /// a win pays ~60 coins, so continues cost several wins and climb within a level (RM shape). Index = continues already
+        /// bought THIS level; the last price repeats.</summary>
+        public static readonly int[] CONTINUE_COSTS = { 300, 600, 900 };
+        private int _continuesThisLevel;
 
         /// <summary>Coin cost for the NEXT continue in this run. 50 → 100 then capped.
         /// Reset on StartSurvival.</summary>
@@ -2625,6 +2689,7 @@ namespace WordDrop
         {
             get
             {
+                if (LevelMapPanel.MapFlowEnabled) return CONTINUE_COSTS[Mathf.Min(_continuesThisLevel, CONTINUE_COSTS.Length - 1)];
                 // 50 * 2^n for n=0,1 → 50, 100. Cap at 100 since we hard-cap continues at 2.
                 int scale = 1 << Mathf.Min(_continuesInRun, 1);
                 return CONTINUE_BASE_COST * scale;
@@ -2632,7 +2697,7 @@ namespace WordDrop
         }
 
         /// <summary>True if the player has any continues remaining this run.</summary>
-        public bool CanOfferContinue => _continuesInRun < MAX_CONTINUES_PER_RUN;
+        public bool CanOfferContinue => LevelMapPanel.MapFlowEnabled || _continuesInRun < MAX_CONTINUES_PER_RUN;   // 11-16: no session cap in the level flow (it sent a 4th loss to the old game over -> level 1)
 
         public int ContinuesUsedThisRun => _continuesInRun;
 
@@ -2652,7 +2717,7 @@ namespace WordDrop
             if (MoveLimitMode)
             {
                 _currentStageMovesUsed = Mathf.Max(0, _currentStageMovesUsed - CONTINUE_EXTRA_MOVES);
-                _continuesInRun++;
+                _continuesInRun++; _continuesThisLevel++;
                 WinStreak.Rescued();
                 WDLog.Log($"[MoveLimit] continue: +{CONTINUE_EXTRA_MOVES} moves -> {CurrentStageMovesRemaining} left, continues_used={_continuesInRun}");
                 return default;
@@ -2739,6 +2804,36 @@ namespace WordDrop
         /// <summary>Player declined the continue offer. End run, route to game-over.
         /// MVP: no heart cost (hearts dropped from Survival 2026-05-22 after
         /// Claude+Codex review — coin-bypass made the heart system decorative).</summary>
+        /// <summary>11-16 Try Again? card (ContinueModal): replay the CURRENT level - fresh deal, same per-level seed - instead of
+        /// ending the run (which restarted at level 1). Goes through the normal home screen; <paramref name="openCard"/> opens
+        /// the level card on arrival (Try Again), false leaves the home screen up (the card's X).</summary>
+        /// <summary>11-17 Settings "Reset Progress": the saved level + tutorial flags were just cleared - rebuild the level under
+        /// the home screen at wherever a fresh run starts (RetryCurrentLevel's route, different stage).</summary>
+        public void RestartFromSavedProgress()
+        {
+            _continueOffered = false;
+            SetOverlayPaused(false);
+            if (HandManager.Instance != null) HandManager.Instance.IsInteractable = true;
+            if (ScoreManager.Instance != null) _stageStartScore = ScoreManager.Instance.PlayerScore;
+            LevelRules.ResetForNewRun();
+            LevelMapPanel.AutoOpenCardOnce = false;
+            int stage = ResumeStage;
+            WDLog.Log($"[Progress] restart from the beginning -> stage {stage}");
+            DebugJumpToStage(stage);
+        }
+
+        public void RetryCurrentLevel(bool openCard)
+        {
+            _continueOffered = false;
+            SetOverlayPaused(false);
+            if (HandManager.Instance != null) HandManager.Instance.IsInteractable = true;
+            if (ScoreManager.Instance != null) _stageStartScore = ScoreManager.Instance.PlayerScore;   // the level's points start at 0 again
+            LevelRules.ResetForNewRun();   // board/ice/gift statics: a same-stage reinstall would otherwise skip the deal + ice
+            LevelMapPanel.AutoOpenCardOnce = openCard;
+            WDLog.Log($"[Retry] level {_currentStageIndex} (openCard={openCard}, lives={HeartsManager.Current})");
+            DebugJumpToStage(_currentStageIndex);
+        }
+
         public void DeclineContinue()
         {
             try

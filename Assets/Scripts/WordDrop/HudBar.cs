@@ -18,6 +18,7 @@ namespace WordDrop
     {
         // design space (hud_bar.py: W1, H1) and the spots it exported
         private const float DW = 1179f, DH = 250f;
+        public static float PORTRAIT_R = 83f;   // match_home_ring3.py: photo r 85 inside a thicker gold ring; 83 leaves its dark separation line showing
         private const float BAR_TOP = 28f, BAR_CY = 114f;                 // bar box 28..200, portrait centre 114
         private const float VIS_TOP = 4f;                                 // highest drawn pixel: the portrait ring + outline (centre 114, r ~110)
         public static float SAFE_MARGIN_FRAC = 0.012f;                    // clear gap under the safe area (~10pt on an iPhone)
@@ -63,7 +64,11 @@ namespace WordDrop
             fit.aspectRatio = DW / DH;
             var img = GetComponent<Image>(); img.sprite = bar; img.raycastTarget = false;
 
-            // portrait (placeholder for now) - tappable later for the profile screen
+            // portrait: the SAME picture as the in-level HUD (PlayerProfile, 2026-10-29 Spencer: "they should be linked in code so
+            // their same profile appears") laid over the baked placeholder in the photo well (hud_layout.json portrait: centre
+            // 116,114 r 76) - tappable later for the profile screen
+            var pic = MakeIcon("ProfilePicture", PlayerProfile.Avatar, 116f, 114f, 2f * PORTRAIT_R);
+            PlayerProfile.Bind(pic.GetComponent<Image>());
             PortraitButton = Hit("Portrait", 116f, 114f, 180f, 180f);
 
             HeartIcon = MakeIcon("Heart", heart, 314f, 110f, 192f);
@@ -77,6 +82,16 @@ namespace WordDrop
             plusRT.SetAsLastSibling(); PlusButton.transform.SetAsLastSibling();
             CoinLabel = Text("CoinLabel", 965f, 113f, 46f, 290f);
 
+            // SHINE ON TAP (2026-10-29, Spencer's RK crown GIF): tapping a panel sweeps a glint across it (ShineSweep). The cream
+            // panels are baked into the bar, so each gets an invisible panel-sized rect (hud_layout heartPanel / coinPanel) to clip to.
+            var heartPanel = Box("HeartPanelShine", 455f, 112f, 310f, 96f, typeof(RectTransform));
+            var coinPanel = Box("CoinPanelShine", 930f, 112f, 380f, 96f, typeof(RectTransform));
+            var heartHit = Hit("HeartPanelHit", 455f, 112f, 330f, 110f); heartHit.transform.SetAsFirstSibling();
+            var coinHit = Hit("CoinPanelHit", 930f, 112f, 400f, 110f); coinHit.transform.SetAsFirstSibling();
+            heartHit.onClick.AddListener(() => { ShineSweep.PlayMask(_rt, "heart_panel"); GameAudio.Instance?.PlayUIClick(); });
+            coinHit.onClick.AddListener(() => { ShineSweep.PlayMask(_rt, "coin_panel"); GameAudio.Instance?.PlayUIClick(); });
+            var picImg = pic.GetComponent<Image>();
+            PortraitButton.onClick.AddListener(() => ShineSweep.Play(picImg));
             RefreshHearts();
             return true;
         }

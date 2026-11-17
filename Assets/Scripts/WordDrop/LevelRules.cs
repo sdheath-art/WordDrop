@@ -50,9 +50,18 @@ namespace WordDrop
         public bool   Bonus;          // no-fail coin level (Royal Match L20) — 2026-10-23
         public string Teach;          // the one new thing this level introduces (tutorial beat key; see TutorialBeats) — 2026-10-23
         public string CrateLayout, IceLayout;
+        public int    ShelfStyle;     // 11-03 BOOKSHELF art: 0 = rounded frame, 1 = ornate bookcase (a 2nd shelf gets the other)
+        public int    Safes;          // 11-03 SAFE: safes on the floor (6 hits each); > 0 = an "Open N safes" goal
+        public int    ShelfBooks;     // 11-03 BOOKSHELF: books on the level's shelf/shelves (RulesEngine.PlaceShelves); > 0 = a Books goal
+        public string CrateHits;     // 11-03 multi-hit crates: starting layers picked per crate from this list ("1,2,3"); null = all single-hit
+        public string Shape;          // board shape (RulesEngine.SHAPES name: octagon, funnel, notches, split, sidenotch, hole, legs); null = rectangle (2026-10-28)
         public int    Grass, GrassSeeds; public string GrassLayout;   // squares of grass to MOW + their starting pattern (GrassSeeds unused since the flip) — 2026-10-23   // designed starting arrangement (RulesEngine.LayoutCells) — 2026-10-23 "bland and repetitive"
         public static bool HasGrassGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Grass) return true; return false; } }
         public static bool HasCrateGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Crates) return true; return false; } }
+        public static bool HasBooksGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Books) return true; return false; } }
+        /// <summary>BOOKSHELF: books knocked off (counted by the board) whose flight to the goal hasn't launched yet - the badge waits for
+        /// them to land, like gems. HUDManager.FlyBook takes one off as it launches.</summary>
+        public static int BooksAwaitingFly; public static float BooksAwaitingSince;
         public static bool HasGemGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Gems) return true; return false; } }
         /// <summary>How many more gems the board should carry right now: up to GEM_MIN_ON_BOARD, but never more than the goal
         /// still needs (gems already on the board count toward it).</summary>
@@ -78,7 +87,7 @@ namespace WordDrop
         // ── LEVEL GOALS (2026-10-21 Spencer: "the objectives levels seem funner"). A level has one or two goals; it is won
         // when ALL are done (score then only feeds coins / the bonus). Goals belong to GoalsStage — the clear check re-runs
         // on the NEXT stage before it installs (the L2 -> L34 runaway), so a goal only counts on its own stage. ──
-        public enum GoalType { Crates, Collect, Ice, Gems, Theme, Ducks, Grass }
+        public enum GoalType { Crates, Collect, Ice, Gems, Theme, Ducks, Grass, Books, Safes }   // Books = BOOKSHELF, Safes = SAFE (11-03)
         public class LevelGoal { public GoalType Type; public char Letter; public int Target; public string Theme; }
 
         // ── THEME WORDS (2026-10-22 Spencer: "sure" to theme words as the next goal) ───────────────────────────────
@@ -97,8 +106,10 @@ namespace WordDrop
             public int MinWordLength; public bool BranchPriming, GoldTiles;
             public System.Collections.Generic.List<string> ThemePlantPool; public Vector2Int[] ShortWordCells, LastSwapCells; public System.Collections.Generic.List<Vector2Int> LastRefillCells;
             public int RefillGoldPending, CratesBroken;
+            public string Shape; public bool[,] ShapeMask;   // 11-03: board shape (the bot left L19's mask live)
         }
-        public static SimSnapshot TakeSimSnapshot() => new SimSnapshot
+        public static SimSnapshot TakeSimSnapshot() { var s = TakeSimSnapshotCore(); RulesEngine.GetShapeState(out s.Shape, out s.ShapeMask); return s; }
+        private static SimSnapshot TakeSimSnapshotCore() => new SimSnapshot
         {
             Goals = new System.Collections.Generic.List<LevelGoal>(Goals), GoalsStage = GoalsStage, Collected = Collected, CollectAwaitingFly = CollectAwaitingFly,
             ThemeMade = ThemeMade, ThemeAwaitingFly = ThemeAwaitingFly, CrateGoal = CrateGoal, CrateGoalStage = CrateGoalStage, PendingThemeSince = PendingThemeSince,
@@ -120,10 +131,37 @@ namespace WordDrop
             RulesEngine.ThemePlantPool = s.ThemePlantPool; RulesEngine.ShortWordCells = s.ShortWordCells; RulesEngine.LastSwapCells = s.LastSwapCells;
             RulesEngine.LastRefillCells.Clear(); RulesEngine.LastRefillCells.AddRange(s.LastRefillCells);
             RulesEngine.RefillGoldPending = s.RefillGoldPending; RulesEngine.CratesBroken = s.CratesBroken;
+            RulesEngine.SetShapeState(s.Shape, s.ShapeMask);
         }
 
         /// <summary>Build DISPLAY level <paramref name="stage"/> on the bot's engine and set its goals into the statics. Returns the
         /// move budget. Mirrors Apply()'s full-board branch.</summary>
+        /// <summary>11-16: the lesson's planted word(s). L1 (swap + gems, strict gem rule) gets TWO: the gem word first (parked as the beat-2
+        /// word, RulesEngine.Teach2*), then beat 1's plain word kept away from it. Other lessons: one word as before.</summary>
+        /// <summary>11-17 (Spencer: "you are getting powerups right away"; RM hands the player no power-up on its first levels): the
+        /// dynamite letter every full-board level starts with (RulesEngine.FULL_START_TNT) begins at this DISPLAY level. 1 = every
+        /// level, as before. Levels 1-5 were bot-tuned WITH it - they need a bot pass.</summary>
+        public static int START_TNT_FROM_LEVEL = 6;
+        private static int StartTntFor(int stage) => stage < START_TNT_FROM_LEVEL ? 0 : RulesEngine.FULL_START_TNT;
+        private static bool PlantLessonWords(LevelRules r)
+        {
+            var re = RulesEngine.Instance; RulesEngine.Teach2Cells = null; RulesEngine.Teach2Word = null;
+            RulesEngine.TeachExtraCells = null; RulesEngine.TeachWord2 = null; RulesEngine.TeachKind = null;
+            { string pk = TutorialBeats.KeyFor(r); if (TutorialBeats.POWER_BEATS && TutorialBeats.IsPowerKey(pk)) return re.PlantPowerLesson(pk); }   // 11-17 power-up lessons
+            if (r.Teach == "swap" && r.Gems > 0 && !RulesEngine.GEM_ADJACENT_COLLECT && !TutorialBeats.Done("gem"))
+            {
+                System.Collections.Generic.HashSet<Vector2Int> avoid = null;
+                if (re.PlantTeachSwap(throughGem: true))
+                {
+                    re.ParkTeachAsSecond();
+                    avoid = new System.Collections.Generic.HashSet<Vector2Int>(RulesEngine.Teach2Cells) { RulesEngine.Teach2From, RulesEngine.Teach2To };
+                    foreach (var c in RulesEngine.Teach2Cells) { avoid.Add(c + Vector2Int.up); avoid.Add(c + Vector2Int.down); avoid.Add(c + Vector2Int.left); avoid.Add(c + Vector2Int.right); }
+                }
+                bool one = re.PlantTeachSwap(avoid: avoid);
+                return one || RulesEngine.Teach2Cells != null;
+            }
+            return re.PlantTeachSwap(through: r.Teach == "ice" && !RulesEngine.ICE_ADJACENT_THAW);
+        }
         public static int SetupSimLevel(RulesEngine sim, int stage, int internalStage)
         {
             var r = For(stage);
@@ -132,7 +170,7 @@ namespace WordDrop
             RulesEngine.BranchPriming   = r.BranchPriming;
             RulesEngine.GoldTilesEnabled = r.GoldTiles;
             RulesEngine.ShortWordCells = null; RulesEngine.LastSwapCells = null; RulesEngine.RefillGoldPending = 0;
-            Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; GoalsStage = internalStage; CrateGoal = 0; CrateGoalStage = internalStage; BonusLevelActive = r.Bonus;
+            Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; BooksAwaitingFly = 0; GoalsStage = internalStage; CrateGoal = 0; CrateGoalStage = internalStage; BonusLevelActive = r.Bonus;
             ThemeMade = 0; ThemeAwaitingFly = 0; PendingThemeWords.Clear(); s_themeWords.Clear(); RulesEngine.ThemePlantPool = null;
             if (!string.IsNullOrEmpty(r.Theme) && r.ThemeCount > 0)
             {
@@ -142,6 +180,7 @@ namespace WordDrop
             if (r.Gems > 0)  Goals.Add(new LevelGoal { Type = GoalType.Gems, Target = r.Gems });
             if (r.Ducks > 0) Goals.Add(new LevelGoal { Type = GoalType.Ducks, Target = r.Ducks });
             if (r.CollectLetter != '\0' && r.CollectCount > 0) Goals.Add(new LevelGoal { Type = GoalType.Collect, Letter = char.ToUpperInvariant(r.CollectLetter), Target = r.CollectCount });
+            RulesEngine.SetBoardShape(SHAPES_ON ? r.Shape : null);   // shaped board (void cells) - same mask as the live level
             sim.FillBoardNoWords();
             sim.SnapshotForRain(out var before, out var _);
             sim.PlantNearWordsOnBoard(RulesEngine.FULL_START_PLANTS, spreadRows: true);
@@ -150,21 +189,26 @@ namespace WordDrop
             for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++) if (before[x, y] != after[x, y]) keep.Add(new Vector2Int(x, y));
             sim.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
             RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
+            RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.SafeHitsNow = RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? sim.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF first: crates must not land on its cells (mirrors Apply)
             int crates = r.Crates > 0 ? sim.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
+            if (crates > 0) sim.AssignCrateHits(r.CrateHits);   // 11-03 multi-hit crates (mirrors Apply)
             if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = sim.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
             else sim.ClearGrass();
-            sim.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
+            sim.PlaceStartTnt(StartTntFor(stage), keep);
             if (!r.Bonus) sim.PlaceTreasures(stage, keep);   // TREASURE (bonus loot) - mirrors Apply
             if (r.Gems > 0) sim.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep);
             if (r.Ducks > 0) sim.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep);
             CrateGoal = crates;
             if (crates > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Crates, Target = crates });
+            if (books > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Books, Target = books });
+            if (safes > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Safes, Target = safes });
             sim.ScrubAccidentalWords(keep);
             if (r.IceCount > 0)
             {
                 int placed = sim.SpawnFrozenTiles(r.IceCount);
                 if (placed > 0) Goals.Add(new LevelGoal { Type = GoalType.Ice, Target = placed });
             }
+            if (RulesEngine.GIFT_WORD_ON && Goals.Count > 0 && !r.Bonus && !TutorialBeats.WantsSwipePlant(r)) sim.PlantGiftWord(out _);   // mirrors the live gift word
             return MovesForRules(stage, r);
         }
 
@@ -231,9 +275,94 @@ namespace WordDrop
         // BONUS_COINS_PER_LETTER per letter into the HUD's REWARD panel; the level clears when the moves run out.
         public static bool BonusLevelActive;
         public static int  BONUS_COINS_PER_LETTER = 1;
+        // GOLD RUSH (2026-10-30, Spencer: the L20 bonus "is kind of boring and lame" + "there really is no reward for making and
+        // firing off the powerups"). Short and loud: GOLD_RUSH_MOVES moves, the board starts LOADED with specials, a swap may
+        // make 3-letter words (RulesEngine.ShortWordRejected), every tile a special clears pays coins (HandManager), and the
+        // payout multiplier climbs as specials are fired (see v2 below) up to GOLD_RUSH_MAX_MULT. Leftover specials fire in the finale
+        // (the end-of-level bonus blast already does that).
+        public const  int  GOLD_RUSH_MOVES = 10;
+        public static int  GOLD_RUSH_ROCKETS = 3, GOLD_RUSH_BOMBS = 2, GOLD_RUSH_AIRPLANES = 1, GOLD_RUSH_DISCOS = 1, GOLD_RUSH_GAP = 2;
+        // 10-30 v2 (Spencer: "what makes the badge climb?" - it was just the move count, i.e. a timer): the payout climbs one
+        // step for every GOLD_RUSH_SPECIALS_PER_STEP specials the player fires, so firing early is a (small, smart) choice.
+        // Tuned for ~250 coins on a typical run (normal level ~50-70) - his move-based run paid ~340.
+        public static int  GOLD_RUSH_SPECIALS_PER_STEP = 2, GOLD_RUSH_MAX_MULT = 3;
+        // 10-30 v3 (his first specials-climb run paid ~746 - a 44-tile combo + x4 by move 4): the multiplier now applies to
+        // SPECIAL blasts only (words pay a flat 1/letter), specials pay 1 coin per GOLD_RUSH_TILES_PER_COIN tiles, cap x3.
+        // Replayed on that run's log: ~281. Words stay steady pocket money; the specials are the jackpot.
+        public static int  GOLD_RUSH_TILES_PER_COIN = 2;   // special blasts: 1 coin per this many gold tiles, x the multiplier
+        // v4 (2026-10-30, Spencer asked what Royal Match's L20 does: "coins everywhere except a + shaped channel"): the board
+        // opens GOLD - every letter is a gold coin tile (v5: no + channel). Coins come ONLY
+        // from gold tiles: GOLD_RUSH_COIN_TILE each, times the multiplier, whether a word or a special takes them. Refills
+        // fall in gold too (v5). (Gold here = coins, never +1 move.)
+        public static int  GOLD_RUSH_COIN_TILE = 1;   // all-gold board = the v3 economy (measured ~206/run, Spencer "felt fine")
+        public static bool GOLD_RUSH_GOLD_BOARD = true;   // (forced off while GOLD_RUSH_SAFES - see GoldBoardOn)
+        // ── v6 SAFES (2026-11-03, Spencer: the safe is "a good mechanic for the gold level instead of what we have right now"). Three
+        // safes on the floor, GOLD_RUSH_SAFE_HITS hits each (two lamps per hit). Each lamp hit pays GOLD_RUSH_LAMP_COINS, each
+        // safe that blows pays GOLD_RUSH_JACKPOT. Specials stay loaded - blasts are the fun way to crack safes. No gold board and
+        // no multiplier badge: one thing to chase. Words still pay a flat 1 coin/letter. ~3 x (2x10 + 60) + words = ~250-280/run.
+        // The level ends early once every safe is open (the finale blast then pays the leftover moves). false = the v5 gold board.
+        public static bool GOLD_RUSH_SAFES = true;
+        public static int  GOLD_RUSH_SAFE_COUNT = 3, GOLD_RUSH_SAFE_HITS = 3, GOLD_RUSH_LAMP_COINS = 10, GOLD_RUSH_JACKPOT = 60;
+        public static bool GoldBoardOn => GOLD_RUSH_GOLD_BOARD && !GOLD_RUSH_SAFES;
+        public static int  GoldRushSpecialsFired;
+        public static int  GoldRushSafesPlaced;   // v6: safes this Gold Rush started with (the level ends early when they're all open)
+        public static int  GoldRushSafesStage = -1;   // ...and the internal stage they belong to (the early end only applies there)
+        private static int s_rushMultShown = 1;
+        /// <summary>Gold Rush payout multiplier (1 off the bonus level); announces each step up with the banner.</summary>
+        /// <summary>The multiplier right now, no side effects (the HUD badge reads this every frame).</summary>
+        public static int GoldRushMultNow()
+            => !BonusLevelActive || GOLD_RUSH_SAFES ? 1 : Mathf.Clamp(1 + GoldRushSpecialsFired / Mathf.Max(1, GOLD_RUSH_SPECIALS_PER_STEP), 1, GOLD_RUSH_MAX_MULT);
+        public static int GoldRushMult()
+        {
+            if (!BonusLevelActive) return 1;
+            int m = GoldRushMultNow();
+            if (m > s_rushMultShown && !RulesEngine.Simulating)
+            {
+                s_rushMultShown = m;
+                BonusPopup.Instance?.Show($"GOLD RUSH x{m}!", new Color(1f, 0.85f, 0.3f), Vector3.zero, 1.3f);
+                WDLog.Log($"[GoldRush] payout now x{m} ({GoldRushSpecialsFired} specials fired)");
+            }
+            return m;
+        }
+        /// <summary>Loads the Gold Rush board with specials (live build only; the bot never plays the bonus).</summary>
+        private static void LoadGoldRush(RulesEngine rules, System.Collections.Generic.HashSet<Vector2Int> keep)
+        {
+            s_rushMultShown = 1; GoldRushSpecialsFired = 0;
+            GoldRushSafesPlaced = 0; GoldRushSafesStage = GoalsStage;   // Apply sets GoalsStage = this level's internal stage first
+            if (GOLD_RUSH_SAFES)
+            {   // v6: safes first (they're 2x2 on the floor), so the specials land around them
+                RulesEngine.SafeHitsNow = GOLD_RUSH_SAFE_HITS;
+                rules.PlaceShelves(0, keep, GOLD_RUSH_SAFE_COUNT, out GoldRushSafesPlaced);
+            }
+            int n = 0;
+            for (int i = 0; i < GOLD_RUSH_ROCKETS; i++) n += rules.PlaceStartSpecial(i % 2 == 0 ? RulesEngine.SPECIAL_ROCKET_H : RulesEngine.SPECIAL_ROCKET_V, 1, keep, GOLD_RUSH_GAP);
+            n += rules.PlaceStartSpecial(RulesEngine.SPECIAL_BOMB, GOLD_RUSH_BOMBS, keep, GOLD_RUSH_GAP);
+            n += rules.PlaceStartSpecial(RulesEngine.SPECIAL_AIRPLANE, GOLD_RUSH_AIRPLANES, keep, GOLD_RUSH_GAP);
+            n += rules.PlaceStartSpecial(RulesEngine.SPECIAL_DISCO, GOLD_RUSH_DISCOS, keep, GOLD_RUSH_GAP);
+            int g = 0;
+            if (GoldBoardOn)
+            {   // EVERY letter gold (10-30 Spencer: the + channel "looks kind of stupid unless all the letters are gold") - gold
+                // words already glow gold and gold letters already throw gold debris, so the whole level reads gold
+                for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++)
+                {
+                    var d = rules.GetCell(x, y);
+                    if (d == null || !char.IsLetter(d.Letter) || d.IsStone || d.SpecialKind != RulesEngine.SPECIAL_NONE) continue;
+                    d.IsRainGold = true; g++;
+                }
+            }
+            WDLog.Log($"[GoldRush] board loaded with {n} special(s), {g} gold coin tile(s)");
+        }
         private static void PayBonusWord(string word, System.Collections.Generic.List<Vector2Int> cells)
         {
-            int coins = word.Length * BONUS_COINS_PER_LETTER;
+            int coins = word.Length * BONUS_COINS_PER_LETTER;   // flat - the Gold Rush multiplier is for special blasts (v3)
+            if (GoldBoardOn)
+            {   // v4: only the word's GOLD tiles pay (still on the board here - DoExplode clears them after this call)
+                var re = RulesEngine.Instance; var gold = new System.Collections.Generic.List<Vector2Int>();
+                if (re != null) foreach (var c in cells) { var d = re.GetCell(c.x, c.y); if (d != null && d.IsRainGold) gold.Add(c); }
+                cells = gold;
+                coins = gold.Count * GOLD_RUSH_COIN_TILE;   // flat, like v3 - the multiplier is for special blasts
+                if (coins <= 0) return;
+            }
             CoinWallet.Add(coins);
             SurvivalManager.PendingBonusCoins += coins;
             LevelMapPanel.Instance?.AddPendingCoinReward(coins);
@@ -284,6 +413,8 @@ namespace WordDrop
             var re = RulesEngine.Current;   // the board being played — the bot's while it simulates (was always the live one)
             if (g.Type == GoalType.Crates) return re != null ? Mathf.Clamp(g.Target - re.CountCrateCells(), 0, g.Target) : 0;
             if (g.Type == GoalType.Ice)    return re != null ? Mathf.Clamp(g.Target - re.CountFrozenCells(), 0, g.Target) : 0;
+            if (g.Type == GoalType.Safes)  return re != null ? Mathf.Clamp(g.Target - re.CountSafes(), 0, g.Target) : 0;   // opened
+            if (g.Type == GoalType.Books)  return re != null ? Mathf.Clamp(g.Target - re.CountShelfBooks(), 0, g.Target) : 0;   // knocked off
             if (g.Type == GoalType.Grass)  return re != null ? Mathf.Clamp(g.Target - re.CountGrass(), 0, g.Target) : 0;   // mowed
             if (g.Type == GoalType.Theme)  return Mathf.Min(ThemeMade, g.Target);
             return Mathf.Min(Collected, g.Target);   // Collect + Gems share the Collected counter (one per level)
@@ -300,9 +431,10 @@ namespace WordDrop
                 if (sb.Length > 0) sb.Append("   ");
                 // A lone collect goal shows just "3/15" — the violet letter icon beside it says which letter.
                 string label = g.Type == GoalType.Collect ? (Goals.Count > 1 ? $"{g.Letter} " : "")
-                             : Goals.Count > 1 ? (g.Type == GoalType.Ducks ? "Ducks " : g.Type == GoalType.Theme ? char.ToUpperInvariant(g.Theme[0]) + g.Theme.Substring(1) + " " : g.Type == GoalType.Ice ? "Ice " : g.Type == GoalType.Gems ? "Gems " : "Crates ") : "";
+                             : Goals.Count > 1 ? (g.Type == GoalType.Ducks ? "Ducks " : g.Type == GoalType.Theme ? char.ToUpperInvariant(g.Theme[0]) + g.Theme.Substring(1) + " " : g.Type == GoalType.Ice ? "Ice " : g.Type == GoalType.Gems ? "Gems " : g.Type == GoalType.Books ? "Books " : g.Type == GoalType.Safes ? "Safes " : "Crates ") : "";
                 bool flies = g.Type == GoalType.Collect || g.Type == GoalType.Gems || g.Type == GoalType.Ducks;
-                int shown = flies ? Mathf.Max(0, GoalProgress(g) - HUDManager.CollectInFlight - CollectAwaitingFly) : GoalProgress(g);
+                int shown = flies ? Mathf.Max(0, GoalProgress(g) - HUDManager.CollectInFlight - CollectAwaitingFly)
+                          : g.Type == GoalType.Books ? Mathf.Max(0, GoalProgress(g) - HUDManager.BooksInFlight - BooksAwaitingFly) : GoalProgress(g);
                 sb.Append($"{label}{shown}/{g.Target}");
             }
             return sb.ToString();
@@ -317,12 +449,12 @@ namespace WordDrop
         private static LevelRules Make(string name, int ice = 0, int minLen = 3, int cadence = 2,
                                        bool branch = false, bool fuse = false, bool gold = false,
                                        int fillRows = 5, float density = 0.92f, int crates = 0, char collect = '\0', int collectN = 0, int gems = 0, string theme = null, int themeN = 0, int ducks = 0,
-                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null)
+                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null, string shape = null, string crateHits = null, int shelfBooks = 0, int shelfStyle = 0, int safes = 0)
             => new LevelRules {
                 Name = name, IceCount = ice, MinWordLength = minLen, RiseCadence = cadence,
                 BranchPriming = branch, FuseOn = fuse, GoldTiles = gold,
                 FillRows = fillRows, Density = density, Crates = crates, CollectLetter = collect, CollectCount = collectN, Gems = gems, Theme = theme, ThemeCount = themeN, Ducks = ducks,
-                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout };
+                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout, Shape = shape, CrateHits = crateHits, ShelfBooks = shelfBooks, ShelfStyle = shelfStyle, Safes = safes };
 
         /// <summary>The authored opening. One named twist per stage — that is what makes a level
         /// feel designed instead of a number going up. Keep each stage to ONE new idea.</summary>
@@ -353,6 +485,8 @@ namespace WordDrop
         // crates28 18/27, gems10 17/30, gems12 20/31, ice8 17/26, ice12 23/41, theme3 6/11, ducks4 38/57) — RETUNE WITH THE BOT.
         // Ducks are slow (casual 15% at 25 moves) — kept out of 1-20. NEW_CURVE=false restores TABLE_OLD. ──
         public static bool NEW_CURVE = true;
+        /// <summary>Shaped boards on/off (2026-10-28). false = every level is the plain rectangle again.</summary>
+        public static bool SHAPES_ON = true;
         private static LevelRules[] TABLE => NEW_CURVE ? TABLE_NEW : TABLE_OLD;
         private static readonly LevelRules[] TABLE_NEW = {
             // MOVES re-tuned 2026-10-23 from bot run 12:43 (20 games/bot): casual p95 for tutorial/teach levels (target >=98% casual),
@@ -366,30 +500,36 @@ namespace WordDrop
             // casual-bot p80, L6-11 p70, L12-16 p65, L17/L19 p50, L18 p70 (17:57 run). Lands in RM's 20-30 move range.
             // Pass 4 (17:57 run, 7x9 board — crates/ice already x63/99 in ScaleForBoard): L1-5 tightened to casual p95 (were 93-100%
             // with 50-58% left), L6-12 loosened (65-80%), L7/12/15/16/19 goal trims, ice spawns off the edges (ICE_AVOID_EDGES).
+            // Pass 5 (2026-10-30 10:09 run of pass 4: L1-13 on target 93-100%; L14 73% -> 20, L17 93% (easy) -> 24, L18 85% (relief
+            // should be ~95) -> 22, L19 65% -> 23).
+            // Pass 4 (2026-10-30, the run 09:44 AFTER the letter-supply fix; casual win jumped from 30-98% to 62-100% at the same budgets):
+            // budgets set from the casual bot's own distribution to the research bands. L1-5 kept generous (tutorial); onboarding at
+            // 92-96%; L14 the soft check (~82%); L17 the first tight level eased 22->25 (62% -> ~80%); L18 relief (~95%); L19 ~85%.
+            // +1 buffer where a cut was over 4 moves (40 games per level = about ±7 points). Tuned with NO win streak.
             // Pass 3 (15:20 run — FIRST human-calibrated: casual wastes 50% of moves, sees common words only, fishing hint + endgame
             // rescue on): goal COUNTS cut to each level's casual p85-p90 so budgets stay 26-34; L2 / L8 single goal (RM mixes kinds from L12).
             // Pass 2 (12:56 run, 40 games/bot): L5 20->22 (teach level at 90%), L10 38->32 (overshot: 100%, 57% left), L19 30->28 (93% — the
             // Gauntlet should bite). Curve now: L1-16 casual 93-98%, L17 the first hard (70%, 28% near-miss), L18 relief 90%, L19 ~85%.
-            /* 1  */ Make("First Gems",     gems:6,               moves:20, teach:"swap"),      // RM L1 "collect 12 red" -> yellow gems
-            /* 2  */ Make("Gem Swipe",      gems:7,               moves:20, teach:"swipe"),     // ONE goal: RM mixes goal KINDS only from L12 (Spencer 10-23); teaches SWIPE
-            /* 3  */ Make("Rocket",         crates:6,             moves:18, teach:"rocket", crateLayout:"band"),    // 5-letter word
-            /* 4  */ Make("Bomb",           gems:8,               moves:20, teach:"bomb"),      // crossing words
-            /* 5  */ Make("Disco",          crates:6,             moves:20, teach:"disco", crateLayout:"corners"),     // 6+ letter word
-            /* 6  */ Make("Crate Yard",     crates:11,            moves:28, teach:"crates", crateLayout:"wall"),    // FIRST BLOCKER, big count (RM L6: 48 boxes)
-            /* 7  */ Make("Stacked",        crates:11,            moves:26, crateLayout:"columns"),
-            /* 8  */ Make("Crate Run",      crates:12,            moves:28, teach:"airplane", crateLayout:"pyramid"),  // ONE goal (was crates + gems); airplane flies to a crate
-            /* 9  */ Make("Ice Breaker",    ice:6, iceLayout:"center", moves:24, teach:"ice"),       // SECOND BLOCKER (grass tried here 10-23: "lame ... boring and it looks bad" — tiles hide the lawn; code kept, GRASS_ON)
-            /* 10 */ Make("Cold Snap",      ice:7, iceLayout:"cross", moves:24),
-            /* 11 */ Make("Deep Freeze",    ice:8, iceLayout:"diagonal", moves:24),
-            /* 12 */ Make("Frozen Crates",  crates:5, ice:4,      moves:24, crateLayout:"ring", iceLayout:"center"),                    // FIRST goal MIX (RM: L12)
-            /* 13 */ Make("Gem Mine",       gems:6, crates:4,     moves:22, crateLayout:"diamond"),                    // was "Animal Kingdom" (theme) — Spencer 10-23: "the animal words idea isnt fun"; theme goals = vocabulary luck. Stone (2-hit crate) planned here
-            /* 14 */ Make("Crate & Ice",    crates:5, ice:4, crateLayout:"pyramid", iceLayout:"line", moves:22),
-            /* 15 */ Make("Triple",         crates:5, ice:4, gems:5, moves:26, crateLayout:"corners", iceLayout:"cross"),                 // first THREE-goal level
-            /* 16 */ Make("Gearing Up",     crates:6, ice:6,      moves:28, teach:"boosters", crateLayout:"columns", iceLayout:"center"),  // RM L16: booster pick before play
-            /* 17 */ Make("The Squeeze",    crates:10, ice:5,     moves:22, crateLayout:"wall", iceLayout:"diagonal"),                    // FIRST TIGHT (RM: won with 1 move) — target ~60%
-            /* 18 */ Make("Cold Hands",     ice:7, gems:6,        moves:24, iceLayout:"cross"),                    // relief-ish ~80%
-            /* 19 */ Make("Gauntlet",       crates:7, ice:6, gems:6, moves:24, crateLayout:"ring", iceLayout:"center"),                 // tightest ~65% (RM: won on the last move)
-            /* 20 */ Make("Bonus Level",    bonus:true,           moves:20, teach:"bonus"),     // no fail, coins everywhere
+            /* 1  */ Make("First Gems",     gems:6,               moves:15, teach:"swap"),   // 11-06 Spencer L1-10 recording (moves left 17-35% / lost vs RM 50-65% L1-5, 35-50% L6-11): 12->15   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 8->12 moves      // RM L1 "collect 12 red" -> yellow gems   // 11-02 pass 13: 20->14 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 14->12 (bot 11:35 rerun)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 12->13   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 13->11   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 11->8
+            /* 2  */ Make("Gem Swipe",      gems:7,               moves:13, teach:"swipe"),   // 11-04 pass 27 (bot 09:06 x40): 11->13 (80%, tutorial ~95)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 10->11 moves     // ONE goal: RM mixes goal KINDS only from L12 (Spencer 10-23); teaches SWIPE   // 11-02 pass 13: 20->13 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 13->11 (bot 11:35 rerun)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 11->10
+            /* 3  */ Make("Rocket",         gems:7,               moves:18, teach:"rocket"),   // 11-17: 14->18. Spencer's own run (no start TNT, spaced gems): 12 of 14 used = 14% left; RM leaves 50-65% on L1-5. PROVISIONAL until the bot pass.   // 11-17 RM ROLLOUT (Spencer: follow RM exactly): was crates:6 band - RM has NO obstacle before L6, the lesson is the only new thing. NOT bot-checked.   // 11-06 Spencer L1-10 recording (moves left 17-35% / lost vs RM 50-65% L1-5, 35-50% L6-11): 11->14   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 9->11 moves    // 5-letter word   // 11-02 pass 13: 18->16 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 16->14 (bot 11:35 rerun)   // 11-02 pass 15: 14->13 (bot 13:18, diagonal crates)   // 11-02 pass 16: 13->12 (bot 13:36)   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 12->8   // 11-03 pass 23 (bot 19:28 full x40): 8->9
+            /* 4  */ Make("Bomb",           gems:8,               moves:17, teach:"bomb"),   // 11-17: 13->17. Spencer's own run: 11 of 13 used = 15% left. PROVISIONAL until the bot pass.   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 9->13 moves      // crossing words   // 11-02 pass 13: 20->14 (bot after gem-touch + goal re-deal off)   // 11-02 pass 15: 14->12 (bot 13:18, diagonal crates)   // 11-02 pass 16: 12->11 (bot 13:36)   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 11->9
+            /* 5  */ Make("Royal Orb",      gems:9,               moves:16, teach:"disco", shape:"octagon"),   // 11-17 RM ROLLOUT (Spencer: follow RM exactly): was crates:6 corners, moves 19 - gems instead (no obstacle before L6). NOT bot-checked.   // 11-06 Spencer L1-10 recording (moves left 17-35% / lost vs RM 50-65% L1-5, 35-50% L6-11): 17->19   // 11-04 pass 30 (bot 10:46 x40): 15->17 (85%, disco teach level wants ~95%)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 13->15 moves   // first SHAPED board (RM L4/5: first shape)     // 6+ letter word   // 11-02 pass 15: 20->17 (bot 13:18, diagonal crates)   // 11-02 pass 16: 17->16 (bot 13:36)   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 16->15   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 15->11   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 11->13
+            /* 6  */ Make("Crate Yard",     crates:8,             moves:22, teach:"crates", crateLayout:"pyramid"),   // 11-06 Spencer L1-10 recording (moves left 17-35% / lost vs RM 50-65% L1-5, 35-50% L6-11): 19->22   // 11-04 pass 27 (bot 09:06 x40): 17->19 (pyramid fixed END-STALL 7.5->3.1; 75%)   // 11-04 pass 26 (bot 08:42 x40, layout pass): wall -> pyramid (fixed crates: a floor slab only shows its top faces - 73%, END-STALL 7.5)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 16->17 moves    // FIRST BLOCKER, big count (RM L6: 48 boxes)   // 10-31 pass 11: 26->23 (bot w/ drags)   // 11-02 pass 13: 23->25 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 25->27 (bot 11:35 rerun)   // 11-02 pass 15: 27->22 (bot 13:18, diagonal crates)   // 11-02 pass 16: 22->24 (bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 24->22   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 22->14   // 11-03 pass 23 (bot 19:28 full x40): 14->16
+            /* 7  */ Make("Stacked",        crates:5,             moves:24, crateLayout:"pillars", crateHits:"2"),   // 11-04 pass 28 (bot 09:30 x40): 23->24 (90%)   // 11-04 pass 27 (bot 09:06 x40): 21->23 (85%)   // 11-04 pass 26 (bot 08:42 x40, layout pass): 26->21 moves (100%, 52% left)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): columns -> pillars, crates 8 -> 5 (x2 = two 5-tall pillars: rows 5-9 stay full width for across-words) + hits 1,2 -> 2 (20 hits vs ~24) (edge crates had one open face, END-STALL 6.9)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 22->26 moves, 9->8 crates   // 11-02 pass 13: 27->25 (bot after gem-touch + goal re-deal off)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 25->22   // 11-03 multi-hit crates: "1,2"
+            /* 8  */ Make("Crate Run",      crates:6,             moves:15, crateLayout:"lid", shape:"funnel"),   // 11-17 RM ROLLOUT (Spencer: follow RM exactly): the Flying Tome lesson moved to L10 (L8 already has the first booster-slot lesson).   // 11-06 Spencer L1-10 recording (moves left 17-35% / lost vs RM 50-65% L1-5, 35-50% L6-11): 12->15   // 11-04 pass 26 (bot 08:42 x40, layout pass): 25->12 moves (100%, 75% left; airplane teach level stays generous)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): pyramid -> lid, crates 10 -> 6 (x2 = 12 = the whole lid; GOAL-DEAD 40%: the pyramid sat in the funnel tip)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 21->25 moves, 12->10 crates  // ONE goal (was crates + gems); airplane flies to a crate   // 11-02 pass 13: 26->31 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 31->33 (bot 11:35 rerun)   // 11-02 pass 15: 33->30 (bot 13:18, diagonal crates)   // 11-02 pass 16: 30->28 (bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 28->31   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 31->17   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 17->21
+            /* 9  */ Make("Ice Breaker",    ice:7, iceLayout:"spread", moves:15, teach:"ice"),   // 11-06 Spencer L1-10 recording (moves left 17-35% / lost vs RM 50-65% L1-5, 35-50% L6-11): 13->15   // 11-06 Spencer recording: lost the ice lesson level at 12 (bot 85% vs ~95% teach target): 12->13   // 11-04 pass 30 (bot 10:46 x40): 11->12 (85%, ice teach level wants ~95%)   // 11-04 pass 25 (bot 06:48 x40): 13->11 moves (overshot: L9 100%, L10 98%, L17 80% vs 65, L19 85% vs 70)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 8->13 moves, 9->7 ice       // SECOND BLOCKER (grass tried here 10-23: "lame ... boring and it looks bad" — tiles hide the lawn; code kept, GRASS_ON)   // 10-31 pass 11: 18->12 (bot w/ drags)   // 11-02 pass 13: 12->11 (bot after gem-touch + goal re-deal off)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 11->8
+            /* 10 */ Make("Cold Snap",      ice:8, iceLayout:"spread", moves:14, teach:"airplane"),   // 11-17 RM ROLLOUT (Spencer: follow RM exactly): Flying Tome lesson here (RM teaches nothing on L10); 12->14 as a lesson level. NOT bot-checked.   // 11-04 pass 27 (bot 09:06 x40): 14->12 (no notches: GOAL-DEAD 54->31%, 98%)   // 11-04 pass 26 (bot 08:42 x40, layout pass): shape notches -> plain (GOAL-DEAD 54%, 11 word swaps/turn vs ~18)   // 11-04 pass 25 (bot 06:48 x40): 17->14 moves (overshot: L9 100%, L10 98%, L17 80% vs 65, L19 85% vs 70)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 10->17 moves, 11->8 ice   // 10-31 pass 11: 16->13 (bot w/ drags)   // 11-02 pass 13: 13->12 (bot after gem-touch + goal re-deal off)   // 11-02 pass 16: 12->14 (bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 14->11   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 11->8   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 8->10
+            /* 11 */ Make("Deep Freeze",    ice:9, iceLayout:"spread", moves:14),   // 11-04 pass 27b (bot 09:06): shape lanes -> plain (GOAL-DEAD 39%, END-STALL 5.7 - same fix as L10)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 9->14 moves, 12->9 ice   // 10-30: was "split" (goal dead 52% of turns)   // RM L11 split board   // 11-02 pass 13: 13->11 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 11->13 (bot 11:35 rerun)   // 11-02 pass 15: 13->14 (bot 13:18, diagonal crates)   // 11-02 pass 16: 14->13 (bot 13:36)   // 11-02 pass 17 CURVE: 13->10 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 10->11   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 11->12   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 12->9
+            /* 12 */ Make("Frozen Crates",  crates:5, ice:6,      moves:15, crateLayout:"ring", iceLayout:"spread", crateHits:"1,2"),   // 11-04 pass 29 (bot 10:06 x40): 14->15 (78%, soft check ~82)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 12->14 moves                    // FIRST goal MIX (RM: L12)   // 10-31 pass 11: 20->19 (bot w/ drags)   // pass 12: 19->16   // 11-02 pass 13: 16->19 (bot after gem-touch + goal re-deal off)   // 11-02 pass 15: 19->16 (bot 13:18, diagonal crates)   // 11-02 pass 16: 16->15 (bot 13:36)   // 11-02 pass 17 CURVE: 15->12 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 12->10   // 11-03 multi-hit crates: "1,2"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 10->12
+            /* 13 */ Make("The Library",    shelfBooks:6,         moves:22),   // 11-04 pass 29 (bot 10:06 x40): 21->22 (85%)   // 11-04 pass 28 (bot 09:30 x40): 20->21 (90%)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 19->20 moves   // 11-03 BOOKSHELF intro (Spencer's library piece; alone, per the one-new-thing rule). Was: Make("Gem Mine",       gems:6, crates:4,     moves:11, crateLayout:"diamond", crateHits:"2"),                    // was "Animal Kingdom" (theme) — Spencer 10-23: "the animal words idea isnt fun"; theme goals = vocabulary luck. Stone (2-hit crate) planned here   // 10-31 pass 11: 20->16 (bot w/ drags)   // 11-02 pass 13: 16->19 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 19->14 (bot 11:35 rerun)   // 11-02 pass 15: 14->13 (bot 13:18, diagonal crates)   // 11-02 pass 17 CURVE: 13->11 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 11->10   // 11-03 multi-hit crates: "2"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 10->11   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 10->17   // 11-03 pass 22 (bot 17:37 x80, diagonal-aware bot): 17->19
+            /* 14 */ Make("Crate & Ice",    crates:5, ice:4, crateLayout:"lid", iceLayout:"spread", moves:21, crateHits:"1,2"),   // 11-04 pass 27b (bot 09:06): pyramid -> lid (END-STALL 7.2: the pyramid floor row shows only its top faces)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 17->21 moves   // 11-02 pass 17 CURVE: 20->18 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 18->13   // 11-03 multi-hit crates: "1,2"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 13->14   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 14->17
+            /* 15 */ Make("Triple",         crates:5, ice:4, gems:4, moves:19, crateLayout:"lid", iceLayout:"spread", crateHits:"1,2"),   // 11-04 pass 26 (bot 08:42 x40, layout pass): 25->19 moves (100%)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): corners -> lid (END-STALL 6.8: corner crates)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 19->25 moves, gems 5->4                 // first THREE-goal level   // 10-31 pass 11: 26->24 (bot w/ drags)   // 11-02 pass 13: 24->26 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 26->24 (bot 11:35 rerun)   // 11-02 pass 15: 24->21 (bot 13:18, diagonal crates)   // 11-02 pass 17 CURVE: 21->20 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 20->16   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 16->19   // 11-03 multi-hit crates: "1,2"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 19->16   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 16->19
+            /* 16 */ Make("Gearing Up",     crates:5, ice:4,      moves:22, teach:"boosters", crateLayout:"pillars", iceLayout:"spread", crateHits:"1,2"),   // 11-04 pass 26 (bot 08:42 x40, layout pass): 30->22 moves (100%)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): columns -> pillars, crates 6 -> 5 (x2 = 5-tall pillars)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 26->30 moves, ice 6->4, crateHits 2,3->1,2  // RM L16: booster pick before play   // 10-31 pass 11: 24->21 (bot w/ drags)   // 11-02 pass 13: 21->23 (bot after gem-touch + goal re-deal off)   // 11-02 pass 15: 23->21 (bot 13:18, diagonal crates)   // 11-02 pass 16: 21->20 (bot 13:36)   // 11-02 pass 17 CURVE: 20->17 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 17->21   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 21->19   // 11-03 multi-hit crates: "2,3"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 19->24   // 11-03 pass 23 (bot 19:28 full x40): 24->26
+            /* 17 */ Make("The Squeeze",    shelfBooks:6, crates:6, moves:21, crateLayout:"band", crateHits:"2,3", shelfStyle:1),   // 11-04 pass 31: 20->21 (same settings over 4 runs x40: 70/48/65/45% = ~57% avg vs ~65% target)   // 11-04 FIXED CRATES: 8 crates in "band" = one FULL-WIDTH row, which now seals the rows below it (nothing can slide past) and starves the shelf on the floor. 6 = cols 1-6, the edge columns feed letters down; hits 1,2,3 -> 2,3 keeps the total (~16 -> ~15).   // 11-04 pass 25 (bot 06:48 x40): 23->20 moves (overshot: L9 100%, L10 98%, L17 80% vs 65, L19 85% vs 70)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 18->23 moves   // 11-03 v2: bot 19:50 casual 43% (expert 98%, near-miss 41%) with "2,3" -> mix in single-layer crates (~6 fewer hits) toward ~65%.   // 11-03 CONTENT-HARD (Spencer: hard via content, not fewer moves - RM style): shelf (L13) + 2-3 layer crates, same 18 moves; target ~65%. Was: Make("The Squeeze",    crates:10, ice:5,     moves:18, crateLayout:"diamond", iceLayout:"spread", crateHits:"1,2,3"),   // 10-31: was wall + sidenotch (goal dead 46%, help in 90% of games)                    // FIRST TIGHT (RM: won with 1 move) — target ~60%   // 10-31 pass 11: 18->16 (bot w/ drags)   // 11-02 pass 13: 16->19 (bot after gem-touch + goal re-deal off)   // 11-02 pass 15: 19->18 (bot 13:18, diagonal crates)   // 11-02 pass 16: 18->16 (bot 13:36)   // 11-02 pass 17 CURVE: 16->10 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 10->12   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 12->11   // 11-03 multi-hit crates: "1,2,3"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 11->15   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 15->18
+            /* 18 */ Make("The Vault",      safes:1,              moves:18),   // 11-04 pass 28 (bot 09:30 x40): 16->18 (88%, relief target ~92)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 14->16 moves   // 11-03 SAFE intro (Spencer's safe; alone, relief slot). Was: Make("Cold Hands",     ice:7, gems:6,        moves:11, iceLayout:"spread", shape:"hole"),                    // relief-ish ~80%   // 10-31 pass 11: 22->19 (bot w/ drags)   // pass 12: 19->17   // 11-02 pass 13: 17->14 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 14->12 (bot 11:35 rerun)   // 11-02 pass 15: 12->13 (bot 13:18, diagonal crates)   // 11-02 pass 16: 13->14 (bot 13:36)   // 11-02 pass 17 CURVE: 14->13 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 13->12   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 12->11   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 12->16   // 11-03 pass 22 (bot 17:37 x80, diagonal-aware bot): 16->14
+            /* 19 */ Make("Gauntlet",       crates:6, ice:6, gems:6, moves:15, crateLayout:"lid", iceLayout:"spread", crateHits:"2"),   // 11-16 SEEDED (reroll 1, bot 07:12 x100): 20->15 (96% -> 82% casual; 2 seeds both ~95% at 20)   // 11-04 pass 30 (bot 10:46 x40): gems 5->6 (83%, expert 95%; content not moves toward ~75%)   // 11-04 pass 29 (bot 10:06 x40): 22->20 (90% after ice 4->6; 75% quantile = 19)   // 11-04 pass 28 (bot 09:30 x40): ice 4->6 + moves 24->22 (95% / expert 100% / END-STALL 2.2 - fair now, too easy for the ~70% hard slot; content first, 2 moves)   // 11-04 pass 27b (bot 09:06): arch shape removed + hits 2,3 -> 2 (expert only 83%, END-STALL 8.5, 12 word swaps/turn: luck-decided; keep the lid as the structure)   // 11-04 pass 26 (bot 08:42 x40, layout pass): 23->24 moves (60%, target ~65-70)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): ring -> lid, crates 7 -> 6 (x2 = 12 = the whole lid), hits 1,2 -> 2,3 (93% vs ~70% target: hard by STRUCTURE - goals under a 2-3 layer roof)   // 11-04 pass 25 (bot 06:48 x40): 26->23 moves (overshot: L9 100%, L10 98%, L17 80% vs 65, L19 85% vs 70)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 21->26 moves, ice 6->4, gems 6->5, crateHits 2,3->1,2   // 10-30: was "legs" (goal dead 45%)                 // tightest ~65% (RM: won on the last move)   // 10-31 pass 11: 22->19 (bot w/ drags)   // 11-02 pass 17 CURVE: 19->12 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 12->14   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 14->15   // 11-03 multi-hit crates: "2,3"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 15->18   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 18->21
+            /* 20 */ Make("Gold Rush",      bonus:true,           moves:GOLD_RUSH_MOVES, teach:"bonus"),     // no fail: preloaded specials, 3-letter swaps, climbing payout (10-30)
         };
 
         /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
@@ -438,7 +578,7 @@ namespace WordDrop
         /// <summary>SMALL BOARD (2026-10-23): blocker counts were tuned on 99 cells — on 7x9's 63 the same crates would be over a
         /// third of the board. Crates and ice scale by the cell ratio (63/99); gems / theme / ducks are about words, not area,
         /// and keep their counts. Moves get re-tuned from the bot.</summary>
-        public static float SMALL_BOARD_BLOCKER_SCALE = 63f / 99f;
+        public static float SMALL_BOARD_BLOCKER_SCALE => RulesEngine.COLS * RulesEngine.LEVEL_ROWS / 99f;   // 11-02: by cell count (7x9 63/99, 8x10 80/99)
         private static LevelRules ScaleForBoard(LevelRules r)
         {
             if (!RulesEngine.SMALL_BOARD) return r;
@@ -473,6 +613,7 @@ namespace WordDrop
         /// stage cannot stack ice on top of ice. The rule switches are idempotent and can
         /// safely re-apply; seeding is not.</summary>
         private static int s_icedStage  = -1;
+        private static int s_giftStage = -1;
         /// <summary>Last stage this ran for (-1 = none yet this run). Any change of stage — INCLUDING the
         /// first install of a run since 2026-10-20 — gets a fresh LevelRules board; a repeated install of
         /// the same stage does not. (The first level used to keep OpeningSeed's sparse board; see Apply.)</summary>
@@ -481,7 +622,7 @@ namespace WordDrop
         public static void ForceFreshBoardOnNextApply() => s_lastStage = -1;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        private static void ResetStatics() { s_icedStage = -1; s_lastStage = -1; }
+        private static void ResetStatics() { s_icedStage = -1; s_lastStage = -1; s_giftStage = -1; }
 
         /// <summary>Forget the previous run. Called by SurvivalManager.StartSurvival. These statics used to
         /// reset only on domain reload, so Play Again carried the last run's stage: a stage-11 restart
@@ -537,6 +678,8 @@ namespace WordDrop
             if (!SurvivalManager.FullBoardActive) return list;
             var r = For(Mathf.Max(1, LevelMapPanel.RunLevel(internalStage)));
             void Add(GoalType t, int planned, char l = '\0') { if (planned > 0) list.Add(new GoalIconInfo { Type = t, Count = GoalCountFor(internalStage, t, planned), Letter = l }); }
+            Add(GoalType.Safes, r.Safes);
+            Add(GoalType.Books, r.ShelfBooks);
             Add(GoalType.Crates, r.Crates > 0 ? Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT) : 0);
             Add(GoalType.Ice, r.IceCount);
             Add(GoalType.Grass, r.Grass);
@@ -558,8 +701,10 @@ namespace WordDrop
         {
             var sb = new System.Text.StringBuilder();
             int moves = MovesForRules(stage, r);
+            if (r.Bonus && GOLD_RUSH_SAFES)   // v6 (11-03): crack the safes
+                return $"<b>Gold Rush!</b>\nYou can't lose this one. Crack open the <b>{GOLD_RUSH_SAFE_COUNT} safes</b> in <b>{moves} moves</b> - every hit pays, and each safe you blow open pays a <b>jackpot</b>. Specials hit hardest!";
             if (r.Bonus)   // BONUS LEVEL (2026-10-23): nothing to lose, just coins
-                return $"<b>Bonus Level!</b>\nYou can't lose this one. Every word you make in <b>{moves} moves</b> pays coins.";
+                return $"<b>Gold Rush!</b>\nYou can't lose this one. <b>{moves} moves</b>, 3-letter swaps count, and every letter you pop pays coins. <b>Fire specials</b> to raise the payout!";
             // Real counts once the level is installed (ice can place fewer than asked); planned counts before that.
             int GoalCount(GoalType t, int planned) => GoalCountFor(internalStage, t, planned);
             int crates = r.Crates > 0 ? GoalCount(GoalType.Crates, Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT)) : 0;
@@ -576,6 +721,12 @@ namespace WordDrop
             int grassN = r.Grass > 0 ? GoalCount(GoalType.Grass, r.Grass) : 0;
             if (grassN > 0)  { goals.Add($"Mow <b>{grassN} grass</b>");
                                how.Add("<b>Grass</b> is mowed when a letter on it pops — words, rockets and bombs all mow it."); }
+            int safesN = r.Safes > 0 ? GoalCount(GoalType.Safes, r.Safes) : 0;
+            if (safesN > 0)  { goals.Add(safesN == 1 ? "Crack open <b>the safe</b>" : $"Crack open <b>{safesN} safes</b>");
+                               how.Add($"Each word <b>touching the safe</b> lights a lamp. Light all {RulesEngine.SAFE_HITS} to open it - and keep the coins inside!"); }
+            int booksN = r.ShelfBooks > 0 ? GoalCount(GoalType.Books, r.ShelfBooks) : 0;
+            if (booksN > 0)  { goals.Add($"Knock <b>{booksN} books</b> off the shelf");
+                               how.Add("Make a word <b>touching the bookshelf</b> to knock a book off. Rockets and bombs knock books off too."); }
             if (crates > 0)  { goals.Add($"Break <b>{crates} crates</b>");
                                how.Add("<b>Crates</b> break when you make a word right next to them. Rockets and bombs smash them too."); }
             if (ice > 0)     { goals.Add($"Melt <b>{ice} ice</b>");
@@ -701,6 +852,7 @@ namespace WordDrop
 
         public static void Apply(int internalStage)
         {
+            if (!RulesEngine.Simulating) { AnalyticsManager.Log("level_start", "stage", internalStage, "level", LevelMapPanel.DisplayNum(internalStage)); PlaythroughStats.Reset(); }   // 11-04 play log: start line + fresh pace clock
             // ⚠️ INTERNAL STAGE != THE LEVEL THE PLAYER SEES. 2026-10-19 — Spencer started a run,
             // saw "LEVEL 1", and it had ice in it. Cause: with the tutorial complete a run begins
             // at INTERNAL stage 11 (RunStartStage = TUTORIAL_LEVELS + 1), and LevelMapPanel maps
@@ -767,7 +919,7 @@ namespace WordDrop
             if (isTransition && rules2 != null)
             {
                 CrateGoal = 0;
-                Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; GoalsStage = internalStage;
+                Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; BooksAwaitingFly = 0; GoalsStage = internalStage; GoldRushSafesPlaced = 0;   // 11-03: a new level never inherits Gold Rush's early end
                 BonusLevelActive = SurvivalManager.FullBoardActive && r.Bonus;
                 ThemeMade = 0; ThemeAwaitingFly = 0; PendingThemeWords.Clear(); s_themeWords.Clear(); RulesEngine.ThemePlantPool = null;
                 if (SurvivalManager.FullBoardActive && !string.IsNullOrEmpty(r.Theme) && r.ThemeCount > 0)
@@ -792,6 +944,7 @@ namespace WordDrop
                 {
                     // FULL BOARD (2026-10-21): every cell filled, no word spelled by accident; then the usual plants,
                     // then scrub anything the plants spelled with their neighbours.
+                    RulesEngine.SetBoardShape(SHAPES_ON ? r.Shape : null);   // shaped board (2026-10-28): void cells never get a tile
                     rules2.FillBoardNoWords();
                     rules2.SnapshotForRain(out var before, out var _);
                     rules2.PlantNearWordsOnBoard(RulesEngine.FULL_START_PLANTS, spreadRows: true);
@@ -802,11 +955,14 @@ namespace WordDrop
                     if (TutorialBeats.WantsSwipePlant(r)) { var sw = rules2.PlantSwipeWord(keep, out _); if (sw != null) foreach (var c in sw) keep.Add(c); }
                     int shortWords = rules2.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
                     RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
+                    RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.SafeHitsNow = RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? rules2.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF (11-03) first: crates must not land on its cells
                     int crates = r.Crates > 0 ? rules2.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
+                    if (crates > 0) rules2.AssignCrateHits(r.CrateHits);   // 11-03 multi-hit crates
                     if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = rules2.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
                     else rules2.ClearGrass();
-                    int tnt = rules2.PlaceStartTnt(RulesEngine.FULL_START_TNT, keep);
+                    int tnt = rules2.PlaceStartTnt(StartTntFor(stage), keep);
                     if (!r.Bonus) rules2.PlaceTreasures(stage, keep);   // TREASURE (2026-10-27): random bonus loot, never a goal
+                    if (BonusLevelActive) LoadGoldRush(rules2, keep);   // GOLD RUSH (10-30): the bonus starts loaded with specials
                     WinStreak.Apply(rules2, keep);   // 2026-10-23: streak rockets / bombs / disco (live only — the bot's SetupSimLevel skips it)
                     int gemsPlaced = r.Gems > 0 ? rules2.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep) : 0;
                     // fixed gems: the board can't get more later, so the goal can never ask for more than were placed
@@ -815,20 +971,25 @@ namespace WordDrop
                     int ducksPlaced = r.Ducks > 0 ? rules2.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep) : 0;
                     CrateGoal = crates; CrateGoalStage = internalStage;
                     if (crates > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Crates, Target = crates });
+                    if (books > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Books, Target = books });
+                    if (safes > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Safes, Target = safes });
                     int scrubbed = rules2.ScrubAccidentalWords(keep);
                     WDLog.Log($"[FullBoard] start structure: {shortWords} short word(s), {crates} crate(s) (goal), {tnt} TNT");
                     HUDManager.Instance?.SnapScoreReadoutForNewLevel();   // redraw now the crate goal exists (it read 0/6000 — snapped before the crates)
                     if (BonusLevelActive) HUDManager.Instance?.EnterRewardMode(0);   // bonus level: the panel counts coins from the start
                     MatchController.Instance?.ResetTurnCounter();
                     GridManager.Instance?.RebuildFromRulesEngine(rules2);
+                    GridManager.Instance?.RebuildCellGridForShape();   // sockets + shaped frame for this level's shape (rectangle restores the old art)
                     var gm = GridManager.Instance;   // the rebuild doesn't paint specials — put the TNT on now, not a sync later
                     if (gm != null) for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++)
                     { var d = rules2.GetCell(x, y); if (d != null && d.SpecialKind != RulesEngine.SPECIAL_NONE) gm.GetTile(x, y)?.SetSpecial(d.SpecialKind);
                       if (d != null && d.HasGem) gm.GetTile(x, y)?.SetGem(true);
+                      if (d != null && d.IsRainGold) gm.GetTile(x, y)?.SetRainGold(true);   // Gold Rush gold board (10-30)
                       if (d != null && d.IsDropTarget) gm.GetTile(x, y)?.SetDropTargetVisual(true); }
                     WDLog.Log($"[FullBoard] fresh FULL board for LEVEL {stage} — {keep.Count} planted cell(s), {scrubbed} accidental word cell(s) redrawn");
                 }
                 else {
+                RulesEngine.SetBoardShape(null);
                 rules2.SeedVaultBoard(r.FillRows, Mathf.Min(r.Density, FRESH_BOARD_DENSITY_CAP), 0, 0, 0, 0, 0, 0, 0); // 0 vaults = fill only
                 // SETTLE IT. SeedVaultBoard scatters at `density`, so at 0.65 a third of the
                 // cells are holes — including holes UNDER letters, which is the "massive gaps
@@ -868,6 +1029,18 @@ namespace WordDrop
                 if (dataFrozen != placed)
                     Debug.LogWarning($"[LevelRules] ICE MISMATCH — spawned {placed} but board reports " +
                                      $"{dataFrozen} frozen cells. Stale ice from a previous level?");
+            }
+
+            // GIFT WORD (2026-10-30): one ready-made word through / beside a goal piece, swipeable as an opening move. Once per level,
+            // after every goal piece (crates, gems, ice) is placed; not on the swipe-lesson level (it has its own) or the bonus level.
+            if (RulesEngine.GIFT_WORD_ON && SurvivalManager.FullBoardActive && RulesEngine.Instance != null && s_giftStage != internalStage
+                && Goals.Count > 0 && GoalsStage == internalStage && !BonusLevelActive && RulesEngine.TutorialSwipeCells == null)
+            {
+                s_giftStage = internalStage;
+                RulesEngine.TeachCells = null; RulesEngine.TeachWord = null;
+                // 11-02: a lesson level gets a TEACHING word (one easy swap, beside a goal piece) instead of the gift word
+                if (TutorialBeats.WantsTeachPlant(r)) { if (PlantLessonWords(r)) GridManager.Instance?.SyncToRulesState(RulesEngine.Instance); }
+                else if (RulesEngine.Instance.PlantGiftWord(out _) != null) GridManager.Instance?.SyncToRulesState(RulesEngine.Instance);
             }
 
             var sm = SurvivalManager.Instance;

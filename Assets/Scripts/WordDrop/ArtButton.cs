@@ -65,7 +65,7 @@ namespace WordDrop
 
         /// <summary>Builds the button under <paramref name="parent"/>, or returns null if its art is missing (callers
         /// keep their old button then). The root is centre-anchored; set its size with FrameAspect.</summary>
-        public static ArtButton Create(Transform parent, string key, string label = null)
+        public static ArtButton Create(Transform parent, string key, string label = null, bool? lilita = null, bool? titleMedium = null)
         {
             var frame = Resources.Load<Sprite>($"UI/Buttons/{key}_frame");
             var face  = Resources.Load<Sprite>($"UI/Buttons/{key}_face");
@@ -78,6 +78,9 @@ namespace WordDrop
             var go = new GameObject(key, typeof(RectTransform), typeof(Button));
             go.transform.SetParent(parent, false);
             var ab = go.AddComponent<ArtButton>();
+            ab._lilitaOverride = lilita;
+            ab._titleMediumOverride = titleMedium;   // 11-06 Spencer: Play stays WordSlop Button
+            ab._key = key;
             ab.Build(frame, face, JsonUtility.FromJson<Spec>(json.text), label);
             return ab;
         }
@@ -117,11 +120,20 @@ namespace WordDrop
 
         private void BuildLabel(string text)
         {
-            var font = Resources.Load<TMP_FontAsset>("WordSlop Button SDF") ?? Resources.Load<TMP_FontAsset>("WordSlop SDF");
+            // LABEL FONT (2026-10-29, Spencer: the WordSlop label "looks off" next to Royal Kingdom; picked Lilita One from
+            // vector_buttons/compare_level_fonts.png + compare_play_lilita.png, "lets switch it over for now"). "LilitaOne Button SDF"
+            // is baked like WordSlop's (pt 90 / pad 9 = the same 0.1 spread, so the label material's outline/underlay values hold;
+            // the old "LilitaOne SDF" is pt 71 / pad 4) by Editor/WordSlopSetup. Missing -> WordSlop, as before.
+            // Per-button override (2026-10-31: the home Level button went back to WordSlop after the library-home mockup).
+            var font = ((_lilitaOverride ?? LABEL_LILITA) ? Resources.Load<TMP_FontAsset>("LilitaOne Button SDF") : null);
+            _lilita = font != null;
+            // 2026-11-06 Spencer: WordSlop Title Medium on the labels (more distinct). LABEL_TITLE_MEDIUM = false -> WordSlop Button.
+            if (font == null && (_titleMediumOverride ?? LABEL_TITLE_MEDIUM)) font = Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF");
+            if (font == null) font = Resources.Load<TMP_FontAsset>("WordSlop Button SDF") ?? Resources.Load<TMP_FontAsset>("WordSlop SDF");
             if (font == null) { Debug.LogWarning("[ArtButton] no WordSlop font asset — label skipped"); return; }
 
             Color ink  = Hex(_spec.ink), top = Hex(_spec.creamTop), bot = Hex(_spec.creamBottom);
-            var mat = InkMaterial(font, ink);
+            var mat = Styled(InkMaterial(font, ink), _key);
 
             // Label box centred on the measured text box (face-local, y from the top), widened so longer labels have
             // room before they shrink; condense is the horizontal stretch the art applied to the letters.
@@ -162,6 +174,49 @@ namespace WordDrop
         }
 
         public static bool INNER_SHADE = false;
+        public static bool LABEL_LILITA = true;
+        public static bool LABEL_TITLE_MEDIUM = true;
+        // Lilita's capital is 0.702 em vs WordSlop Button's 0.594 em (measured from the .ttf 'L'), so the same em size would make
+        // the capitals 18% taller: scale the size so the capital stays at the measured 10.1% of the frame width. Lilita's own
+        // spacing is already tight, so it skips WordSlop's -18 tracking (LILITA_TRACKING, TMP units).
+        public static float LILITA_SIZE = 0.594f / 0.702f, LILITA_TRACKING = 0f;
+        private bool _lilita;
+        private bool? _titleMediumOverride;
+        private string _key;
+
+        // Per-button label look on top of ArtButtonLabel.mat (11-06 Spencer: Play like RK's "Continue" button ref, Desktop
+        // screenshot 8.40.40: thin mid-olive line (54,75,23) ~45% of the face value, barely any drop - the edge below is only
+        // ~1 px thicker than the outline). (outline width, drop x, drop y, edge colour). Remove an entry = template look.
+        public static readonly Dictionary<string, (float outline, float dropX, float dropY, Color edge)> LABEL_STYLE =
+            new Dictionary<string, (float, float, float, Color)>
+            {
+                // 11-06 v2 (Spencer "the word play doesnt really pop"): the ref's green is a flat MID green (123,165,49); ours runs
+                // bright lime (156,225,12) -> dark (49,118,1), so a 2 px mid-olive line vanished at both ends. Thicker + darker line,
+                // short visible drop. v1 was (0.15, 0.12, -0.22, #364B17).
+                // 11-16 Spencer ("lighten the stroke a bit around the lettering", picked C of ~/Desktop/continue_text_mock.png): RK style like the
+                // Level header - THIN edge, depth in a down-right drop, deep green instead of near-black olive. Play + Continue share it.
+                // v2 (above) was (0.22, 0.20, -0.40, #223308).
+                // 11-16 later (Spencer: the mock's drop offset "is too much"): firmer edge .08 -> .11, drop halved (.45/-.90 -> .25/-.50)
+                ["pill_play"] = (0.11f, 0.25f, -0.50f, new Color32(0x24, 0x4E, 0x10, 0xFF)),
+            };
+        private static readonly Dictionary<string, Material> s_styled = new Dictionary<string, Material>();
+        private static Material Styled(Material baseMat, string key)
+        {
+            if (key == null || !LABEL_STYLE.TryGetValue(key, out var st)) return baseMat;
+            string k = $"{baseMat.name}|{key}";
+            if (s_styled.TryGetValue(k, out var m) && m != null) return m;
+            m = new Material(baseMat) { name = $"{baseMat.name} {key}" };
+            m.SetFloat("_OutlineWidth", st.outline); m.SetColor("_OutlineColor", st.edge);
+            if (m.HasProperty("_UnderlayColor"))
+            {
+                m.SetColor("_UnderlayColor", st.edge);
+                m.SetFloat("_UnderlayOffsetX", st.dropX); m.SetFloat("_UnderlayOffsetY", st.dropY);
+                if (m.HasProperty("_UnderlayDilate")) m.SetFloat("_UnderlayDilate", st.outline);   // 11-16: the drop = the thin-edged letter, shifted
+            }
+            ShaderUtilities.UpdateShaderRatios(m);
+            s_styled[k] = m; return m;
+        }
+        private bool? _lilitaOverride;
         private Color _creamTop, _creamBot;
 
         private void WordGradient(TMP_TextInfo info)
@@ -203,11 +258,12 @@ namespace WordDrop
             t.font = font;
             t.fontSharedMaterial = mat;
             t.text = text;
-            t.fontSize = _spec.emPx;
+            float em = _spec.emPx * (_lilita ? LILITA_SIZE : 1f);
+            t.fontSize = em;
             t.enableAutoSizing = true;              // only ever SHRINKS: max is the art's size
-            t.fontSizeMax = _spec.emPx;
-            t.fontSizeMin = _spec.emPx * 0.5f;
-            t.characterSpacing = _spec.trackingPerMille / 10f;   // TMP spacing is in 1/100 em; Photoshop's in 1/1000
+            t.fontSizeMax = em;
+            t.fontSizeMin = em * 0.5f;
+            t.characterSpacing = _lilita ? LILITA_TRACKING : _spec.trackingPerMille / 10f;   // TMP spacing is in 1/100 em; Photoshop's in 1/1000
             t.textWrappingMode = TextWrappingModes.NoWrap;
             // Centre the INK, not the advance box — that is how the art placed it (bounds centred in the box).
             t.horizontalAlignment = HorizontalAlignmentOptions.Geometry;
@@ -253,7 +309,7 @@ namespace WordDrop
         }
 
         /// <summary>Forget the cached label materials so the next button re-reads ArtButtonLabel.mat (editor renders).</summary>
-        public static void ClearMaterialCache() { s_mats.Clear(); s_live.Clear(); }
+        public static void ClearMaterialCache() { s_mats.Clear(); s_live.Clear(); s_styled.Clear(); }
 
         private class Live { public Material mat, snap; public TMP_FontAsset font; public Color ink; }
         private static readonly List<Live> s_live = new List<Live>();
@@ -398,6 +454,38 @@ namespace WordDrop
         /// <summary>Re-scale the art to the root's current size. Call after resizing the root — the resize callback
         /// above only runs in Play mode, and the size at Create time is Unity's default 100x100.</summary>
         public void Refit() { if (_art != null) Fit(); }
+
+        /// <summary>11-16 (Spencer: "why dont you just extend the buttons by width since arent they 9-sliced? then you can fit all the
+        /// letters in there"): widen the pill by <paramref name="extra"/> art px. Frame + face become 9-sliced with fixed ends of
+        /// <paramref name="endPx"/> (pill_play: the frame's round end reaches x 166, the face's 187 -> 200 covers both), so the rounded
+        /// ends keep their shape and only the straight middle stretches. The face pivot, label box and fit box move with it.
+        /// Call AFTER any face-sprite swap, then size the root to the wider aspect and Refit.</summary>
+        public void Widen(float extra, float endPx = 200f)
+        {
+            if (_art == null || Face == null || extra <= 0f) return;
+            var frameImg = _art.Find("Frame") != null ? _art.Find("Frame").GetComponent<Image>() : null;
+            var faceImg = Face.Find("FaceArt") != null ? Face.Find("FaceArt").GetComponent<Image>() : null;
+            foreach (var img in new[] { frameImg, faceImg })
+            {
+                if (img == null || img.sprite == null) continue;
+                var t = img.sprite.texture;
+                img.sprite = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(endPx, 0f, endPx, 0f));
+                img.type = Image.Type.Sliced; img.pixelsPerUnitMultiplier = 1f;
+            }
+            _canvas.x += extra; _art.sizeDelta = _canvas;
+            _spec.frameBox[2] += Mathf.RoundToInt(extra); _spec.face[2] += extra; _spec.textBox[0] += extra * 0.5f;
+            Face.pivot = new Vector2((_spec.face[0] + _spec.face[2] * 0.5f) / _canvas.x, Face.pivot.y);
+            var label = Face.Find("Label") as RectTransform;
+            if (label != null)
+            {
+                float c = _spec.condense > 0f ? _spec.condense : 1f;
+                label.anchoredPosition += new Vector2(extra * 0.5f, 0f);
+                label.sizeDelta = new Vector2(_spec.face[2] * FIT_WIDTH / c, label.sizeDelta.y);
+            }
+            Fit();
+        }
+        /// <summary>Width/height of the visible frame in art px (after any Widen) - for sizing the root to the art's aspect.</summary>
+        public Vector2 FrameSize => _spec != null ? new Vector2(_spec.frameBox[2], _spec.frameBox[3]) : Vector2.one;
 
         private void Fit()
         {

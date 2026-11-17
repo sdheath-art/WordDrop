@@ -1,0 +1,28 @@
+MONKEY TEST  20261117_094452   seed 534391   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  1063 gestures:  BUTTON 263  DOUBLE TAP 27  TAP ANYWHERE 73  TAPPABLE 59  RANDOM DRAG 64  CELL TAP 85  RANDOM SWIPE 67  MASH BOARD 65  MASH BUTTON 64  REAL MOVE 217  MASH ANYWHERE 26  BOOSTER TAP 31  TAUGHT MOVE 22
+GAME    levels started 16, cleared 10, failed 2;  swaps accepted 122, swiped words 3, boosters used 0;  hearts refilled by the monkey 0x
+FRAMES  worst 307 ms, 3 frame(s) over 250 ms, 35605 frames (59 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       65x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        5x  [RulesEngine] Step chain hit depth cap () — completing.
+        5x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+        4x  [INVARIANT] GOLD-ART t=. (,) 'E' gold-primed but wearing '' (colour=)
+        3x  [INVARIANT] GOLD-ART t=. (,) 'I' gold-primed but wearing '' (colour=)
+        2x  [INVARIANT] GOLD-ART t=. (,) 'K' gold-primed but wearing '' (colour=)
+        2x  [INVARIANT] (,) 'U' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'D' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'K' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'V' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'A' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] GOLD-ART t=. (,) 'U' gold-primed but wearing '' (colour=)
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261117_094452.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

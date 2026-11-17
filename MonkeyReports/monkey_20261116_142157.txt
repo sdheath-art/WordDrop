@@ -1,0 +1,18 @@
+MONKEY TEST  20261116_142157   seed 353071   ran -0.1 min   ended: play mode ended
+Screen 556x1730.  One fake finger, real game, Play mode.
+
+INPUTS  36 gestures:  MASH BUTTON 3  BUTTON 8  RANDOM DRAG 5  CELL TAP 7  MASH BOARD 2  REAL MOVE 8  MASH ANYWHERE 2  RANDOM SWIPE 1
+GAME    levels started 0, cleared 0, failed 0;  swaps accepted 7, swiped words 0, boosters used 0;  hearts refilled by the monkey 0x
+FRAMES  worst 176 ms, 0 frame(s) over 250 ms, 1125 frames (0 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+WARNINGS in the log (not counted as faults), most frequent first:
+        7x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        1x  <color=#ff><color=#bc><b>DOTWEEN ► </b></color> SAFE MODE ►</color> DOTween's safe mode captured  errors. This is usually ok (it's 
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_142157.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

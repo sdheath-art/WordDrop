@@ -56,6 +56,23 @@ public static class FontSdfGenerator
     [MenuItem("WordDrop/Fonts/Generate Fredoka SemiBold SDF")]
     public static void GenFredokaSemi() => Generate("Assets/Fonts/Fredoka-SemiBold.ttf", "FredokaSemiBold SDF");
 
+    [MenuItem("WordDrop/Fonts/Generate M PLUS Rounded Black SDF")]
+    public static void GenMPlusRoundedBlack() => Generate("Assets/Fonts/MPLUSRounded1c-Black.ttf", "MPlusRoundedBlack SDF");
+
+    /// <summary>2026-11-01 (Spencer picked M PLUS Rounded Black for the tile letters off the full-screen mocks): bake its SDF
+    /// automatically the first time the editor loads without it, so nobody has to find the menu item.</summary>
+    [InitializeOnLoadMethod]
+    private static void AutoBakeTileFont()
+    {
+        if (File.Exists("Assets/Resources/MPlusRoundedBlack SDF.asset") || !File.Exists("Assets/Fonts/MPLUSRounded1c-Black.ttf")) return;
+        EditorApplication.delayCall += () =>
+        {
+            if (File.Exists("Assets/Resources/MPlusRoundedBlack SDF.asset")) return;
+            Debug.Log("[FontSDF] baking MPlusRoundedBlack SDF (tile letters, first load)");
+            GenMPlusRoundedBlack();
+        };
+    }
+
     [MenuItem("WordDrop/Fonts/Generate Nunito Black SDF")]
     public static void GenNunitoBlack() => Generate("Assets/Fonts/Nunito-Black.ttf", "NunitoBlack SDF");
 

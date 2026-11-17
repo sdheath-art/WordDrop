@@ -49,6 +49,8 @@ namespace WordDrop
             // Everything else is only meaningful once the board has stopped moving.
             if (MatchController.Instance != null && MatchController.Instance.IsProcessing) return;
             if (grid.BoardEntryInProgress) return;
+            if (BoosterManager.CascadeBusy) return;   // 11-17: a booster's fall + cascade is the board moving, same as a move
+            if (grid.RoutedFallPlaying) return;   // 11-17: a booster fall stepping round a crate - tiles pause on cells that are not theirs yet
 
             // HEARTBEAT: zero [Invariant] lines is ambiguous — it could mean "no faults" or
             // "this never ran". Say so once so the next log is readable. 2026-10-19.
@@ -141,7 +143,7 @@ namespace WordDrop
                 // 2. SORTING ORDER: a settled tile must sit in its own row band.
                 // Row 0 is the row being pushed in by a rise; it is deliberately parked at a
                 // low order so it slides in from behind. Not a fault. 2026-09-10.
-                if (r > 0 && t.SortingOrderNow != t.BaseSortingOrder)
+                if (r > 0 && Tile.AimModeTileOrder <= 0 && t.SortingOrderNow != t.BaseSortingOrder)   // 11-07: booster aim lifts every tile on purpose (was ~990 false flags a run)
                     Flag(live, $"sort|{c},{r}",
                         $"({c},{r}) '{t.Letter}' sortingOrder={t.SortingOrderNow} expected {t.BaseSortingOrder} — a lift outlived its effect");
 
@@ -207,7 +209,8 @@ namespace WordDrop
                 // 1. FLOATING DATA — a cell with empty space beneath it. Gravity should make
                 //    this impossible; if it happens the rules board itself is wrong.
                 if (cell != null && r > 0 && rules.GetCell(c, r - 1) == null
-                    && !cell.IsAnchored)                      // vaults legitimately float
+                    && !RulesEngine.IsVoid(c, r - 1)         // shaped board: a void below is a floor, not a fault
+                    && !RulesEngine.IsFixedCell(cell))        // vaults + fixed crates (11-04) legitimately float - a hole under one waits for the next slide
                     ReportIntegrity($"FLOATING ({c},{r}) '{cell.Letter}' — nothing beneath it");
 
                 // 2. ORPHAN VISUAL — a tile on screen with no data behind it. SyncToRulesState

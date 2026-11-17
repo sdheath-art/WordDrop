@@ -1,0 +1,111 @@
+MONKEY TEST  20261116_160306   seed 478391   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.  PLAY BADLY mode.
+
+INPUTS  1006 gestures:  BUTTON 228  MASH BOARD 60  MASH ANYWHERE 41  REAL MOVE 214  RANDOM SWIPE 44  MASH BUTTON 63  BOOSTER TAP 39  CELL TAP 72  TAP ANYWHERE 80  DOUBLE TAP 27  TAPPABLE 83  RANDOM DRAG 55
+GAME    levels started 9, cleared 5, failed 0;  swaps accepted 121, swiped words 0, boosters used 17;  hearts refilled by the monkey 0x;  PLAY BADLY: cut 6 level(s) down to a few moves
+FRAMES  worst 375 ms, 1 frame(s) over 250 ms, 35588 frames (59 fps average)
+
+FAULTS  5 different   COUNTER 1   PASS-THROUGH 1   STUCK 1   ERROR 1   CHECK 1
+
+--- 1. [COUNTER] moves used (24) is past the level's budget (22)
+    first at 02:03, level 13, seen 616x, screenshot fault_20261116_160306_01.png
+    state: level 13, moves left 0, coins 250684, hearts 5, timeScale 1.00 | board accepts input=False, resolving a move=True, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[ContinueModal]
+    last inputs before it:
+      01:58 f7194  REAL MOVE  drag (1,8)->(1,9)   [board BUSY]
+      01:59 f7224  REAL MOVE  drag (6,5)->(7,5)   [board BUSY, under a full-screen card]
+      01:59 f7234  BUTTON  Slot_6_Settings   [board BUSY, under a full-screen card]
+      01:59 f7243  RANDOM SWIPE  (6,5)->(6,0)   [board BUSY, under a full-screen card]
+      02:00 f7280  BUTTON  HapticsToggle   [board idle, under a full-screen card]
+      02:02 f7395  TAP ANYWHERE  598,1060   [board idle, under a full-screen card]
+      02:02 f7409  TAP ANYWHERE  280,1407   [board idle, under a full-screen card]
+      02:02 f7412  BUTTON  CloseBtn   [board idle, under a full-screen card]
+      02:02 f7419  TAPPABLE  Scrim   [board idle, under a full-screen card]
+      02:02 f7442  REAL MOVE  drag (5,9)->(6,9)   [board idle]
+      02:03 f7448  REAL MOVE  drag (5,8)->(6,8)   [board BUSY]
+      02:03 f7455  REAL MOVE  drag (3,8)->(3,9)   [board BUSY]
+
+--- 2. [PASS-THROUGH] a booster was used while a full-screen card had been covering the board for 1.7s
+    first at 02:14, level 13, seen 6x, screenshot fault_20261116_160306_02.png
+    state: level 13, moves left 0, coins 250684, hearts 5, timeScale 1.00 | board accepts input=False, resolving a move=False, card pause=True, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      02:06 f7672  CELL TAP  (6,7)   [board idle]
+      02:09 f7811  BOOSTER TAP  BoosterHUDSlot   [board idle]
+      02:09 f7819  MASH BUTTON  Slot_5_Booster x6   [board idle]
+      02:09 f7847  REAL MOVE  drag (1,6)->(1,7)   [board idle]
+      02:10 f7886  REAL MOVE  drag (1,7)->(2,7)   [board BUSY]
+      02:10 f7907  REAL MOVE  drag (6,5)->(7,5)   [board BUSY]
+      02:11 f7932  REAL MOVE  drag (7,7)->(7,8)   [board BUSY]
+      02:11 f7969  REAL MOVE  drag (3,5)->(3,6)   [board BUSY]
+      02:12 f7980  TAP ANYWHERE  474,37   [board BUSY]
+      02:14 f8125  BUTTON  Slot_2_Booster   [board idle, under a full-screen card]
+      02:14 f8132  TAP ANYWHERE  684,658   [board idle, under a full-screen card]
+      02:14 f8139  MASH BUTTON  Slot_1_Booster x9   [board idle, under a full-screen card]
+
+--- 3. [STUCK] nothing changed for 30s while the monkey kept tapping
+    first at 05:26, level 15, seen 1x, screenshot fault_20261116_160306_03.png
+    state: level 15, moves left 4, coins 249270, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=True, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      05:21 f19213  BUTTON  RestartConfirmScrim   [board idle, under a full-screen card]
+      05:21 f19218  TAPPABLE  HintsToggle   [board idle, under a full-screen card]
+      05:21 f19224  BOOSTER TAP  BoosterHUDSlot   [board idle, under a full-screen card]
+      05:21 f19229  TAPPABLE  Scrim   [board idle, under a full-screen card]
+      05:21 f19238  BUTTON  HapticsToggle   [board idle, under a full-screen card]
+      05:22 f19260  REAL MOVE  drag (0,9)->(1,9)   [board idle, under a full-screen card]
+      05:23 f19326  TAP ANYWHERE  158,1260   [board idle, under a full-screen card]
+      05:23 f19335  REAL MOVE  drag (5,6)->(5,7)   [board idle, under a full-screen card]
+      05:23 f19342  MASH ANYWHERE  x10   [board idle, under a full-screen card]
+      05:24 f19381  BUTTON  Tab_SFX   [board idle, under a full-screen card]
+      05:24 f19390  MASH BUTTON  Tab_Haptics x5   [board idle, under a full-screen card]
+      05:25 f19433  MASH BOARD  one cell (7,2) x9   [board idle, under a full-screen card]
+
+--- 4. [ERROR] [BoosterDbg] Post-cascade FINAL desync count: 4 cell(s) (visual layer drifted from data after SyncToRulesState)
+    first at 05:40, level 15, seen 1x, screenshot fault_20261116_160306_04.png
+      UnityEngine.Debug:LogError (object)
+      WordDrop.BoosterManager/<RunGravityAndCascadeCoroutine>d__44:MoveNext () (at Assets/Scripts/WordDrop/BoosterManager.cs:376)
+      UnityEngine.SetupCoroutine:InvokeMoveNext (System.Collections.IEnumerator,intptr) (at /Users/bokken/build/output/unity/unity/Runtime/Export/Scripting/Coroutines.cs:17)
+    state: level 15, moves left 2, coins 249270, hearts 4, timeScale 1.00 | board accepts input=False, resolving a move=True, card pause=False, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      05:27 f19572  REAL MOVE  drag (0,6)->(0,7)   [board idle, under a full-screen card]
+      05:27 f19584  BUTTON  HintsToggle   [board idle, under a full-screen card]
+      05:27 f19593  REAL MOVE  drag (0,9)->(1,9)   [board idle, under a full-screen card]
+      05:27 f19605  BUTTON  Tab_SFX   [board idle, under a full-screen card]
+      05:28 f19610  BUTTON  CloseBtn   [board idle, under a full-screen card]
+      05:29 f19707  REAL MOVE  drag (5,6)->(5,7)   [board idle]
+      05:31 f19806  CELL TAP  (7,0)   [board idle]
+      05:32 f19896  REAL MOVE  drag (0,9)->(1,9)   [board idle]
+      05:33 f19918  BUTTON  Slot_1_Booster   [board BUSY]
+      05:33 f19934  MASH BUTTON  Slot_5_Booster x14   [board BUSY]
+      05:36 f20113  TAPPABLE  Slot_2_Booster   [board idle]
+      05:39 f20262  BOOSTER TAP  BoosterHUDSlot   [board idle]
+
+--- 5. [CHECK] two cards visible together for 1.5s+: ContinueModal + LevelIntroModal
+    first at 09:03, level 17, seen 2x, screenshot fault_20261116_160306_05.png
+    state: level 17, moves left 21, coins 249337, hearts 1, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=True, level-end lock=False, level won wait=False, home covers board=True, board sliding in=True, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[ContinueModal + LevelIntroModal]
+    last inputs before it:
+      08:57 f32083  BUTTON  QuitConfirmBtn   [board idle, under a full-screen card]
+      08:58 f32093  TAP ANYWHERE  286,1190   [board idle, under the home screen]
+      08:58 f32104  BUTTON  Tab2   [board idle, under the home screen]
+      08:58 f32110  TAPPABLE  PlayButton   [board idle, under the home screen]
+      08:58 f32121  BUTTON  BtnPlay   [board idle, under the home screen]
+      08:58 f32128  REAL MOVE  drag (4,3)->(5,3)   [board idle, under the home screen]
+      08:59 f32162  TAP ANYWHERE  162,870   [board idle, under the home screen]
+      08:59 f32170  TAP ANYWHERE  355,1171   [board idle, under the home screen]
+      08:59 f32193  MASH BUTTON  CloseBtn x4   [board idle, under the home screen]
+      09:00 f32240  TAPPABLE  TapToEnter   [board idle, under the home screen]
+      09:00 f32251  RANDOM SWIPE  (2,5)->(0,5)   [board idle, under the home screen]
+      09:01 f32289  MASH ANYWHERE  x4   [board idle, under the home screen]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       32x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        3x  [INVARIANT] (,) 'S' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'N' sortingOrder= expected  — a lift outlived its effect
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=E
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=L
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=I
+        1x  [BoosterDbg] DESYNC (,): data=null, visual=A
+        1x  <color=#bc><b>DOTWEEN ► </b></color>Tween startup failed (NULL target/property - Void TryThrowEditorNullExceptionObject(UnityEngine.Obje
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_160306.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

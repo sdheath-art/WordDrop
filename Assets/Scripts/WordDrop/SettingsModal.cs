@@ -132,6 +132,8 @@ namespace WordDrop
             if (firstBuild) BuildCanvas();
             _canvasGO.SetActive(true);
             _modalOpenTime = Time.unscaledTime;
+            // Quit level only makes sense inside a level - hidden when Settings is opened from the home screen (11-16).
+            if (_quitBtnGO != null) _quitBtnGO.SetActive(!(LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard));
 
             // BLOCK GAMEPLAY INPUT while the modal is up. The UI scrim
             // absorbs Canvas raycasts but does NOT block world-space input
@@ -202,6 +204,8 @@ namespace WordDrop
 
         /// <summary>Fired when the modal starts closing (the level map's nav bar moves its dome back off the settings tab).</summary>
         public static event System.Action Closed;
+        /// <summary>11-17: the new home Settings card (SettingsV2) closes through the same event.</summary>
+        public static void RaiseClosed() => Closed?.Invoke();
 
         public void Hide()
         {
@@ -355,6 +359,9 @@ namespace WordDrop
 
         // ── Tabs ────────────────────────────────────────────────────────────────
 
+        /// <summary>11-16: Help tab hidden (its text described the old game) until the settings revamp.</summary>
+        public static bool SHOW_HELP_TAB = false;
+
         private void BuildTabs(Transform panel)
         {
             // 4 tab buttons in a row near the top of the panel.
@@ -368,16 +375,18 @@ namespace WordDrop
             trrt.anchorMin = new Vector2(0.5f, 1f);
             trrt.anchorMax = new Vector2(0.5f, 1f);
             trrt.pivot     = new Vector2(0.5f, 1f);
-            float rowW = TAB_SIZE * 4 + TAB_GAP * 3;
+            int tabCount = SHOW_HELP_TAB ? 4 : 3;
+            float rowW = TAB_SIZE * tabCount + TAB_GAP * (tabCount - 1);
             trrt.sizeDelta = new Vector2(rowW, TAB_SIZE);
             trrt.anchoredPosition = new Vector2(0f, ROW_Y);
 
             _tabImages = new Image[4];
-            string[] labels = { "≋", "♪", "♬", "?" }; // placeholder glyphs — TODO real icon art
+            // 11-16 stopgap until the settings revamp: the display font has no symbol glyphs (they drew as boxes), so short words.
+            string[] labels = { "VIBE", "SFX", "MUSIC", "?" };
             Tab[] tabIds = { Tab.Haptics, Tab.SFX, Tab.Music, Tab.Help };
 
             float startX = -rowW * 0.5f + TAB_SIZE * 0.5f;
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < tabCount; i++)
             {
                 int idx = i;
                 var tabGO = new GameObject($"Tab_{tabIds[i]}",
@@ -407,7 +416,7 @@ namespace WordDrop
                 var font = GameFont.GetDisplayTMP();
                 if (font != null) ltmp.font = font;
                 ltmp.text = labels[i];
-                ltmp.fontSize = 64;
+                ltmp.fontSize = labels[i].Length > 1 ? 34 : 64;
                 ltmp.alignment = TextAlignmentOptions.Center;
                 ltmp.color = Color.white;
                 ltmp.raycastTarget = false;
@@ -475,17 +484,17 @@ namespace WordDrop
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
             rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
 
-            BuildContentLabel(go.transform, "Vibration", anchorY: 0.82f);
+            BuildContentLabel(go.transform, "Vibration", anchorY: 0.90f);   // 11-04: moved up to make room for Hints below
 
             // ON/OFF toggle styled as a pill switch.
             var toggleGO = new GameObject("HapticsToggle",
                 typeof(RectTransform), typeof(Image), typeof(Button));
             toggleGO.transform.SetParent(go.transform, false);
             var trt = toggleGO.GetComponent<RectTransform>();
-            trt.anchorMin = new Vector2(0.5f, 0.40f);
-            trt.anchorMax = new Vector2(0.5f, 0.40f);
+            trt.anchorMin = new Vector2(0.5f, 0.66f);
+            trt.anchorMax = new Vector2(0.5f, 0.66f);
             trt.pivot     = new Vector2(0.5f, 0.5f);
-            trt.sizeDelta = new Vector2(320f, 110f);
+            trt.sizeDelta = new Vector2(320f, 100f);
             trt.anchoredPosition = Vector2.zero;
             var togImg = toggleGO.GetComponent<Image>();
             togImg.sprite = GetPillSprite();
@@ -512,6 +521,31 @@ namespace WordDrop
                 togImg.color = HapticsManager.Enabled ? SLIDER_FILL : SLIDER_TRACK;
                 ltmp.text    = HapticsManager.Enabled ? "ON" : "OFF";
                 // Subtle UI selector — single tick (otherpop second half).
+                GameAudio.Instance?.PlaySettingsRelease();
+            });
+
+            // 11-04 HINTS (Spencer: "can we put a no hints option in our settings? then i can play with no help for the tester brief").
+            // The switch already existed (HintManager.IsEnabled / SetEnabled, PlayerPrefs "hint_enabled") with no button. OFF = no idle
+            // hint, no fishing hint, no stale-board hint (every HintManager hint goes through IsEnabled).
+            BuildContentLabel(go.transform, "Hints", anchorY: 0.40f);
+            var hGO = new GameObject("HintsToggle", typeof(RectTransform), typeof(Image), typeof(Button));
+            hGO.transform.SetParent(go.transform, false);
+            var hrt = hGO.GetComponent<RectTransform>();
+            hrt.anchorMin = hrt.anchorMax = new Vector2(0.5f, 0.16f); hrt.pivot = new Vector2(0.5f, 0.5f);
+            hrt.sizeDelta = new Vector2(320f, 100f); hrt.anchoredPosition = Vector2.zero;
+            var hImg = hGO.GetComponent<Image>(); hImg.sprite = GetPillSprite();
+            hImg.color = HintManager.IsEnabled() ? SLIDER_FILL : SLIDER_TRACK;
+            var hl = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI)); hl.transform.SetParent(hGO.transform, false);
+            var hlrt = hl.GetComponent<RectTransform>(); hlrt.anchorMin = Vector2.zero; hlrt.anchorMax = Vector2.one; hlrt.offsetMin = hlrt.offsetMax = Vector2.zero;
+            var htmp = hl.GetComponent<TextMeshProUGUI>(); if (font != null) htmp.font = font;
+            htmp.text = HintManager.IsEnabled() ? "ON" : "OFF"; htmp.fontSize = 52; htmp.alignment = TextAlignmentOptions.Center;
+            htmp.color = ltmp.color; htmp.raycastTarget = false;
+            hGO.GetComponent<Button>().onClick.AddListener(() =>
+            {
+                bool on = !HintManager.IsEnabled();
+                HintManager.SetEnabled(on);
+                hImg.color = on ? SLIDER_FILL : SLIDER_TRACK;
+                htmp.text  = on ? "ON" : "OFF";
                 GameAudio.Instance?.PlaySettingsRelease();
             });
             return go;
@@ -704,16 +738,22 @@ namespace WordDrop
 
         private void BuildBottomButtons(Transform panel)
         {
-            // Three pills fit by going a touch shorter (100 tall) so they stay inside the panel.
-            BuildPillButton(panel, "Save progress", SAVE_BTN_COLOR,
-                anchorY: -930f, onClick: OnSaveProgressTapped, height: 100f);
-            BuildPillButton(panel, "Restart run", RESTART_BTN_COLOR,
-                anchorY: -1042f, onClick: OnRestartRunTapped, height: 100f);
-            BuildPillButton(panel, "Quit level", QUIT_BTN_COLOR,
+            // 11-16 Spencer: "take out restart run and save progress" (both belonged to the old endless run; progress saves by
+            // itself). Only Quit level is left, and only while a level is being played (RM: no quit on the home screen).
+            if (SHOW_OLD_RUN_BUTTONS)
+            {
+                BuildPillButton(panel, "Save progress", SAVE_BTN_COLOR,
+                    anchorY: -930f, onClick: OnSaveProgressTapped, height: 100f);
+                BuildPillButton(panel, "Restart run", RESTART_BTN_COLOR,
+                    anchorY: -1042f, onClick: OnRestartRunTapped, height: 100f);
+            }
+            _quitBtnGO = BuildPillButton(panel, "Quit level", QUIT_BTN_COLOR,
                 anchorY: -1154f, onClick: OnQuitLevelTapped, height: 100f);
         }
+        public static bool SHOW_OLD_RUN_BUTTONS = false;
+        private GameObject _quitBtnGO;
 
-        private void BuildPillButton(Transform panel, string label, Color color,
+        private GameObject BuildPillButton(Transform panel, string label, Color color,
                                      float anchorY, System.Action onClick, float height = 120f)
         {
             var btnGO = new GameObject(label + "Btn",
@@ -758,6 +798,7 @@ namespace WordDrop
                 GameAudio.Instance?.PlayMultiPopRelease();
                 onClick?.Invoke();
             });
+            return btnGO;
         }
 
         private void OnSaveProgressTapped()
@@ -816,7 +857,7 @@ namespace WordDrop
             var srt = _confirmOverlay.GetComponent<RectTransform>();
             srt.anchorMin = Vector2.zero; srt.anchorMax = Vector2.one;
             srt.offsetMin = Vector2.zero; srt.offsetMax = Vector2.zero;
-            _confirmOverlay.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
+            _confirmOverlay.GetComponent<Image>().color = UISeparation.MODAL_DIM;   // 11-02 shared dim
             _confirmOverlay.transform.SetAsLastSibling(); // render above the settings panel
             _confirmOverlay.GetComponent<Button>().onClick.AddListener(() =>
             {
@@ -928,8 +969,33 @@ namespace WordDrop
         }
 
         private bool _quitting;
+        /// <summary>11-16 Spencer: "quit level to operate as it would in royal match". RM: Quit asks "Quit Level? You will lose a
+        /// life!"; confirming takes the life, ends the win streak and goes home. Leaving before the first move costs nothing, so
+        /// that case goes straight home with no question. false = the old behaviour (straight home, nothing lost).</summary>
+        public static bool QUIT_LIKE_RM = true;
         private void OnQuitLevelTapped()
         {
+            if (_quitting) return;   // 11-16 monkey: a second tap on Quit while the card was leaving rebuilt the level twice
+            bool played = StageStats.MovesMade > 0;
+            if (!QUIT_LIKE_RM || !played) { WDLog.Log("[SettingsModal] Quit level - no move made yet (or RM quit off), nothing lost"); DoQuitLevel(); return; }
+            ShowConfirm(
+                title: "Quit Level?",
+                body: "You will lose a life!",
+                confirmLabel: "Quit",
+                confirmColor: QUIT_BTN_COLOR,
+                onConfirm: () =>
+                {
+                    HeartsManager.Consume();
+                    int streak = WinStreak.Count; WinStreak.Reset();
+                    try { AnalyticsManager.Log("level_quit", "stage", SurvivalManager.Instance != null ? SurvivalManager.Instance.CurrentStageIndex : -1, "moves_used", StageStats.MovesMade, "lives_left", HeartsManager.Current, "streak_lost", streak); }
+                    catch (System.Exception ex) { Debug.LogError($"[SettingsModal] Analytics threw: {ex.Message}"); }
+                    WDLog.Log($"[SettingsModal] Quit level confirmed - life taken ({HeartsManager.Current} left), streak {streak} -> 0");
+                    DoQuitLevel();
+                });
+        }
+        private void DoQuitLevel()
+        {
+            if (_quitting) return;
             _quitting = true;
             // Hide the modal first so its ExitUp animation runs alongside
             // the screen-slide transition (cosmetic — the slide covers
@@ -941,8 +1007,22 @@ namespace WordDrop
             //   • menu BGM swap
             // All driven from the GameState.Menu case in GameManager.
             Hide();
+            // 11-16 Spencer: "quit level should take them back to the game menu not this red play button screen". Home screen, SAME
+            // level (the path the Try Again? card's X uses). The old route below went to the title screen, and its PLAY restarted
+            // the run at level 1.
+            var sm = SurvivalManager.Instance;
+            if (QUIT_TO_HOME && sm != null && SurvivalManager.IsSurvivalMode && LevelMapPanel.MapFlowEnabled) { StartCoroutine(QuitToHome(sm)); return; }
             if (GameManager.Instance != null)
                 GameManager.Instance.TransitionTo(GameState.Menu);
+        }
+        public static bool QUIT_TO_HOME = true;
+        /// <summary>Let a move that is still resolving finish first (max 4 s) - rebuilding the level under a running cascade is the
+        /// kind of thing that breaks boards. Input stays blocked meanwhile (_quitting keeps the pause on).</summary>
+        private System.Collections.IEnumerator QuitToHome(SurvivalManager sm)
+        {
+            float until = Time.unscaledTime + 4f;
+            while (Time.unscaledTime < until && MatchController.Instance != null && MatchController.Instance.IsProcessing) yield return null;
+            if (sm != null) sm.RetryCurrentLevel(openCard: false);
         }
 
         // ── Close button ────────────────────────────────────────────────────────
@@ -971,7 +1051,10 @@ namespace WordDrop
             var ltmp = lblGO.GetComponent<TextMeshProUGUI>();
             var font = GameFont.GetDisplayTMP();
             if (font != null) ltmp.font = font;
-            ltmp.text = "✕";
+            // 11-16: the X glyph is not in the display font (drew as a box) - use the panel kit's close button art instead.
+            var closeArt = Resources.Load<Sprite>("UI/Panel/close");
+            if (closeArt != null) { img.sprite = closeArt; img.color = Color.white; img.preserveAspect = true; ltmp.text = ""; }
+            else ltmp.text = "X";
             ltmp.fontSize = 64;
             ltmp.alignment = TextAlignmentOptions.Center;
             ltmp.color = Color.white;

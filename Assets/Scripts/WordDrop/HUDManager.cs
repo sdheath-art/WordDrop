@@ -146,6 +146,7 @@ namespace WordDrop
             _scoreShown  = total;
             ResetScoreTargetLatch();
             CollectInFlight = 0; LevelRules.CollectAwaitingFly = 0;
+            BooksInFlight = 0; LevelRules.BooksAwaitingFly = 0;   // BOOKSHELF (11-03)
             SyncCollectIcon();
             if (_scorePanelNum != null)
             {
@@ -154,6 +155,7 @@ namespace WordDrop
             }
         }
 
+        public static bool SCORE_TICK_SOUND = false;   // 11-07 Spencer: "remove the score ticking sound after every pop since there isnt any score anymore"
         private IEnumerator ScoreChase()
         {
             while (_scorePanelNum != null && _scoreShown < _scoreTarget - 0.5f)
@@ -175,7 +177,7 @@ namespace WordDrop
                     if (Time.unscaledTime - _scoreTickAt >= 0.045f)
                     {
                         _scoreTickAt = Time.unscaledTime;
-                        GameAudio.Instance?.PlayScoreTick(Mathf.Lerp(1.55f, 0.95f, mag));
+                        if (SCORE_TICK_SOUND) GameAudio.Instance?.PlayScoreTick(Mathf.Lerp(1.55f, 0.95f, mag));   // 11-07 Spencer: no score on screen any more -> silent
                     }
                 }
                 else
@@ -295,7 +297,7 @@ namespace WordDrop
         {
             if (_topOutNumText == null) return;
             _topOutDisplay = int.MaxValue;               // the moves readout only counts DOWN unless re-seeded
-            _topOutNumText.color = new Color(1f, 0.84f, 0.25f);
+            _topOutNumText.color = HUD_RECIPE_D ? MOVES_GOLD : new Color(1f, 0.84f, 0.25f);
             AnimateScorePop(_topOutNumText.rectTransform);
             if (_movesPanelInner != null) SpawnSlotSparkleBurst(_movesPanelInner, Vector2.zero);
             GameAudio.Instance?.PlayScorePowerup();
@@ -323,7 +325,7 @@ namespace WordDrop
         public void FlashMovesPenalty()
         {
             if (_topOutNumText == null) return;
-            _topOutNumText.color = new Color(1f, 0.3f, 0.25f);
+            _topOutNumText.color = HUD_RECIPE_D ? MOVES_RED : new Color(1f, 0.3f, 0.25f);
             AnimateScorePop(_topOutNumText.rectTransform);
         }
         private Image           _topOutBubble;
@@ -451,7 +453,7 @@ namespace WordDrop
                 if (!_hudBarRestCaptured) { _hudBarRestPos = _hudBarRT.anchoredPosition; _hudBarRestCaptured = true; }
                 _hudBarRT.DOKill();
                 _hudBarRT.localScale = Vector3.one;
-                _hudBarRT.anchoredPosition = _hudBarRestPos + new Vector2(0f, 200f);
+                _hudBarRT.anchoredPosition = _hudBarRestPos + new Vector2(0f, HudHideOffset());
             }
             BoosterHUDSlot.Instance?.PrepBenchEntry();   // bottom HUD (panel + boosters + settings) → below
             GridManager.Instance?.PrepBoardEntry();      // board → off right
@@ -494,6 +496,7 @@ namespace WordDrop
                      GridManager.Instance?.EndEntrySlide();
                      HandManager.Instance?.EndEntrySlide();
                      BoosterHUDSlot.Instance?.EndSwapSlide();
+                     OnLevelEntryDone?.Invoke();   // pre-level boosters drop in now (PreBoosters)
                  });
                 GameAudio.Instance?.PlayWhooshFast();
             }).SetUpdate(true);
@@ -501,6 +504,8 @@ namespace WordDrop
 
         /// <summary>TEMP 2026-10-20: per-frame timing of the board entry slide, to tell a frame hitch from a too-fast
         /// tween. Strip (or set false) once diagnosed.</summary>
+        /// <summary>The board has finished sliding in at level start (2026-10-29: pre-level booster drop-in).</summary>
+        public static event System.Action OnLevelEntryDone;
         public static bool ENTRY_PERF_LOG = true;
         /// <summary>Bonus blast: show this many moves instead of the live count (which already belongs to the NEXT level
         /// once the target is hit). -1 = off. Cleared by LevelRules.Apply when the next level installs.</summary>
@@ -538,7 +543,7 @@ namespace WordDrop
             {
                 if (!_hudBarRestCaptured) { _hudBarRestPos = _hudBarRT.anchoredPosition; _hudBarRestCaptured = true; }
                 _hudBarRT.DOKill();
-                _hudBarRT.DOAnchorPos(_hudBarRestPos + new Vector2(0f, 200f), 0.30f)
+                _hudBarRT.DOAnchorPos(_hudBarRestPos + new Vector2(0f, HudHideOffset()), 0.30f)
                     .SetEase(Ease.OutCubic).SetUpdate(true);
             }
             BoosterHUDSlot.Instance?.AnimateBenchOut();
@@ -559,13 +564,17 @@ namespace WordDrop
         /// the bar below rest, which would open a cyan gap above it — the BarTopExtend strip (a child that slides
         /// with the bar) keeps that area filled with the bar colour, so it reads as the panel extending off the
         /// top. 2026-07-13 Spencer.</summary>
+        // 10-31 Spencer: at "Chapter complete" the portrait's star badge still poked in at the top - a fixed 200 no longer clears
+        // the taller art bar (portrait ring + star hang below the bar rect). Clear it by twice its own height.
+        private float HudHideOffset() => _hudBarRT != null ? Mathf.Max(200f, _hudBarRT.rect.height * 2f) : 200f;
+
         public void AnimateHudBarIn()
         {
             if (_hudBarRT == null) return;
             if (!_hudBarRestCaptured) { _hudBarRestPos = _hudBarRT.anchoredPosition; _hudBarRestCaptured = true; }
             _hudBarRT.DOKill();
             _hudBarRT.localScale = Vector3.one; // no warp
-            _hudBarRT.anchoredPosition = _hudBarRestPos + new Vector2(0f, 200f); // start above the top edge
+            _hudBarRT.anchoredPosition = _hudBarRestPos + new Vector2(0f, HudHideOffset()); // start above the top edge
             _hudBarRT.DOAnchorPos(_hudBarRestPos, 0.24f).SetEase(Ease.OutBack, 1.4f)
                 .OnComplete(() => { if (_hudBarRT != null) _hudBarRT.anchoredPosition = _hudBarRestPos; });
         }
@@ -1312,6 +1321,98 @@ namespace WordDrop
             t.UpdateMeshPadding();
         }
 
+        // ── HUD TEXT RECIPE "D" (2026-10-31, Spencer picked D from composition/library_home/game_hud_stroke_options.png; the level
+        // star gets a thicker stroke "to stand out in hierarchy"). TEXT_TREATMENT_RESEARCH.md tier 3:
+        //   moves number = FLAT dark ink on the cream box (no outline, no drop) - RM/Toon Blast style;
+        //   goal counts  = cream face + ink stroke (~5% cap) + hard drop (~7% cap);
+        //   level star   = cream face + the star's own dark blue, thicker stroke (~9% cap) + drop.
+        // WordSlop Button SDF (pad 9 / pt 90) - Montserrat's atlas (pad 3) can't hold a 7% drop. Units = TMP material units on that
+        // asset, starting from ArtButton's fitted 0.19 outline = ~3% cap / -0.6 offset = ~8% drop. Tune here.
+        public static bool  HUD_RECIPE_D = true;
+        public static Color HUD_INK   = new Color32(0x21, 0x0C, 0x51, 0xFF);   // tab purple at S85 V32
+        public static Color HUD_CREAM = new Color32(0xFF, 0xF6, 0xD8, 0xFF);
+        public static Color STAR_LINE = new Color32(0x03, 0x37, 0x4C, 0xFF);   // the star's blue at S95 V30
+        public static Color MOVES_RED = new Color32(0xC8, 0x24, 0x1C, 0xFF), MOVES_GOLD = new Color32(0xC9, 0x7A, 0x00, 0xFF);
+        public static float D_STROKE = 0.16f, D_DROP = -0.75f, STAR_STROKE = 0.16f, STAR_DROP = -0.75f;
+        // 11-03 RK NUMBER STYLE (Spencer: match the Royal Kingdom HUD numbers - ref ~/Documents/WordDrop_Art/number_style_1103/rk_hud.png).
+        // MEASURED on its "30": fill is a vertical GRADIENT, near-white cream (FFFCEA) at the top -> warm pale yellow (FFF4BC) at the
+        // bottom; outline ~3.5% of cap; the dark extrusion goes down ~7% of cap AND right ~3.5% (dx/dy 0.5); outline = the darkest
+        // value of the plate it sits on (ours already: HUD_INK / STAR_LINE). false = the 10-31 flat-cream straight-down recipe.
+        public static bool  RK_NUM_STYLE = true;
+        public static Color RK_FILL_TOP = new Color32(0xFF, 0xFC, 0xEA, 0xFF), RK_FILL_BOT = new Color32(0xFF, 0xF0, 0xB0, 0xFF);
+        public static float RK_DROP_X = 0.5f;   // extrusion x as a fraction of its y
+        public static bool  MOVES_RK = true; public static float MOVES_RK_SIZE = 1.48f;   // moves number: RK chunky style + size (33% -> 49% of its box)   // 10-31 measured in-game: 0.32 drew ~10% of cap (D = 5%), star 0.55 drew ~17%; Spencer "just do what you did in D"
+        private static readonly System.Collections.Generic.Dictionary<string, Material> s_recipeMats = new System.Collections.Generic.Dictionary<string, Material>();
+        private static TMP_FontAsset RecipeFont() => Resources.Load<TMP_FontAsset>("WordSlop Button SDF") ?? GameFont.GetNumberTMP();
+        private static Material RecipeMat(TMP_FontAsset font, Color line, float stroke, float drop)
+        {
+            string key = $"{font.name}|{ColorUtility.ToHtmlStringRGB(line)}|{stroke}|{drop}";
+            if (s_recipeMats.TryGetValue(key, out var m) && m != null) return m;
+            m = new Material(font.material) { name = "HUDRecipe_" + key };
+            if (stroke > 0f)
+            {
+                m.EnableKeyword("OUTLINE_ON");
+                m.SetFloat("_OutlineWidth", stroke); m.SetColor("_OutlineColor", line);
+                m.SetFloat("_FaceDilate", stroke * 0.5f);                       // push the stroke OUTSIDE the letter
+                m.EnableKeyword("UNDERLAY_ON"); m.DisableKeyword("UNDERLAY_INNER");
+                m.SetColor("_UnderlayColor", line);
+                m.SetFloat("_UnderlayOffsetX", RK_NUM_STYLE ? -drop * RK_DROP_X : 0f); m.SetFloat("_UnderlayOffsetY", drop);   // 11-03 RK: the extrusion leans down-RIGHT
+                m.SetFloat("_UnderlayDilate", stroke); m.SetFloat("_UnderlaySoftness", 0f);   // the stroked shape, dropped straight down
+            }
+            else { m.DisableKeyword("OUTLINE_ON"); m.DisableKeyword("UNDERLAY_ON"); m.SetFloat("_OutlineWidth", 0f); m.SetFloat("_FaceDilate", 0.04f); }
+            s_recipeMats[key] = m; return m;
+        }
+        // SIZE FIX (10-31, Spencer: "it shrunk the size of the 1"): WordSlop's line box is ~1.6 em (Montserrat ~1.2) and its cap
+        // 0.594 em (Montserrat 0.70), so TMP auto-size - which fits the whole LINE in the rect - drew every number ~35% smaller in
+        // the same box. RecipeFit grows the text's area vertically (negative margins, the rect itself untouched) and the max size
+        // once, so the digits come back to the Montserrat cap height.
+        public static float RECIPE_MARGIN = 0.27f, RECIPE_MAX_MUL = 1.2f, MOVES_NUM_SHIFT = 0.094f;
+        private class RecipeFit : MonoBehaviour
+        {
+            public float shiftDown;   // fraction of the rect height to move the text's centre down
+            private TMP_Text _t; private float _h = -1f;
+            private void LateUpdate()
+            {
+                if (_t == null) _t = GetComponent<TMP_Text>(); if (_t == null) return;
+                float h = _t.rectTransform.rect.height;
+                if (h <= 0f || Mathf.Abs(h - _h) < 0.5f) return;
+                _h = h; float m = h * RECIPE_MARGIN, d = h * shiftDown * 2f;   // top margin +2d moves the centre down by d
+                _t.margin = new Vector4(0f, -m + d, 0f, -m);
+            }
+        }
+        private static void RecipeSize(TMP_Text t)
+        {
+            if (t.GetComponent<RecipeFit>() != null) return;                // once per text
+            t.gameObject.AddComponent<RecipeFit>();
+            if (t.enableAutoSizing) t.fontSizeMax *= RECIPE_MAX_MUL; else t.fontSize *= RECIPE_MAX_MUL;
+        }
+
+        /// <summary>Cream face + <paramref name="line"/> stroke + hard drop (goal counts, level star).</summary>
+        public static void ApplyRecipeCount(TMP_Text t, Color line, float stroke, float drop, TMP_FontAsset fontOverride = null)
+        {
+            var font = fontOverride != null ? fontOverride : RecipeFont(); if (t == null || font == null) return;
+            t.font = font; t.fontSharedMaterial = RecipeMat(font, line, stroke, drop);
+            if (RK_NUM_STYLE) { t.color = Color.white; t.enableVertexGradient = true; t.colorGradient = new VertexGradient(RK_FILL_TOP, RK_FILL_TOP, RK_FILL_BOT, RK_FILL_BOT); }
+            else { t.enableVertexGradient = false; t.color = HUD_CREAM; }
+            t.fontStyle = FontStyles.Normal; t.UpdateMeshPadding(); RecipeSize(t);
+        }
+        /// <summary>Flat ink, no outline/drop (the moves number on its cream box).</summary>
+        public static void ApplyRecipeFlat(TMP_Text t)
+        {
+            var font = RecipeFont(); if (t == null || font == null) return;
+            t.font = font; t.fontSharedMaterial = RecipeMat(font, HUD_INK, 0f, 0f);
+            t.enableVertexGradient = false; t.color = HUD_INK; t.fontStyle = FontStyles.Normal; t.UpdateMeshPadding(); RecipeSize(t);
+        }
+        private static Color MovesInk  => HUD_RECIPE_D ? HUD_INK : Color.white;
+        /// <summary>11-03: the moves number's resting colour - white under the RK gradient style (the vertex gradient IS the colour;
+        /// dark ink multiplied it to a blob - Spencer's 11:46 shot), else the old flat ink.</summary>
+        private static Color MovesBase => (MOVES_RK && RK_NUM_STYLE) ? Color.white : MovesInk;
+        private static Vector3 MovesRestScale => Vector3.one * (MOVES_RK ? MOVES_RK_SIZE : 1f);
+        /// <summary>11-03 Spencer: "remove the red colour when you get low on moves ... and take out that bubble that expands behind it".
+        /// false = the moves number keeps its normal colour when low, and the danger bubble never shows.</summary>
+        public static bool MOVES_LOW_WARNING = false;
+        private static Color MovesRed  => !MOVES_LOW_WARNING ? MovesBase : HUD_RECIPE_D ? MOVES_RED : new Color(1f, 0.42f, 0.35f);
+
         private static readonly System.Collections.Generic.Dictionary<string, Material> s_mkOutlineMats = new System.Collections.Generic.Dictionary<string, Material>();
         private static void MkSetFont(TMP_Text t, TMP_FontAsset font, float outline, Color32 outlineCol)
         {
@@ -1476,18 +1577,461 @@ namespace WordDrop
             MkRestylePanel(_objectivePanel, _objectivePanelLabel, _objectivePanelInner, 410f, 868f, labelFont);
             MkRestylePanel(_movesPanel, _movesPanelLabel, _movesPanelInner, 915f, 1117f, labelFont);
             if (_scorePanelNum != null) { _scorePanelNum.fontSizeMax = 64f; _scorePanelNum.color = MK_INK; }
-            if (_topOutNumText != null) { _topOutNumText.fontSizeMax = 72f; ApplyRMNumberStyle(_topOutNumText, RM_MOVES_TOP, RM_MOVES_BOTTOM); }
+            if (_topOutNumText != null)
+            {
+                _topOutNumText.fontSizeMax = 72f;
+                // 11-03 v2: fontSizeMax didn't grow it - auto-size is capped by the text rect. Scale the drawn number instead.
+                _topOutNumText.rectTransform.localScale = MovesRestScale;
+                // 11-03 (Spencer "give it a shot"): RK's moves number is the same chunky outlined style as the goal counts, and BIG -
+                // measured 49% of its cream box's height (ours was 33%) -> x1.48. The outline is the HUD's dark purple ink.
+                if (MOVES_RK) ApplyRecipeCount(_topOutNumText, HUD_INK, D_STROKE, D_DROP);
+                else if (HUD_RECIPE_D) ApplyRecipeFlat(_topOutNumText); else ApplyRMNumberStyle(_topOutNumText, RM_MOVES_TOP, RM_MOVES_BOTTOM);
+                // 10-31 Spencer: centre the number in the VISIBLE cream (below the Moves tab), not the whole box. Measured: visible
+                // y 260-410 (centre 335), digits centred at 317 -> down ~18 of the ~192-unit panel.
+                var mfit = _topOutNumText.GetComponent<RecipeFit>(); if (mfit != null) mfit.shiftDown = MOVES_NUM_SHIFT;
+            }
             if (_topOutBubble != null) _topOutBubble.rectTransform.sizeDelta = new Vector2(110f, 110f);
 
             _mkChrome = new[] { barEdge.gameObject, ring.gameObject, star.gameObject };
             foreach (var g in _mkChrome) g.SetActive(false);   // shown with the in-run panels (RefreshMockupHud)
             _hudBarRT = _mkRoot;   // the level-entry drop-in slides the new layout
+            if (ART_HUD) ApplyArtHud(barEdge.gameObject, ring.gameObject, star.gameObject, photo);
             WDLog.Log("[MockupHUD] layout applied");
         }
         private Image _mkPortrait; private GameObject[] _mkChrome;
+
+        // ══ ART HUD (2026-10-29) ════════════════════════════════════════════════════════════════════════════════
+        // Spencer's in-level HUD from his newboard-Recovered.psd, rebuilt to the style guide (our gold stack, our contact shadows,
+        // his purple + panels + baked Goals/Moves/Rewards labels): ~/Documents/WordDrop_Art/vector_buttons/hud/psd_hud
+        // (export_text_flat.jsx -> export_1x.jsx -> merge_1x.py -> swap_gold.py -> make_ring.py -> export_game.py).
+        // Resources/UI/HUD: hud_bar_goals / hud_bar_rewards = the whole 1179 x 540 band at 2x; ring_track + ring_fill = square crops
+        // centred on the ring; ring_cap_start / _end = the rounded fill ends; hud_star; hud_layout.json = positions (design units)
+        // + the ring's measured band edges per degree (his ring is slightly elliptical). LIVE on top: goal icons + counts, moves,
+        // the level number, the avatar. The PROGRESS RING starts behind the star and fills CLOCKWISE with the level's goal progress.
+        // ART_HUD = false -> the placeholder mockup HUD (2026-10-22) as before.
+        public static bool ART_HUD = true;
+        public static float GOAL_SCALE_1 = 1f, GOAL_SCALE_2 = 1f;   // 10-31 Spencer picked the smaller size (was 1.3 / 1.15, the 10-29 "fill the panel" scale)
+        public static float RING_FINISH_SPEED = 0.35f;   // min fill speed (per second) on the way to FULL - no slow tail before the star
+        public static float RING_EASE = 2.2f, RING_MAX_SPEED = 0.45f;   // 10-29 Spencer: grow 'a little bit slower' (was 6/s, no cap)                       // ring catch-up speed (per second, exponential)
+        // GROWING FX (2026-10-29, Spencer: "can the status bar light up or do something to signify that it is making progress
+        // while it grows?"): while the fill is catching up, a bright glow rides its moving end, sparks fly off it, and the cap
+        // pulses; all fade out once it has caught up. RING_FX = false turns them off.
+        public static bool RING_FX = false;   // 10-29 Spencer: "i dont like the progress bar glow" - off (code kept)
+        public static Color RING_GLOW = new Color32(0xB8, 0xE8, 0xFF, 0xFF);
+        private Image _artGlow, _artFillLit, _artCapLitB; private float _ringGlowA, _nextSpark;
+        // ADDITIVE GLOW v3 (10-29, Spencer: the lit copy "looks cheap ... what would make it look more professional?"):
+        // core (hot middle of the filled tube) + halo (glow stack hugging the tube) on WordDrop/AdditiveSprite, both radial-filled
+        // with the fill; a SHEEN sprite (34-deg highlight) rotated along the filled arc from the star to the tip; a soft tip bloom.
+        public static Vector2 STAR_NUM_CENTRE = new Vector2(0.500f, 0.463f);   // 11-03 v2: MEASURED - digit centre lands on the blue face's bbox centre (0.53 put it 11 px low)   // 11-03: number on the star's optical centre (x, y down); x<=0 = the layout's old box
+        public static bool STAR_DEPTH = true; private Image _artStarBack;
+        // GOLD PORTRAIT FRAME (11-02, Spencer: "ditch the progress bar and just have the owl bigger inside a golden frame", mock
+        // panels/owl_frame_1102/full_compare.png v7 approved: "it looks fantastic"). The progress ring is hidden; the photo grows to
+        // fill the old ring and sits on the bar art's OUTER gold ring centre (fitted 204.43,320.48 r161.2 - 1.4px off the photo, so
+        // centring on the photo let the old ring peek out at the bottom). The rim copies Royal Kingdom's king-portrait rim (measured:
+        // flat saturated gold 5% of the portrait width, bright lip at both edges, orange fall-off inside, 1-2px dark lines).
+        // The star moves out to the new rim (+35 down) and hud_star_back.png is now a downward contact shadow, not a purple ring.
+        public static bool PORTRAIT_FRAME = true;
+        public static float FRAME_CX = 204.43f, FRAME_CY = 320.48f, FRAME_R = 148f, FRAME_STAR_DROP = 35f;
+        private const float FRAME_GOLD = 0.10f, FRAME_LINE = 2f, FRAME_SHADOW_PAD = 26f;   // gold width / photo r; outline px; shadow room
+        private static Sprite s_frame; private Image _portraitFrame;
+        private static Sprite FrameSprite()
+        {
+            if (s_frame != null) return s_frame;
+            const int N = 768; float rIn = FRAME_R, rOut = FRAME_R * (1f + FRAME_GOLD), box = rOut + FRAME_LINE + FRAME_SHADOW_PAD;
+            float s = box * 2f / N, c = N * 0.5f;
+            var stops = new[] { (0.00f, new Color32(0xEF, 0x96, 0x00, 0xFF)), (0.13f, new Color32(0xFD, 0xCC, 0x05, 0xFF)), (0.32f, new Color32(0xFC, 0xB1, 0x00, 0xFF)),
+                                (0.58f, new Color32(0xF9, 0xB7, 0x00, 0xFF)), (0.76f, new Color32(0xFF, 0xCF, 0x00, 0xFF)), (0.90f, new Color32(0xD2, 0x70, 0x08, 0xFF)), (1.00f, new Color32(0xA6, 0x46, 0x0C, 0xFF)) };
+            Color line = new Color32(0x20, 0x0A, 0x54, 0xFF), shade = new Color32(0x14, 0x06, 0x32, 0xFF);
+            var px = new Color[N * N];
+            for (int y = 0; y < N; y++) for (int x = 0; x < N; x++)
+            {
+                float dx = (x + 0.5f - c) * s, dy = (y + 0.5f - c) * s, r = Mathf.Sqrt(dx * dx + dy * dy);
+                // drop shadow of the frame onto the HUD: 8px down, soft ~10px, outside the frame only (y up: down = +8 on dy)
+                float rs = Mathf.Sqrt(dx * dx + (dy + 8f) * (dy + 8f));
+                float sh = 0.59f * (1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((rs - (rOut + FRAME_LINE) + 10f) / 20f)));
+                Color o = new Color(shade.r, shade.g, shade.b, r > rOut + FRAME_LINE - 0.5f ? sh : 0f);
+                // dark outline ring (outside 2px + inside 2px)
+                float aLine = Mathf.Clamp01(r - (rIn - FRAME_LINE) + 0.5f) * Mathf.Clamp01(rOut + FRAME_LINE - r + 0.5f);
+                o = Over(o, new Color(line.r, line.g, line.b, aLine));
+                // gold tube
+                float aGold = Mathf.Clamp01(r - rIn + 0.5f) * Mathf.Clamp01(rOut - r + 0.5f);
+                if (aGold > 0f)
+                {
+                    float t = Mathf.Clamp01((rOut - r) / (rOut - rIn)); Color g = stops[stops.Length - 1].Item2;
+                    for (int i = 1; i < stops.Length; i++) if (t <= stops[i].Item1) { g = Color.Lerp(stops[i - 1].Item2, stops[i].Item2, (t - stops[i - 1].Item1) / (stops[i].Item1 - stops[i - 1].Item1)); break; }
+                    g.a = aGold; o = Over(o, g);
+                }
+                px[y * N + x] = o;
+            }
+            var tex = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            tex.SetPixels(px); tex.Apply(false, true);
+            return s_frame = Sprite.Create(tex, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), 100f);
+        }
+        private static Color Over(Color under, Color top)
+        {
+            float a = top.a + under.a * (1f - top.a); if (a <= 0f) return new Color(0, 0, 0, 0);
+            Color c = (top * top.a + under * under.a * (1f - top.a)) / a; c.a = a; return c;
+        }
+        private Image _artStar; private Image _addCore, _addHalo, _addSheen, _addTip, _addTipHalo; private float _sheenT = -1f, _sheenNext; private static Material s_ringAddMat;
+        public static float RING_GLOW_MAX = 0.85f, RING_SHEEN_TIME = 0.75f, RING_SHEEN_GAP = 0.35f;
+        private static Material RingAddMat()
+        {
+            if (s_ringAddMat != null) return s_ringAddMat;
+            var sh = Shader.Find("WordDrop/AdditiveSprite"); if (sh == null) sh = Resources.Load<Shader>("Shaders/AdditiveSprite");
+            if (sh != null) s_ringAddMat = new Material(sh) { name = "RingAdditive" };
+            return s_ringAddMat;
+        }
+        private Image AddRingLayer(string name, string sprite, bool filled)
+        {
+            var img = MkImage(_artRing, name, ArtSprite(sprite), new Color(1f, 1f, 1f, 0f)); img.preserveAspect = false;
+            var m = RingAddMat(); if (m != null) img.material = m;
+            if (filled) { Stretch(img.rectTransform); img.type = Image.Type.Filled; img.fillMethod = Image.FillMethod.Radial360; img.fillOrigin = (int)Image.Origin360.Bottom; img.fillClockwise = true; }
+            return img;
+        }
+        /// <summary>FX menu test: >= 0 overrides the ring's progress (0..1); -1 = real goal progress.</summary>
+        public static float RING_TEST = -1f;
+        private int _ringStage = int.MinValue;
+        [System.Serializable] private class ArtHudLayout
+        {
+            public float bandW, bandH; public float[] ringBox; public float[] ringCentrePx; public float ringBoxPx;
+            public float capWidthPx; public float[] bandInPx, bandOutPx; public float[] star, starNum, photo, goalsPanel, movesPanel;
+        }
+        private ArtHudLayout _art; private Image _artBar, _artFill, _artCapA, _artCapB; private RectTransform _artRing;
+        private Sprite _artBarGoals, _artBarRewards; private float _ringShown = -1f; private bool _ringFullFx;
+        private static Sprite ArtSprite(string n) => Resources.Load<Sprite>("UI/HUD/" + n);
+        private void ApplyArtHud(GameObject barPh, GameObject ringPh, GameObject starPh, Image photo)
+        {
+            var json = Resources.Load<TextAsset>("UI/HUD/hud_layout");
+            _artBarGoals = ArtSprite("hud_bar_goals"); _artBarRewards = ArtSprite("hud_bar_rewards");
+            if (json == null || _artBarGoals == null) { WDLog.Log("[ArtHUD] art missing - placeholder HUD kept"); return; }
+            _art = JsonUtility.FromJson<ArtHudLayout>(json.text);
+            // placeholders off for good (the photo disc is kept: reparented below)
+            if (photo != null) photo.transform.SetParent(_mkRoot, false);
+            foreach (var g in new[] { barPh, ringPh, starPh }) if (g != null) g.SetActive(false);
+            // the bar band, behind everything
+            _artBar = MkImage(_mkRoot, "ArtBar", _artBarGoals, Color.white); _artBar.preserveAspect = false;
+            MkPlace(_artBar.rectTransform, 0f, 0f, _art.bandW, _art.bandH); _artBar.transform.SetAsFirstSibling();
+            // panels: the art draws the boxes, tabs and labels - keep the panels (goal icons, counts, moves live inside) but
+            // move them onto the art's boxes and make their own chrome invisible
+            ArtPanel(_objectivePanel, _objectivePanelInner, _art.goalsPanel);
+            ArtPanel(_movesPanel, _movesPanelInner, _art.movesPanel);
+            // ring: track + radial fill (origin bottom = behind the star, clockwise) + two rounded caps
+            var ringGO = new GameObject("ArtRing", typeof(RectTransform)); ringGO.transform.SetParent(_mkRoot, false);
+            _artRing = (RectTransform)ringGO.transform;
+            MkPlace(_artRing, _art.ringBox[0], _art.ringBox[1], _art.ringBox[2], _art.ringBox[3]);
+            var track = MkImage(_artRing, "Track", ArtSprite("ring_track"), Color.white); Stretch(track.rectTransform);
+            _artFill = MkImage(_artRing, "Fill", ArtSprite("ring_fill"), Color.white); Stretch(_artFill.rectTransform);
+            _artFill.type = Image.Type.Filled; _artFill.fillMethod = Image.FillMethod.Radial360;
+            _artFill.fillOrigin = (int)Image.Origin360.Bottom; _artFill.fillClockwise = true; _artFill.fillAmount = 0f;
+            _artCapA = MkImage(_artRing, "CapStart", ArtSprite("ring_cap_end"), Color.white);    // fixed at the star (6 o'clock)
+            _artCapB = MkImage(_artRing, "CapEnd", ArtSprite("ring_cap_start"), Color.white);    // rides the moving end
+            _artCapA.preserveAspect = _artCapB.preserveAspect = false;
+            _artGlow = MkImage(_artRing, "Glow", WordDropFX.SoftDot(), new Color(RING_GLOW.r, RING_GLOW.g, RING_GLOW.b, 0f));
+            _artGlow.preserveAspect = false; _artGlow.gameObject.SetActive(false);
+            // WHOLE-BAR LIGHT-UP (10-29 v2, Spencer: effects "a bit much ... focused on the tip ... not the entire status bar"):
+            // a lit copy of the fill (lighter, cyan) on top of it, same fill amount, faded in while it grows + a gentle pulse
+            _artFillLit = MkImage(_artRing, "FillLit", ArtSprite("ring_fill_lit"), new Color(1f, 1f, 1f, 0f)); Stretch(_artFillLit.rectTransform);
+            _artFillLit.type = Image.Type.Filled; _artFillLit.fillMethod = Image.FillMethod.Radial360;
+            _artFillLit.fillOrigin = (int)Image.Origin360.Bottom; _artFillLit.fillClockwise = true;
+            _artCapLitB = MkImage(_artRing, "CapEndLit", ArtSprite("ring_cap_start_lit"), new Color(1f, 1f, 1f, 0f)); _artCapLitB.preserveAspect = false;
+            _artCapA.transform.SetAsLastSibling(); _artCapB.transform.SetAsLastSibling(); _artCapLitB.transform.SetAsLastSibling();
+            _addHalo = AddRingLayer("GlowHalo", "ring_add_halo", true);
+            _addCore = AddRingLayer("GlowCore", "ring_add_core", true);
+            _addSheen = AddRingLayer("Sheen", "ring_add_sheen", false); Stretch(_addSheen.rectTransform);
+            _addSheen.rectTransform.pivot = new Vector2(_art.ringCentrePx[0] / _art.ringBoxPx, 1f - _art.ringCentrePx[1] / _art.ringBoxPx);   // rotate about the ring centre
+            _addTip = AddRingLayer("GlowCapCore", "ring_add_cap_core", false);   // the moving cap's own core + halo light (make_ring_glow.py)
+            _addTipHalo = AddRingLayer("GlowCapHalo", "ring_add_cap_halo", false);
+            if (PORTRAIT_FRAME) _artRing.gameObject.SetActive(false);   // 11-02: no progress ring - the goal counter is the progress
+            // avatar in the photo well (the art's grey well), then the star + live level number on top
+            if (photo != null)
+            {
+                MkPlace(photo.rectTransform, _art.photo[0] - _art.photo[2], _art.photo[1] - _art.photo[2], _art.photo[0] + _art.photo[2], _art.photo[1] + _art.photo[2]);
+                if (PORTRAIT_FRAME) MkPlace(photo.rectTransform, FRAME_CX - FRAME_R - 1f, FRAME_CY - FRAME_R - 1f, FRAME_CX + FRAME_R + 1f, FRAME_CY + FRAME_R + 1f);   // +1: tucks under the inner line
+                photo.color = new Color32(0x5C, 0xA6, 0xF0, 0xFF);
+                // DEFAULT AVATAR = the preview's (2026-10-29 Spencer: "i dont like that profile icon ... use the one you were using
+                // in the preview"): blue ground + soft white bust + recess shading, already circular. The old bust is hidden; a
+                // real profile picture can later go into the "Avatar" child again.
+                if (PlayerProfile.Avatar != null)
+                {
+                    PlayerProfile.Bind(photo);   // the SAME picture as the home-screen bar (2026-10-29), kept in sync
+                    var oldAv = photo.transform.Find("Avatar"); if (oldAv != null) oldAv.gameObject.SetActive(false);
+                }
+                OwlPortrait.Attach(_mkRoot, photo);   // 11-01 placeholder mascot: owl in the portrait, head over the ring (under the star)
+                if (PORTRAIT_FRAME)
+                {   // above the masked photo (+ the owl's mask-edge line), below his unmasked head so the tufts break over the gold
+                    var frame = MkImage(_mkRoot, "PortraitFrame", FrameSprite(), Color.white); frame.preserveAspect = false; _portraitFrame = frame;
+                    float b = FRAME_R * (1f + FRAME_GOLD) + FRAME_LINE + FRAME_SHADOW_PAD;
+                    MkPlace(frame.rectTransform, FRAME_CX - b, FRAME_CY - b, FRAME_CX + b, FRAME_CY + b);
+                    frame.transform.SetSiblingIndex(photo.transform.GetSiblingIndex() + 1);
+                    var edge = photo.transform.parent.Find("OwlMaskEdge"); if (edge != null) edge.SetSiblingIndex(photo.transform.GetSiblingIndex() + 1);
+                }
+            }
+            // STAR DEPTH (10-31, Spencer: "make the star stick out more from the HUD ... shadow or some depth from the golden ring",
+            // picked option 3 of composition/library_home/star_depth_options.png): behind the star, ONE baked image = a soft drop
+            // shadow + a thin dark-purple ring hugging the star (its own silhouette grown ~3px), so its gold no longer runs into the
+            // portrait's gold ring. hud_star_back.png = hud_star.png's alpha padded 40px (2x art) each side; made by Python 10-31.
+            Image starBack = null;
+            if (STAR_DEPTH && ArtSprite("hud_star_back") != null)
+            {
+                starBack = MkImage(_mkRoot, "ArtStarBack", ArtSprite("hud_star_back"), Color.white); starBack.preserveAspect = false;
+                const float PAD = 20f;   // 40 art px = 20 design units
+                float sd = PORTRAIT_FRAME ? FRAME_STAR_DROP : 0f;
+                MkPlace(starBack.rectTransform, _art.star[0] - PAD, _art.star[1] - PAD + sd, _art.star[2] + PAD, _art.star[3] + PAD + sd);
+                _artStarBack = starBack;
+            }
+            var star = MkImage(_mkRoot, "ArtStar", ArtSprite("hud_star"), Color.white); star.preserveAspect = false; _artStar = star;
+            float sdrop = PORTRAIT_FRAME ? FRAME_STAR_DROP : 0f;
+            MkPlace(star.rectTransform, _art.star[0], _art.star[1] + sdrop, _art.star[2], _art.star[3] + sdrop);
+            var oldNum = _mkStarNum;
+            var numGO = new GameObject("LevelNum", typeof(RectTransform)); numGO.transform.SetParent(star.transform, false);
+            var nrt = (RectTransform)numGO.transform;
+            float sw = _art.star[2] - _art.star[0], sh = _art.star[3] - _art.star[1];
+            nrt.anchorMin = new Vector2((_art.starNum[0] - _art.star[0]) / sw - 0.08f, 1f - (_art.starNum[3] - _art.star[1]) / sh - 0.06f);
+            nrt.anchorMax = new Vector2((_art.starNum[2] - _art.star[0]) / sw + 0.08f, 1f - (_art.starNum[1] - _art.star[1]) / sh + 0.06f);
+            if (STAR_NUM_CENTRE.x > 0f)
+            {   // 11-03 new star art (Spencer: "the number isnt centered on the star"): centre the number box on the star's OPTICAL centre
+                // (fractions of the star image, x right / y DOWN). Measured face centroid (.50, .48); a star reads centred a bit lower.
+                Vector2 half = (nrt.anchorMax - nrt.anchorMin) * 0.5f, c = new Vector2(STAR_NUM_CENTRE.x, 1f - STAR_NUM_CENTRE.y);
+                nrt.anchorMin = c - half; nrt.anchorMax = c + half;
+            }
+            nrt.offsetMin = nrt.offsetMax = Vector2.zero;
+            _mkStarNum = numGO.AddComponent<TextMeshProUGUI>();
+            if (oldNum != null) _mkStarNum.font = oldNum.font;
+            _mkStarNum.alignment = TextAlignmentOptions.Center; _mkStarNum.enableAutoSizing = true; _mkStarNum.fontSizeMin = 8f; _mkStarNum.fontSizeMax = 80f;
+            _mkStarNum.raycastTarget = false; _mkStarNum.text = "";
+            if (HUD_RECIPE_D) ApplyRecipeCount(_mkStarNum, STAR_LINE, STAR_STROKE, STAR_DROP);   // 10-31 recipe D, thicker stroke for hierarchy
+            else ApplyRMNumberStyle(_mkStarNum, Color.white, new Color32(0xE2, 0xDE, 0xEE, 0xFF));   // his star number: white, thick dark outline
+            // 11-02: with the gold frame the ring stays off (this list is re-shown every frame - it had switched the ring back on)
+            _mkChrome = new[] { _artBar.gameObject, PORTRAIT_FRAME ? (_portraitFrame != null ? _portraitFrame.gameObject : null) : ringGO, star.gameObject, photo != null ? photo.gameObject : null, starBack != null ? starBack.gameObject : null };
+            foreach (var g in _mkChrome) if (g != null) g.SetActive(false);   // shown with the in-run panels (RefreshMockupHud)
+            _ringShown = -1f;
+            WDLog.Log("[ArtHUD] art HUD applied");
+        }
+        /// <summary>GOAL REACHED on the level star (2026-10-29, Spencer: "that kind of animation [as the coins hitting the coin on the
+        /// main menu] on the star when you achieve the goal? maybe have a star aura expanding out or something flashy?").
+        /// All additive (WordDrop/AdditiveSprite): a hot white-gold flash behind the star, two STAR-SHAPED auras (the star's own
+        /// silhouette) expanding out and fading, a burst of twinkle sparks, and the star itself pops + wiggles. STAR_FX = false = off.</summary>
+        public static bool STAR_FX = true;
+        public static bool BING_ON_STAR = true;   // 11-01: bing on the star pop + level-number change, not on the checkmark
+        private bool _starSwapReady;
+        private void StarCelebrate()
+        {
+            // the new level number lands at the pop's peak - and (11-01, Spencer) the objective-complete BING lands with it, instead of
+            // with the checkmark
+            DOVirtual.DelayedCall(0.14f, () => { _starSwapReady = true; if (BING_ON_STAR) GameAudio.Instance?.PlayBing(); }).SetUpdate(true);
+            GameAudio.Instance?.PlayScorePowerup();
+            if (!STAR_FX || _artStar == null) return;
+            var srt = _artStar.rectTransform; var mat = RingAddMat();
+            Vector2 size = srt.rect.size; Vector3 at = srt.position;
+            Image Layer(string n, Sprite sp, Color c, float sizeMul)
+            {
+                var img = MkImage(_mkRoot, n, sp, c); img.preserveAspect = true; if (mat != null) img.material = mat;
+                var rt = img.rectTransform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f); rt.sizeDelta = size * sizeMul; rt.position = at;
+                img.transform.SetAsLastSibling(); return img;
+            }
+            // 1 hot flash behind (well, over - additive) the star
+            var flash = Layer("StarFlash", WordDropFX.SoftDot(), new Color(1f, 0.92f, 0.6f, 1f), 1.6f);
+            flash.rectTransform.localScale = Vector3.one * 0.3f;
+            var fs = DOTween.Sequence().SetUpdate(true);
+            fs.Append(flash.rectTransform.DOScale(1.25f, 0.18f).SetEase(Ease.OutCubic)).Join(flash.DOFade(0f, 0.5f).SetEase(Ease.InQuad).SetDelay(0.05f));
+            fs.OnComplete(() => { if (flash != null) Destroy(flash.gameObject); });
+            // 2 star-shaped auras expanding out (the star art itself, additive, tinted) - two waves
+            for (int i = 0; i < 2; i++)
+            {
+                var aura = Layer("StarAura", _artStar.sprite, i == 0 ? new Color(1f, 0.85f, 0.35f, 0.9f) : new Color(0.55f, 0.85f, 1f, 0.75f), 1f);
+                aura.rectTransform.localScale = Vector3.one; float d = 0.08f + i * 0.14f;
+                var aq = DOTween.Sequence().SetUpdate(true).SetDelay(d);
+                aq.Append(aura.rectTransform.DOScale(2.4f + i * 0.6f, 0.6f).SetEase(Ease.OutCubic)).Join(aura.DOFade(0f, 0.6f).SetEase(Ease.InQuad))
+                  .Join(aura.rectTransform.DORotate(new Vector3(0, 0, i == 0 ? 18f : -18f), 0.6f).SetEase(Ease.OutCubic));
+                aq.OnComplete(() => { if (aura != null) Destroy(aura.gameObject); });
+            }
+            // 3 sparks bursting out
+            var tw = WordDropFX.TwinkleSprite != null ? WordDropFX.TwinkleSprite : WordDropFX.SoftDot();
+            for (int i = 0; i < 12; i++)
+            {
+                var sp = Layer("StarSpark", tw, i % 3 == 0 ? new Color(0.6f, 0.9f, 1f, 1f) : new Color(1f, 0.93f, 0.55f, 1f), Random.Range(0.18f, 0.3f));
+                float ang = (i / 12f + Random.Range(-0.03f, 0.03f)) * Mathf.PI * 2f, dist = size.x * Random.Range(0.9f, 1.6f);
+                var r = sp.rectTransform; r.localScale = Vector3.one * 0.2f;
+                var q = DOTween.Sequence().SetUpdate(true).SetDelay(Random.Range(0f, 0.08f));
+                q.Append(r.DOScale(1f, 0.14f).SetEase(Ease.OutBack, 2f))
+                 .Join(r.DOAnchorPos(r.anchoredPosition + new Vector2(Mathf.Cos(ang), Mathf.Sin(ang)) * dist, 0.55f).SetEase(Ease.OutCubic))
+                 .Join(r.DORotate(new Vector3(0, 0, Random.Range(-90f, 90f)), 0.55f))
+                 .Insert(0.22f, sp.DOFade(0f, 0.36f).SetEase(Ease.InQuad));
+                q.OnComplete(() => { if (sp != null) Destroy(sp.gameObject); });
+            }
+            // 4 the star pops + wiggles (and its number with it)
+            srt.DOKill(true); srt.localScale = Vector3.one; srt.localRotation = Quaternion.identity;
+            var ss = DOTween.Sequence().SetUpdate(true);
+            ss.Append(srt.DOScale(1.35f, 0.14f).SetEase(Ease.OutQuad)).Append(srt.DOScale(1f, 0.45f).SetEase(Ease.OutElastic, 1.1f, 0.35f));
+            ss.Insert(0f, srt.DOPunchRotation(new Vector3(0, 0, 14f), 0.6f, 8, 0.6f));
+            if (_artStarBack != null)   // the ring + shadow move with the star
+            {
+                var brt = _artStarBack.rectTransform; brt.DOKill(true); brt.localScale = Vector3.one; brt.localRotation = Quaternion.identity;
+                var bs = DOTween.Sequence().SetUpdate(true);
+                bs.Append(brt.DOScale(1.35f, 0.14f).SetEase(Ease.OutQuad)).Append(brt.DOScale(1f, 0.45f).SetEase(Ease.OutElastic, 1.1f, 0.35f));
+                bs.Insert(0f, brt.DOPunchRotation(new Vector3(0, 0, 14f), 0.6f, 8, 0.6f));
+            }
+            WDLog.Log("[ArtHUD] star celebrate");
+        }
+        private static void Stretch(RectTransform rt) { rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = rt.offsetMax = Vector2.zero; }
+        private void ArtPanel(GameObject panel, RectTransform inner, float[] box)
+        {
+            if (panel == null || box == null) return;
+            MkPlace((RectTransform)panel.transform, box[0], box[1], box[2], box[3]);
+            var fr = panel.GetComponent<Image>(); if (fr != null) fr.color = new Color(1f, 1f, 1f, 0f);
+            if (inner != null) { var ii = inner.GetComponent<Image>(); if (ii != null) ii.color = new Color(1f, 1f, 1f, 0f); }
+            var plq = panel.transform.Find("Plaque");
+            if (plq != null) { var cg = plq.GetComponent<CanvasGroup>(); if (cg == null) cg = plq.gameObject.AddComponent<CanvasGroup>(); cg.alpha = 0f; cg.blocksRaycasts = false; }   // NOT '??': Unity's fake-null GetComponent result slips past it
+        }
+        private void SetArtBarRewards(bool on)
+        {
+            if (_artBar == null) return;
+            var sp = on && _artBarRewards != null ? _artBarRewards : _artBarGoals;
+            if (_artBar.sprite != sp) _artBar.sprite = sp;
+        }
+        /// <summary>Level progress 0..1 = goal units done / goal units total (GoalRemaining honours letters still in flight).</summary>
+        private float GoalProgress01()
+        {
+            if (_rewardMode) return 1f;
+            if (LevelRules.Goals.Count == 0 || SurvivalManager.Instance == null || !LevelRules.GoalsActiveFor(SurvivalManager.Instance.CurrentStageIndex)) return 0f;
+            float tot = 0f, done = 0f;
+            foreach (var g in LevelRules.Goals) { tot += g.Target; done += g.Target - GoalRemaining(g); }
+            return tot > 0f ? Mathf.Clamp01(done / tot) : 0f;
+        }
+        private void RefreshArtRing()
+        {
+            // 11-02 PORTRAIT_FRAME: the ring is hidden but its progress tracking still runs - it fires StarCelebrate (and the new level
+            // number lands at that pop's peak). Spencer: "put back in the star animation ... when you achieve the objective".
+            if (_artFill == null || _art == null || (!PORTRAIT_FRAME && !_artFill.gameObject.activeInHierarchy)) return;
+            float want = RING_TEST >= 0f ? RING_TEST : GoalProgress01();
+            // NEVER GO BACKWARDS WITHIN A LEVEL (10-29, Spencer: "when you achieve the goal all of a sudden the progress bar
+            // disappears and then reappears and goes to the end"): at the goal-complete moment the goals stop being 'active' for a
+            // beat (GoalProgress01 -> 0, the ring snapped empty) before reward mode reports 1. Within one stage the ring only rises;
+            // it resets only when the stage changes.
+            int stage = SurvivalManager.Instance != null ? SurvivalManager.Instance.CurrentStageIndex : -1;
+            if (RING_TEST < 0f)
+            {
+                // 10-29 (Spencer: "when you pass the level it is resetting the status bar to zero ... it is saying it is already level
+                // 2"): the stage index ticks over as soon as the level is passed, while this level's HUD (reward count-up, win modal)
+                // is still on screen. Only reset once the NEW level's goals are actually live; until then the ring holds full.
+                bool newLevelLive = !_rewardMode && !SurvivalManager.AwaitingNextLevel && LevelRules.GoalsActiveFor(stage) && !LevelRules.AllGoalsDone();
+                if (stage != _ringStage && newLevelLive) { _ringStage = stage; _ringShown = -1f; _starSwapReady = false; }
+                else if (stage != _ringStage) want = Mathf.Max(want, Mathf.Max(0f, _ringShown));
+                else if (LevelRules.Goals.Count > 0 && LevelRules.AllGoalsDone()) want = 1f;
+                else want = Mathf.Max(want, Mathf.Max(0f, _ringShown));
+            }
+            if (PORTRAIT_FRAME)
+            {   // no ring to animate: track the goal directly so the star fires the moment the objective is achieved
+                _ringShown = want;
+                if (_ringShown >= 0.999f && !_ringFullFx) { _ringFullFx = true; StarCelebrate(); }
+                else if (_ringShown < 0.99f) _ringFullFx = false;
+                return;
+            }
+            bool growing = _ringShown >= 0f && want - _ringShown > 0.003f;
+            if (_ringShown < 0f || want < _ringShown - 0.5f) _ringShown = want;            // level start / reset: snap
+            else
+            {
+                float next = Mathf.Lerp(_ringShown, want, 1f - Mathf.Exp(-RING_EASE * Time.unscaledDeltaTime));
+                float maxStep = RING_MAX_SPEED * Time.unscaledDeltaTime;
+                // THE FINAL STRETCH ARRIVES (2026-10-30 Spencer: "the star animation ... should fire exactly when the status bar
+                // reached full. right now it is delayed"): the exponential ease crawls through its last few percent - the bar
+                // LOOKED full a second or two before it hit 1 and fired the star, by then the bonus was over. Heading for full, it
+                // never drops below RING_FINISH_SPEED, so it lands crisply and the star goes off on the frame it fills.
+                if (want >= 0.999f) next = Mathf.Max(next, Mathf.MoveTowards(_ringShown, want, RING_FINISH_SPEED * Time.unscaledDeltaTime));
+                _ringShown = Mathf.Clamp(next, _ringShown - maxStep, _ringShown + maxStep);
+            }
+            if (Mathf.Abs(_ringShown - want) < 0.001f) _ringShown = want;
+            _artFill.fillAmount = _ringShown;
+            bool on = _ringShown > 0.002f;
+            PlaceCap(_artCapA, 180f, on);                                                     // start, hidden behind the star
+            PlaceCap(_artCapB, 180f - _ringShown * 360f, on && _ringShown < 0.999f);         // moving end
+            RingGrowFx(growing && on, 180f - _ringShown * 360f);
+            if (_ringShown >= 0.999f && !_ringFullFx)
+            {
+                _ringFullFx = true;
+                _artRing.DOKill(true); _artRing.DOPunchScale(Vector3.one * 0.06f, 0.45f, 6, 0.6f).SetUpdate(true);
+                StarCelebrate();
+            }
+            else if (_ringShown < 0.99f) _ringFullFx = false;
+        }
+        /// <summary>Where angle a (deg CCW from 12) sits on the ring's band: normalised position in the ring box (y up) + band width
+        /// as a fraction of the box.</summary>
+        private Vector2 RingPoint(float a, out float wNorm)
+        {
+            a = Mathf.Repeat(a, 360f);
+            int i0 = Mathf.FloorToInt(a) % 360, i1 = (i0 + 1) % 360; float f = a - Mathf.Floor(a);
+            float rin = Mathf.Lerp(_art.bandInPx[i0], _art.bandInPx[i1], f), rout = Mathf.Lerp(_art.bandOutPx[i0], _art.bandOutPx[i1], f);
+            float rmid = (rin + rout) * 0.5f, B = _art.ringBoxPx, th = a * Mathf.Deg2Rad;
+            wNorm = (rout - rin) / B;
+            return new Vector2((_art.ringCentrePx[0] - rmid * Mathf.Sin(th)) / B, 1f - (_art.ringCentrePx[1] - rmid * Mathf.Cos(th)) / B);
+        }
+        private void RingGrowFx(bool growing, float a)
+        {
+            if (!RING_FX || _addCore == null) return;
+            float dt = Time.unscaledDeltaTime;
+            // swell in, settle out (no blink): smoothstep of an eased envelope
+            _ringGlowA = Mathf.MoveTowards(_ringGlowA, growing ? 1f : 0f, dt * (growing ? 2.6f : 1.3f));
+            float env = _ringGlowA * _ringGlowA * (3f - 2f * _ringGlowA);
+            float amt = _artFill.fillAmount;
+            _addCore.fillAmount = _addHalo.fillAmount = amt;
+            _addCore.color = new Color(1f, 1f, 1f, 0.55f * env * RING_GLOW_MAX);
+            _addHalo.color = new Color(1f, 1f, 1f, 0.75f * env * RING_GLOW_MAX);
+            if (_artFillLit != null) _artFillLit.color = new Color(1f, 1f, 1f, 0f);        // v2 lit copy off
+            if (_artCapLitB != null && _artCapLitB.gameObject.activeSelf) _artCapLitB.gameObject.SetActive(false);
+            // the moving cap glows with the tube: an additive copy of the cap sprite, same rect + rotation as the cap (no spill)
+            bool tipOn = env > 0.01f && _artCapB != null && _artCapB.gameObject.activeSelf;
+            foreach (var (gl, alpha) in new[] { (_addTip, 0.55f), (_addTipHalo, 0.75f) })   // SAME alphas as the tube's core / halo
+            {
+                if (gl == null) continue;
+                if (gl.gameObject.activeSelf != tipOn) gl.gameObject.SetActive(tipOn);
+                if (!tipOn) continue;
+                var src = _artCapB.rectTransform; var rt = gl.rectTransform;
+                rt.anchorMin = src.anchorMin; rt.anchorMax = src.anchorMax; rt.offsetMin = rt.offsetMax = Vector2.zero; rt.localEulerAngles = src.localEulerAngles;
+                gl.color = new Color(1f, 1f, 1f, alpha * env * RING_GLOW_MAX);
+            }
+            // SHEEN: runs from the star (start) to the tip, repeating while it grows; one last pass as it settles
+            if (_sheenT < 0f && env > 0.3f && Time.unscaledTime >= _sheenNext && amt > 0.04f) _sheenT = 0f;
+            bool sheenOn = _sheenT >= 0f;
+            if (_addSheen.gameObject.activeSelf != sheenOn) _addSheen.gameObject.SetActive(sheenOn);
+            if (sheenOn)
+            {
+                _sheenT += dt / RING_SHEEN_TIME;
+                float k = Mathf.Clamp01(_sheenT); float e = k * k * (3f - 2f * k);
+                const float SHEEN_HALF = 19f / 360f;                                        // half the sheen's angular width (+ margin)
+                float span = amt - 2f * SHEEN_HALF;
+                if (span <= 0f) { _sheenT = -1f; _addSheen.gameObject.SetActive(false); return; }   // too short a fill for a sheen
+                float prog = SHEEN_HALF + e * span;                                          // the sheen stays wholly INSIDE the filled arc
+                float sa = 180f - prog * 360f;                                              // CCW-from-top angle of the sheen centre
+                _addSheen.rectTransform.localEulerAngles = new Vector3(0f, 0f, sa);
+                float edge = Mathf.Sin(Mathf.Clamp01(e) * Mathf.PI);                       // fades in from the star, out before the tip
+                _addSheen.color = new Color(1f, 1f, 1f, 0.9f * edge * Mathf.Max(env, 0.35f));
+                if (_sheenT >= 1f) { _sheenT = -1f; _sheenNext = Time.unscaledTime + RING_SHEEN_GAP; }
+            }
+        }
+        /// <summary>Put a rounded cap on the ring at angle a (degrees COUNTER-clockwise from 12 o'clock), sized + placed on the
+        /// ring's MEASURED band at that angle (make_ring.band_at), its 'up' pointing outward.</summary>
+        private void PlaceCap(Image cap, float a, bool show)
+        {
+            if (cap == null) return;
+            if (cap.gameObject.activeSelf != show) cap.gameObject.SetActive(show);
+            if (!show) return;
+            a = Mathf.Repeat(a, 360f);
+            int i0 = Mathf.FloorToInt(a) % 360, i1 = (i0 + 1) % 360; float f = a - Mathf.Floor(a);
+            float rin = Mathf.Lerp(_art.bandInPx[i0], _art.bandInPx[i1], f), rout = Mathf.Lerp(_art.bandOutPx[i0], _art.bandOutPx[i1], f);
+            float rmid = (rin + rout) * 0.5f, w = rout - rin, B = _art.ringBoxPx;
+            float th = a * Mathf.Deg2Rad;
+            float px = _art.ringCentrePx[0] - rmid * Mathf.Sin(th), py = _art.ringCentrePx[1] - rmid * Mathf.Cos(th);   // crop px, y down
+            float capPx = Mathf.Ceil(_art.capWidthPx) + 4f;                                    // the cap sprite's canvas (make_caps)
+            float half = 0.5f * capPx * (w / _art.capWidthPx) / B;
+            var rt = cap.rectTransform; rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchorMin = new Vector2(px / B - half, 1f - py / B - half); rt.anchorMax = new Vector2(px / B + half, 1f - py / B + half);
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+            rt.localEulerAngles = new Vector3(0f, 0f, a);
+        }
         public static float MOVES_NUM_INSET_X = 0.17f, MOVES_NUM_INSET_Y = 0.15f;   // margins inside the MOVES box (0 = fill it)
         private void RefreshMockupHud()
         {
+            RefreshArtRing();
             if (_mkChrome != null)
             {
                 bool show = _movesPanel != null && _movesPanel.activeSelf;   // same rule as the in-run GOAL/MOVES panels
@@ -1507,7 +2051,11 @@ namespace WordDrop
             }
             if (_mkStarNum == null || SurvivalManager.Instance == null) return;
             string lv = LevelMapPanel.DisplayNum(SurvivalManager.Instance.CurrentStageIndex).ToString();
-            if (_mkStarNum.text != lv) _mkStarNum.text = lv;
+            // 10-31 Spencer: "the level number on the star shouldnt change until the animation fires". The stage index ticks over the
+            // moment the level is passed; the star keeps the OLD number while the ring still belongs to the old level, and switches
+            // at the peak of StarCelebrate's pop (_starSwapReady). Empty (first show) always writes.
+            bool held = _mkStarNum.text.Length > 0 && SurvivalManager.Instance.CurrentStageIndex != _ringStage && !_starSwapReady;
+            if (_mkStarNum.text != lv && !held) _mkStarNum.text = lv;
         }
 
         private void BuildResetButton(Transform plateTransform)
@@ -2128,9 +2676,11 @@ namespace WordDrop
                 bool gem = !duck && LevelRules.HasGemGoal && Tile.GemSprite != null;
                 Color acc = gem ? Tile.GEM_ACCENT : Tile.CollectAccent;
                 Color vg = new Color(acc.r * 2f + 0.2f, acc.g * 2f + 0.2f, acc.b * 2.2f + 0.2f, 1f);   // HDR glow in the collect colour
+                bool gemFx = gem && GEM_GLOW_FX;
+                if (gemFx) vg = GEM_GLOW_HDR;
                 StartCoroutine(FlyTileCoroutine(startWorld, duck ? Tile.DuckSprite : gem ? Tile.GemSprite : Tile.CollectFaceSprite, (gem || duck) ? Color.white : Tile.CollectFaceTint, vg, letter,
                     flyTarget.position, OnCollectLanded, startDelay, popPeak, sortBase, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE,
-                    duck ? DUCK_FLY_DUR : -1f));
+                    duck ? DUCK_FLY_DUR : gemFx ? GEM_FLY_DUR : -1f, gemFx: gemFx));
                 return;
             }
             // Gold-only fly-up (HandManager.FLY_UP_GOLD_ONLY) is its own permission: both callers already pass
@@ -2288,6 +2838,7 @@ namespace WordDrop
                 tex = Resources.Load<Texture2D>("Coins/VFX_Coin_rotation");
             }
             if (tex == null) return null;
+            if (COLS == 8 && tex.width != 1024 && tex.width % 128 == 0) COLS = tex.width / 128;   // 11-03: the thick crown coin sheet is 6x4 (24 frames) of 128 px
             int fw = tex.width / COLS, fh = tex.height / ROWS;
             var frames = new Sprite[COLS * ROWS];
             int idx = 0;
@@ -2510,6 +3061,8 @@ namespace WordDrop
         private bool _rewardMode;
         private int  _rewardShown;
         private Image _rewardCoinIcon;
+        /// <summary>11-02: the in-level REWARD coin, when it's showing (Well Done coin flight target).</summary>
+        public RectTransform RewardCoinRect => _rewardCoinIcon != null && _rewardCoinIcon.gameObject.activeInHierarchy ? _rewardCoinIcon.rectTransform : null;
 
         // ── COLLECT ICON (2026-10-21 Spencer: "there should be an icon of a purple E tile in the HUD that it flies up to and
         // glows when it hits much like our coin animation"). A violet tile with the letter, left of the count — the same slot
@@ -2554,7 +3107,38 @@ namespace WordDrop
             // RM's target badges ("3", "24") are the SAME treatment as its moves number — cream face, navy stroke, lip —
             // not white. 2026-10-22 comparison. (BADGE_OUTLINE kept for reference; the shared RM material now drives it.)
             if (num == null) return;
+            if (HUD_RECIPE_D) { ApplyRecipeCount(num, HUD_INK, D_STROKE, D_DROP); return; }   // 10-31 recipe D
             ApplyRMNumberStyle(num, RM_MOVES_TOP, RM_MOVES_BOTTOM);
+        }
+        // GOLD RUSH MULTIPLIER BADGE (2026-10-30, Spencer: "didnt notice the banners really"): a permanent x1/x2/x3/x4 on the
+        // reward coin's top-left while the bonus level runs, punching big (+ a sound) each time it climbs - the climb is on
+        // the thing the player is already watching (the coins landing) instead of a banner over the board.
+        private TextMeshProUGUI _rushBadge; private int _rushShown = -1;
+        public static float RUSH_BADGE_PUNCH = 1.9f;
+        private void RefreshRushBadge()
+        {
+            bool want = _rewardMode && LevelRules.BonusLevelActive && !LevelRules.GOLD_RUSH_SAFES && _rewardCoinIcon != null && _rewardCoinIcon.gameObject.activeInHierarchy;
+            if (!want) { if (_rushBadge != null && _rushBadge.gameObject.activeSelf) _rushBadge.gameObject.SetActive(false); _rushShown = -1; return; }
+            if (_rushBadge == null)
+            {
+                _rushBadge = MakeCornerBadge(_rewardCoinIcon.rectTransform, 1f);
+                _rushBadge.gameObject.name = "RushBadge";
+                var r = _rushBadge.rectTransform; r.anchorMin = new Vector2(-0.55f, 0.50f); r.anchorMax = new Vector2(0.25f, 1.18f);
+                r.offsetMin = r.offsetMax = Vector2.zero; _rushBadge.fontSizeMax = 52f;
+            }
+            if (!_rushBadge.gameObject.activeSelf) _rushBadge.gameObject.SetActive(true);
+            int m = LevelRules.GoldRushMultNow();
+            if (m == _rushShown) return;
+            bool climbed = _rushShown > 0 && m > _rushShown;
+            _rushShown = m;
+            _rushBadge.text = "x" + m;
+            if (climbed)
+            {
+                var t = _rushBadge.transform; t.DOKill(); t.localScale = Vector3.one * RUSH_BADGE_PUNCH; t.localRotation = Quaternion.Euler(0, 0, -14f);
+                t.DOScale(1f, 0.45f).SetEase(Ease.OutBack, 2.6f).SetUpdate(true);
+                t.DOLocalRotate(Vector3.zero, 0.45f).SetEase(Ease.OutElastic).SetUpdate(true);
+                GameAudio.Instance?.PlayScorePowerup();
+            }
         }
         private void RefreshRewardBadge()
         {
@@ -2569,7 +3153,10 @@ namespace WordDrop
                 t.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
             }
         }
-        private class GoalIconEntry { public LevelRules.GoalType Type; public RectTransform Pic; public TextMeshProUGUI Num; public GameObject Check; public int Shown = -1; }
+        private class GoalIconEntry { public LevelRules.GoalType Type; public RectTransform Pic; public TextMeshProUGUI Num; public GameObject Check; public int Shown = -1; public float Base = 1f; }
+        /// <summary>The goal picture's resting scale (GOAL_SCALE_1/2 fill the box). 10-31 Spencer: the goal "starts out too big and then
+        /// adjusts" - every landing punch settled to 1.0, shrinking the picture after the first goal. Punches now settle here.</summary>
+        private float PicBase(Transform t) { foreach (var e in _goalIcons) if (e.Pic == t) return e.Base; return 1f; }
         private readonly List<GoalIconEntry> _goalIcons = new List<GoalIconEntry>();
         private GameObject _goalIconsRoot; private string _goalIconsSig;
         private bool GoalsOnHud
@@ -2598,6 +3185,7 @@ namespace WordDrop
             bool flies = g.Type == LevelRules.GoalType.Collect || g.Type == LevelRules.GoalType.Gems || g.Type == LevelRules.GoalType.Ducks;
             int done = flies ? Mathf.Max(0, LevelRules.GoalProgress(g) - CollectInFlight - LevelRules.CollectAwaitingFly)
                      : g.Type == LevelRules.GoalType.Theme ? Mathf.Max(0, LevelRules.GoalProgress(g) - LevelRules.ThemeAwaitingFly)
+                     : g.Type == LevelRules.GoalType.Books ? Mathf.Max(0, LevelRules.GoalProgress(g) - BooksInFlight - LevelRules.BooksAwaitingFly)   // BOOKSHELF: ticks on landing
                      : LevelRules.GoalProgress(g);
             return Mathf.Max(0, g.Target - done);
         }
@@ -2674,6 +3262,10 @@ namespace WordDrop
                 prt.offsetMin = prt.offsetMax = Vector2.zero;
                 var fit = pic.AddComponent<AspectRatioFitter>();
                 fit.aspectMode = AspectRatioFitter.AspectMode.HeightControlsWidth; fit.aspectRatio = 1f;
+                // FILL THE PANEL (2026-10-29, Spencer OK'd the composition mock): one goal floated small in the wide Goals box ->
+                // scale the goal picture (and its count with it) by how many goals share the panel
+                float picBase = ART_HUD ? (n == 1 ? GOAL_SCALE_1 : n == 2 ? GOAL_SCALE_2 : 1f) : 1f;
+                pic.transform.localScale = Vector3.one * picBase;
                 var info = new LevelRules.GoalIconInfo { Type = g.Type, Count = 0, Letter = g.Letter, Theme = g.Theme };
                 var icon = ObjectiveIconBuilder.BuildGoalIcon(info, pic.transform, 40f);
                 if (icon != null)
@@ -2703,7 +3295,7 @@ namespace WordDrop
                 var cimg = check.GetComponent<Image>(); cimg.sprite = LoadCheckSprite(); cimg.preserveAspect = true; cimg.raycastTarget = false;
                 check.SetActive(false);
 
-                _goalIcons.Add(new GoalIconEntry { Type = g.Type, Pic = prt, Num = num, Check = check });
+                _goalIcons.Add(new GoalIconEntry { Type = g.Type, Pic = prt, Num = num, Check = check, Base = picBase });
             }
             WDLog.Log($"[GoalHud] built {n} goal picture(s)");
         }
@@ -2720,8 +3312,9 @@ namespace WordDrop
                 RefreshGoalIcons(punch: true);
                 if (target != null)
                 {
-                    target.DOKill(); target.localScale = Vector3.one * 1.28f;
-                    target.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+                    float tb = PicBase(target);
+                    target.DOKill(); target.localScale = Vector3.one * 1.28f * tb;
+                    target.DOScale(tb, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
                     SpawnSlotSparkleBurst((RectTransform)target, Vector2.zero);
                 }
                 GameAudio.Instance?.PlayCoinLand();
@@ -2785,6 +3378,62 @@ namespace WordDrop
         /// 0.34s; a duck always starts on the BOTTOM row — the longest trip on screen — so it crossed the whole screen in a third
         /// of a second. Ducks get their own, slower float up. Letters/gems keep 0.34.</summary>
         public static float DUCK_FLY_DUR = 0.8f;
+        // GEM GLOW (2026-11-01, Spencer: "make the diamond pieces glow when you get them"). The gem flight already had a halo, but it
+        // flashed for 0.13s then sat at 35-55% on a 0.34s flight - unseen. Now (coin-pop recipe, RM 50-100 ref): a bigger cyan
+        // HDR halo that blooms at pickup with a sparkle burst, stays lit and pulses through a slightly longer flight, and sheds
+        // cyan sparkles. Landing burst unchanged (already sparkles + coin-hit glow). GEM_GLOW_FX = false -> the old flight.
+        public static bool  GEM_GLOW_FX = true;
+        // 11-06: target-letter/gem pickup pop -> flight. The glow bloom (0.17 s, Spencer 11-01) is kept; only the settle and the
+        // dead beat before take-off are trimmed. Was 0.16 / 0.05.
+        public static float POP_SETTLE = 0.10f, POP_TO_FLY_GAP = 0f;
+        public static float GEM_FLY_DUR = 0.40f,   /* 11-06: 0.5 -> 0.4 (L1-20 recording: gem pop -> count ~1.1 s; RM ~0.5 s) */ GEM_GLOW_HOLD = 0.9f, GEM_GLOW_SIZE = 1.35f;
+        public static int   GEM_PICKUP_SPARKS = 10;
+        // 11-16 ruby gems: halo + trail sparks follow the gem colour (were cyan 0.55,2.4,2.8 / 0.62,0.97,1).
+        public static Color GEM_GLOW_HDR = Tile.GEM_MAGENTA ? new Color(2.6f, 0.6f, 2.6f, 1f) : Tile.GEM_RUBY ? new Color(2.8f, 0.5f, 0.7f, 1f) : new Color(0.55f, 2.4f, 2.8f, 1f);
+        public static Color GEM_SPARK = Tile.GEM_MAGENTA ? new Color(1f, 0.72f, 1f, 1f) : Tile.GEM_RUBY ? new Color(1f, 0.66f, 0.72f, 1f) : new Color(0.62f, 0.97f, 1f, 1f);
+        // ── BOOKSHELF (2026-11-03): a knocked-off book flies from its slot on the shelf into the Books goal picture; the badge ticks
+        // when it LANDS (GoalRemaining subtracts BooksInFlight + LevelRules.BooksAwaitingFly). ──
+        public static int BooksInFlight;
+        private float _bookLaunchGate;
+        private Transform BooksFlightTarget
+        {
+            get
+            {
+                if (GoalIconsShowing) foreach (var e in _goalIcons) if (e.Type == LevelRules.GoalType.Books) return e.Pic;
+                return null;
+            }
+        }
+        public void FlyBook(Vector3 startWorld, Sprite book)
+        {
+            if (LevelRules.BooksAwaitingFly > 0) LevelRules.BooksAwaitingFly--;
+            BooksInFlight++;
+            var target = BooksFlightTarget;
+            if (!isActiveAndEnabled || Camera.main == null || target == null || !target.gameObject.activeInHierarchy || UIAnimations.ReducedMotion) { OnBookLanded(); return; }
+            float now = Time.unscaledTime;
+            float delay = Mathf.Max(0f, _bookLaunchGate - now);
+            _bookLaunchGate = now + delay + COLLECT_LAND_SPACING;
+            StartCoroutine(FlyTileCoroutine(startWorld, book, Color.white, new Color(2.2f, 1.6f, 0.7f, 1f), '\0', target.position, OnBookLanded,
+                delay, 1.28f, 200, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE));
+        }
+        private float _goalHitAt = -10f; private int _goalHitStep;
+        private void GoalHitSound()
+        {   // a run of goal items landing climbs a little in pitch (like the coin ramp), resets after a pause
+            float now = Time.unscaledTime; _goalHitStep = now - _goalHitAt < 0.6f ? Mathf.Min(_goalHitStep + 1, 8) : 0; _goalHitAt = now;
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("goal_hit")) GameAudio.Instance.PlayKit("goal_hit", 1f, Mathf.Pow(2f, _goalHitStep / 12f));
+            else GameAudio.Instance?.PlayCoinLand();
+        }
+        private void OnBookLanded()
+        {
+            BooksInFlight = Mathf.Max(0, BooksInFlight - 1);
+            var landT = BooksFlightTarget;
+            if (landT == null || !landT.gameObject.activeInHierarchy) { RefreshGoalIcons(punch: false); return; }
+            RefreshGoalIcons(punch: true);
+            var irt = (RectTransform)landT; float lb = PicBase(landT);
+            irt.DOKill(); irt.localScale = Vector3.one * 1.28f * lb;
+            irt.DOScale(lb, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+            SpawnSlotSparkleBurst(irt, Vector2.zero);
+            GoalHitSound();   // 11-07 Spencer: goal items played the COIN ting - their own sound now (Glass Surface Plop C3)
+        }
         private float _collectLaunchGate;
         public void FlyCollectLetter(Vector3 startWorld, char letter)
         {
@@ -2803,14 +3452,14 @@ namespace WordDrop
             var landT = CollectFlightTarget;
             if (landT == null || !landT.gameObject.activeInHierarchy) return;
             RefreshGoalIcons(punch: true);
-            var irt = (RectTransform)landT;
-            irt.DOKill(); irt.localScale = Vector3.one * 1.28f;
-            irt.DOScale(1f, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
+            var irt = (RectTransform)landT; float lb = PicBase(landT);
+            irt.DOKill(); irt.localScale = Vector3.one * 1.28f * lb;
+            irt.DOScale(lb, 0.22f).SetEase(Ease.OutBack, 2.2f).SetUpdate(true);
             SpawnSlotSparkleBurst(irt, Vector2.zero);
             var canvas = landT.GetComponentInParent<Canvas>();
             var map = LevelMapPanel.Instance;
             if (map != null && canvas != null) map.SpawnCoinHitFXOn(canvas.rootCanvas.transform, irt.position);   // the coin-hit glow
-            GameAudio.Instance?.PlayCoinLand();
+            GoalHitSound();   // 11-07 Spencer: goal items played the COIN ting - their own sound now (Glass Surface Plop C3)
         }
         /// <summary>Coin icon on the left of the panel in REWARD mode, number shifted right. 2026-10-21 Spencer: "could you have
         /// the coin icon though in the reward part of the hud?" Restored to the full-width SCORE layout on exit.</summary>
@@ -2866,32 +3515,45 @@ namespace WordDrop
             if (_scoreCountUp != null) { StopCoroutine(_scoreCountUp); _scoreCountUp = null; }
             SetRewardLayout(true);
             _rewardMode = true;
+            SetArtBarRewards(true);
             _rewardShown = Mathf.Max(0, startCoins);
             if (_objectivePanelLabel != null) _objectivePanelLabel.text = PanelLabel("REWARD");
             if (_scorePanelNum != null) { _scorePanelNum.text = _rewardShown.ToString("N0"); AnimateScorePop(_scorePanelNum.rectTransform); }
         }
+        /// <summary>True from the bonus blast's start until reward mode ends: the REWARD readout is driven by the real payout
+        /// (SetRewardTotal), and landing coins only punch it.</summary>
+        public static bool RewardFromPayouts;
+        public static System.Func<int> RewardLiveTarget;   // set by the bonus blast: live paid-so-far total
+        private int _rewardTarget, _bonusCoinsInFlight, _bonusValueInFlight;
         public void ExitRewardMode()
         {
+            RewardFromPayouts = false; RewardLiveTarget = null; _rewardTarget = 0; _bonusCoinsInFlight = 0; _bonusValueInFlight = 0;
             if (!_rewardMode) return;
             _rewardMode = false;
             SetRewardLayout(false);
+            SetArtBarRewards(false);
         }
         /// <summary>Snap the REWARD readout to the true total (coins in flight may round differently).</summary>
         public void SetRewardTotal(int total)
         {
             if (!_rewardMode) return;
-            _rewardShown = total;
+            if (RewardFromPayouts) { _rewardTarget = Mathf.Max(_rewardTarget, total); return; }   // 10-31: target only - coins count it up
+            _rewardShown = total; _rewardTarget = total;
             if (_scorePanelNum != null) _scorePanelNum.text = _rewardShown.ToString("N0");
         }
         /// <summary>Coins burst out of tiles a bonus special destroyed and fly into the REWARD panel. The cells arrive in
         /// sweep order (nearest the special first) and launch staggered, so they STREAM like the rocket's path instead
         /// of all leaving on one frame. Visual coins are capped (BONUS_COIN_VISUAL_CAP); their shares still add up to
         /// <paramref name="totalValue"/>.</summary>
-        public void SpawnBonusCoins(List<Vector3> worldStarts, int totalValue)
+        public void SpawnBonusCoins(List<Vector3> worldStarts, int totalValue) => SpawnBonusCoins(worldStarts, totalValue, null);
+        /// <param name="startDelays">11-07: per-start delay (s) - each coin waits until its tile breaks. One call per special keeps the
+        /// original stream (cap + stagger), so the coin-landing sound keeps its rhythm.</param>
+        public void SpawnBonusCoins(List<Vector3> worldStarts, int totalValue, List<float> startDelays)
         {
             if (!_rewardMode || worldStarts == null || worldStarts.Count == 0 || totalValue <= 0) return;
             if (!isActiveAndEnabled || UIAnimations.ReducedMotion || Camera.main == null) { _rewardShown += totalValue; SetRewardTotal(_rewardShown); return; }
             int n = Mathf.Min(worldStarts.Count, BONUS_COIN_VISUAL_CAP);
+            _bonusCoinsInFlight += n; _bonusValueInFlight += totalValue;
             int per = totalValue / n, rem = totalValue - per * n;
             var map = LevelMapPanel.Instance;
             var hudCanvas = (_rewardCoinIcon != null && _rewardCoinIcon.canvas != null) ? _rewardCoinIcon.canvas.rootCanvas : null;
@@ -2904,13 +3566,24 @@ namespace WordDrop
                     // The HOME-SCREEN coin flight (2026-10-21 Spencer), on the HUD canvas, into the REWARD coin icon.
                     Vector3 screen = Camera.main.WorldToScreenPoint(worldStarts[src]);
                     var hudRoot = hudCanvas.transform;
-                    StartCoroutine(map.CoinFlyRoutine(hudRoot, screen, _rewardCoinIcon.rectTransform, share, i,
-                        (s, p) => { OnRewardCoinLanded(s); map.SpawnCoinHitFXOn(hudRoot, _rewardCoinIcon != null ? _rewardCoinIcon.rectTransform.position : p); }));
+                    var fly = map.CoinFlyRoutine(hudRoot, screen, _rewardCoinIcon.rectTransform, share, i,
+                        (s, p) => { OnRewardCoinLanded(s); map.SpawnCoinHitFXOn(hudRoot, _rewardCoinIcon != null ? _rewardCoinIcon.rectTransform.position : p); },
+                        sizeMul: BONUS_COIN_SIZE);
+                    float wait = startDelays != null && src < startDelays.Count ? startDelays[src] : 0f;
+                    if (wait > 0f) StartCoroutine(StartAfter(wait, fly)); else StartCoroutine(fly);
                 }
                 else StartCoroutine(DelayedRewardCoin(worldStarts[src], share, i, i * 0.035f));   // fallback: the old world-space coin
             }
         }
-        public static int BONUS_COIN_VISUAL_CAP = 14;
+        // 11-16 (calmer finale, pre-TestFlight): was 14 coins per special at 1x - several rockets put ~70 coins in the air.
+        // Fewer, bigger coins; their shares still add up to the payout, so the REWARD total is unchanged.
+        public static int   BONUS_COIN_VISUAL_CAP = 6;
+        public static float BONUS_COIN_SIZE = 1.35f;
+        private System.Collections.IEnumerator StartAfter(float wait, System.Collections.IEnumerator routine)
+        {
+            yield return new WaitForSecondsRealtime(wait);
+            yield return StartCoroutine(routine);
+        }
         /// <summary>TREASURE (2026-10-27, Spencer: "copy the exact animation we already have for the bonus where the coins fly up"):
         /// the bonus blast's coin flight (LevelMapPanel.CoinFlyRoutine - spinning 3D coin, shadow, pop + fan + stream) from the
         /// opened treasure into the REWARD coin, or the score panel when the HUD isn't in reward mode.</summary>
@@ -2943,7 +3616,8 @@ namespace WordDrop
         {
             if (_rewardMode)
             {
-                _rewardShown += share;
+                _bonusCoinsInFlight = Mathf.Max(0, _bonusCoinsInFlight - 1); _bonusValueInFlight = Mathf.Max(0, _bonusValueInFlight - share);
+                _rewardShown += share;   // counts up as each coin hits; any payout the coins didn't carry is topped up once none are in flight
                 if (_scorePanelNum != null)
                 {
                     _scorePanelNum.text = _rewardShown.ToString("N0");
@@ -3005,7 +3679,7 @@ namespace WordDrop
 
         private System.Collections.IEnumerator FlyTileCoroutine(Vector3 startWorld, Sprite sprite, Color tileColor,
             Color glowColor, char letter, Vector3 targetScreen, System.Action onArrive, float startDelay, float popPeak = 1.28f, int sortBase = 200,
-            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE, float flyDurOverride = -1f, Color? letterColor = null)
+            float endScale = FLY_END_SCALE, float suckScale = FLY_SUCK_SCALE, float flyDurOverride = -1f, Color? letterColor = null, bool gemFx = false)
         {
             var cam = Camera.main;
             if (cam == null) { onArrive?.Invoke(); yield break; }
@@ -3043,7 +3717,7 @@ namespace WordDrop
             }
             else glowSR.color = new Color(glowColor.r, glowColor.g, glowColor.b, 0.75f);
             glowSR.sortingOrder = sortBase + 1;
-            glowSR.transform.localScale = Vector3.one * FLY_GLOW_SCALE;
+            glowSR.transform.localScale = Vector3.one * FLY_GLOW_SCALE * (gemFx ? GEM_GLOW_SIZE : 1f);
 
             var trail = go.AddComponent<TrailRenderer>();
             trail.time = 0.35f;
@@ -3084,10 +3758,19 @@ namespace WordDrop
             pop.Append(go.transform.DOScale(baseScale * popPeak, 0.17f).SetEase(Ease.OutBack, 4f)); // popPeak ramps per word on a chain (glow is a child → scales with it)
             pop.Join(glowSR.DOFade(0.95f, 0.13f));
             pop.Join(go.transform.DOPunchRotation(new Vector3(0f, 0f, 13f), 0.34f, 6, 0.7f));
-            pop.Append(go.transform.DOScale(baseScale, 0.16f).SetEase(Ease.OutElastic, 0.6f, 0.4f));
-            pop.Join(glowSR.DOFade(0.35f, 0.22f));
+            pop.Append(go.transform.DOScale(baseScale, POP_SETTLE).SetEase(Ease.OutElastic, 0.6f, 0.4f));   // 11-06: 0.16 -> POP_SETTLE
+            pop.Join(glowSR.DOFade(gemFx ? GEM_GLOW_HOLD : 0.35f, 0.22f));
+            if (gemFx)
+            {   // pickup flash: the halo blooms out past its size and settles back
+                var gt = glowSR.transform; float gs = gt.localScale.x;
+                gt.localScale = Vector3.one * gs * 0.6f;
+                pop.Insert(0f, gt.DOScale(gs * 1.45f, 0.17f).SetEase(Ease.OutQuad));
+                pop.Insert(0.17f, gt.DOScale(gs, 0.25f).SetEase(Ease.InOutSine));
+                for (int k = 0; k < GEM_PICKUP_SPARKS; k++)
+                    SpawnTrailSpark(startWorld, GetFlareStarSprite(), 0.10f, 0.26f, cell * 0.55f, k % 3 == 0 ? Color.white : GEM_SPARK);
+            }
             yield return pop.WaitForCompletion();
-            yield return WaitCache.Get(0.05f);
+            if (POP_TO_FLY_GAP > 0f) yield return WaitCache.Get(POP_TO_FLY_GAP);   // 11-06: was a fixed 0.05
             if (startDelay > 0f) yield return WaitCache.Get(startDelay); // stagger AFTER the pop → group pops together, lands one-by-one
 
             // ── Phase 2: curved flight UP, ACCELERATING into the target (coin-collect "suck-in") ──
@@ -3099,7 +3782,8 @@ namespace WordDrop
             Vector3 control = Vector3.Lerp(from, targetWorld, 0.5f)
                               + new Vector3(UnityEngine.Random.Range(-1.3f, 1.3f), 1.2f, 0f);
 
-            if (glowSR != null) glowSR.DOFade(0.55f, 0.12f);
+            if (glowSR != null) glowSR.DOFade(gemFx ? GEM_GLOW_HOLD : 0.55f, 0.12f);
+            float glowBase = glowSR != null ? glowSR.transform.localScale.x : 1f;
             if (trail != null) { trail.Clear(); trail.emitting = true; }
             float flyDur = flyDurOverride > 0f ? flyDurOverride : 0.34f, elapsed = 0f, trailT = 0f; // was 0.5 — snappier float-up (letters + escorts). 2026-06-18 Spencer.
             while (elapsed < flyDur && go != null)
@@ -3133,14 +3817,20 @@ namespace WordDrop
                     float fade = Mathf.Pow(land, FLY_FADE_CURVE);
                     var cc = sr.color; sr.color = new Color(cc.r, cc.g, cc.b, fade);
                     if (tmp != null) tmp.color = new Color(1f, 1f, 1f, fade);
-                    if (glowSR != null) { var gc = glowSR.color; glowSR.color = new Color(gc.r, gc.g, gc.b, 0.55f * fade); }
+                    if (glowSR != null) { var gc = glowSR.color; glowSR.color = new Color(gc.r, gc.g, gc.b, (gemFx ? GEM_GLOW_HOLD : 0.55f) * fade); }
                     if (trail != null) trail.emitting = false;
                 }
 
+                if (gemFx && glowSR != null) glowSR.transform.localScale = Vector3.one * glowBase * (1f + 0.12f * Mathf.Sin(elapsed * 18f));   // gentle pulse
                 trailT += Time.deltaTime;
                 if (trailT >= 0.012f && !nearHud)
                 {
                     trailT = 0f;
+                    if (gemFx)
+                    {   // cyan sparkles shed along the path (the coin pop's emitted sparkles, in the gem colour)
+                        SpawnTrailSpark(pos, GetFlareStarSprite(), 0.08f, 0.20f, 0.22f, GEM_SPARK);
+                        SpawnTrailSpark(pos, GetFlareStarSprite(), 0.05f, 0.12f, 0.30f, GEM_SPARK);
+                    }
                     SpawnTrailSpark(pos, GetFlareStarSprite(), 0.10f, 0.22f, 0.16f);
                     SpawnTrailSpark(pos, GetFlareStarSprite(), 0.05f, 0.11f, 0.22f);
                     SpawnTrailSpark(pos, GetFlareStarSprite(), 0.03f, 0.08f, 0.26f);
@@ -3213,7 +3903,7 @@ namespace WordDrop
                     if (elapsed - lastTickTime >= tickInterval)
                     {
                         float pitch = Mathf.Lerp(0.9f, pitchTop, t);
-                        GameAudio.Instance?.PlayScoreTick(pitch);
+                        if (SCORE_TICK_SOUND) GameAudio.Instance?.PlayScoreTick(pitch);   // 11-07: this count-up ticked too (log: ~500 ticks a run)
                         lastTickTime = elapsed;
                     }
                     lastDisplay = display;
@@ -3593,11 +4283,34 @@ namespace WordDrop
         // TOP-OUT DANGER INDICATOR (Survival)
         // ═══════════════════════════════════════════════════════════════════════════
 
+        // REWARD ODOMETER (10-31, Spencer: during the bonus the numbers "stick on one number and then change immediately to
+        // another"): coins land in up to 14 big shares and the total is snapped at the end, so the readout jumped. _rewardShown
+        // stays the TRUE total; the text now ROLLS to it (eased, never slower than REWARD_ROLL_MIN per second), so it climbs
+        // continuously. Any direct text write in reward mode is simply overtaken by the roll.
+        public static float REWARD_ROLL_RATE = 6f, REWARD_ROLL_MIN = 40f;
+        private float _rewardRoll = -1f;
+        private void TickRewardRoll()
+        {
+            if (!_rewardMode || _scorePanelNum == null) { _rewardRoll = -1f; return; }
+            // 10-31 v2 (Spencer: "it always adds an extra 10 at the very end"): rockets overlap, so coins were never ALL landed until
+            // the end and the chain/word extras piled up there. Now the extra the flying coins don't carry is added as soon as it is
+            // paid: the readout is held at (paid total - value still in the air), and each landing coin adds the rest.
+            if (RewardFromPayouts && _rewardTarget - _bonusValueInFlight > _rewardShown) _rewardShown = _rewardTarget - _bonusValueInFlight;
+            if (_rewardRoll < 0f) _rewardRoll = _rewardShown;
+            float gap = _rewardShown - _rewardRoll, dt = Time.unscaledDeltaTime;
+            if (Mathf.Abs(gap) > 0.001f)
+                _rewardRoll = Mathf.MoveTowards(_rewardRoll, _rewardShown, Mathf.Max(REWARD_ROLL_MIN * dt, Mathf.Abs(gap) * (1f - Mathf.Exp(-REWARD_ROLL_RATE * dt))));
+            string txt = Mathf.RoundToInt(_rewardRoll).ToString("N0");
+            if (_scorePanelNum.text != txt) _scorePanelNum.text = txt;
+        }
+
         private void Update()
         {
+            TickRewardRoll();
             RefreshTopOutDanger();
             RefreshGoalIcons(punch: false);
             RefreshRewardBadge();
+            RefreshRushBadge();
             RefreshMockupHud();
 
             // Royal Match panels (2026-06-15 Spencer): Target (driven by SetObjective) + Level + Moves
@@ -3628,7 +4341,7 @@ namespace WordDrop
         {
             if (_topOutNumText == null) return;
             _topOutNumText.transform.DOKill();
-            _topOutNumText.transform.localScale    = Vector3.one;
+            _topOutNumText.transform.localScale    = MovesRestScale;   // 11-03: the RK moves number rests bigger
             _topOutNumText.transform.localRotation = Quaternion.identity;
         }
 
@@ -3667,7 +4380,7 @@ namespace WordDrop
             }
             // Non-death overlay (stage-clear transition) → hide so it doesn't flash a
             // mid-shift value; reappears when play resumes.
-            if (sm.IsOverlayPaused)
+            if (sm.IsOverlayPaused && !SettingsV2.IsOpen)   // 11-17: the settings flyout pauses too, but the HUD stays in view - keep the number
             {
                 if (_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(false);
                 ResetTopOutNumTransform();
@@ -3692,8 +4405,8 @@ namespace WordDrop
                     if (down)
                     {
                         var nt = _topOutNumText.rectTransform;
-                        nt.DOKill(); nt.localScale = Vector3.one; nt.localRotation = Quaternion.identity;
-                        nt.DOPunchScale(Vector3.one * BONUS_MOVES_TICK, 0.16f, 1, 0.5f).SetUpdate(true);
+                        nt.DOKill(); nt.localScale = MovesRestScale; nt.localRotation = Quaternion.identity;   // 11-03: was Vector3.one - the bonus countdown shrank the bigger RK moves number
+                        nt.DOPunchScale(MovesRestScale * BONUS_MOVES_TICK, 0.16f, 1, 0.5f).SetUpdate(true);
                     }
                 }
                 if (_movesPanelLabel != null && _movesPanelLabel.text != PanelLabel("MOVES")) _movesPanelLabel.text = PanelLabel("MOVES");
@@ -3708,7 +4421,7 @@ namespace WordDrop
                 int left = sm.BlastsRemaining;
                 if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
                 if (left != _topOutLastShown) { _topOutLastShown = left; _topOutNumText.text = left.ToString(); }
-                _topOutNumText.color = left <= 1 ? new Color(1f, 0.42f, 0.35f) : Color.white;
+                _topOutNumText.color = left <= 1 ? MovesRed : MovesBase;
                 if (left <= 1) ShowTopOutBubble(); else HideTopOutBubble();
                 return;
             }
@@ -3745,7 +4458,7 @@ namespace WordDrop
                 if (!_topOutNumText.gameObject.activeSelf) _topOutNumText.gameObject.SetActive(true);
                 if (left != _topOutLastShown) { _topOutLastShown = left; _topOutNumText.text = left.ToString(); }
                 if (SurvivalManager.MoveLimitMode)
-                    _topOutNumText.color = Color.Lerp(_topOutNumText.color, left <= 3 ? new Color(1f, 0.42f, 0.35f) : Color.white, Time.unscaledDeltaTime * 6f);
+                    _topOutNumText.color = Color.Lerp(_topOutNumText.color, left <= 3 ? MovesRed : MovesBase, Time.unscaledDeltaTime * 6f);
                 if (left <= TOPOUT_DANGER_THRESHOLD) ShowTopOutBubble();
                 else HideTopOutBubble();
                 return;
@@ -3770,7 +4483,7 @@ namespace WordDrop
                 bool wentUp = _topOutLastShown != int.MinValue && moves > _topOutLastShown;
                 _topOutLastShown = moves;
                 _topOutNumText.text = moves.ToString();
-                if (wentUp) UIAnimations.WildCardPop(_topOutNumText.transform, Vector3.one);
+                if (wentUp) UIAnimations.WildCardPop(_topOutNumText.transform, MovesRestScale);
             }
 
             if (moves <= TOPOUT_DANGER_THRESHOLD) ShowTopOutBubble();
@@ -3779,6 +4492,7 @@ namespace WordDrop
 
         private void ShowTopOutBubble()
         {
+            if (!MOVES_LOW_WARNING) { HideTopOutBubble(); return; }
             if (_topOutBubble == null) return;
             if (!_topOutBubble.gameObject.activeSelf) _topOutBubble.gameObject.SetActive(true);
             if (_topOutBubbleLoop == null) _topOutBubbleLoop = StartCoroutine(TopOutBubbleLoop());
@@ -3963,7 +4677,7 @@ namespace WordDrop
 
         /// <summary>Spawns one WHITE spark near <paramref name="pos"/> that twinkles, drifts a little, and
         /// fades — emitted along the fly-up path for a Candy-Crush-style sparkle trail. Pooled. 2026-06-17 Spencer.</summary>
-        private void SpawnTrailSpark(Vector3 pos, Sprite sprite, float minSz, float maxSz, float spread)
+        private void SpawnTrailSpark(Vector3 pos, Sprite sprite, float minSz, float maxSz, float spread, Color? tint = null)
         {
             var sr = GetPooledSpark();
             var t = sr.transform;
@@ -3972,7 +4686,7 @@ namespace WordDrop
             t.position = pos + new Vector3(off.x, off.y, 0f);
             t.localRotation = Quaternion.Euler(0f, 0f, UnityEngine.Random.Range(0f, 360f));
             sr.sprite = sprite;
-            sr.color = Color.white; // white sparks
+            sr.color = tint ?? Color.white; // white sparks (gem flights: cyan)
             float sz = UnityEngine.Random.Range(minSz, maxSz);
             t.localScale = Vector3.one * sz;
             float life = UnityEngine.Random.Range(0.35f, 0.6f);
@@ -4664,6 +5378,7 @@ namespace WordDrop
         {
             SyncCollectIcon();
             // Safety: a counted letter whose tile never played a hide (no flight launched) must not hold the count down forever.
+            if (LevelRules.BooksAwaitingFly > 0 && Time.unscaledTime - LevelRules.BooksAwaitingSince > 2.5f) LevelRules.BooksAwaitingFly = 0;   // BOOKSHELF: a book whose flight never launched
             if (LevelRules.CollectAwaitingFly > 0 && Time.unscaledTime - LevelRules.CollectAwaitingSince > 2.5f)
             { LevelRules.CollectAwaitingFly = 0; if (_scorePanelNum != null && !_rewardMode) _scorePanelNum.text = ScoreLabel(0); }
             if (sm == null || _turnCounterText == null) return;
@@ -4709,7 +5424,7 @@ namespace WordDrop
             {
                 _topOutNumText.text = untilRise.ToString();
                 bool urgent = untilRise <= 1;
-                _topOutNumText.color = urgent ? new Color(1f, 0.42f, 0.35f) : Color.white;
+                _topOutNumText.color = urgent ? MovesRed : MovesBase;
                 if (urgent && !_riseWarned) { _riseWarned = true; AnimateScorePop(_topOutNumText.rectTransform); }
                 if (!urgent) _riseWarned = false;
                 // The pulsing bubble behind the number — the existing top-out indicator,

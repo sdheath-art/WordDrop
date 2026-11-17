@@ -136,6 +136,20 @@ namespace WordDrop
                 WDLog.Log($"[NOTE-GHOST] active tile NOT in the grid: {t.name} '{t.Letter}' ({t.Col},{t.Row}) pos={t.transform.position}");
             }
             if (ghosts == 0) WDLog.Log("[NOTE-GHOST] none");
+            // TEMP DIAG 11-02 (Spencer: "the whole row turned into rockets after it fell"): every renderer drawing special art, and whose it is
+            int sa = 0; var art = new System.Text.StringBuilder();
+            foreach (var sr in Object.FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None))
+            {
+                if (sr == null || !sr.enabled || !sr.gameObject.activeInHierarchy || sr.sprite == null || sr.sprite.texture == null) continue;
+                string tn = sr.sprite.texture.name; if (!tn.StartsWith("special_")) continue;
+                var owner = sr.GetComponentInParent<Tile>();
+                var cell = grid.WorldToCell(sr.bounds.center);
+                var d = RulesEngine.Instance != null ? RulesEngine.Instance.GetCell(cell.x, cell.y) : null;
+                art.Append($"\n      {sr.gameObject.name}<{(sr.transform.parent != null ? sr.transform.parent.name : "-")}> tex={tn} cell ({cell.x},{cell.y}) order={sr.sortingOrder} mask={sr.maskInteraction} col={sr.color} " +
+                           $"owner={(owner != null ? owner.name + " special=" + owner.SpecialKind : "none")} data special={(d != null ? d.SpecialKind : -1)} isGridTile={(owner != null && grid.GetTile(cell.x, cell.y) == owner)}");
+                sa++;
+            }
+            WDLog.Log($"[NOTE-SPECIALART] {sa} renderer(s) drawing special art:{art}");
         }
 
         public void Take()

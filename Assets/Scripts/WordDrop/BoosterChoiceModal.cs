@@ -220,6 +220,7 @@ namespace WordDrop
                 case "bloomburst":     return new Bloomburst()         { Level = level };
                 case "lantern_trace":  return new LanternTrace()       { Level = level };
                 case "bramble_sweep":  return new BrambleSweep()       { Level = level };
+                case "axe_column":     return new AxeChop()            { Level = level };
                 case "wispwhirl_row":  return new WispwhirlSingleRow() { Level = level };
                 case "motepluck":      return new Motepluck()          { Level = level };
                 case "starseed_charm": return new StarseedCharm()      { Level = level };
@@ -364,7 +365,7 @@ namespace WordDrop
             var dimRT = dimGO.GetComponent<RectTransform>();
             dimRT.anchorMin = Vector2.zero; dimRT.anchorMax = Vector2.one;
             dimRT.offsetMin = Vector2.zero; dimRT.offsetMax = Vector2.zero;
-            dimGO.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
+            dimGO.GetComponent<Image>().color = UISeparation.MODAL_DIM;   // 11-02 shared dim (was black .6)
 
             // Panel
             var panelGO = new GameObject("Panel", typeof(RectTransform), typeof(Image));

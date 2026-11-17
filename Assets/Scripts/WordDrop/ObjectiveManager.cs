@@ -410,6 +410,9 @@ namespace WordDrop
 
             var e = LevelTable.Get(levelIndex);
 
+            // 11-15: same opening board for every player on this level (SurvivalRng.LevelSeed). Seeded before the board is built below.
+            if (SurvivalRng.LEVEL_SEEDS && !DailyDropManager.IsDailyMode) SurvivalRng.SetSeed(SurvivalRng.LevelSeed(levelIndex));
+
             // Clear any stale authored EDIT nudge from a PRIOR level BEFORE the near-word / cross-hint
             // setters below run, so leaving an edit-hint level (e.g. L6) can't wipe the new level's
             // forced hint. SetupEditHint (called later) then installs THIS level's edit nudge, if any. 2026-07-09.
@@ -948,7 +951,7 @@ namespace WordDrop
         // The objective-complete payoff: bing + checkmark flash NOW, then the Level Completed modal a beat later.
         private void FireCompleteCelebration()
         {
-            GameAudio.Instance?.PlayBing();                 // objective-complete "bing"
+            if (!HUDManager.BING_ON_STAR) GameAudio.Instance?.PlayBing();   // 11-01: the bing now lands on the star pop (HUDManager.StarCelebrate)                 // objective-complete "bing"
             HUDManager.Instance?.FlashObjectiveComplete();  // checkmark drop
             // Hold the stage clear (→ Level Completed modal) until AFTER the ding + checkmark land — the modal
             // shouldn't pop on top of them. Fired from Update once the delay passes. POLL-BASED objectives

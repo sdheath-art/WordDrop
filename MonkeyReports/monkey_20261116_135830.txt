@@ -1,0 +1,22 @@
+MONKEY TEST  20261116_135830   seed 848371   ran -0.5 min   ended: play mode ended
+Screen 556x1730.  One fake finger, real game, Play mode.
+
+INPUTS  52 gestures:  REAL MOVE 10  DOUBLE TAP 4  MASH BOARD 5  BUTTON 13  MASH BUTTON 5  RANDOM DRAG 1  TAP ANYWHERE 2  RANDOM SWIPE 1  CELL TAP 2  BOOSTER TAP 2  TAPPABLE 7
+GAME    levels started 0, cleared 1, failed 0;  swaps accepted 8, swiped words 0, boosters used 0;  hearts refilled by the monkey 0x
+FRAMES  worst 113 ms, 0 frame(s) over 250 ms, 2184 frames (0 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+WARNINGS in the log (not counted as faults), most frequent first:
+        1x  [INVARIANT] GOLD-ART t=. (,) 'Y' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] (,) 'C' sortingOrder= expected  — a lift outlived its effect
+        1x  [RulesEngine] Step chain hit depth cap () — completing.
+        1x  The character with Unicode value \uB was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+        1x  The character with Unicode value \uC was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+        1x  The character with Unicode value \u was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_135830.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

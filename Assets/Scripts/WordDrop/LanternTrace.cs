@@ -36,6 +36,13 @@ namespace WordDrop
 
         public override void Activate(System.Action onComplete)
         {
+            // SPYGLASS SEARCH (2026-10-29): spyglass flies in, its lens sweeps the board and locks on the best word; then the
+            // strong hint (outline + the move) takes over.
+            if (BoosterFX.ON && BoosterFX.Instance != null)
+            {
+                BoosterFX.Instance.Spyglass(() => { HintManager.Instance?.ForceShowHint(strong: true); onComplete?.Invoke(); });
+                return;
+            }
             if (HintManager.Instance != null)
             {
                 // L2/L3 fire multiple hint reveals — HintManager.ForceShowHint

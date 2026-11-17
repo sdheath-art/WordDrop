@@ -217,6 +217,7 @@ namespace WordDrop
 
         private void Awake()
         {
+            BoardShuffle.Ensure();   // no-words -> shuffle watcher (2026-10-30)
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             _intentSlopPx = Mathf.Max(14f, Screen.dpi * 0.08f);
@@ -1114,13 +1115,13 @@ namespace WordDrop
             TickWildExpiry();
 
             Vector3 screenPos = Vector3.zero;
-            bool mouseDown = Input.GetMouseButtonDown(0);
-            bool mouseHeld = Input.GetMouseButton(0);
-            bool mouseUp   = Input.GetMouseButtonUp(0);
+            bool mouseDown = WDInput.GetMouseButtonDown(0);
+            bool mouseHeld = WDInput.GetMouseButton(0);
+            bool mouseUp   = WDInput.GetMouseButtonUp(0);
 
-            if (Input.touchCount > 0)
+            if (WDInput.touchCount > 0)
             {
-                Touch touch = Input.GetTouch(0);
+                Touch touch = WDInput.GetTouch(0);
                 screenPos = touch.position;
                 mouseDown = (touch.phase == TouchPhase.Began);
                 mouseHeld = (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary);
@@ -1128,8 +1129,9 @@ namespace WordDrop
             }
             else
             {
-                screenPos = Input.mousePosition;
+                screenPos = WDInput.mousePosition;
             }
+            if (BoosterIntro.Running || TutorialBeats.Pending) mouseDown = false;   // booster lesson up / a lesson about to appear (11-17): no new board press starts, mouse or touch
 
             screenPos.z = Mathf.Abs(_cam.transform.position.z);
             Vector3 worldPos = _cam.ScreenToWorldPoint(screenPos);
@@ -1321,7 +1323,9 @@ namespace WordDrop
                                 // you dont actually need to make another word with it to detonate? like a double tap"). Royal Match
                                 // charges a move for tapping a booster piece too. Single tap still selects, so specials can be swapped.
                                 if (InstantPopMode && boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow
-                                    && Time.unscaledTime - _selectedAt <= DOUBLE_TAP_WINDOW && !SurvivalManager.AwaitingNextLevel)
+                                    && Time.unscaledTime - _selectedAt <= DOUBLE_TAP_WINDOW && !SurvivalManager.AwaitingNextLevel && !BoosterManager.CascadeBusy
+                                    && (SurvivalManager.Instance == null || !SurvivalManager.Instance.OutOfMovesLocked)   // 11-17 monkey 436301: double-tapped power-ups after the last move -> "moves used 12 past the budget 10"
+                                    && TutorialBeats.AllowsCell(boardTap))   // 11-17: a lesson is up -> only its own tiles (monkey 98181: a Royal Orb double-tapped on the DIMMED board cleared letters and the swipe lesson's word PIKE fell apart)
                                 {
                                     var sc = RulesEngine.Instance != null ? RulesEngine.Instance.GetCell(boardTap.x, boardTap.y) : null;
                                     // TNT is NOT double-tappable (2026-10-21 Spencer: "if i just double tap the dynamite ones they
@@ -1814,6 +1818,7 @@ namespace WordDrop
             var cell2 = rules.GetCell(col2, row2);
             if (cell1 == null || cell2 == null) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: empty cell"); return false; }
             if (!TutorialBeats.AllowSwap(new Vector2Int(col1, row1), new Vector2Int(col2, row2))) return false;   // tutorial beat: only the taught swap
+            if (BoosterManager.CascadeBusy) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: a booster is still resolving"); return false; }   // 11-17
             if (AdjacentSwapsOnly && !_freeSwap && !IsAdjacent(col1, row1, col2, row2)) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: not touching"); return false; }
 
             // Cannot swap special tiles
@@ -1823,6 +1828,14 @@ namespace WordDrop
             // swap by swap until its letter lands in a word beat the goal's point — FIND a word through it. Gems fall, can be
             // swiped through, and are collected by any word using them; they just can't be moved by hand.
             if (GEMS_LOCKED && (cell1.HasGem || cell2.HasGem)) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: GEM (locked)"); return false; }
+            // POWER-UPS LOCKED (2026-11-03, Spencer: "i shouldnt be able to move the dynamite pieces"). A power-up can't be dragged into a
+            // word any more; it fires by double-tap, by a word made through it, or caught in a blast. Two power-ups swapped TOGETHER
+            // still make their combo. false = the 10-30 rule (a power-up swap that makes a word stays).
+            // 11-03 correction (Spencer: "you should still be able to move rockets, bombs and disco balls around freely"): ONLY the
+            // dynamite is locked. Two power-ups swapped together still combo.
+            bool tnt1 = cell1.SpecialKind == RulesEngine.SPECIAL_TNT, tnt2 = cell2.SpecialKind == RulesEngine.SPECIAL_TNT;
+            bool sp1 = cell1.SpecialKind != RulesEngine.SPECIAL_NONE, sp2 = cell2.SpecialKind != RulesEngine.SPECIAL_NONE;
+            if (SPECIALS_LOCKED && (tnt1 || tnt2) && !(sp1 && sp2)) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: dynamite (locked)"); return false; }
             if (cell1.IsSwapRefill || cell1.IsEditRefill || cell1.IsWildRefill) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: refill tile A"); return false; }
             if (cell2.IsSwapRefill || cell2.IsEditRefill || cell2.IsWildRefill) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: refill tile B"); return false; }
             if (cell1.IsWild || cell2.IsWild) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: wild"); return false; }
@@ -1882,6 +1895,30 @@ namespace WordDrop
                 return false;
             }
 
+            // BOUNCE-BACK (2026-10-30 Spencer: "sure if you think this would make the game better lets do it", after the RM study:
+            // a match-3 swap that makes no match slides over, slides back and costs nothing; ours made 54% of his swaps cost a
+            // move for nothing). Judged BEFORE anything is committed - WordsIfSwapped tries the swap in place and restores it - so
+            // the rules state is never touched and nothing can desync. Specials too (BOUNCE_SPECIALS) - two specials still combo above;
+            // the Free Swap booster keeps its own rule. Dead boards are BoardShuffle's job.
+            if (BOUNCE_NO_WORD && InstantPopMode && SurvivalManager.FullBoardActive && !_freeSwap && (BOUNCE_SPECIALS || !specialInvolved)
+                && (s_bouncePre = rules.WordsIfSwapped(new Vector2Int(col1, row1), new Vector2Int(col2, row2))).Count == 0)
+                // (10-30: dropped "&& !CellHasUnscoredWord(a/b)". It saw standing words the real scan won't count - claim-blocked or
+                // too short - so those swaps skipped this bounce, went through, found nothing and hit the LATE BOUNCE: the letters
+                // visibly flipped and snapped back (Spencer: "the letter will switch ... and then glitch back"). WordsIfSwapped already
+                // covers the same-letter claim case it guarded - the swap leaves the board as it is, so a standing word shows there.)
+            {
+                WDLog.Log($"[Bounce] ({col1},{row1})<->({col2},{row2}) makes no word - bounced back, no move spent");
+                NoWordStreak++;   // the fishing hint still notices repeated misses
+                PlaythroughStats.Bounces++;
+                CancelRewriteMode();
+                OwlPortrait.Play("think");   // 11-01 owl: unimpressed by a swap that makes no word
+                StartCoroutine(BounceNoWordSwap(new Vector2Int(col1, row1), new Vector2Int(col2, row2)));
+                return true;      // handled: the caller must not treat it as refused (no second nudge)
+            }
+
+            // STRANDED-GOAL AIRPLANE (10-30): judged on the board BEFORE this swap - if no common word reached a goal, a special this
+            // swap earns becomes an airplane (RulesEngine.DoExplode). Only on goal levels, only for a real (worded) swap.
+            RulesEngine.GoalDeadAtSwap = SurvivalManager.FullBoardActive && LevelRules.Goals.Count > 0 && rules.GoalAreaDead();
             MarkPlayerWordComing();   // the next pop is the word THIS swap makes (QUICK_POP)
             TutorialBeats.OnSwapCommitted(new Vector2Int(col1, row1), new Vector2Int(col2, row2));
             // Consume edit charge
@@ -1964,7 +2001,7 @@ namespace WordDrop
         public static bool FLY_UP_GOLD_ONLY = true;
         // Not during the bonus blast (2026-10-21 Spencer: "during the bonus it shouldnt reward extra moves for golden tiles") —
         // the level is won, so a gold letter just explodes and pays its coin like any other tile, no "+1 MOVE" fly-up.
-        public static bool GoldFlyUpActive => InstantPopMode && FLY_UP_GOLD_ONLY && !BonusBlastRunning;
+        public static bool GoldFlyUpActive => InstantPopMode && FLY_UP_GOLD_ONLY && !BonusBlastRunning && !LevelRules.BonusLevelActive;   // Gold Rush: gold = coins, not moves (10-30)
 
         /// <summary>Gold letters fly to the MOVES box and each one is worth +1 move (2026-10-20 Spencer: "what do you
         /// think about these letters awarding an extra move"). The blast's POINTS then pay straight away (no fly
@@ -2061,7 +2098,7 @@ namespace WordDrop
         /// that ever broke mid-way can never soft-lock the level end.</summary>
         public static bool BonusBlastHoldsModal => BonusBlastRunning && Time.unscaledTime - s_bonusStartedAt < 25f;
 
-        public void BeginBonusBlast(int rockets, int movesLeft, int baseCoins = 0)
+        public void BeginBonusBlast(int rockets, int movesLeft, int baseCoins = 0, int alreadyShown = 0)
         {
             if (BonusBlastRunning) return;
             bool anySpecial = false;
@@ -2070,13 +2107,22 @@ namespace WordDrop
                 for (int x = 0; x < RulesEngine.COLS && !anySpecial; x++)
                     for (int y = 0; y < RulesEngine.ROWS && !anySpecial; y++)
                     { var d = rules.GetCell(x, y); if (d != null && d.SpecialKind != RulesEngine.SPECIAL_NONE) anySpecial = true; }
-            if (rockets <= 0 && !anySpecial) { WDLog.Log("[Bonus] nothing to blast (no moves left, no specials)"); return; }
+            if (rockets <= 0 && !anySpecial)
+            {   // Gold Rush with every special used: no finale, but the counter still gets the level-clear coins (10-30)
+                if (LevelRules.BonusLevelActive) HUDManager.Instance?.EnterRewardMode(Mathf.Max(0, baseCoins - alreadyShown));
+                WDLog.Log("[Bonus] nothing to blast (no moves left, no specials)"); return;
+            }
             BonusBlastRunning = true;
+            HUDManager.RewardFromPayouts = true;   // 10-31: the REWARD readout follows the real payout from here (see PayBonusCoins)
+            // 10-31 v3 (Spencer: still "+10 at the very end", log: the whole finale is ONE chained tap -> ONE payout at the end): the
+            // readout's target is now LIVE - base + every tile destroyed so far x COINS_PER_BONUS_TILE - so the chain/word extras
+            // count in as the tiles explode, not in a lump after.
+            // (v3 live target REMOVED: it ran ahead of the coins - tiles count before their coins launch)
             // 2026-10-22 Spencer: "can it cut the music during the bonus?" — the level music fades out so the rockets and
             // blasts carry the moment; the Well Done screen starts its own victory track after, the next level its song.
             if (BONUS_CUT_MUSIC) GameAudio.Instance?.StopMusic(BONUS_MUSIC_FADE);
             s_bonusStartedAt = Time.unscaledTime;
-            s_bonusBaseCoins = baseCoins;
+            s_bonusBaseCoins = baseCoins; s_bonusAlreadyShown = Mathf.Clamp(alreadyShown, 0, baseCoins);
             StartCoroutine(BonusBlastRoutine(rockets, movesLeft));
         }
 
@@ -2084,14 +2130,16 @@ namespace WordDrop
         /// clicking can't skip it by accident (2026-10-21).</summary>
         private static bool TapPressedThisFrame() =>
             Time.unscaledTime - s_bonusStartedAt >= BONUS_SKIP_LOCKOUT
-            && (Input.GetMouseButtonDown(0) || (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began));
+            && (WDInput.GetMouseButtonDown(0) || (WDInput.touchCount > 0 && WDInput.GetTouch(0).phase == TouchPhase.Began));
         public static float BONUS_SKIP_LOCKOUT = 1.2f;
 
         /// <summary>Seconds the completed goal badges (checks) stay up before the bonus blast swaps in the coin counter.</summary>
-        public static float BONUS_CHECK_HOLD = 0.8f;
+        public static float BONUS_CHECK_HOLD = 0.4f;   // 11-06: 0.8 -> 0.4 (L1-20 recording: 1.75 s static board after the goal; RM goes to its banner in ~0.3 s)
         /// <summary>true = a tap during the bonus blast SKIPS it (estimate paid); false = a tap fast-forwards it.</summary>
         public static bool  BONUS_TAP_SKIPS = false;
         public static float BONUS_FAST_INTERVAL = 0.03f;   // rocket launch gap once the player taps
+        public static bool  BONUS_COINS_ON_ARRIVAL = true;  // 11-07: bonus coins leave each tile as it breaks (false = all at launch)
+        public static float BONUS_FAST_SCALE = 3.5f;       // 11-07: game speed for the rest of the bonus once the player taps
         private IEnumerator BonusBlastRoutine(int rockets, int movesLeft)
         {
             var rules = RulesEngine.Instance; var grid = GridManager.Instance;
@@ -2101,9 +2149,15 @@ namespace WordDrop
             // wiped the specials and paid an estimate — then the board sat still until the modal. Now a tap ends the holds and
             // rushes the rockets; everything still fires and pays for real. BONUS_TAP_SKIPS = true restores the old skip.
             bool skip = false, fast = false;
+            GameObject skipHint = null;   // 11-07 Spencer: "tap to skip for the rockets bonus" (RM shows "Tap to Skip")
             bool Tapped()
             {
+                // 11-07 Spencer "i cant actually tap to skip": the tap only shortened the rocket launch gaps - the blasts still
+                // played at full length (log: ~2.6 s from tap to done). Fast-forward now runs the rest of the show at
+                // BONUS_FAST_SCALE; re-asserted every frame because a hitstop sets timeScale 0 -> 1. Restored at the end.
+                if (fast && Time.timeScale > 0f && Time.timeScale < BONUS_FAST_SCALE) Time.timeScale = BONUS_FAST_SCALE;
                 if (!TapPressedThisFrame()) return false;
+                if (skipHint != null) { var g0 = skipHint; skipHint = null; HideBonusSkipHint(g0); }
                 if (BONUS_TAP_SKIPS) return true;
                 if (!fast) WDLog.Log("[Bonus] tap — fast-forward");
                 fast = true; return false;
@@ -2124,8 +2178,9 @@ namespace WordDrop
             { float h = 0f; while (h < BONUS_CHECK_HOLD && !fast) { Tapped(); h += Time.unscaledDeltaTime; yield return null; } }
 
             int coins = 0;
+            if (BONUS_SKIP_HINT && !fast && rockets > 1) skipHint = MakeBonusSkipHint();
             TMPro.TextMeshPro counter = null;
-            if (grid != null)
+            if (grid != null && BONUS_BANNER)   // 2026-10-29 Spencer: "remove the cheezy bonus! with pill text" - off; the rockets + coin count carry it
             {
                 var cgo = new GameObject("BonusCounter");
                 counter = cgo.AddComponent<TMPro.TextMeshPro>();
@@ -2161,7 +2216,7 @@ namespace WordDrop
                 cgo.transform.DOScale(1f, 0.3f).SetEase(Ease.OutBack, 2.5f).SetUpdate(true);
             }
             GameAudio.Instance?.PlayScorePowerup();
-            HUDManager.Instance?.EnterRewardMode(s_bonusBaseCoins);   // SCORE panel -> REWARD, counting this level's coins
+            HUDManager.Instance?.EnterRewardMode(s_bonusBaseCoins - s_bonusAlreadyShown);   // Gold Rush: the panel already counts its coins - add the base only   // SCORE panel -> REWARD, counting this level's coins
             // ANTICIPATION (2026-10-21 Spencer: "a bit of an anticipation beat ... it all just happens a bit too fast").
             { float h = 0f; while (h < BONUS_INTRO_HOLD && !skip && !fast) { if (Tapped()) skip = true; h += Time.unscaledDeltaTime; yield return null; } }
 
@@ -2185,14 +2240,17 @@ namespace WordDrop
                 rules.GetCell(c.x, c.y).SpecialKind = kind;   // claim the cell now so the next rocket picks another
                 grid?.GetTile(c.x, c.y)?.HideLetterForBonus();   // now, not on landing: state sync can show the icon mid-flight (2026-10-26)
                 placed++;
-                HUDManager.MovesDisplayOverride = Mathf.Max(0, movesLeft - placed);   // the move leaves the counter...
+                // 10-31 (Spencer: the moves "stick on one number and then change immediately"): rockets are capped at
+                // BONUS_MAX_ROCKETS, so with more moves left the counter stalled and then snapped to 0. Each rocket now takes its
+                // share of the moves, so the last rocket brings the counter to 0.
+                HUDManager.MovesDisplayOverride = Mathf.Max(0, movesLeft - Mathf.RoundToInt(placed * (float)movesLeft / Mathf.Max(1, rockets)));
                 // OVERLAPPING LAUNCHES (2026-10-22 Spencer: "during the bonus can it dole out the rockets a little bit faster?").
                 // Was strictly one-at-a-time: 0.32s flight + 0.12s gap = 0.44s a rocket, 4.4s for ten. Now the next rocket
                 // leaves the MOVES counter every BONUS_ROCKET_INTERVAL while earlier ones are still flying; each lands on its
                 // own tile when its flight ends (delayed call), and the loop waits for the last landing before the pre-fire hold.
                 int li = i; var lc = c; int lk = kind;
                 Vector3 lto = grid != null ? grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.6f) : Vector3.zero;
-                System.Action land = () => { var lt = grid?.GetTile(lc.x, lc.y); lt?.SetSpecial(lk, pop: true); lt?.HideLetterForBonus(); GameAudio.Instance?.PlayScoreTick(1f + 0.06f * li);
+                System.Action land = () => { var lt = grid?.GetTile(lc.x, lc.y); lt?.SetSpecial(lk, pop: true); lt?.HideLetterForBonus(); GameAudio.Instance?.PlayScoreTick(1f + 0.06f * li); GameAudio.Instance?.PlayPowerupShimmer();   // 10-31: shimmer as each bonus rocket lands
                                              if (WordDropFX.BONUS_COMET) WordDropFX.Instance?.BonusLandSparkle(lto); };
                 if (grid != null && HUDManager.Instance != null && WordDropFX.Instance != null)
                 {
@@ -2272,7 +2330,9 @@ namespace WordDrop
             }
 
             HUDManager.MovesDisplayOverride = 0;
-            yield return new WaitForSecondsRealtime(0.9f);   // let the last coins land before the readout is snapped
+            { float h = 0f; float settle = fast ? BONUS_COINS_SETTLE / BONUS_FAST_SCALE : BONUS_COINS_SETTLE; while (h < settle) { Tapped(); h += Time.unscaledDeltaTime; yield return null; } }   // let the last coins land before the readout is snapped
+            if (fast) Time.timeScale = 1f;   // 11-07: end of the fast-forward
+            HUDManager.RewardFromPayouts = false;   // final: exact total (by now the coins have counted it up)
             HUDManager.Instance?.SetRewardTotal(s_bonusBaseCoins + coins);
             WDLog.Log($"[Bonus] done — {coins} coin(s) from the blast");
             try { AnalyticsManager.Log("bonus_blast", "rockets", rockets, "moves_left", movesLeft, "coins", coins, "skipped", skip ? 1 : 0); AnalyticsManager.FlushToDisk(); }
@@ -2284,15 +2344,53 @@ namespace WordDrop
                 if (plate != null) plate.DOFade(0f, 0.4f).SetDelay(0.7f).SetUpdate(true);
                 counter.DOFade(0f, 0.4f).SetDelay(0.7f).SetUpdate(true).OnComplete(() => { if (cg != null) Destroy(cg); });
             }
-            yield return new WaitForSecondsRealtime(0.5f);
-            BonusBlastRunning = false;
+            if (skipHint != null) { HideBonusSkipHint(skipHint); skipHint = null; }
+            yield return new WaitForSecondsRealtime(BONUS_END_HOLD);
+            if (fast && Time.timeScale > 1f) Time.timeScale = 1f; BonusBlastRunning = false;
+        }
+
+        /// <summary>11-07: "Tap to skip" at the bottom of the screen during the leftover-moves rockets (RM's "Tap to Skip"). A tap
+        /// fast-forwards (every rocket still fires and pays) - the hint fades as soon as it's used, and at the end of the show.</summary>
+        public static bool BONUS_SKIP_HINT = true;
+        private GameObject MakeBonusSkipHint()
+        {
+            var go = new GameObject("BonusSkipHint", typeof(RectTransform), typeof(Canvas), typeof(UnityEngine.UI.CanvasScaler));
+            var cv = go.GetComponent<Canvas>(); cv.renderMode = RenderMode.ScreenSpaceOverlay; cv.sortingOrder = 45;   // under the win screen
+            var sc = go.GetComponent<UnityEngine.UI.CanvasScaler>(); sc.uiScaleMode = UnityEngine.UI.CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            sc.referenceResolution = new Vector2(1179f, 2556f); sc.matchWidthOrHeight = 0f;
+            var tg = new GameObject("Text", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI)); tg.transform.SetParent(go.transform, false);
+            var rt = (RectTransform)tg.transform; rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0f); rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = new Vector2(0f, 2556f * BONUS_SKIP_Y); rt.sizeDelta = new Vector2(900f, 110f);
+            var t = tg.GetComponent<TMPro.TextMeshProUGUI>(); t.text = "Tap to Skip"; t.fontSize = BONUS_SKIP_SIZE; t.alignment = TMPro.TextAlignmentOptions.Center; t.raycastTarget = false;
+            // 11-16 (Spencer: "looks weird in comparison to the royal match version"). RM (L9 @538s): SOLID warm cream, soft dark
+            // shadow, ~37% of the screen wide, steady. Ours was lavender-stroked, alpha pulsing .9 <-> .6 (read ghosted over the
+            // debris) and ~24% wide. Now: solid cream, dark stroke + drop, bigger, a gentle size breathe instead of the fade.
+            HUDManager.ApplyRecipeCount(t, BONUS_SKIP_LINE, HUDManager.D_STROKE, HUDManager.D_DROP * 1.5f);
+            t.enableVertexGradient = false; t.color = BONUS_SKIP_CREAM; t.fontSize = BONUS_SKIP_SIZE;
+            t.alpha = 0f; t.DOFade(1f, 0.25f).SetUpdate(true).SetLink(t.gameObject);
+            tg.transform.DOScale(1.04f, 0.8f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetLink(tg);
+            return go;
+        }
+        public static float BONUS_SKIP_Y = 0.135f;  // 11-16 Movie_009: .17 sat ON the board's gold rim; .135 = centred in the gap above the boosters (was .20)
+        public static float BONUS_SKIP_SIZE = 86f;  // 11-16: was 58 (~24% of the screen wide; RM ~37%)
+        public static Color BONUS_SKIP_CREAM = new Color(1f, 0.96f, 0.84f, 1f), BONUS_SKIP_LINE = new Color(0.16f, 0.07f, 0.26f, 1f);   // height from the bottom (fraction of the screen) - above the booster row
+        private static void HideBonusSkipHint(GameObject go)
+        {
+            if (go == null) return;
+            var t = go.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+            if (t == null) { Destroy(go); return; }
+            t.DOKill(); t.DOFade(0f, 0.2f).SetUpdate(true).OnComplete(() => { if (go != null) Destroy(go); });
         }
 
         public static int BONUS_SKIP_COINS_PER_SPECIAL = 7;
+        // 11-06 (L1-20 recording: 2.25 s static board between the last bonus blast and Well Done = 0.9 + 0.5 here + the modal's
+        // 0.8 settle beat). Was 0.9 / 0.5. Rocket pacing itself is untouched (10-21 Spencer wanted the rockets slower).
+        public static float BONUS_COINS_SETTLE = 0.5f, BONUS_END_HOLD = 0.2f;
         private static Sprite s_bonusPlate;
         // Bonus pacing (2026-10-21: slowed down — "it all just happens a bit too fast").
         public static bool  BONUS_CUT_MUSIC     = true;
         public static float BONUS_MUSIC_FADE    = 0.35f;   // seconds
+        public static bool  BONUS_BANNER        = false;  // the "BONUS!" pill over the board at level end (10-29: removed)
         public static float BONUS_INTRO_HOLD    = 0.7f;   // "BONUS!" on screen before anything moves
         public static float BONUS_COMET_FLIGHT  = 0.22f;  // RM comet: ~0.15-0.2s counter -> tile (measured @1:19)
         public static float BONUS_ROCKET_FLIGHT = 0.32f;  // each rocket flying from the MOVES counter to its tile
@@ -2300,11 +2398,15 @@ namespace WordDrop
         public static float BONUS_ROCKET_INTERVAL = 0.2f; // 2026-10-22: a new rocket leaves the MOVES counter this often (flights overlap)
         public static float BONUS_PREFIRE_HOLD  = 0.5f;   // all rockets placed, before the first fires
         public static float BONUS_FIRE_STAGGER  = 0.07f;  // all specials fire together; their FX ripple out this far apart
-        private static int s_bonusBaseCoins;   // estimate when the blast is tapped through
+        private static int s_bonusBaseCoins, s_bonusAlreadyShown;   // estimate when the blast is tapped through
 
         private static void PayBonusCoins(int n, ref int running, TMPro.TextMeshPro counter)
         {
             running += n;
+            // 10-31 (Spencer: "right before it goes to the well done screen the rewards number changes to something else"): the
+            // flying coins carry "tiles this special cleared" but the pay counts EVERY exploded tile (words + chains the rockets
+            // set off), so the readout was corrected at the end. Now the readout's target IS the paid total; coins only punch it.
+            HUDManager.Instance?.SetRewardTotal(s_bonusBaseCoins + running);
             CoinWallet.Add(n);
             SurvivalManager.PendingBonusCoins += n;
             LevelMapPanel.Instance?.AddPendingCoinReward(n);
@@ -2314,10 +2416,13 @@ namespace WordDrop
         public static float DOUBLE_TAP_WINDOW = 0.4f;   // seconds between the two taps that fire a special
         private float _selectedAt = -10f;
 
+        public static int   BIG_MOMENT_WORDS = 2;   // words in one blast that count as a big moment (boom + harder shake)
         public static bool  SPECIAL_COMBOS = true;
         /// <summary>FX Test Menu: run the swap-combo sequence on two cells that already hold specials.</summary>
         public void TestCombo(Vector2Int a, Vector2Int b) { if (!_tapDetonating) StartCoroutine(SpecialComboSequence(a, b)); }
         public static float COMBO_MERGE_DUR = 0.16f;
+        private static int ComboPower(int k) => k == RulesEngine.SPECIAL_DISCO ? 4 : RulesEngine.IsBombLike(k) ? 3
+                                              : k == RulesEngine.SPECIAL_AIRPLANE ? 2 : RulesEngine.IsRocket(k) ? 1 : 0;
         /// <summary>The two specials slide into each other (the second into the first), the merged tile pops, then the combo
         /// fires through the normal detonation path at the first cell.</summary>
         private System.Collections.IEnumerator SpecialComboSequence(Vector2Int a, Vector2Int b)
@@ -2325,10 +2430,18 @@ namespace WordDrop
             var rules = RulesEngine.Instance; if (rules == null || _grid == null) yield break;
             var da = rules.GetCell(a.x, a.y); var db = rules.GetCell(b.x, b.y);
             if (da == null || db == null) yield break;
-            int ka = da.SpecialKind, kb = db.SpecialKind;
+            // FIRES AT THE DROP TARGET (11-01 Spencer: "it should start its animation at the tile you pushed it into"). a = the tile
+            // the player dragged, b = the tile it was pushed into: a slides into b and the combo goes off from b. The STRONGER
+            // special still decides what it becomes (10-31: rocket + dynamite -> the dynamite look) - only its position changed.
+            {
+                var tc = a; a = b; b = tc; var td = da; da = db; db = td;   // a = where it fires (the target), b = the one that moves
+            }
+            bool dStrong = ComboPower(da.SpecialKind) >= ComboPower(db.SpecialKind);
+            int ka = dStrong ? da.SpecialKind : db.SpecialKind, kb = dStrong ? db.SpecialKind : da.SpecialKind;   // ka = stronger
             int combo = RulesEngine.ComboKindFor(ka, kb);
             RulesEngine.PendingComboPartner = ka == RulesEngine.SPECIAL_DISCO ? kb : ka;
-            WDLog.Log($"[Combo] {RulesEngine.SpecialName(ka)} + {RulesEngine.SpecialName(kb)} -> {RulesEngine.SpecialName(combo)} at ({a.x},{a.y})");
+            OwlPortrait.Play("starry");   // 11-01 owl: power-up combo
+            WDLog.Log($"[Combo] {RulesEngine.SpecialName(db.SpecialKind)} pushed into {RulesEngine.SpecialName(da.SpecialKind)} -> {RulesEngine.SpecialName(combo)} at ({a.x},{a.y})");
             var ta = _grid.GetTile(a.x, a.y); var tb = _grid.GetTile(b.x, b.y);
             if (tb != null)
             {
@@ -2337,7 +2450,7 @@ namespace WordDrop
                 tb.transform.DOMove(_grid.CellToWorld(a.x, a.y) + new Vector3(_grid.BoardSlideOffsetX, 0f, -0.05f), COMBO_MERGE_DUR).SetEase(Ease.InBack, 1.3f);
             }
             if (ta != null) { ta.transform.DOKill(); ta.transform.DOPunchScale(Vector3.one * 0.25f, COMBO_MERGE_DUR + 0.12f, 6, 0.6f); }
-            GameAudio.Instance?.PlayScorePowerup();
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("combo_merge")) GameAudio.Instance.PlayKit("combo_merge"); else GameAudio.Instance?.PlayScorePowerup();   // 11-07 Spencer's pick: Pop Delay Rising B4
             yield return new WaitForSeconds(COMBO_MERGE_DUR);
             // b's special is consumed into the combo; a carries the combo kind and fires.
             db.SpecialKind = RulesEngine.SPECIAL_NONE; tb?.SetSpecial(RulesEngine.SPECIAL_NONE);
@@ -2345,6 +2458,15 @@ namespace WordDrop
             da.SpecialKind = combo;
             if (FireSpecialAt(a) && SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && SurvivalManager.Instance.EditsCountAsMoves)
                 SurvivalManager.Instance.NotifyDropCommitted();   // costs a move
+        }
+
+        /// <summary>True while a tapped / fired special is resolving (BoosterManager waits on it between queued fires).</summary>
+        public bool IsTapDetonating => _tapDetonating;
+        /// <summary>BOOSTERS (11-07): a booster's shelf/safe hits get the same books-fly / lamp / open FX a blast's do.</summary>
+        public void HitShelvesFromBooster(List<KeyValuePair<Vector2Int, int>> hits)
+        {
+            if (hits == null || hits.Count == 0) return;
+            HitShelfTiles(_grid != null ? _grid : GridManager.Instance, new RulesEngine.StepResult { ShelfHits = hits });
         }
 
         public bool FireSpecialAt(Vector2Int cell)
@@ -2357,7 +2479,9 @@ namespace WordDrop
                          MatchController.PLAYER_HUMAN, rules.GlobalTurn, rules.GlobalTurn + 999);
             if (id < 0) return false;
             WDLog.Log($"[Special] TEST fire {RulesEngine.SpecialName(data.SpecialKind)} at ({cell.x},{cell.y})");
-            return TryTapDetonate(cell);
+            bool fired = TryTapDetonate(cell);
+            if (fired) TutorialBeats.OnSpecialFired(cell);   // 11-17: the "double-tap the rocket" lesson ends here
+            return fired;
         }
 
         private bool TryTapDetonate(Vector2Int cell)
@@ -2420,13 +2544,20 @@ namespace WordDrop
                         }
                         tapAt.z = anchor.z;      // keep the badge's depth so sorting is unchanged
                         // the word(s) in this cluster, for the word-instead-of-score pop (2026-10-23)
-                        var words = new List<string>();
+                        var words = new List<string>(); bool goalHit = false; int longest = 0;
                         foreach (var pw in rules.PrimedRegistry.GetAllPrimedWords())
                             if (pw?.Cells != null && pw.Word != null && pw.Word.Length > 1 && pw.Cells.Exists(c => cl[i].cells.Contains(c)) && !words.Contains(pw.Word.ToUpperInvariant()))
-                                words.Add(pw.Word.ToUpperInvariant());
+                            {
+                                words.Add(pw.Word.ToUpperInvariant()); longest = Mathf.Max(longest, pw.Word.Length);
+                                if (BonusPopup.GOAL_WORD_GOLD && LevelRules.Goals.Count > 0 && rules.WordCellsHitGoal(pw.Cells)) goalHit = true;
+                            }
+                        // 10-31 (Spencer OK'd the mock goal_word_pop.png): GOLD = this word made goal progress; LONG words pop bigger.
+                        BonusPopup.NextPopGold = goalHit; BonusPopup.NextPopLength = longest;
+                        OwlPortrait.Play(longest >= 7 ? "starry" : longest >= 6 ? "proud" : (goalHit && Random.value < 0.35f ? "wink" : "happy"));   // 11-01 owl (7+ letters = starry)
                         string label = words.Count == 0 ? null : words.Count <= BonusPopup.WORD_POPUP_MAX_WORDS ? string.Join("  ", words) : $"{words[0]}  +{words.Count - 1} MORE";
                         _tapPopWords.Clear(); foreach (var w in words) _tapPopWords.Add(w);   // these already got their pop-up here
-                        ClusterOutline.Instance.PopPayout(tapAt, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc, label);
+                        bool firesSpecial = !WORD_POP_OVER_BLAST && cl[i].cells.Exists(c => { var sd = rules.GetCell(c.x, c.y); return sd != null && sd.SpecialKind != RulesEngine.SPECIAL_NONE; });
+                        if (!firesSpecial) ClusterOutline.Instance.PopPayout(tapAt, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc, label);
                     }
                     break;
                 }
@@ -2629,6 +2760,23 @@ namespace WordDrop
                                 ScoreManager.Instance?.DepositFlyScore(step.TotalScore);
                             }
 
+                            // BIG MOMENT decided at the START of the blast (10-31, Spencer: the boom was "not firing at the right time" -
+                            // it played after the ~0.75s explode+splash). The boom lands with the explosion; the shake below uses the same call.
+                            int wordsHere = Mathf.Max(step.PoppedWords != null ? step.PoppedWords.Count : 0, step.TriggerWords != null ? step.TriggerWords.Count : 0,
+                                                      step.ChainTriggeredCount);   // (not _lastBurstWords: it can still hold the previous blast's words)
+                            wordsHere = Mathf.Max(wordsHere, RulesEngine.PendingSwapWordCount); RulesEngine.PendingSwapWordCount = 0;   // the swap's words, counted once
+                            bool bigMoment = step.TotalScore > 0 && (wordsHere >= BIG_MOMENT_WORDS || (step.SpecialsFired != null && step.SpecialsFired.Count > 0));
+                            WDLog.Log($"[BigMoment] words={wordsHere} specials={step.SpecialsFired?.Count ?? 0} depth={step.ChainDepth} -> {(bigMoment ? "BOOM" : "pop")}");   // TEMP DIAG 10-31
+                            // 10-31 Spencer: "on places where a bomb goes off though it should just be the bomb sound" - specials keep their own sound
+                            // ARM the boom (10-31 v2): it plays in place of the first explosion pop, as the tiles burst, and the blast's
+                            // other pops stay silent. Specials keep their own sound; an EARNED plane doesn't fly here, so it doesn't block it.
+                            bool boomHere = bigMoment && (step.SpecialsFired == null || step.SpecialsFired.Count == 0);
+                            // v5 (10-31, Spencer: "the blast needs to line up with the screen shake" -> v4 boom at the late shake was "even
+                            // more off"): the boom AND the big shake both fire at the FIRST burst (GameAudio.BoomInsteadOfPop, which also
+                            // silences that blast's other pops); the end-of-blast shake stays the normal small one.
+                            if (bigMoment) OwlPortrait.Play(wordsHere >= 3 ? "starry" : "wow");   // 11-01 owl: double word / big blast; 3+ words in one move = starry
+                            if (boomHere) GameAudio.Instance?.ArmBoom(() => GridManager.Instance?.ShakeBoard(0.025f + 0.045f * 0.9f, 0.09f + 0.05f * 0.9f));
+
                             if (dying.Count > 0 && WordDropFX.Instance != null)
                             {
                                 FirePerWordBurst();
@@ -2640,6 +2788,7 @@ namespace WordDrop
                                 yield return ExplodeWordsThenSplash(step, dying, step.ChainDepth, wLen);
                                 PopTiming("explode + splash done");
                             }
+                            if (boomHere) GameAudio.Instance?.EndBoomBlast();
 
                             // ONE shake, HERE, at the blast — sized by what the blast was worth.
                             // A single-word detonation previously got no shake at all (only the
@@ -2652,6 +2801,10 @@ namespace WordDrop
                                 // a slow sweep, not an impact. The shipped shakes were 0.06-0.09.
                                 // Short and small: an impact is a jolt, not a slide. 2026-09-09.
                                 float sm = Mathf.Clamp01(step.TotalScore / 600f);
+                                // BIG MOMENT = 2+ words in one blast (a double word) or a special going off: harder shake + the BOOM
+                                // (10-31, Spencer: "the pop sound doesnt really do a bigger explosion justice"). The first wiring went
+                                // into WordDropFX's tier path, which the swap game never runs - this is the live pop.
+                                if (bigMoment && !boomHere) sm = Mathf.Max(sm, 0.8f);   // (a boom blast already got its big shake at the burst)
                                 GridManager.Instance?.ShakeBoard(0.025f + 0.045f * sm, 0.09f + 0.05f * sm);
                             }
 
@@ -2862,6 +3015,7 @@ case RulesEngine.ResolutionPhase.Complete:
         /// shake-in-place. Duration/overshoot from the research: 0.18-0.25s, ease-out with a small
         /// overshoot. 2026-10-20.</summary>
         public static bool  MATCH3_SWAP_ANIM = true;
+        public static float MAGIC_LIFT = 0.22f, MAGIC_CROSS = 0.42f, MAGIC_LAND = 0.14f;   // Free Swap booster's magic swap
         /// <summary>false (2026-10-23 Spencer) = no tap-a-tile-then-another swap and no select click; swaps are drag-only and a
         /// pressed tile glows (SwipeWordInput). Power-ups still take taps for double-tap-to-fire.</summary>
         public static bool  TAP_TO_SWAP = false;
@@ -2883,6 +3037,9 @@ case RulesEngine.ResolutionPhase.Complete:
             var grid = GridManager.Instance;
             Tile ta = grid != null ? grid.GetTile(a.x, a.y) : null;
             if (ta == null) yield break;
+            // 11-16: a second refusal while the first nudge is still leaning read the LEANED position as home and left the tile
+            // parked off its cell for good (mashing a refused swap). One nudge per tile at a time.
+            if (!_nudging.Add(ta)) yield break;
             const float dur = 0.22f;
             ta.MarkAnimating(dur + 0.05f);
             ta.LiftForFx(dur + 0.05f);   // the bump toward the other tile draws OVER it (2026-10-23 Spencer) — self-restoring
@@ -2898,7 +3055,42 @@ case RulesEngine.ResolutionPhase.Complete:
                 ta.transform.position = from + dir * lean + new Vector3(shake * grid.CellSize, 0f, 0f);
                 yield return null;
             }
-            ta.transform.position = from;
+            if (ta != null) ta.transform.position = from;
+            _nudging.Remove(ta);
+        }
+        private readonly System.Collections.Generic.HashSet<Tile> _nudging = new System.Collections.Generic.HashSet<Tile>();
+
+        private static System.Collections.Generic.List<RulesWordMatch> s_bouncePre;   // what the bounce pre-check saw (LATE BOUNCE diag)
+        public static bool  BOUNCE_NO_WORD   = true;
+        public static bool  SPECIALS_LOCKED  = true;    // 11-03 Spencer: the DYNAMITE can't be moved (rockets/bombs/discos can; two power-ups still combo)
+        public static bool  BOUNCE_SPECIALS  = true;    // 10-30 Spencer: specials follow the same rule (no word -> bounce); double-tap still fires one for a move, two specials still combo    // false = the old rule: every swap stays and costs a move
+        public static float BOUNCE_OUT = 0.13f, BOUNCE_HOLD = 0.05f, BOUNCE_BACK = 0.17f;
+        /// <summary>No-word swap: the two tiles trade places, hold a beat, and slide home with a small "no" shake - the match-3
+        /// bounce. Visual only (the rules never changed); input waits for it.</summary>
+        private IEnumerator BounceNoWordSwap(Vector2Int a, Vector2Int b)
+        {
+            var grid = GridManager.Instance;
+            Tile ta = grid != null ? grid.GetTile(a.x, a.y) : null, tb = grid != null ? grid.GetTile(b.x, b.y) : null;
+            if (ta == null || tb == null) yield break;
+            IsInteractable = false;
+            float total = BOUNCE_OUT + BOUNCE_HOLD + BOUNCE_BACK + 0.05f;
+            ta.MarkAnimating(total); tb.MarkAnimating(total); ta.LiftForFx(total);
+            Vector3 pa = grid.CellToWorld(a.x, a.y), pb = grid.CellToWorld(b.x, b.y);
+            pa.z = ta.transform.position.z; pb.z = tb.transform.position.z;
+            GameAudio.Instance?.PlaySwapSound();
+            float t = 0f;
+            while (t < BOUNCE_OUT) { t += Time.deltaTime; float k = Mathf.SmoothStep(0f, 1f, t / BOUNCE_OUT);
+                ta.transform.position = Vector3.Lerp(pa, pb, k); tb.transform.position = Vector3.Lerp(pb, pa, k); yield return null; }
+            GameAudio.Instance?.PlaySwapReject();   // 11-07: own sound for a rejected swap
+            HapticsManager.Light();
+            yield return new WaitForSeconds(BOUNCE_HOLD);
+            t = 0f;
+            while (t < BOUNCE_BACK) { t += Time.deltaTime; float k = Mathf.Clamp01(t / BOUNCE_BACK); float e = Mathf.SmoothStep(0f, 1f, k);
+                Vector3 shake = new Vector3(Mathf.Sin(k * Mathf.PI * 5f) * (1f - k) * 0.025f * grid.CellSize, 0f, 0f);
+                ta.transform.position = Vector3.Lerp(pb, pa, e) + shake; tb.transform.position = Vector3.Lerp(pa, pb, e) - shake; yield return null; }
+            if (ta != null) ta.transform.position = pa;
+            if (tb != null) tb.transform.position = pb;
+            IsInteractable = true;
         }
 
         private IEnumerator BoardSwapTurnSequence(int col1, int row1, char newLetter1, int col2, int row2, char newLetter2)
@@ -2952,6 +3144,8 @@ case RulesEngine.ResolutionPhase.Complete:
                 // the other (lifted + swells), the other dips under. Replaces the old shake-in-place,
                 // which was the EDIT animation and read as "a letter changed", not "two tiles moved".
                 float dur = SWAP_SLIDE_DUR;
+                bool magic = _freeSwap && BoosterFX.ON && BoosterFX.Instance != null;   // FREE SWAP booster: the MAGIC SWAP (2026-10-29)
+                if (magic) dur = MAGIC_LIFT + MAGIC_CROSS + MAGIC_LAND;
                 // Settle any tap-select LIFT first (Tile.SELECT_LIFT) — a breathing selected tile would fight
                 // the slide's scale and its base scale would be captured mid-breath.
                 tile1.SetEditSelected(false);
@@ -2961,6 +3155,52 @@ case RulesEngine.ResolutionPhase.Complete:
                 tile1.LiftForFx(dur + 0.05f);             // the moved tile travels on top
                 Vector3 baseScale1 = tile1.transform.localScale, baseScale2 = tile2.transform.localScale;
                 float t = 0f;
+                if (magic)
+                {   // MAGIC SWAP (2026-10-29 Spencer: free swap "needs to look a bit juicy ... special rather than just swapping out letters").
+                    // 1 LIFT: both tiles rise and swell as the glove swoops in. 2 CROSS: they trade places on crossing arcs (one over,
+                    // one under) with a full spin each, trailing sparkles. 3 LAND: squash back down with a burst of stars on each cell.
+                    tile2.LiftForFx(dur + 0.05f);
+                    BoosterFX.Instance.Glove(restPos1, restPos2, MAGIC_LIFT + MAGIC_CROSS);
+                    GameAudio.Instance?.PlayWhooshFast();
+                    float c = grid.CellSize; Vector3 up = new Vector3(0f, c * 0.35f, 0f);
+                    while (t < MAGIC_LIFT)
+                    {
+                        t += Time.deltaTime; float k = Mathf.Clamp01(t / MAGIC_LIFT); float e = EaseOutBack(k, 1.6f);
+                        tile1.transform.position = restPos1 + up * e; tile2.transform.position = restPos2 + up * e;
+                        tile1.transform.localScale = baseScale1 * (1f + 0.3f * e); tile2.transform.localScale = baseScale2 * (1f + 0.3f * e);
+                        yield return null;
+                    }
+                    BoosterFX.Instance.SwapTrail(tile1.transform, MAGIC_CROSS); BoosterFX.Instance.SwapTrail(tile2.transform, MAGIC_CROSS);
+                    Vector3 p1 = restPos1 + up, p2 = restPos2 + up, mid = (p1 + p2) * 0.5f;
+                    Vector3 dir = (p2 - p1); Vector3 perp = new Vector3(-dir.y, dir.x, 0f).normalized; if (perp.y < 0f) perp = -perp;
+                    float bow = Mathf.Max(c * 1.1f, dir.magnitude * 0.35f);
+                    Vector3 cA = mid + perp * bow, cB = mid - perp * bow;
+                    float t2 = 0f;
+                    while (t2 < MAGIC_CROSS)
+                    {
+                        t2 += Time.deltaTime; float k = Mathf.Clamp01(t2 / MAGIC_CROSS); float e = k * k * (3f - 2f * k); float u = 1f - e;
+                        tile1.transform.position = u * u * p1 + 2f * u * e * cA + e * e * p2;
+                        tile2.transform.position = u * u * p2 + 2f * u * e * cB + e * e * p1;
+                        tile1.transform.rotation = Quaternion.Euler(0f, 0f, 360f * e); tile2.transform.rotation = Quaternion.Euler(0f, 0f, -360f * e);
+                        float sw = 1.3f + 0.12f * Mathf.Sin(k * Mathf.PI);
+                        tile1.transform.localScale = baseScale1 * sw; tile2.transform.localScale = baseScale2 * sw;
+                        yield return null;
+                    }
+                    tile1.transform.rotation = Quaternion.identity; tile2.transform.rotation = Quaternion.identity;
+                    float t3 = 0f;
+                    while (t3 < MAGIC_LAND)
+                    {
+                        t3 += Time.deltaTime; float k = Mathf.Clamp01(t3 / MAGIC_LAND);
+                        tile1.transform.position = Vector3.Lerp(restPos2 + up, restPos2, k * k); tile2.transform.position = Vector3.Lerp(restPos1 + up, restPos1, k * k);
+                        float sq = Mathf.Lerp(1.3f, 1f, k * k);
+                        tile1.transform.localScale = new Vector3(baseScale1.x * sq * (1f + 0.1f * Mathf.Sin(k * Mathf.PI)), baseScale1.y * sq * (1f - 0.1f * Mathf.Sin(k * Mathf.PI)), baseScale1.z);
+                        tile2.transform.localScale = new Vector3(baseScale2.x * sq * (1f + 0.1f * Mathf.Sin(k * Mathf.PI)), baseScale2.y * sq * (1f - 0.1f * Mathf.Sin(k * Mathf.PI)), baseScale2.z);
+                        yield return null;
+                    }
+                    BoosterFX.Instance.SwapLand(restPos1); BoosterFX.Instance.SwapLand(restPos2);
+                    GameAudio.Instance?.PlayScorePowerup();
+                    t = dur;   // skip the normal slide loop
+                }
                 while (t < dur)
                 {
                     t += Time.deltaTime;
@@ -3048,6 +3288,58 @@ case RulesEngine.ResolutionPhase.Complete:
                     if (swapWords != null) foreach (var w in swapWords) sb.Append($"{w.Word}(blocked={rules.IsClaimBlocked(w.Word + "|" + w.CellKey)}) ");
                     WDLog.Log($"[Hint] MISMATCH: hint expected '{HintManager.LastHintWord}' at ({col1},{row1})<->({col2},{row2}); scan found [{sb}] shortCells={(RulesEngine.ShortWordCells == null ? "null" : RulesEngine.ShortWordCells.Length.ToString())}");
                 }
+            }
+            // LATE BOUNCE (2026-10-30, Spencer: "i shouldnt have been able to move the gem piece objective"): the pre-check
+            // (WordsIfSwapped) saw 'BITE' for a gem swap but the real scan found nothing, so the swap went through with NO word and
+            // CHARGED a move - breaking the rule "no word = nothing happens". Whatever the two judges disagree on, the rule holds:
+            // undo the data swap (letter + special + gold + gem), put the tiles back, refund the charge, no move.
+            if (allNew.Count == 0 && BOUNCE_NO_WORD && InstantPopMode && SurvivalManager.FullBoardActive && !_freeSwap && rules != null && grid != null)
+            {
+                var c1 = rules.GetCell(col1, row1); var c2 = rules.GetCell(col2, row2);
+                if (c1 != null && c2 != null)
+                {
+                    char lt = c1.Letter; c1.Letter = c2.Letter; c2.Letter = lt;
+                    int sk = c1.SpecialKind; c1.SpecialKind = c2.SpecialKind; c2.SpecialKind = sk;
+                    bool rg = c1.IsRainGold; c1.IsRainGold = c2.IsRainGold; c2.IsRainGold = rg;
+                    bool gm = c1.HasGem; c1.HasGem = c2.HasGem; c2.HasGem = gm;
+                    foreach (var (t, c) in new[] { (grid.GetTile(col1, row1), c1), (grid.GetTile(col2, row2), c2) })
+                    {
+                        if (t == null) continue;
+                        t.SetLetter(c.Letter); t.SetSpecial(c.SpecialKind); t.SetRainGold(c.IsRainGold); t.SetGem(c.HasGem);
+                        t.FadeEditGlowOut();
+                    }
+                    // SLIDE BACK, don't flip (10-30): each tile now wears its ORIGINAL letter, so start it on the OTHER cell (where
+                    // that letter was just showing) and slide it home with the normal bounce's wobble - it reads as the same
+                    // bounce-back instead of letters changing in place.
+                    Tile t1 = grid.GetTile(col1, row1), t2 = grid.GetTile(col2, row2);
+                    if (t1 != null && t2 != null)
+                    {
+                        Vector3 p1 = grid.CellToWorld(col1, row1), p2 = grid.CellToWorld(col2, row2);
+                        p1.z = t1.transform.position.z; p2.z = t2.transform.position.z;
+                        t1.MarkAnimating(BOUNCE_BACK + 0.05f); t2.MarkAnimating(BOUNCE_BACK + 0.05f); t1.LiftForFx(BOUNCE_BACK + 0.05f);
+                        float bt = 0f;
+                        while (bt < BOUNCE_BACK)
+                        {
+                            bt += Time.deltaTime; float k = Mathf.Clamp01(bt / BOUNCE_BACK); float e = Mathf.SmoothStep(0f, 1f, k);
+                            Vector3 shake = new Vector3(Mathf.Sin(k * Mathf.PI * 5f) * (1f - k) * 0.025f * grid.CellSize, 0f, 0f);
+                            if (t1 != null) t1.transform.position = Vector3.Lerp(p2, p1, e) + shake;
+                            if (t2 != null) t2.transform.position = Vector3.Lerp(p1, p2, e) - shake;
+                            yield return null;
+                        }
+                        if (t1 != null) t1.transform.position = p1;
+                        if (t2 != null) t2.transform.position = p2;
+                    }
+                }
+                var pre = new System.Text.StringBuilder(); if (s_bouncePre != null) foreach (var w in s_bouncePre) pre.Append(w.Word).Append(' ');
+                WDLog.Log($"[Bounce] LATE ({col1},{row1})<->({col2},{row2}): pre-check saw [{pre}] but the real scan found none - swap undone, charge refunded, no move");
+                GameAudio.Instance?.PlaySwapReject();   // 11-07: own sound for a rejected swap
+                MatchController.Instance?.RefundRewriteCharge(MatchController.PLAYER_HUMAN);
+                NoWordStreak++; PlaythroughStats.Bounces++;
+                rules.FinalizeDrop();
+                grid.SyncToRulesState(rules); rules.RefreshAllPrimedWordTiles(-1, flashNew: false);
+                IsInteractable = true;
+                MatchController.Instance?.EndProcessing();
+                yield break;
             }
             if (allNew.Count > 0)
             {
@@ -3354,6 +3646,14 @@ case RulesEngine.ResolutionPhase.Complete:
             // real id, or a refused word would score and cost a move without arming.
             bool armed = false;
             foreach (int id in justPrimedIds) if (id >= 0) { armed = true; break; }
+            // FOUND-IT (10-31, Spencer OK'd): a dragged word is the purest word-spot - it makes its special one size earlier
+            // (RulesEngine.DRAG_SPECIAL_BONUS) and gets a bigger pop + its own sound (ClusterOutline / here).
+            if (armed && RulesEngine.DRAG_REWARD)
+            {
+                foreach (int id in justPrimedIds) if (id >= 0) RulesEngine.SwipedPrimedIds.Add(id);
+                RulesEngine.SwipedWords.Add(match.Word.ToUpperInvariant());
+                GameAudio.Instance?.PlayScorePowerup();
+            }
 
             if (armed)
             {
@@ -3636,7 +3936,14 @@ case RulesEngine.ResolutionPhase.Complete:
                                                                  : ROCKET_POP_PER_CELL * d);
                         }
                         else if (f.Kind == RulesEngine.SPECIAL_AIRPLANE)
-                            t = fire + f.Delay + (c == f.Target && c != f.Cell ? WordDropFX.AIRPLANE_TAKEOFF + WordDropFX.AIRPLANE_FLIGHT : 0.02f);   // home plus at once; the target when the plane lands
+                            t = fire + f.Delay + (c == f.Target && c != f.Cell ? WordDropFX.AIRPLANE_TAKEOFF + WordDropFX.AIRPLANE_FLIGHT : 0.02f);
+                        else if (f.Kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB)
+                        {   // home plus at once; the carried bomb's square when the plane lands (rippling out from the target)
+                            int dT = Mathf.Max(Mathf.Abs(c.x - f.Target.x), Mathf.Abs(c.y - f.Target.y));
+                            bool atTarget = f.Target != f.Cell && dT <= RulesEngine.BOMB_RADIUS_POWERED
+                                            && Mathf.Abs(c.x - f.Cell.x) + Mathf.Abs(c.y - f.Cell.y) > 1;
+                            t = fire + (atTarget ? WordDropFX.AIRPLANE_TAKEOFF + WordDropFX.AIRPLANE_FLIGHT + 0.008f * dT : 0.02f);
+                        }   // home plus at once; the target when the plane lands
                         else if (RulesEngine.IsBombLike(f.Kind))
                             t = fire + 0.008f * Mathf.Max(Mathf.Abs(c.x - f.Cell.x), Mathf.Abs(c.y - f.Cell.y));   // gone in the first frames — tiles must not stand inside the fireball (2026-10-22 capture)
                         else if (f.Kind == RulesEngine.SPECIAL_DISCO)
@@ -3646,6 +3953,17 @@ case RulesEngine.ResolutionPhase.Complete:
                         if (!_specialPopDelay.TryGetValue(c, out float was) || t < was) _specialPopDelay[c] = t;
                     }
                 }
+                // 11-04 (Spencer: "the bookshelf and any objective needs to wait to blow up until the flying propeller hits it"):
+                // a propeller lands on ONE cell of a 2x2 shelf/safe, but the shelf's last hit clears all four - the other three
+                // popped at takeoff. Every cell of a shelf the plane is flying to now pops when it lands.
+                if (step.ShelfHits != null)
+                    foreach (var kv in step.ShelfHits)
+                    {
+                        float land = 0f; var a = kv.Key;
+                        for (int dx = 0; dx < 2; dx++) for (int dy = 0; dy < 2; dy++) land = Mathf.Max(land, PlaneLandDelay(step, new Vector2Int(a.x + dx, a.y + dy)));
+                        if (land <= 0f) continue;
+                        for (int dx = 0; dx < 2; dx++) for (int dy = 0; dy < 2; dy++) _specialPopDelay[new Vector2Int(a.x + dx, a.y + dy)] = land;
+                    }
             }
             if (step.SpecialsFired != null && WordDropFX.Instance != null)
             {
@@ -3668,19 +3986,399 @@ case RulesEngine.ResolutionPhase.Complete:
                 foreach (var f in step.SpecialsFired)
                 {
                     if (f.Cleared == null || f.Cleared.Count == 0) continue;
+                    if (BONUS_COINS_ON_ARRIVAL)
+                    {   // 11-07 (Movie_007): every coin burst out at LAUNCH, before the rockets reached the tiles. Each coin now waits for
+                        // its tile to break (_specialPopDelay, filled above). ONE call per special, so the stream (cap 14, stagger) and the
+                        // coin-landing sound keep their rhythm (Spencer 11-07: per-bucket calls had changed the landing sound).
+                        var pts = new List<Vector3>(); var waits = new List<float>();
+                        foreach (var c in f.Cleared)
+                        {
+                            pts.Add(grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f));
+                            waits.Add(_specialPopDelay.TryGetValue(c, out float d) ? d : 0f);
+                        }
+                        HUDManager.Instance.SpawnBonusCoins(pts, f.Cleared.Count * SurvivalManager.COINS_PER_BONUS_TILE, waits);
+                        continue;
+                    }
                     var starts = new List<Vector3>();
                     foreach (var c in f.Cleared) starts.Add(grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f));
                     HUDManager.Instance.SpawnBonusCoins(starts, f.Cleared.Count * SurvivalManager.COINS_PER_BONUS_TILE);
                 }
+            // 10-31 (the REWARD readout jumped ~+10 at the end): the finale also destroys tiles NO special cleared (words the
+            // cascade spells, chain pops) and pays for them, but no coin flew for them. They get their own coins now, so the coins
+            // that land add up to what is paid.
+            if (BonusBlastRunning && step.ExplodedCells != null && step.ExplodedCells.Count > 0 && HUDManager.Instance != null)
+            {
+                var byFire = new HashSet<Vector2Int>();
+                if (step.SpecialsFired != null) foreach (var f in step.SpecialsFired) if (f.Cleared != null) foreach (var c in f.Cleared) byFire.Add(c);
+                var extra = new List<Vector3>();
+                foreach (var c in step.ExplodedCells) if (!byFire.Contains(c)) extra.Add(grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f));
+                if (extra.Count > 0) HUDManager.Instance.SpawnBonusCoins(extra, extra.Count * SurvivalManager.COINS_PER_BONUS_TILE);
+            }
+            // GOLD RUSH (2026-10-30, Spencer: "there really is no reward for making and firing off the powerups"): on the bonus
+            // level every tile a special clears pays coins too, times the climbing Gold Rush multiplier. (The finale blast above
+            // pays through its own counter - not here, or it would pay twice.)
+            if (!BonusBlastRunning && LevelRules.BonusLevelActive && !RulesEngine.Simulating && step.SpecialsFired != null && HUDManager.Instance != null)
+                foreach (var f in step.SpecialsFired)
+                {
+                    LevelRules.GoldRushSpecialsFired++;   // the climb: every GOLD_RUSH_SPECIALS_PER_STEP specials fired = one step up
+                    int mult = LevelRules.GoldRushMult();
+                    // v4 (RM L20 "coins everywhere"): a blast pays for the GOLD COIN tiles it takes, times the multiplier
+                    if (f.Gold == null || f.Gold.Count == 0) continue;
+                    int pay = Mathf.Max(1, f.Gold.Count / Mathf.Max(1, LevelRules.GOLD_RUSH_TILES_PER_COIN)) * LevelRules.GOLD_RUSH_COIN_TILE * mult;
+                    CoinWallet.Add(pay); SurvivalManager.PendingBonusCoins += pay; LevelMapPanel.Instance?.AddPendingCoinReward(pay);
+                    var starts = new List<Vector3>();
+                    foreach (var c in f.Gold) starts.Add(grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f));
+                    HUDManager.Instance.SpawnBonusCoins(starts, pay);
+                }
         }
 
         /// <summary>The longest combo wind-up among this step's specials (0 in the bonus blast, which stays one quick ripple).</summary>
+        /// <summary>Seconds until a propeller (or plane+bomb combo) fired this step lands on <paramref name="cell"/>; 0 if none is
+        /// flying there. Same timing as the target's pop in the special-pop schedule (windup + the plane's own delay + takeoff + flight).</summary>
+        private static float PlaneLandDelay(RulesEngine.StepResult step, Vector2Int cell)
+        {
+            if (step?.SpecialsFired == null) return 0f;
+            float best = 0f;
+            foreach (var f in step.SpecialsFired)
+                if (f.Target != f.Cell && ((f.Kind == RulesEngine.SPECIAL_AIRPLANE && f.Target == cell)
+                    || (f.Kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB && Mathf.Max(Mathf.Abs(cell.x - f.Target.x), Mathf.Abs(cell.y - f.Target.y)) <= RulesEngine.BOMB_RADIUS_POWERED)))   // the carried bomb's square too
+                    best = Mathf.Max(best, StepComboWindup(step) + f.Delay + WordDropFX.AIRPLANE_TAKEOFF + WordDropFX.AIRPLANE_FLIGHT);
+            return best;
+        }
+
         private static float StepComboWindup(RulesEngine.StepResult step)
         {
             if (BonusBlastRunning || step == null || step.SpecialsFired == null) return 0f;
             float w = 0f;
             foreach (var f in step.SpecialsFired) w = Mathf.Max(w, WordDropFX.ComboWindup(f.Kind));
             return w;
+        }
+
+        /// <summary>MULTI-HIT CRATE (2026-11-03): each crate that lost a layer this step - wood-chip debris, a knock, then the next stage
+        /// (X -> one plank -> slats).</summary>
+        private void HitCrateTiles(GridManager grid, RulesEngine.StepResult step)
+        {
+            if (grid == null || step == null || step.CrateHitCells == null) return;
+            var rules = RulesEngine.Instance;
+            foreach (var c in step.CrateHitCells)
+            {
+                Tile t = null; try { t = grid.GetTile(c.x, c.y); } catch { }
+                if (t == null) continue;
+                var d = rules != null ? rules.GetCell(c.x, c.y) : null;
+                int after = d != null ? d.CrateHP : Mathf.Max(1, t.CrateHP - 1);
+                int before = Mathf.Max(t.CrateHP, after + 1);
+                void Knock()
+                {
+                    if (t == null) return;
+                    WordDropFX.Instance?.PlayCrateDebris(t.transform.position);
+                    WordDropFX.Instance?.PlayPlankOff(t, before);   // 11-03: the plank that came off tumbles away
+                    if (!t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.12f, 0.22f, 6, 0.6f);   // knock (skipped mid-move so it can't fight a fall tween)
+                    t.SetCrateHP(after);
+                    GameAudio.Instance?.PlayCrateKnock();   // 11-07 sound pass: a layer coming off was silent
+                }
+                // 11-04 (Spencer: "the planks and animations of the crate being hit need to wait until the propeller book flies and
+                // hits it. right now it fires as soon as you use the book"): a crate the propeller is flying to knocks when it LANDS.
+                float land = PlaneLandDelay(step, c);
+                if (land > 0f) DOVirtual.DelayedCall(land, Knock, ignoreTimeScale: true);
+                else if (CRATE_KNOCK_ON_ARRIVAL && step.SpecialsFired != null && step.SpecialsFired.Count > 0) StartCoroutine(KnockWhenBlastArrives(c, Knock));
+                else Knock();
+            }
+        }
+
+        /// <summary>11-07 (Spencer: "when a rocket goes through a crate it also needs to show the destruction ... or a bomb goes off"):
+        /// a crate that LOSES a layer to a special knocked the moment the special fired - the plank flew while the rocket was still
+        /// at its start and the tiles round the crate popped later, as the head / blast wave reached them. It now knocks when the
+        /// blast reaches it: the pop time of its own or a side neighbour's cell (ApplySpecialStep fills _specialPopDelay right
+        /// after this step's crate hits, hence the one-frame wait).</summary>
+        public static bool CRATE_KNOCK_ON_ARRIVAL = true;
+        private IEnumerator KnockWhenBlastArrives(Vector2Int c, System.Action knock)
+        {
+            float t0 = Time.unscaledTime;
+            yield return null;
+            float best = -1f;
+            var around = new[] { c, c + Vector2Int.left, c + Vector2Int.right, c + Vector2Int.up, c + Vector2Int.down };
+            foreach (var q in around)
+                if (_specialPopDelay.TryGetValue(q, out float d) && (best < 0f || d < best)) best = d;
+            while (best > 0f && Time.unscaledTime - t0 < best) yield return null;
+            knock();
+        }
+
+        /// <summary>BOOKSHELF (2026-11-03): each book knocked off this step - its slot empties on the shelf, a copy flies to the Books
+        /// goal, and the shelf takes a knock. Positions come from the grid (not the tile), so the last book still flies when the
+        /// shelf's tiles are cleared in the same step.</summary>
+        private void HitShelfTiles(GridManager grid, RulesEngine.StepResult step)
+        {
+            if (grid == null || step == null || step.ShelfHits == null) return;
+            foreach (var kv in step.ShelfHits)
+            {
+                var a = kv.Key; int slot = kv.Value;
+                Tile t = null; try { t = grid.GetTile(a.x, a.y); } catch { }
+                bool safe = t != null && t.ShelfKind == 1;
+                int style = t != null ? t.ShelfStyle : 0;
+                void Hit()
+                {
+                    if (safe) { HitSafe(grid, t, a, slot); return; }   // SAFE (11-03): lamps, not books
+                    Vector3 at = Tile.ShelfBookWorld(grid.CellToWorld(a.x, a.y), grid.CellSize, slot, style);
+                    if (t != null && t.ShelfPart == 1)
+                    {
+                        t.SetShelf(1, slot);   // hide the slot that just emptied
+                        WordDropFX.Instance?.PlayCrateDebris(at);
+                        if (!t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.06f, 0.22f, 6, 0.6f);
+                    }
+                    HUDManager.Instance?.FlyBook(at, Tile.ShelfBookFlySprite(slot));
+                    if (GameAudio.Instance != null && GameAudio.Instance.HasKit("tome_land")) GameAudio.Instance.PlayKit("tome_land", GameAudio.TOME_LAND_VOL);   // 11-07 pick: a book knocked off the shelf (Book Drop Low A2)
+                }
+                // 11-04 (Spencer "start away" on the list: shelf/safe like the crates) - a propeller flying to the shelf/safe hits it on LANDING
+                float land = 0f;
+                for (int dx = 0; dx < 2; dx++) for (int dy = 0; dy < 2; dy++) land = Mathf.Max(land, PlaneLandDelay(step, new Vector2Int(a.x + dx, a.y + dy)));
+                if (land > 0f) DOVirtual.DelayedCall(land, Hit, ignoreTimeScale: true); else Hit();
+            }
+        }
+
+        /// <summary>SAFE (2026-11-03): a hit lights the next lamp; the last hit swings the door open on a pile of coins (Spencer's open
+        /// art over the board for a beat), pays RulesEngine.SAFE_COINS the way an opened treasure does, and the coins fly to the HUD.
+        /// The safe's four tiles clear in the same step (crate debris is skipped for safes - WordDropFX.MaybeCrateDebris).</summary>
+        private void HitSafe(GridManager grid, Tile t, Vector2Int a, int left)
+        {
+            Vector3 anchor = grid.CellToWorld(a.x, a.y);
+            if (left > 0)
+            {
+                int lit = Tile.SafeLampsLit(left) - 1;   // the newest lamp (Gold Rush lights two per hit)
+                t.SetShelf(1, left);
+                SafeHitImpact(t, Tile.SafeLampWorld(anchor, grid.CellSize, lit), lit, grid.CellSize);
+                if (lit > 0 && Tile.SafeLampsLit(left) - Tile.SafeLampsLit(left + 1) > 1) t.PopSafeLamp(lit - 1);
+                if (LevelRules.BonusLevelActive && LevelRules.GOLD_RUSH_SAFES && !RulesEngine.Simulating)
+                {   // GOLD RUSH v6: every lamp hit pays a little, straight into the REWARD counter
+                    int pay = LevelRules.GOLD_RUSH_LAMP_COINS;
+                    CoinWallet.Add(pay); SurvivalManager.PendingBonusCoins += pay; LevelMapPanel.Instance?.AddPendingCoinReward(pay);
+                    HUDManager.Instance?.SpawnBonusCoins(new List<Vector3> { Tile.SafeLampWorld(anchor, grid.CellSize, lit) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f) }, pay);
+                }
+                return;
+            }
+            bool rush = LevelRules.BonusLevelActive && LevelRules.GOLD_RUSH_SAFES;
+            if (RulesEngine.SAFE_STAYS_OPEN && t != null) t.SetShelf(1, 0);   // 11-04: the tile now draws the open, empty vault (stays on the board); the blast FX plays over it
+            int coins = rush ? LevelRules.GOLD_RUSH_JACKPOT : RulesEngine.SAFE_COINS;   // Gold Rush: the jackpot
+            StartCoroutine(SafeOpenFX(Tile.ShelfCentreWorld(anchor, grid.CellSize) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f), Tile.ShelfWorldSize(grid.CellSize), coins));
+            CoinWallet.Add(coins);
+            SurvivalManager.PendingBonusCoins += coins;
+            LevelMapPanel.Instance?.AddPendingCoinReward(coins);
+            WDLog.Log($"[Safe] opened at ({a.x},{a.y}) -> +{coins} coins");
+        }
+        // ── SAFE BLOW-OFF (2026-11-03, Spencer: "the door gets blown off its hinges ... make the inside empty and then we can fill it
+        // with our own art of our coins in stacks"). Flash + shake; the door (Blockers/safe_door) blasts off toward the camera,
+        // spinning, and falls away under gravity; the empty vault (safe_empty) stays; the coin stacks (safe_coins) pop up inside;
+        // then the coins fly to the HUD and the vault fades. Falls back to the old open-door pop if the new art is missing. ──
+        // IMPACT (11-03 Spencer: a hit "should show some kind of force of impact"): the safe squashes and rebounds, the new lamp pops
+        // big with a burst of gold sparks, the board gives a small knock.
+        public static float SAFE_HIT_SHAKE = 0.045f;
+        public static int   SAFE_HIT_SPARKS = 12, SAFE_OPEN_SPARKS = 30;
+        public static Color SAFE_SPARK_HDR = new Color(2.4f, 1.7f, 0.5f, 1f);
+        private void SafeHitImpact(Tile t, Vector3 lampAt, int lamp, float cell)
+        {
+            t.PunchShelf(1f);
+            t.PopSafeLamp(lamp);
+            SafeSparks(lampAt, cell, SAFE_HIT_SPARKS, 1f);
+            GridManager.Instance?.ShakeBoard(SAFE_HIT_SHAKE, 0.12f);
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("safe_lamp")) GameAudio.Instance.PlayKit("safe_lamp"); else { GameAudio.Instance?.PlayCrateBreak(); GameAudio.Instance?.PlayCoinLand(); }   // 11-07 pick: Metal Latch B3
+        }
+        private static void SafeSparks(Vector3 at, float cell, int n, float reach)
+        {
+            var fx = WordDropFX.Instance; if (fx == null) return;
+            for (int i = 0; i < n; i++)
+            {
+                float ang = Random.Range(0f, Mathf.PI * 2f), sp = Random.Range(2.5f, 5.5f) * cell * reach;
+                fx.SpawnSpark(at + new Vector3(0f, 0f, -0.5f), new Vector3(Mathf.Cos(ang), Mathf.Sin(ang) + 0.35f, 0f) * sp, cell * Random.Range(0.10f, 0.18f), Random.Range(0.35f, 0.6f), SAFE_SPARK_HDR);
+            }
+        }
+        /// <summary>FX TEST (11-03, Spencer: "work on the safe that is on the board"): the full blow-off ON the first safe on the board -
+        /// visual only: the safe hides while it plays and comes back after (the data is untouched, so it can be replayed).
+        /// No safe on the board = plays at the board centre.</summary>
+        public void TestSafeBlowOff()
+        {
+            var g = GridManager.Instance; if (g == null) return;
+            for (int c = 0; c < RulesEngine.COLS; c++) for (int r = 0; r < RulesEngine.ROWS; r++)
+            {
+                Tile t = null; try { t = g.GetTile(c, r); } catch { }
+                if (t == null || t.ShelfPart != 1 || t.ShelfKind != 1) continue;
+                StartCoroutine(TestBlowOffOn(t, g.CellToWorld(c, r), g.CellSize));
+                return;
+            }
+            var anchor = g.CellToWorld(RulesEngine.COLS / 2 - 1, RulesEngine.ROWS / 2 - 1);
+            StartCoroutine(SafeOpenFX(Tile.ShelfCentreWorld(anchor, g.CellSize) + new Vector3(g.BoardSlideOffsetX, 0f, -0.4f), Tile.ShelfWorldSize(g.CellSize)));
+        }
+        private System.Collections.IEnumerator TestBlowOffOn(Tile t, Vector3 anchor, float cell)
+        {
+            var g = GridManager.Instance;
+            t.SetShelf(1, 0);   // all lamps lit, as on the real last hit
+            yield return new WaitForSeconds(0.15f);
+            t.SetShelfVisible(false);
+            yield return SafeOpenFX(Tile.ShelfCentreWorld(anchor, cell) + new Vector3(g != null ? g.BoardSlideOffsetX : 0f, 0f, -0.4f), Tile.ShelfWorldSize(cell));
+            yield return new WaitForSeconds(0.4f);
+            if (t != null) { t.SetShelf(1, RulesEngine.SafeHitsNow); t.SetShelfVisible(true); }   // back to a fresh closed safe for another go
+        }
+        /// <summary>FX TEST (11-03): one hit on the first safe on the board (visual only - lights the next lamp, no data change).</summary>
+        public bool TestSafeHit()
+        {
+            var g = GridManager.Instance; if (g == null) return false;
+            for (int c = 0; c < RulesEngine.COLS; c++) for (int r = 0; r < RulesEngine.ROWS; r++)
+            {
+                Tile t = null; try { t = g.GetTile(c, r); } catch { }
+                if (t == null || t.ShelfPart != 1 || t.ShelfKind != 1) continue;
+                int left = t.ShelfBooks > 1 ? t.ShelfBooks - 1 : RulesEngine.SafeHitsNow - 1;   // loops back to the first hit
+                int lit = Tile.SafeLampsLit(left) - 1;
+                t.SetShelf(1, left);
+                SafeHitImpact(t, Tile.SafeLampWorld(g.CellToWorld(c, r), g.CellSize, lit), lit, g.CellSize);
+                return true;
+            }
+            return false;
+        }
+        public static float SAFE_OPEN_HOLD = 0.9f;
+        public static int   SAFE_VAULT_ORDER = 44;  // 11-04 ABOVE the tiles (row bands 5..~34) and below FX (46+): the letters fall in BEHIND the opening safe and show as the vault fades (Spencer: "the letters fell over the safe before its animation was done" - his 11-03 ask was "cascade down behind it"; 3 = under the tiles, the old misread)   // 11-03: longer look at the loot before it fades (was .55)
+        public static float SAFE_DOOR_FIT = 0.96f;                     // door width / safe width (its gold frame lines up with the closed safe's)
+        public static float SAFE_DOOR_DUR = 0.95f, SAFE_DOOR_GRAVITY = 16f, SAFE_DOOR_SPIN = 260f, SAFE_DOOR_GROW = 1.6f;
+        public static Vector3 SAFE_COINS_AT = new Vector3(0.4976f, 0.5191f, 0.5981f);   // coin stacks: centre x / y DOWN, width (0..1 of the safe)
+        private System.Collections.IEnumerator SafeOpenFX(Vector3 at, float size, int coinsPaid = -1)
+        {
+            if (coinsPaid < 0) coinsPaid = RulesEngine.SAFE_COINS;
+            var empty = Tile.SafeEmptySprite; var door = Tile.SafeDoorSprite; var coinsSp = Tile.SafeCoinsSprite;
+            if (empty == null || door == null) { yield return SafeOpenSwingFX(at, size); yield break; }
+            SpriteRenderer Make(string n, Sprite sp, Vector3 pos, float width, int order)
+            {
+                var g = new GameObject(n); g.transform.position = pos;
+                var r = g.AddComponent<SpriteRenderer>(); r.sprite = sp; r.sortingOrder = order;
+                g.transform.localScale = Vector3.one * (width / Mathf.Max(0.0001f, sp.bounds.size.x));
+                return r;
+            }
+            // 11-03 (Spencer: "can the letters still cascade down behind it"): the letters keep falling into the cleared space at their
+            // normal pace, BEHIND the vault + coins (SAFE_VAULT_ORDER 44 / 45 > tiles), and show as the vault fades. The door and its
+            // flash stay on top (64 / 65).
+            var vault = Make("SafeVault", empty, at, size, SAFE_VAULT_ORDER);
+            var drSR = Make("SafeDoor", door, at + new Vector3(0f, 0f, -0.05f), size * SAFE_DOOR_FIT, 64);
+            GridManager.Instance?.ShakeBoard(0.24f, 0.32f);   // 11-03: the blast hits harder than a lamp
+            if (GameAudio.Instance != null && GameAudio.Instance.HasKit("safe_open")) GameAudio.Instance.PlayKit("safe_open"); else GameAudio.Instance?.PlayCrateBreak();   // 11-07 pick: Sack Drop On Table Metal Loose B6
+            WordDropFX.Instance?.PlayScreenFlash(2);
+            WordDropFX.Instance?.PlayChestCoinBurst(at, size);   // gold glow + bubble pop behind the vault
+            SafeSparks(at, size * 0.5f, SAFE_OPEN_SPARKS, 1.4f);
+            vault.transform.DOPunchScale(Vector3.one * vault.transform.localScale.x * 0.12f, 0.35f, 6, 0.6f);
+            // flash: a white copy of the door that fades in a blink
+            var fl = Make("SafeFlash", door, drSR.transform.position + new Vector3(0f, 0f, -0.01f), size * SAFE_DOOR_FIT, 65);
+            fl.color = new Color(1f, 1f, 1f, 0.9f); fl.material = new Material(Shader.Find("GUI/Text Shader"));   // solid white silhouette
+            fl.DOFade(0f, 0.18f).OnComplete(() => { if (fl != null) Destroy(fl.gameObject); });
+            // 11-03 (Spencer: "when the door blows off should the coins already be in there"): the stacks are IN the vault from the
+            // first frame, behind the door, so the blast reveals them - no pop-in
+            SpriteRenderer coins = null;
+            if (coinsSp != null)
+            {
+                var cpos = at + new Vector3((SAFE_COINS_AT.x - 0.5f) * size, (0.5f - SAFE_COINS_AT.y) * size, -0.02f);
+                coins = Make("SafeCoins", coinsSp, cpos, size * SAFE_COINS_AT.z, SAFE_VAULT_ORDER + 1);
+                if (SAFE_COIN_SPARKLE) StartCoroutine(SafeCoinSparkle(coins, 0.16f + 0.3f + SAFE_OPEN_HOLD));   // 11-17: the reveal glitters until the coins fade
+            }
+            StartCoroutine(SafeDoorFly(drSR, size));
+            yield return new WaitForSeconds(0.16f);
+            GameAudio.Instance?.PlayCoinDisperse();
+            yield return new WaitForSeconds(0.3f);
+            if (LevelRules.BonusLevelActive && HUDManager.Instance != null)
+            {   // Gold Rush: the REWARD counter only counts the bonus coin path - stream them off the stacks
+                var starts = new List<Vector3>();
+                for (int i = 0; i < 8; i++) starts.Add(at + new Vector3(Random.Range(-0.28f, 0.28f) * size, Random.Range(-0.2f, 0.15f) * size, -0.1f));
+                HUDManager.Instance.SpawnBonusCoins(starts, coinsPaid);
+            }
+            else HUDManager.Instance?.SpawnTreasureCoins(at, coinsPaid);   // the bonus coin flight, into the HUD
+            yield return new WaitForSeconds(SAFE_OPEN_HOLD);
+            if (coins != null) { coins.DOFade(0f, 0.3f); coins.transform.DOScale(coins.transform.localScale * 0.85f, 0.3f); }
+            if (vault != null) vault.DOFade(0f, 0.3f);
+            yield return new WaitForSeconds(0.32f);
+            if (coins != null) Destroy(coins.gameObject);
+            if (vault != null) Destroy(vault.gameObject);
+        }
+        // ── COIN SPARKLE (2026-11-17, Spencer: "when the safe opens could we have some kind of particle effect sparkle on the coins
+        // inside the safe for the reveal?"). Four-point glints wink on and off over the coin stacks from the moment the door blows
+        // off until the coins fade: a quick cluster for the reveal, then a steady twinkle. Drawn just above the coins and under the
+        // flying door. Gold-white HDR through the FX material's _Color, so it blooms on device. SAFE_COIN_SPARKLE = false: none. ──
+        public static bool  SAFE_COIN_SPARKLE = true;
+        public static int   SAFE_SPARKLE_BURST = 6;                 // glints in the first moment of the reveal
+        public static float SAFE_SPARKLE_EVERY = 0.085f;            // then one this often
+        public static Vector2 SAFE_SPARKLE_SIZE = new Vector2(0.16f, 0.34f);   // glint size, x the coin pile's width
+        public static Vector2 SAFE_SPARKLE_LIFE = new Vector2(0.32f, 0.55f);
+        public static Color SAFE_SPARKLE_HDR = new Color(2.6f, 2.3f, 1.5f, 1f);
+        private System.Collections.IEnumerator SafeCoinSparkle(SpriteRenderer coins, float duration)
+        {
+            var fx = WordDropFX.Instance; var star = WordDropFX.TwinkleSprite;
+            if (fx == null || star == null || coins == null) yield break;
+            yield return new WaitForSeconds(0.06f);   // the door has just left
+            float t = 0f, next = 0f; int made = 0;
+            while (t < duration && coins != null)
+            {
+                while (coins != null && (made < SAFE_SPARKLE_BURST || t >= next))
+                {
+                    var b = coins.bounds;
+                    // over the stacks, not the empty corners: the upper two thirds of the pile, pulled in from the sides
+                    var at = new Vector3(Mathf.Lerp(b.min.x, b.max.x, Random.Range(0.10f, 0.90f)), Mathf.Lerp(b.min.y, b.max.y, Random.Range(0.30f, 0.98f)), coins.transform.position.z - 0.02f);
+                    float sz = b.size.x * Random.Range(SAFE_SPARKLE_SIZE.x, SAFE_SPARKLE_SIZE.y);
+                    float delay = made < SAFE_SPARKLE_BURST ? made * 0.035f : 0f;
+                    StartCoroutine(SafeGlint(fx, star, at, sz, Random.Range(SAFE_SPARKLE_LIFE.x, SAFE_SPARKLE_LIFE.y), delay));
+                    made++;
+                    if (made >= SAFE_SPARKLE_BURST) next = t + SAFE_SPARKLE_EVERY;
+                    if (made > 80) yield break;   // never runaway
+                }
+                t += Time.deltaTime;
+                yield return null;
+            }
+        }
+        private System.Collections.IEnumerator SafeGlint(WordDropFX fx, Sprite star, Vector3 at, float size, float life, float delay)
+        {
+            if (delay > 0f) yield return new WaitForSeconds(delay);
+            var sr = fx.MakeFxSprite("SafeGlint", star, SAFE_SPARKLE_HDR, SAFE_VAULT_ORDER + 2);
+            if (sr == null) yield break;
+            sr.transform.position = at;
+            float k0 = size / Mathf.Max(0.0001f, star.bounds.size.x);
+            float t = 0f, rot0 = Random.Range(-20f, 20f), spin = Random.Range(-70f, 70f);
+            while (t < life && sr != null)
+            {
+                t += Time.deltaTime; float k = t / life;
+                float s = k < 0.3f ? k / 0.3f : 1f - (k - 0.3f) / 0.7f;        // snaps open, eases shut
+                sr.transform.localScale = Vector3.one * k0 * Mathf.Max(0f, s);
+                sr.transform.rotation = Quaternion.Euler(0f, 0f, rot0 + spin * t);
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
+        }
+        private System.Collections.IEnumerator SafeDoorFly(SpriteRenderer sr, float size)
+        {
+            if (sr == null) yield break;
+            var tr = sr.transform; float side = Random.value < 0.5f ? -1f : 1f;
+            var vel = new Vector3(side * Random.Range(2.2f, 3.0f), Random.Range(4.0f, 5.0f), 0f) * size * 0.5f;
+            float spin = side * -SAFE_DOOR_SPIN * Random.Range(0.85f, 1.15f), t = 0f; Vector3 s0 = tr.localScale;
+            while (t < SAFE_DOOR_DUR && sr != null)
+            {
+                float dt = Time.deltaTime; t += dt;
+                vel.y -= SAFE_DOOR_GRAVITY * size * 0.5f * dt;
+                tr.position += vel * dt;
+                tr.Rotate(0f, 0f, spin * dt);
+                tr.localScale = s0 * Mathf.Lerp(1f, SAFE_DOOR_GROW, Mathf.Clamp01(t / (SAFE_DOOR_DUR * 0.6f)));   // flies at the camera
+                float f = Mathf.Clamp01((t - SAFE_DOOR_DUR * 0.65f) / (SAFE_DOOR_DUR * 0.35f));
+                sr.color = new Color(1f, 1f, 1f, 1f - f);
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
+        }
+        private System.Collections.IEnumerator SafeOpenSwingFX(Vector3 at, float size)
+        {
+            var sp = Tile.SafeOpenSprite; if (sp == null) yield break;
+            var go = new GameObject("SafeOpen"); go.transform.position = at;
+            var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = sp; sr.sortingOrder = 60;
+            float s0 = size / Mathf.Max(0.0001f, sp.bounds.size.x);
+            go.transform.localScale = Vector3.one * s0 * 0.94f;
+            var seq = DOTween.Sequence().SetTarget(go);
+            seq.Append(go.transform.DOScale(s0 * 1.12f, 0.12f).SetEase(Ease.OutQuad));
+            seq.Append(go.transform.DOScale(s0, 0.22f).SetEase(Ease.OutBack, 2f));
+            GameAudio.Instance?.PlayCoinDisperse();
+            yield return new WaitForSeconds(0.18f);
+            HUDManager.Instance?.SpawnTreasureCoins(at, RulesEngine.SAFE_COINS);
+            yield return new WaitForSeconds(SAFE_OPEN_HOLD);
+            if (go == null) yield break;
+            sr.DOFade(0f, 0.3f).OnComplete(() => { if (go != null) Destroy(go); });
+            go.transform.DOScale(s0 * 0.9f, 0.3f).SetEase(Ease.InQuad);
         }
 
         /// <summary>TREASURE (2026-10-27): each treasure that lost a band this step - repaint to its new state + the band-off FX.</summary>
@@ -3707,6 +4405,10 @@ case RulesEngine.ResolutionPhase.Complete:
         // step now lists its PoppedWords; any not already shown at the tap gets its own pop-up at its centre.
         private readonly HashSet<string> _tapPopWords = new HashSet<string>();
         public static bool POPUP_EVERY_WORD = true;
+        /// <summary>11-07 (Spencer: "some of the explosions seem confusing cause theres just so much going on"): a word that sets off a
+        /// special no longer pops its text - it landed right in the middle of the blast ("ALLY YOGI" over a TNT, L9). The explosion is
+        /// that word's payoff (Royal Match puts no text over a blast). The owl still reacts. true = the old text over the blast.</summary>
+        public static bool WORD_POP_OVER_BLAST = false;
         private void PopUpOtherWords(GridManager grid, RulesEngine.StepResult step)
         {
             if (!POPUP_EVERY_WORD || grid == null || step?.PoppedWords == null || ClusterOutline.Instance == null) { _tapPopWords.Clear(); return; }
@@ -3716,6 +4418,7 @@ case RulesEngine.ResolutionPhase.Complete:
             {
                 string w = kv.Key?.ToUpperInvariant();
                 if (string.IsNullOrEmpty(w) || w.Length < 2 || kv.Value == null || kv.Value.Count == 0 || !shown.Add(w)) continue;
+                if (!WORD_POP_OVER_BLAST && step.SpecialsFired != null && step.SpecialsFired.Exists(f => kv.Value.Contains(f.Cell))) continue;   // 11-07: no text over its own blast
                 Vector3 sum = Vector3.zero;
                 foreach (var c in kv.Value) sum += grid.CellToWorld(c.x, c.y);
                 Vector3 at = sum / kv.Value.Count; at.z = -0.5f;
@@ -3727,6 +4430,8 @@ case RulesEngine.ResolutionPhase.Complete:
         {
             PopUpOtherWords(grid, step);   // pop-ups for words the tap didn't cover (cascade / combo words)
             HitTreasureTiles(grid, step);   // TREASURE: same moment as the thaw (survivors of this detonation)
+            HitCrateTiles(grid, step);      // 11-03 MULTI-HIT CRATE: crates that lost a layer (same moment)
+            HitShelfTiles(grid, step);      // 11-03 BOOKSHELF: books knocked off fly to the goal
             if (grid == null || step == null || step.ThawedCells == null || step.ThawedCells.Count == 0) return;
             bool anyThawed = false;
             for (int i = 0; i < step.ThawedCells.Count; i++)
@@ -3737,8 +4442,10 @@ case RulesEngine.ResolutionPhase.Complete:
                 if (thawed != null)
                 {
                     thawed.ClearPrimedGlow(); // thawed tile becomes a PLAIN letter — no lingering magenta (obscured the melt). 2026-07-07 Spencer.
-                    thawed.PlayDefrost();
-                    anyThawed = true;
+                    float land = PlaneLandDelay(step, step.ThawedCells[i]);   // 11-04: ice a propeller is flying to breaks when it LANDS
+                    var tt = thawed;
+                    if (land > 0f) DOVirtual.DelayedCall(land, () => { if (tt != null) { tt.PlayDefrost(); GameAudio.Instance?.PlayIceMelt(); } }, ignoreTimeScale: true);
+                    else { thawed.PlayDefrost(); anyThawed = true; }
                 }
             }
             // ONE melt sound per batch. The clip is a ~0.94s ascending run of pops, so playing it

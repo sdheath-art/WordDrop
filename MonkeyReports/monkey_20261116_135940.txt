@@ -1,0 +1,38 @@
+MONKEY TEST  20261116_135940   seed 918761   ran 3.3 min   ended: Esc
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  347 gestures:  TAP ANYWHERE 26  MASH BUTTON 25  BUTTON 99  DOUBLE TAP 10  REAL MOVE 54  TAPPABLE 30  RANDOM DRAG 18  CELL TAP 21  MASH ANYWHERE 12  MASH BOARD 24  RANDOM SWIPE 18  BOOSTER TAP 10
+GAME    levels started 5, cleared 3, failed 0;  swaps accepted 47, swiped words 0, boosters used 0;  hearts refilled by the monkey 1x
+FRAMES  worst 301 ms, 2 frame(s) over 250 ms, 11632 frames (59 fps average)
+
+FAULTS  1 different   PASS-THROUGH 1
+
+--- 1. [PASS-THROUGH] a swap was accepted while a full-screen card had been covering the board for 2.3s
+    first at 02:00, level 3, seen 1x, screenshot fault_20261116_135940_01.png
+    state: level 3, moves left 7, coins 249131, hearts 1, timeScale 1.00 | board accepts input=False, resolving a move=False, card pause=True, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      01:54 f6837  RANDOM DRAG  (2,0)->(3,0)   [board idle]
+      01:54 f6852  BUTTON  Slot_2_Booster   [board idle]
+      01:55 f6861  BUTTON  Slot_5_Booster   [board idle]
+      01:55 f6867  BUTTON  Slot_4_Booster   [board idle]
+      01:55 f6873  REAL MOVE  drag (3,7)->(3,8)   [board idle]
+      01:55 f6890  DOUBLE TAP  (3,4)   [board BUSY]
+      01:56 f6937  BUTTON  Slot_2_Booster   [board BUSY]
+      01:57 f7037  RANDOM SWIPE  (6,4)->(6,9)   [board idle]
+      01:58 f7055  REAL MOVE  drag (4,0)->(4,1)   [board idle]
+      01:58 f7073  BUTTON  Slot_6_Settings   [board BUSY]
+      02:00 f7173  BUTTON  Tab_Help   [board BUSY, under a full-screen card]
+      02:00 f7208  RANDOM DRAG  (3,2)->(3,3)   [board BUSY, under a full-screen card]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       13x  The character with Unicode value \uB was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+       13x  The character with Unicode value \uC was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+       13x  The character with Unicode value \u was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+        1x  [INVARIANT] GOLD-ART t=. (,) 'Y' gold-primed but wearing '' (colour=)
+        1x  [RulesEngine] Step chain hit depth cap () — completing.
+        1x  [INVARIANT] (,) 'D' sortingOrder= expected  — a lift outlived its effect
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_135940.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

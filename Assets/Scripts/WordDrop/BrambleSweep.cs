@@ -55,14 +55,39 @@ namespace WordDrop
                 }
             }
 
+            var shelves = new HashSet<Vector2Int>(ShelfCellsIn(toRemove)); var shelfDone = new HashSet<int>();   // 11-07: shelf/safe take a hit
             StripObjectiveTiles(toRemove); // never smash level objectives. 2026-06-15 Spencer.
-            for (int i = 0; i < toRemove.Count; i++)
-                rules.ClearCell(toRemove[i].x, toRemove[i].y);
-            grid.RemoveTiles(toRemove);
-
-            WDLog.Log($"[BrambleSweep L{Level}] Cleared rows {rMin}-{rMax}: {toRemove.Count} tiles");
+            var specials = TakeSpecials(toRemove);   // 11-07: specials in the row are SET OFF after the strike, not smashed
+            var knocks = PeelCratesDeferred(toRemove);   // 11-06: crates take the hit as the strike reaches them (was: on tap)
+            System.Action clear = () =>
+            {
+                for (int i = 0; i < toRemove.Count; i++)
+                    rules.ClearCellCountingGoals(toRemove[i].x, toRemove[i].y);   // counts gems / collect letters (2026-10-29)
+                grid.RemoveTiles(toRemove);
+                WDLog.Log($"[BrambleSweep L{Level}] Cleared rows {rMin}-{rMax}: {toRemove.Count} tiles");
+                onComplete?.Invoke();
+            };
+            // COMET (2026-10-29): a comet streaks along the row; each tile bursts as the head passes, data clears after the slam.
+            if (BoosterFX.ON && BoosterFX.Instance != null)
+            {
+                var set = new HashSet<Vector2Int>(toRemove);
+                BoosterFX.Instance.LightningRow(row, col =>   // lightning strike (2026-10-29); BoosterFX.LIGHTNING=false -> the comet
+                {
+                    for (int r = rMin; r <= rMax; r++)
+                    {
+                        var c = new Vector2Int(col, r);
+                        if (set.Contains(c)) BoosterFX.BurstTile(grid.GetTile(col, r));
+                        else if (knocks.TryGetValue(c, out var hp)) KnockCrate(c, hp);
+                        else if (shelves.Contains(c)) HitShelfAt(c, shelfDone);
+                        else if (specials.Contains(c)) NudgeSpecial(grid.GetTile(col, r));
+                    }
+                }, clear);
+                return;
+            }
             GameAudio.Instance?.PlayUIClick();
-            onComplete?.Invoke();
+            foreach (var kv in knocks) KnockCrate(kv.Key, kv.Value);
+            foreach (var c in shelves) HitShelfAt(c, shelfDone);
+            clear();
         }
     }
 }

@@ -19,6 +19,18 @@ public static class WordSlopSetup
     const string BTN_TTF = "Assets/Fonts/WordSlop-Button.ttf";
     const string BTN_FONT = "WordSlop Button SDF";
     const string DIR = "Assets/Resources";
+    // 2026-10-29: button labels switched to Lilita One (Spencer). Baked with the SAME settings as WordSlop so the label
+    // material's outline/underlay values carry over; kerning from Assets/Fonts/LilitaOne-Regular.kern.json.
+    const string LILITA_TTF = "Assets/Fonts/LilitaOne-Regular.ttf";
+    const string LILITA_FONT = "LilitaOne Button SDF";
+    // 2026-11-06: ArtButton labels (Play / Level / OK) switched to WordSlop Title Medium (Spencer: "more distinct, helps
+    // marketing"). Same bake settings, so the label material's outline/underlay values hold; kerning = the Button cut's file
+    // (same GPOS kernfix lookup).
+    const string TITLE_MED_TTF = "Assets/Fonts/WordSlop-Title-Medium.ttf";
+    const string TITLE_MED_FONT = "WordSlop Title Medium SDF";
+    // 2026-11-06: the BOLD Title cut for the level card's "Level N" heading (Spencer). Same bake + kerning file.
+    const string TITLE_TTF = "Assets/Fonts/WordSlop-Title.ttf";
+    const string TITLE_FONT = "WordSlop Title SDF";
 
     // (preset, ring colour, drop colour, top tint) — measured on the rebuilt buttons (vector_buttons/photoshop/*_scene_cfg.jsx).
     // Recipe (2026-10-25, measured at the sheet's 22px-cap resolution): PURE WHITE face + a faint tint of the button colour
@@ -35,6 +47,9 @@ public static class WordSlopSetup
         EditorApplication.delayCall += () =>
         {
             if (File.Exists(TTF) && (!File.Exists($"{DIR}/{FONT}.asset") || !File.Exists($"{DIR}/{BTN_FONT}.asset"))) Build();
+            if (File.Exists(LILITA_TTF) && !File.Exists($"{DIR}/{LILITA_FONT}.asset")) FontSdfGenerator.Generate(LILITA_TTF, LILITA_FONT);
+            if (File.Exists(TITLE_MED_TTF) && !File.Exists($"{DIR}/{TITLE_MED_FONT}.asset")) FontSdfGenerator.Generate(TITLE_MED_TTF, TITLE_MED_FONT);
+            if (File.Exists(TITLE_TTF) && !File.Exists($"{DIR}/{TITLE_FONT}.asset")) FontSdfGenerator.Generate(TITLE_TTF, TITLE_FONT);
         };
     }
 
@@ -43,6 +58,9 @@ public static class WordSlopSetup
     {
         FontSdfGenerator.Generate(TTF, FONT);
         if (File.Exists(BTN_TTF)) FontSdfGenerator.Generate(BTN_TTF, BTN_FONT);
+        if (File.Exists(LILITA_TTF)) FontSdfGenerator.Generate(LILITA_TTF, LILITA_FONT);
+        if (File.Exists(TITLE_MED_TTF)) FontSdfGenerator.Generate(TITLE_MED_TTF, TITLE_MED_FONT);
+        if (File.Exists(TITLE_TTF)) FontSdfGenerator.Generate(TITLE_TTF, TITLE_FONT);
         // presets are built on the BUTTON cut when it exists (they are button-label materials)
         var fa = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>($"{DIR}/{(File.Exists(BTN_TTF) ? BTN_FONT : FONT)}.asset");
         if (fa == null || fa.material == null) { Debug.LogError("[WordSlop] font asset missing after generate"); return; }

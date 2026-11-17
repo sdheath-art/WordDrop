@@ -183,6 +183,7 @@ namespace WordDrop
             if (GUILayout.Button("Reset all progress"))
             {
                 LevelProgressManager.ResetAll();
+                SurvivalManager.ClearSavedProgress();   // 11-16 saved level
                 CoinWallet.ResetAll();
                 HeartsManager.ResetAll();
                 TutorialProgression.ResetTutorialState();

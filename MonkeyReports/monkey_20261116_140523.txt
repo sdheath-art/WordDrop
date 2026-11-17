@@ -1,0 +1,80 @@
+MONKEY TEST  20261116_140523   seed 287511   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  996 gestures:  TAP ANYWHERE 97  RANDOM SWIPE 54  BUTTON 260  MASH ANYWHERE 44  RANDOM DRAG 66  CELL TAP 55  MASH BOARD 62  REAL MOVE 151  BOOSTER TAP 28  DOUBLE TAP 37  MASH BUTTON 65  TAPPABLE 77
+GAME    levels started 14, cleared 12, failed 0;  swaps accepted 96, swiped words 0, boosters used 19;  hearts refilled by the monkey 0x
+FRAMES  worst 353 ms, 1 frame(s) over 250 ms, 35547 frames (59 fps average)
+
+FAULTS  3 different   DOUBLE-FIRE 2   PASS-THROUGH 1
+
+--- 1. [DOUBLE-FIRE] 'level_start' fired twice within 0.08s
+    first at 01:02, level 2, seen 1x, screenshot fault_20261116_140523_01.png
+[Analytics] level_start | t=66.2 stage=12 level=2
+    state: level 2, moves left 8, coins 249225, hearts 4, timeScale 1.00 | board accepts input=True, resolving a move=False, card pause=True, level-end lock=False, level won wait=False, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      00:55 f3409  BUTTON  Tab_Haptics   [board idle, under a full-screen card]
+      00:55 f3434  TAP ANYWHERE  100,1302   [board idle, under a full-screen card]
+      00:56 f3473  BUTTON  Quit levelBtn   [board idle, under a full-screen card]
+      00:57 f3545  BUTTON  QuitConfirmBtn   [board idle, under a full-screen card]
+      00:58 f3551  TAPPABLE  Overlay   [board idle, under the home screen]
+      00:58 f3557  BUTTON  HeartPanelHit   [board idle, under the home screen]
+      00:58 f3592  TAPPABLE  PlayButton   [board idle, under the home screen]
+      00:59 f3627  TAPPABLE  BtnPlay   [board idle, under the home screen]
+      00:59 f3640  TAPPABLE  BtnPlay   [board idle, under the home screen]
+      01:00 f3666  MASH ANYWHERE  x6   [board idle]
+      01:00 f3690  BUTTON  Panel   [board idle, under a full-screen card]
+      01:01 f3771  MASH ANYWHERE  x11   [board idle, under a full-screen card]
+
+--- 2. [PASS-THROUGH] a booster was used while the level-won wait had been covering the board for 1.5s
+    first at 07:00, level 9, seen 5x, screenshot fault_20261116_140523_02.png
+    state: level 9, moves left 15, coins 249652, hearts 4, timeScale 3.50 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=True, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      06:53 f24626  TAPPABLE  Scrim   [board idle, under a full-screen card]
+      06:53 f24630  BUTTON  Panel   [board idle, under a full-screen card]
+      06:53 f24641  BUTTON  Tab_Haptics   [board idle, under a full-screen card]
+      06:54 f24646  MASH BUTTON  CloseBtn x6   [board idle, under a full-screen card]
+      06:54 f24674  DOUBLE TAP  (2,2)   [board idle]
+      06:56 f24816  CELL TAP  (6,0)   [board idle]
+      06:56 f24825  REAL MOVE  drag (2,3)->(2,4)   [board idle]
+      06:57 f24838  BOOSTER TAP  BoosterHUDSlot   [board BUSY]
+      06:58 f24931  TAPPABLE  Slot_3_Booster   [board BUSY, under the level-won wait]
+      06:58 f24938  DOUBLE TAP  (6,2)   [board BUSY, under the level-won wait]
+      06:59 f24984  BUTTON  Slot_3_Booster   [board idle, under the level-won wait]
+      07:00 f25010  BUTTON  Slot_1_Booster   [board idle, under the level-won wait]
+
+--- 3. [DOUBLE-FIRE] 'booster_activate' fired twice within 0.10s
+    first at 08:10, level 11, seen 12x, screenshot fault_20261116_140523_03.png
+[Analytics] booster_activate | t=494.1 booster=free_swap charges_before=2
+    state: level 11, moves left 12, coins 249843, hearts 4, timeScale 3.50 | board accepts input=True, resolving a move=False, card pause=False, level-end lock=False, level won wait=True, home covers board=False, board sliding in=False, booster aiming=False, tutorial gate=False, lesson tip=False, splash=False, cards=[]
+    last inputs before it:
+      08:05 f28863  CELL TAP  (2,9)   [board BUSY]
+      08:05 f28882  REAL MOVE  drag (3,5)->(3,6)   [board BUSY]
+      08:06 f28943  REAL MOVE  drag (4,0)->(4,1)   [board idle]
+      08:06 f28953  RANDOM DRAG  (6,3)->(5,3)   [board idle]
+      08:06 f28976  DOUBLE TAP  (4,3)   [board BUSY]
+      08:07 f28990  REAL MOVE  drag (0,5)->(0,6)   [board BUSY]
+      08:07 f29003  BUTTON  Slot_1_Booster   [board BUSY, under the level-won wait]
+      08:07 f29008  MASH BUTTON  Slot_1_Booster x14   [board BUSY, under the level-won wait]
+      08:08 f29073  BUTTON  Slot_5_Booster   [board BUSY, under the level-won wait]
+      08:08 f29082  BUTTON  Slot_1_Booster   [board BUSY, under the level-won wait]
+      08:09 f29112  DOUBLE TAP  (2,5)   [board BUSY, under the level-won wait]
+      08:09 f29135  MASH BUTTON  Slot_1_Booster x14   [board BUSY, under the level-won wait]
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       29x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+       20x  The character with Unicode value \uB was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+       20x  The character with Unicode value \uC was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+       20x  The character with Unicode value \u was not found in the [WordSlop SDF] font asset or any potential fallbacks. It was replaced by Unicod
+        9x  [RulesEngine] Step chain hit depth cap () — completing.
+        1x  [INVARIANT] GOLD-ART t=. (,) 'Y' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'O' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'T' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'S' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'I' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'V' sortingOrder= expected  — a lift outlived its effect
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_140523.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

@@ -1,0 +1,14 @@
+MONKEY TEST  20261116_142130   seed 904311   ran -0.1 min   ended: play mode ended
+Screen 556x1730.  One fake finger, real game, Play mode.
+
+INPUTS  24 gestures:  BUTTON 2  DOUBLE TAP 2  MASH ANYWHERE 1  TAP ANYWHERE 4  REAL MOVE 4  CELL TAP 5  BOOSTER TAP 1  RANDOM SWIPE 2  RANDOM DRAG 2  MASH BOARD 1
+GAME    levels started 0, cleared 0, failed 0;  swaps accepted 6, swiped words 0, boosters used 0;  hearts refilled by the monkey 0x
+FRAMES  worst 197 ms, 0 frame(s) over 250 ms, 885 frames (0 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261116_142130.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

@@ -148,6 +148,27 @@ namespace WordDrop
 
         private AudioSource _source;
         private AudioSource _pitchedSource; // separate source for pitch-shifted sounds
+        public static int PITCH_POOL_SIZE = 12;
+        private AudioSource[] _pitchPool; private float[] _pitchBusyUntil; private int _pitchPoolRR;
+        /// <summary>A pooled source whose last one-shot has finished (else the one that frees soonest), for one pitched one-shot.
+        /// (AudioSource.isPlaying does not see PlayOneShot, so busy-until times are tracked here.)</summary>
+        private AudioSource FreePitchSource(float clipSeconds)
+        {
+            if (_pitchPool == null || _pitchPool.Length == 0) return _pitchedSource;
+            if (_pitchBusyUntil == null || _pitchBusyUntil.Length != _pitchPool.Length) _pitchBusyUntil = new float[_pitchPool.Length];
+            float now = Time.unscaledTime; int pick = -1; float soonest = float.MaxValue;
+            for (int k = 0; k < _pitchPool.Length; k++)
+            {
+                int i = (_pitchPoolRR + k) % _pitchPool.Length;
+                if (_pitchPool[i] == null) continue;
+                if (_pitchBusyUntil[i] <= now) { pick = i; break; }
+                if (_pitchBusyUntil[i] < soonest) { soonest = _pitchBusyUntil[i]; pick = i; }
+            }
+            if (pick < 0) return _pitchedSource;
+            _pitchPoolRR = (pick + 1) % _pitchPool.Length;
+            _pitchBusyUntil[pick] = now + clipSeconds;
+            return _pitchPool[pick];
+        }
         private AudioSource _line2Source;   // dedicated source for the HiddenWord hit chime (own pitch, no warp)
         private AudioSource _coinSource;    // dedicated source for coin-land tings (own pitch climb, no warp)
         private AudioSource[] _coinSources; // round-robin pool so overlapping coin tings don't share/warp a pitch
@@ -333,8 +354,18 @@ namespace WordDrop
 
             _source = gameObject.AddComponent<AudioSource>();
             _source.playOnAwake = false;
+            // 11-01 (Spencer: big_pop "only played part of its sound"): the boom loaded on its FIRST play and then seeked 0.29s in -
+            // a cold load + seek can clip the hit. Load it now so the first blast is ready (meta preloadAudioData on too).
+            _shakeBoomTried = true; _shakeBoom = Resources.Load<AudioClip>(SHAKE_BOOM_CLIP);
+            if (_shakeBoom != null && _shakeBoom.loadState != AudioDataLoadState.Loaded) _shakeBoom.LoadAudioData();
             _pitchedSource = gameObject.AddComponent<AudioSource>();
             _pitchedSource.playOnAwake = false;
+            // 11-07 (Spencer: "is it somehow distorting them?"): every pitched Play() set the ONE shared _pitchedSource's pitch,
+            // which instantly re-pitches every sound still ringing on it - a goal plop / letter / coin / word pop bent mid-sound
+            // whenever the next pitched sound fired (word pops climb per cascade step, goal hits per item, letters per letter).
+            // Pitched Play() now takes a free source from this pool, so each sound keeps its own pitch (as the coin pool does).
+            _pitchPool = new AudioSource[PITCH_POOL_SIZE];
+            for (int i = 0; i < _pitchPool.Length; i++) { var ps = gameObject.AddComponent<AudioSource>(); ps.playOnAwake = false; _pitchPool[i] = ps; }
             // Dedicated source for the HiddenWord "hit target" chime so its per-hit pitch climb doesn't
             // bend other pitched SFX (the shared _pitchedSource was warping them). 2026-06-17 Spencer.
             _line2Source = gameObject.AddComponent<AudioSource>();
@@ -343,7 +374,7 @@ namespace WordDrop
             _coinSource.playOnAwake = false;
             // Pool of coin-ting sources: overlapping coin landings each play on their OWN source, so setting one
             // source's pitch never warps a ting still ringing on another (the old single-source glitch). 2026-07-14.
-            _coinSources = new AudioSource[8];
+            _coinSources = new AudioSource[12]; _coinBusyUntil = new float[12];   // 11-16: 8 -> 12 + busy tracking (see PlayCoinLand)
             for (int i = 0; i < _coinSources.Length; i++)
             {
                 var cs = gameObject.AddComponent<AudioSource>();
@@ -391,6 +422,7 @@ namespace WordDrop
             }
             _source.outputAudioMixerGroup        = _sfxGroup;
             _pitchedSource.outputAudioMixerGroup = _sfxGroup;
+            if (_pitchPool != null) foreach (var ps in _pitchPool) if (ps != null) ps.outputAudioMixerGroup = _sfxGroup;
             if (_line2Source != null) _line2Source.outputAudioMixerGroup = _sfxGroup;
             if (_coinSource != null) _coinSource.outputAudioMixerGroup = _sfxGroup;
             if (_coinSources != null)
@@ -443,7 +475,7 @@ namespace WordDrop
             _tilePrimedAlt   = Resources.Load<AudioClip>("SFX/tile_primed_alt");
             _detonation      = Resources.Load<AudioClip>("SFX/detonation");
             _detonationAlt   = Resources.Load<AudioClip>("SFX/detonation_alt");
-            _bigPop          = Resources.Load<AudioClip>("SFX/big_pop");
+            _bigPop          = Resources.Load<AudioClip>("Audio/Kit/big_pop_boom") ?? Resources.Load<AudioClip>("SFX/big_pop");   // 11-07 Spencer's pick: Soft Explosion Tight B2, padded so its peak sits at 0.32 s like big_pop (the hold/nudge sync still holds)
             _chainReaction   = Resources.Load<AudioClip>("SFX/chain_reaction");
             _chainReactionAlt= Resources.Load<AudioClip>("SFX/chain_reaction_alt");
             _meltdown        = Resources.Load<AudioClip>("SFX/meltdown");
@@ -623,7 +655,7 @@ namespace WordDrop
         {
             if (_muted || clip == null) return;
             if (LogSfxFiring)
-                WDLog.Log($"[SFX] {caller} → {clip.name} (vol={_volume * volumeMult:F2} pitch={pitch:F2})");
+                WDLog.Log($"[SOUND] {caller} → {clip.name} (vol={_volume * volumeMult:F2} pitch={pitch:F2})");
             if (Mathf.Approximately(pitch, 1f))
             {
                 // Normal pitch — use main source (no pitch interference)
@@ -632,14 +664,19 @@ namespace WordDrop
             }
             else
             {
-                // Pitched sound — use separate source so it doesn't corrupt main
-                if (_pitchedSource != null)
+                // Pitched sound — its OWN pooled source, so setting this pitch can't bend a sound still ringing (11-07)
+                var ps = FreePitchSource(clip.length / Mathf.Max(0.05f, Mathf.Abs(pitch)));
+                if (ps != null)
                 {
-                    _pitchedSource.pitch = pitch;
-                    _pitchedSource.PlayOneShot(clip, _volume * volumeMult);
+                    ps.pitch = pitch;
+                    ps.PlayOneShot(clip, _volume * volumeMult);
                 }
             }
         }
+
+        /// <summary>TEMP 11-07: the sounds that bypass Play() (own AudioSources) log too, so a recording can be matched sound-by-sound.</summary>
+        private void LogDirect(AudioClip c, [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
+        { if (LogSfxFiring) WDLog.Log($"[SOUND] {caller} → {(c != null ? c.name : "?")} (direct)"); }
 
         private AudioClip PickRandom(AudioClip a, AudioClip b)
         {
@@ -779,6 +816,7 @@ namespace WordDrop
         /// must be played ONCE per defrost batch, never per tile. Silent if missing. 2026-07-30.</summary>
         public void PlayIceMelt(float pitch = 1f)
         {
+            if (HasKit("ice_crack")) { PlayKit("ice_crack", 0.9f, pitch); return; }   // 11-07 pick: Break Mining Crystals A6
             if (_iceMelt != null) Play(_iceMelt, 0.9f, pitch);
         }
 
@@ -850,14 +888,19 @@ namespace WordDrop
         // 2026-07-14 Spencer.
         private int _primeStep = -1; // -1 = fresh; first prime of a chain plays at base pitch
         public void ResetPrimeRamp() => _primeStep = -1;
+        /// <summary>11-07 Spencer: "a very faint charge up sound when you are popping a word, like ... our old priming of a letter":
+        /// in the instant-pop game a word pops the moment it's made, so the prime chime just smeared under the pop. Off there.</summary>
+        public static bool PRIME_CHIME_IN_QUICK_POP = false;
         public void PlayTilePrimed()
         {
             if (_tilePrimed == null) return;
+            if (!PRIME_CHIME_IN_QUICK_POP && HandManager.QUICK_POP && SurvivalManager.FullBoardActive) return;
             _primeStep++; // each connected prime in this chain steps up
             var src = _pitchedSource;
             if (src == null) { Play(_tilePrimed, 0.6f); return; } // no pitched source → plain play
             int step = Mathf.Clamp(_primeStep, 0, 8);
             src.pitch = Mathf.Pow(2f, step / 12f); // +1 semitone per successive prime, capped ~an octave
+            LogDirect(_tilePrimed);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.PlayOneShot(_tilePrimed, _volume * 0.6f);
         }
 
@@ -972,6 +1015,9 @@ namespace WordDrop
         /// used for internal state cycles). Tune volume here if feel needs
         /// adjustment.
         /// </summary>
+        /// <summary>11-07 Spencer's pick (Castanets Low C4): a swap that makes no word, as the tiles bounce back. Was the light tick.</summary>
+        public void PlaySwapReject() { if (HasKit("swap_reject")) PlayKit("swap_reject", 0.85f, Random.Range(0.97f, 1.03f)); else PlayInvalidDrop(); }
+
         public void PlayInvalidDrop()
         {
             Play(_lightTick != null ? _lightTick : _uiClickAlt, 0.55f);
@@ -1154,8 +1200,11 @@ namespace WordDrop
 
         /// <summary>Plays Skybound_Victory (looped) for the between-level MAP screen. Falls back silently if the
         /// clip is missing. Level start swaps back to the gameplay track. 2026-07-13 Spencer.</summary>
+        public static bool MAP_USES_MENU_SONG = true;   // 11-01 Spencer: the home/map screen plays the title screen's song (was Skybound_Victory)
         public void PlayLevelMapMusic()
         {
+            // same track as the title screen; PlayMenuMusic is idempotent, so title -> home carries on without a restart
+            if (MAP_USES_MENU_SONG && _menuMusicPool != null && _menuMusicPool.Length > 0) { PlayMenuMusic(); return; }
             if (_musicSource == null || _victorySkyboundClip == null) return;
 
             // Idempotent — already on the map track.
@@ -1457,6 +1506,7 @@ namespace WordDrop
             var src = _line2Source != null ? _line2Source : _pitchedSource;
             if (src == null) { Play(clip, 0.9f); return; }
             src.pitch = pitch;
+            LogDirect(clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.PlayOneShot(clip, _volume * 0.9f);
         }
 
@@ -1465,7 +1515,8 @@ namespace WordDrop
         private static float _coinBurstLastTime = -10f;
         private static float _coinThrottleTime = -10f;
         private const float  COIN_BURST_WINDOW = 0.6f;  // gap that resets the pitch ramp (between chests)
-        private const float  COIN_THROTTLE     = 0.018f; // min gap between AUDIBLE ticks — small (per-frame-ish) so coins aren't skipped ("holes"); the source pool handles overlap without warping
+        private const float  COIN_THROTTLE     = 0.04f;   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
+        private float[] _coinBusyUntil; // min gap between AUDIBLE ticks — small (per-frame-ish) so coins aren't skipped ("holes"); the source pool handles overlap without warping
 
         /// <summary>Coin lands on the REWARD counter. Uses the audible line2 ting with two anti-machine-gun
         /// fixes: (1) per-hit pitch CLIMB → a rising "ka-ching" run; (2) THROTTLE — drop landings <50ms after
@@ -1509,6 +1560,84 @@ namespace WordDrop
             Play(_bigBoom, BOOM_SFX_VOL);
         }
 
+        // SHAKE BOOM (2026-10-31, Spencer: "the pop sound doesnt really do a bigger explosion justice"): his
+        // /Volumes/T7/Casual UI - Designed/MAGPoof_POOF-Bubble Stumble_B00M_CUDS.wav, FIRST of its four booms (0.215-1.0s, 96k/24
+        // -> 48k/16, 6ms in / 80ms out, transient ~20ms in) -> Resources/Audio/boom_poof.wav. Plays INSTEAD of the word pop on
+        // explosions big enough to shake the screen (WordDropFX tier >= 2). Rate-limited: a double word is one boom.
+        private AudioClip _shakeBoom; private bool _shakeBoomTried; private float _lastShakeBoomAt = -10f; private AudioSource _shakeBoomSource;
+        public static bool  SHAKE_BOOM = true;
+        public static string SHAKE_BOOM_CLIP = "Audio/Kit/big_pop_boom";   // 11-07: Spencer's B2 (peak at 0.32 s, same as big_pop, so SHAKE_BOOM_SKIP still lands on the hit). Was "SFX/big_pop"   // 11-01 Spencer: "instead of [detonation_alt] switch the sound to bigpop". Was SFX/detonation_alt (skip .11, vol .90)   // 10-31 Spencer: "try swapping it for detonation_alt" (was Audio/boom_poof, his T7 poof - kept)
+        public static float SHAKE_BOOM_SKIP = 0.29f;   // big_pop: a small bubbly rise 0.02-0.20s, then the hit at 0.32s - start just before the hit so it lands ON the blast/shake   // seconds of the clip's lead-in to skip (detonation_alt: strong at 0.12, peak 0.26)
+        public static float SHAKE_BOOM_VOL = 1.0f, SHAKE_BOOM_MIN_GAP = 0.35f;   // big_pop's hit is ~25% quieter than detonation_alt's (0.475 vs 0.633 peak window): 0.90 x 1.33, capped at 1.0
+        // BOOM REPLACES THE POPS (10-31, Spencer: "it more just replaces the pops when you have ones that shake the screen" + "the
+        // sound should line up to play when the blast goes off"). The blast arms it (ArmBoom); the FIRST explosion pop of that blast
+        // plays the boom instead, at the moment the tiles burst, and the rest of the blast's pops stay silent until EndBoomBlast.
+        private bool _boomArmed, _boomBlastActive;
+        private System.Action _onBoom;
+        public void ArmBoom(System.Action onBoom = null) { _boomArmed = true; _boomBlastActive = true; _onBoom = onBoom; }
+        public void EndBoomBlast() { if (_boomArmed) WDLog.Log("[ShakeBoom] armed but no explosion pop reached it - boom NOT played (TEMP DIAG)"); _boomArmed = false; _boomBlastActive = false; }
+        /// <summary>Called where a word-explosion pop would play: true = handled (boom played, or pop silenced in a boom blast).</summary>
+        public bool BoomInsteadOfPop()
+        {
+            if (!_boomBlastActive) return false;
+            if (_boomArmed) { _boomArmed = false; PlayShakeBoom(); var cb = _onBoom; _onBoom = null; cb?.Invoke(); }
+            return true;
+        }
+        /// <summary>True if the boom played (the caller then skips its normal pop).</summary>
+        public bool PlayShakeBoom()
+        {
+            if (!SHAKE_BOOM) return false;
+            if (!_shakeBoomTried) { _shakeBoomTried = true; _shakeBoom = Resources.Load<AudioClip>(SHAKE_BOOM_CLIP); }
+            if (_shakeBoom == null) { WDLog.Log("[ShakeBoom] Audio/boom_poof NOT FOUND (import?)"); return false; }
+            float now = Time.unscaledTime;
+            if (now - _lastShakeBoomAt < SHAKE_BOOM_MIN_GAP) return true;
+            WDLog.Log($"[ShakeBoom] play ({_shakeBoom.length:F2}s, vol {SHAKE_BOOM_VOL})");   // TEMP DIAG 10-31   // one boom per big moment; still swallow the pop
+            _lastShakeBoomAt = now;
+            // OWN SOURCE (10-31, Spencer: "muffled weirdness"): a pitched Play() goes through the SHARED pitched source, and the word
+            // pops that land right after re-pitch it (chord climb up to 2x), bending every voice still playing on it - the boom too.
+            if (_shakeBoomSource == null)
+            {
+                _shakeBoomSource = gameObject.AddComponent<AudioSource>();
+                _shakeBoomSource.playOnAwake = false; _shakeBoomSource.spatialBlend = 0f;
+                if (_source != null) _shakeBoomSource.outputAudioMixerGroup = _source.outputAudioMixerGroup;
+            }
+            if (_muted) return true;
+            _shakeBoomSource.pitch = 1f;
+            // 10-31 (Spencer: "the timing doesnt seem right"): the log had the boom ON the first burst, but detonation_alt swells
+            // for 0.12s and peaks at 0.26s - so the bang came ~a quarter second late. Start past the swell.
+            _shakeBoomSource.clip = _shakeBoom; _shakeBoomSource.volume = _volume * SHAKE_BOOM_VOL;
+            _shakeBoomSource.time = Mathf.Clamp(SHAKE_BOOM_SKIP, 0f, Mathf.Max(0f, _shakeBoom.length - 0.05f));
+            LogDirect(_shakeBoomSource.clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
+            _shakeBoomSource.Play();
+            return true;
+        }
+
+        // POWER-UP SHIMMER (2026-10-31, Spencer): the first chime of /Volumes/T7/Casual UI - Construction Kit/
+        // MAGShim_SHIMMER-Brass Chime_B00M_CUCK.wav (0.30-2.80s: the swell trimmed so the chime is ~25ms in; 48k/16, 250ms fade) -> Resources/Audio/shimmer_brass.wav. Plays when a
+        // free power-up lands on the board before a level (PreBoosters) and when a bonus rocket lands. Own source at pitch 1 (the shared
+        // pitched source gets re-pitched mid-sound), rate-limited so a run of ten rockets doesn't stack ten chimes.
+        private AudioClip _shimmer; private bool _shimmerTried; private float _lastShimmerAt = -10f; private AudioSource _shimmerSource;
+        public static bool  SHIMMER_ON = true;
+        public static float SHIMMER_VOL = 0.6f, SHIMMER_MIN_GAP = 0.18f;
+        public void PlayPowerupShimmer()
+        {
+            if (!SHIMMER_ON || _muted) return;
+            if (!_shimmerTried) { _shimmerTried = true; _shimmer = Resources.Load<AudioClip>("Audio/shimmer_brass"); }
+            if (_shimmer == null) return;
+            float now = Time.unscaledTime;
+            if (now - _lastShimmerAt < SHIMMER_MIN_GAP) return;
+            _lastShimmerAt = now;
+            if (_shimmerSource == null)
+            {
+                _shimmerSource = gameObject.AddComponent<AudioSource>(); _shimmerSource.playOnAwake = false; _shimmerSource.spatialBlend = 0f;
+                if (_source != null) _shimmerSource.outputAudioMixerGroup = _source.outputAudioMixerGroup;
+            }
+            // PlayOneShot so overlapping chimes ring out instead of cutting each other off
+            _shimmerSource.pitch = 1f;
+            LogDirect(_shimmer);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
+            _shimmerSource.PlayOneShot(_shimmer, _volume * SHIMMER_VOL);
+        }
+
         // CRATE BREAK (2026-10-22 Spencer: "can you add crate SFX when you destroy a crate?", then "try crate2") — his
         // Assets/Audio/SFX/crate2.mp3 from 0.60s (0.6s of quiet creak BEFORE the crack — played whole, the crack landed
         // 0.65s after the debris) to 1.32s: the crack at 0.65-0.70, a second crack at 0.95, the tail. 10ms in / 120ms out.
@@ -1517,10 +1646,72 @@ namespace WordDrop
         // reads as several breaks, not one loud stacked hit.
         private AudioClip _crate; private bool _crateTried;
         private float _lastCrateAt = -10f, _crateBurstStart = -10f; private int _crateBurstCount;
-        public static float CRATE_VOL = 0.6f, CRATE_MIN_GAP = 0.06f;
+        public static float CRATE_VOL = 0.85f, CRATE_MIN_GAP = 0.06f;   // 10-31 Spencer "i cant hear it": clip was ~23 dB under the booms it plays with - file normalized + soft-limited (orig in audio_library/backup_1031), preload on, 0.6 -> 0.85
         public static int   CRATE_BURST_MAX = 4;
+        public static float CRATE_BURST_FALLOFF = 0.6f;   // 11-01: each extra crate in a burst plays at 60% of the one before
+        private AudioSource _crateSource;
+        /// <summary>11-07 sound pass: a crate LOSING A LAYER (word hit, booster, tome) was silent - only a crate's last layer had a
+        /// sound. Same clip, higher and lighter, so a knock reads smaller than a break.</summary>
+        public static float CRATE_KNOCK_VOL = 0.55f, CRATE_KNOCK_PITCH = 1.28f;
+        private float _lastKnockAt = -10f;
+        public void PlayCrateKnock()
+        {
+            if (HasKit("crate_knock")) { PlayKit("crate_knock", 0.75f); return; }   // 11-07 Spencer's pick: Log Fall On Log (6 takes)
+            if (!_crateTried) { _crateTried = true; _crate = Resources.Load<AudioClip>("Audio/crate_break"); }
+            if (_crate == null || _muted) return;
+            float now = Time.unscaledTime; if (now - _lastKnockAt < 0.05f) return; _lastKnockAt = now;
+            if (_crateSource == null) { _crateSource = gameObject.AddComponent<AudioSource>(); _crateSource.playOnAwake = false; _crateSource.spatialBlend = 0f; if (_source != null) _crateSource.outputAudioMixerGroup = _source.outputAudioMixerGroup; }
+            _crateSource.pitch = CRATE_KNOCK_PITCH * Random.Range(0.96f, 1.04f);
+            LogDirect(_crate);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
+            _crateSource.PlayOneShot(_crate, _volume * CRATE_VOL * CRATE_KNOCK_VOL);
+        }
+
+        // ── KIT SOUNDS (11-07): Spencer's picks from BOOM Library "Casual UI - Construction Kit", Resources/Audio/Kit/<key>.wav or
+        // <key>_1.._n.wav (several takes -> a random one each time, never the same twice in a row). Picks: ~/Desktop/sound_candidates/_picks.json
+        public static float KIT_VOL = 0.8f;
+        // 11-16 LOUDNESS AUDIT (heard level = clip's loudest 100 ms + 20log10(vol), from the 10:51 log): tome_land played at -13 dB, as loud
+        // as the big explosion -> x0.4 (-8 dB). Button click -33 dB for the most-pressed sound -> 0.5 -> 0.8 (+4 dB). File-side the same pass:
+        // explosion_big/explosion declipped (70/29 flat-topped runs), letter_slam_1..6 +6 dB, score_tick +8 dB (originals in
+        // ~/Documents/WordDrop_Art/audio_backup_1116).
+        public static float TOME_LAND_VOL = 0.4f, BUTTON_CLICK_VOL = 0.8f;
+        private readonly Dictionary<string, AudioClip[]> _kit = new Dictionary<string, AudioClip[]>();
+        private readonly Dictionary<string, int> _kitLast = new Dictionary<string, int>();
+        private readonly Dictionary<string, float> _kitStackAt = new Dictionary<string, float>();
+        private readonly Dictionary<string, int> _kitStackN = new Dictionary<string, int>();
+        public static float KIT_STACK_GAP = 0.03f, KIT_STACK_FALLOFF = 0.55f;
+        public static int   KIT_STACK_MAX = 2;
+        private AudioClip[] Kit(string key)
+        {
+            if (_kit.TryGetValue(key, out var a)) return a;
+            var one = Resources.Load<AudioClip>("Audio/Kit/" + key);
+            var list = new List<AudioClip>(); if (one != null) list.Add(one);
+            for (int i = 1; i <= 12 && one == null; i++) { var c = Resources.Load<AudioClip>($"Audio/Kit/{key}_{i}"); if (c == null) break; list.Add(c); }
+            return _kit[key] = list.ToArray();
+        }
+        public bool HasKit(string key) => Kit(key).Length > 0;
+        public void PlayKit(string key, float vol = 1f, float pitch = 1f)
+        {
+            var a = Kit(key); if (a.Length == 0) return;
+            // 11-16 (Movie_008): a bomb hitting 7 crates played 7 crate_knocks on ONE frame, and every crate_break played twice -
+            // stacked copies of one sound read as a louder, smeared hit. The kit path skipped the old crate throttle. Now the same
+            // key within KIT_STACK_GAP plays at most KIT_STACK_MAX times, each extra one quieter.
+            float now = Time.unscaledTime;
+            if (_kitStackAt.TryGetValue(key, out float at) && now - at < KIT_STACK_GAP)
+            {
+                int n = _kitStackN.TryGetValue(key, out int c) ? c : 1;
+                if (n >= KIT_STACK_MAX) return;
+                _kitStackN[key] = n + 1; vol *= KIT_STACK_FALLOFF;
+            }
+            else { _kitStackAt[key] = now; _kitStackN[key] = 1; }
+            int i = a.Length == 1 ? 0 : Random.Range(0, a.Length);
+            if (a.Length > 1 && _kitLast.TryGetValue(key, out int last) && i == last) i = (i + 1) % a.Length;
+            _kitLast[key] = i;
+            Play(a[i], KIT_VOL * vol, pitch, key);
+        }
+
         public void PlayCrateBreak()
         {
+            if (HasKit("crate_break")) { PlayKit("crate_break", 0.9f); return; }   // 11-07 pick: Drop Logs Pile Small B3
             if (!_crateTried) { _crateTried = true; _crate = Resources.Load<AudioClip>("Audio/crate_break"); }
             if (_crate == null) return;
             float now = Time.unscaledTime;
@@ -1528,7 +1719,15 @@ namespace WordDrop
             if (now - _crateBurstStart > 0.6f) { _crateBurstStart = now; _crateBurstCount = 0; }
             if (_crateBurstCount >= CRATE_BURST_MAX) return;
             _crateBurstCount++; _lastCrateAt = now;
-            Play(_crate, CRATE_VOL, Random.Range(0.94f, 1.08f));
+            // 11-01 Spencer: "when the crates explode it shouldnt mute the popping sounds of the tiles". Two causes: the crate played
+            // on the SHARED pitched source (each random-pitch crate re-tuned the pops' chord pitches mid-play) and up to 4 loud
+            // crates stacked in 0.6s over the pops. Now: its own source (pitch never leaks), and each extra crate in a burst is
+            // quieter (x CRATE_BURST_FALLOFF per crate) - the first still hits at CRATE_VOL.
+            if (_muted) return;
+            if (_crateSource == null) { _crateSource = gameObject.AddComponent<AudioSource>(); _crateSource.playOnAwake = false; _crateSource.spatialBlend = 0f; if (_source != null) _crateSource.outputAudioMixerGroup = _source.outputAudioMixerGroup; }
+            _crateSource.pitch = Random.Range(0.94f, 1.08f);
+            LogDirect(_crate);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
+            _crateSource.PlayOneShot(_crate, _volume * CRATE_VOL * Mathf.Pow(CRATE_BURST_FALLOFF, _crateBurstCount - 1));
         }
 
         // DUCK QUACK (2026-10-22 Spencer: "can you add the quack sound when you drop a duck to the bottom?") — his
@@ -1560,22 +1759,32 @@ namespace WordDrop
             else _coinBurstStep++;                                                //     else climbs per audible tick
             _coinBurstLastTime = now;
 
-            var clip = _line2 != null ? _line2 : _line; // the audible "other sound" (line2), not the quiet Coins
+            var kitCoin = Kit("coin_counter");   // 11-07 Spencer's pick: Washer Fall On Pile Single B1 (coins reaching the coin counter)
+            var clip = kitCoin.Length > 0 ? kitCoin[0] : (_line2 != null ? _line2 : _line); // the audible "other sound" (line2), not the quiet Coins
             if (clip == null) return;
 
             int step = Mathf.Clamp(_coinBurstStep, 0, 8);
             float pitch = Mathf.Pow(2f, step * 1f / 12f); // 1 semitone per hit — gentle rise
 
             // Round-robin the pool so an overlapping earlier ting keeps its own pitch (no mid-note warp glitch).
+            // 11-16 (Spencer: "something is going wrong with the coin sound"): round-robin alone reused a source while its 0.38 s ting was
+            // still ringing (8 sources, ticks ~33 ms apart) and setting .pitch re-pitched that ringing ting = warble. Now: take the next
+            // source that is FREE (busy-until tracked, PlayOneShot is invisible to isPlaying); none free -> skip this tick.
             AudioSource src = null;
             if (_coinSources != null && _coinSources.Length > 0)
             {
-                src = _coinSources[_coinSourceRR];
-                _coinSourceRR = (_coinSourceRR + 1) % _coinSources.Length;
+                int n = _coinSources.Length;
+                for (int k = 0; k < n; k++)
+                {
+                    int idx = (_coinSourceRR + k) % n;
+                    if (_coinBusyUntil == null || now >= _coinBusyUntil[idx]) { src = _coinSources[idx]; _coinSourceRR = (idx + 1) % n; if (_coinBusyUntil != null) _coinBusyUntil[idx] = now + clip.length / pitch + 0.02f; break; }
+                }
+                if (src == null) return;   // every source still ringing - skipping beats warping one
             }
             src = src ?? _coinSource ?? _pitchedSource;
             if (src == null) { Play(clip, 0.9f); return; }
             src.pitch = pitch;
+            LogDirect(clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.PlayOneShot(clip, _volume * 0.9f);
         }
 
@@ -1596,6 +1805,7 @@ namespace WordDrop
             src.clip   = _coinJackpot;   // Play() loads the (non-preloaded) clip and starts from 0
             src.pitch  = 1f;
             src.volume = _volume;
+            LogDirect(src.clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.Play();
             yield return new WaitForSecondsRealtime(0.232f); // realtime so hitstop/pause can't stretch it
             if (src.clip == _coinJackpot) src.Stop();
@@ -1618,6 +1828,7 @@ namespace WordDrop
             src.clip   = _chickenCluck;
             src.pitch  = 1f;
             src.volume = _volume; // full SFX volume — cluck was at 0.9×, bumped up so it lands on the bottom hit. 2026-06-23
+            LogDirect(src.clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.Play();
             yield return new WaitForSecondsRealtime(1.5f); // first 1.5s only; realtime so hitstop/pause can't stretch it
             if (src.clip == _chickenCluck) src.Stop();
@@ -1661,6 +1872,7 @@ namespace WordDrop
             _rumbleSource.clip   = _earthquake;
             _rumbleSource.volume = _volume * volume;
             _rumbleSource.loop   = false;
+            LogDirect(_rumbleSource.clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             _rumbleSource.Play();
         }
 
@@ -1825,6 +2037,9 @@ namespace WordDrop
         private float _matchLineLastPlayed = -10f;
         public void PlayMatchLine(int cascadeStep = 0)
         {
+            // 10-31: in a big multi-word blast the FIRST pop becomes the boom and the rest are silent (pops come from ~6 call
+            // sites - the first hook sat on one the swap game doesn't use, so it lives here now)
+            if (BoomInsteadOfPop()) return;
             // Chord-climb pitch escalation. Uses MAX of (incoming cascadeStep,
             // burst-counter step) so:
             //   - Sequential cascade chains (where cascadeStep increments per
@@ -1884,7 +2099,7 @@ namespace WordDrop
             if (now - _lastBigPopTime < BIG_POP_COOLDOWN) return;
             _lastBigPopTime = now;
             if (LogSfxFiring)
-                WDLog.Log($"[SFX] PlayBigPop → big_pop (vol={_volume * 0.8f:F2} pitch=0.95 nudge={nudge:F3})");
+                WDLog.Log($"[SOUND] PlayBigPop → big_pop (vol={_volume * 0.8f:F2} pitch=0.95 nudge={nudge:F3})");
             // Dedicated source so the clip start can be nudged with sample
             // accuracy — the frame-quantized explosion hold can only sync the
             // peak to within ~16ms; this slides it continuously onto the pop.
@@ -1895,6 +2110,7 @@ namespace WordDrop
             _bigPopSource.pitch  = 0.95f;
             _bigPopSource.volume = _volume * 0.8f;
             _bigPopSource.time   = nudge < 0f ? Mathf.Min(-nudge, _bigPop.length - 0.05f) : 0f;
+            if (LogSfxFiring) WDLog.Log($"[SOUND] BigPop → {(_bigPopSource.clip != null ? _bigPopSource.clip.name : "?")} (direct, delay {nudge:F3}s)");   // TEMP 11-07 sound-sync pass
             if (nudge > 0f) _bigPopSource.PlayDelayed(nudge);
             else            _bigPopSource.Play();
         }
@@ -1902,7 +2118,7 @@ namespace WordDrop
         /// <summary>Organic button click — for standard UI buttons.</summary>
         public void PlayButtonClick()
         {
-            Play(PickRandom(_buttonClickVariants), 0.5f);
+            Play(PickRandom(_buttonClickVariants), BUTTON_CLICK_VOL);
             HapticsManager.ButtonTap(); // pair haptic with the click sound (debounced, see ButtonTap)
         }
 

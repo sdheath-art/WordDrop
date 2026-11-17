@@ -1,0 +1,25 @@
+MONKEY TEST  20261117_095913   seed 14651   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  1036 gestures:  TAP ANYWHERE 77  BUTTON 250  RANDOM DRAG 68  TAPPABLE 71  CELL TAP 70  MASH ANYWHERE 27  RANDOM SWIPE 53  DOUBLE TAP 38  REAL MOVE 223  MASH BUTTON 72  MASH BOARD 57  BOOSTER TAP 30
+GAME    levels started 8, cleared 7, failed 0;  swaps accepted 97, swiped words 0, boosters used 34;  hearts refilled by the monkey 0x
+FRAMES  worst 306 ms, 2 frame(s) over 250 ms, 35457 frames (59 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+WARNINGS in the log (not counted as faults), most frequent first:
+      116x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        6x  [RulesEngine] Step chain hit depth cap () — completing.
+        2x  [INVARIANT] (,) 'E' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'T' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'S' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'N' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'V' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'O' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'P' sortingOrder= expected  — a lift outlived its effect
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261117_095913.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt

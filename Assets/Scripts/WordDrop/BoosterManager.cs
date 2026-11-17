@@ -30,6 +30,7 @@ namespace WordDrop
     /// </summary>
     public class BoosterManager : MonoBehaviour
     {
+
         public static BoosterManager Instance { get; private set; }
 
         // ── Inventory configuration ─────────────────────────────────────────────
@@ -44,6 +45,7 @@ namespace WordDrop
         public const string ID_ROCK_CRUSHER  = "stone_splitter";
         public const string ID_MALLET        = "mallet";          // 2026-06-24: tap one tile, smash it
         public const string ID_FREE_SWAP     = "free_swap";       // 2026-10-23: swap any two tiles, no move
+        public const string ID_AXE          = "axe_column";      // 2026-10-29: chop a whole column (AxeChop)
         public const string ID_SPYGLASS      = "lantern_trace";   // 2026-10-22: the PAID strong hint (LanternTrace, shown as "Spyglass")
 
         // ── State ────────────────────────────────────────────────────────────────
@@ -104,6 +106,7 @@ namespace WordDrop
             _inventory.Add(new Mallet());
             _inventory.Add(new LanternTrace());   // Spyglass — the strong hint (2026-10-22)
             _inventory.Add(new FreeSwap());       // 2026-10-23
+            _inventory.Add(new AxeChop());        // 2026-10-29: column clear
 
             foreach (var b in _inventory)
                 _charges[b.Id] = STARTING_CHARGES;
@@ -173,9 +176,12 @@ namespace WordDrop
 
         /// <summary>Player tapped a tile in aim mode. Consumes a charge from the
         /// armed booster and resolves it with the target cell.</summary>
+        /// <summary>Booster unlock tutorial (BoosterIntro): when set, aim taps outside these cells are ignored.</summary>
+        public static HashSet<Vector2Int> TutorialAllowed;
         public void ResolveAim(int col, int row)
         {
             if (!AimMode || ArmedBooster == null) return;
+            if (TutorialAllowed != null && !TutorialAllowed.Contains(new Vector2Int(col, row))) { GameAudio.Instance?.PlayUIClick(); return; }
             // Block resolution during an active resolution loop (mirrors
             // TryActivate's gate). Aim mode should never be entered while
             // a drop is resolving, but if input races, hold the booster.
@@ -193,7 +199,7 @@ namespace WordDrop
                     GameAudio.Instance?.PlayUIClick();
                     return;
                 }
-                if (FirstPick == null) { FirstPick = p; GridManager.Instance?.GetTile(col, row)?.SetEditSelected(true); GameAudio.Instance?.PlayUIClick(); OnStateChanged?.Invoke(); return; }
+                if (FirstPick == null) { FirstPick = p; var pt = GridManager.Instance?.GetTile(col, row); pt?.SetEditSelected(true); BoosterFX.Instance?.ShowPickGlow(pt); GameAudio.Instance?.PlayUIClick(); OnStateChanged?.Invoke(); return; }   // gold pick glow (10-29)
                 var a = FirstPick.Value;
                 if (a == p) { ClearFirstPick(); GameAudio.Instance?.PlayUIClick(); OnStateChanged?.Invoke(); return; }
                 var pairBooster = ArmedBooster;
@@ -246,6 +252,7 @@ namespace WordDrop
             if (FirstPick == null) return;
             var t = GridManager.Instance?.GetTile(FirstPick.Value.x, FirstPick.Value.y);
             if (t != null) t.SetEditSelected(false);
+            BoosterFX.Instance?.HidePickGlow();
             FirstPick = null;
         }
 
@@ -307,7 +314,21 @@ namespace WordDrop
         public HashSet<Vector2Int> SnapshotOccupiedPublic() => SnapshotOccupiedCells();
         /// <summary>Public entry (2026-10-22): the duck collector reuses this exact gravity + refill + cascade path.</summary>
         public IEnumerator RunGravityAndCascadePublic(HashSet<Vector2Int> occupiedBefore) => RunGravityAndCascadeCoroutine(occupiedBefore);
+        // ── 11-17 CASCADE LOCK (monkey seed 718401, L19: a swap the player had queued was committed WHILE a mallet's fall was still
+        // stepping through its waves, its word set off a TNT in the middle of the booster's cascade, and the board audit found 22
+        // cells with a picture and no data; 12 s later the same thing with the axe left "orphan" tiles for a moment). A booster's
+        // cascade is not "processing" (its own queued power-up fires need that off), so nothing held the board. Now a flag covers
+        // the whole cascade: swaps wait in the swipe queue, double-taps and booster buttons are ignored, the integrity checker
+        // waits. Self-clears after 10 s so a lost coroutine can never freeze the board. ──
+        private static float s_cascadeSince = -1f;
+        public static bool CascadeBusy => s_cascadeSince >= 0f && Time.unscaledTime - s_cascadeSince < 10f;
         private IEnumerator RunGravityAndCascadeCoroutine(HashSet<Vector2Int> occupiedBefore)
+        {
+            s_cascadeSince = Time.unscaledTime;
+            yield return RunGravityAndCascadeInner(occupiedBefore);
+            s_cascadeSince = -1f;
+        }
+        private IEnumerator RunGravityAndCascadeInner(HashSet<Vector2Int> occupiedBefore)
         {
             var rules = RulesEngine.Instance;
             var grid  = GridManager.Instance;
@@ -329,8 +350,12 @@ namespace WordDrop
             // 2. Engine entry: applies gravity + full bookkeeping, returns moves.
             var moves = rules.BeginCascadeAfterBoosterClear(clearedCells, MatchController.PLAYER_HUMAN);
 
-            // 3. Animate gravity if anything fell.
-            if (moves != null && moves.Count > 0)
+            // 3. Animate gravity if anything fell. FULL-BOARD also refills: a booster that empties a WHOLE column (the Axe) has
+            //    no falls, only refills, so moves==0 but new letters still need drawing (2026-10-29: Spencer "the board didnt
+            //    repopulate after using the axe" - data refilled, visuals stayed empty). ApplyGravityFromEvents spawns refills
+            //    in full-board even with no moves.
+            bool refillOnly = (moves == null || moves.Count == 0) && SurvivalManager.FullBoardActive && clearedCells.Exists(c => rules.GetCell(c.x, c.y) != null);
+            if ((moves != null && moves.Count > 0) || refillOnly)
                 yield return StartCoroutine(grid.ApplyGravityFromEvents(moves));
 
             // BoosterDbg: post-gravity audit. Walks every board cell and
@@ -344,7 +369,7 @@ namespace WordDrop
             // 4. Drive cascade chain via HandManager if anything fell. The chain
             //    coroutine handles WordsScored / Triggers / Exploding / chain
             //    gravity / Complete and calls FinalizeBoosterCascade at the end.
-            if (moves != null && moves.Count > 0 && HandManager.Instance != null)
+            if (((moves != null && moves.Count > 0) || refillOnly) && HandManager.Instance != null)
             {
                 yield return HandManager.Instance.StartCoroutine(
                     HandManager.Instance.RunBoosterCascadeChain(MatchController.PLAYER_HUMAN));
@@ -360,10 +385,53 @@ namespace WordDrop
             // Post-cascade audit — after SyncToRulesState ran in the cascade
             // chain (or the no-cascade finalize path), the visual should match
             // the data. Any remaining desync is a bug we haven't accounted for.
+            // 11-17: a word the cascade formed pops on its own right here (InstantPop) - its tiles are already cleared in the data
+            // and not yet off the screen, which this audit reported as "FINAL desync" in every monkey run (a false alarm). Wait for
+            // that pop to finish first; the cascade lock stays on meanwhile.
+            { float pw = 0f; while (HandManager.Instance != null && HandManager.Instance.IsTapDetonating && pw < 6f) { pw += Time.unscaledDeltaTime; yield return null; } }
             int finalDesyncs = AuditBoardVisualSync(rules, grid);
             if (finalDesyncs > 0)
                 Debug.LogError($"[BoosterDbg] Post-cascade FINAL desync count: {finalDesyncs} cell(s) " +
                                "(visual layer drifted from data after SyncToRulesState)");
+
+            yield return FireQueuedSpecials();
+
+            // 11-07 Spencer: "when you use a booster and it achieves the last objective it doesnt pass you on the level and waits
+            // for you to make another word first". Boosters are turn-neutral (no NotifyDropCommitted), and the move is what ran
+            // the clear check. Same fix as the duck collector (SurvivalManager runs CheckStageClear after this cascade).
+            if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && !SurvivalManager.AwaitingNextLevel)
+                SurvivalManager.Instance.CheckStageClear();
+        }
+
+        // ── Specials a booster hit (11-07) ──────────────────────────────────────
+        // Spencer: "if the hammer hits a dynamite or any booster i think it should have the effect as if it was triggered" /
+        // "same with all boosters really". A booster no longer smashes a special: Booster.TakeSpecials leaves it on the board and
+        // queues its TILE here (it may fall in the cascade), and once the cascade settles each one still standing fires through
+        // the double-tap path (HandManager.FireSpecialAt) - no move charged. One that a cascade blast already set off is skipped.
+        private static readonly List<Tile> _specialsToFire = new List<Tile>();
+        public static void QueueSpecialFire(Tile t) { if (t != null && !_specialsToFire.Contains(t)) _specialsToFire.Add(t); }
+        private IEnumerator FireQueuedSpecials()
+        {
+            var rules = RulesEngine.Instance; var grid = GridManager.Instance; var hand = HandManager.Instance;
+            while (_specialsToFire.Count > 0)
+            {
+                var t = _specialsToFire[0]; _specialsToFire.RemoveAt(0);
+                if (t == null || rules == null || grid == null || hand == null || SurvivalManager.AwaitingNextLevel) continue;
+                float wait = 0f;
+                while ((hand.IsTapDetonating || (MatchController.Instance != null && MatchController.Instance.IsProcessing)) && wait < 15f)
+                { wait += Time.unscaledDeltaTime; yield return null; }
+                if (t == null) continue;
+                Vector2Int? at = null;
+                for (int c = 0; c < RulesEngine.COLS && at == null; c++)
+                    for (int r = 0; r < RulesEngine.ROWS; r++)
+                        if (grid.GetTile(c, r) == t) { at = new Vector2Int(c, r); break; }
+                if (at == null) continue;
+                var d = rules.GetCell(at.Value.x, at.Value.y);
+                if (d == null || d.SpecialKind == RulesEngine.SPECIAL_NONE) continue;
+                WDLog.Log($"[Booster] hit a {RulesEngine.SpecialName(d.SpecialKind)} at ({at.Value.x},{at.Value.y}) -> fires");
+                if (hand.FireSpecialAt(at.Value)) { yield return null; while (hand.IsTapDetonating) yield return null; }
+            }
+            _specialsToFire.Clear();
         }
 
         /// <summary>Diagnostic: walk every board cell and log any (col,row)

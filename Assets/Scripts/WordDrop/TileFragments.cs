@@ -93,21 +93,27 @@ namespace WordDrop
             };
         }
 
-        private static Color ChunkColor(Tile tile)
+        // 11-07 (Spencer: explosions "confusing cause theres just so much going on"): every popped tile threw WORD-GREEN chunks, so a
+        // TNT sprayed green over its whole area as if all of it had been a word. Royal Match's chunks are the colour of the piece that
+        // broke: a blast's / booster's collateral now throws chunks in the tile's own cream. COLLATERAL_TILE_CHUNKS = false = all green.
+        public static bool  COLLATERAL_TILE_CHUNKS = true;
+        public static readonly Color CHUNKY_TILE = new Color(1f, 0.91f, 0.74f, 1f);   // the letter tile's cream face
+        private static Color ChunkColor(Tile tile, bool collateral = false)
         {
             if (tile.IsGem) return Tile.GEM_ACCENT;
             if (tile.IsGoldLetter) return CHUNKY_GOLD;
             if (Tile.CollectLetter != '\0' && char.ToUpperInvariant(tile.Letter) == Tile.CollectLetter) return Tile.CollectAccent;
+            if (collateral && COLLATERAL_TILE_CHUNKS) return CHUNKY_TILE;
             return Tile.SCORED_TINT;   // the green every word flashes as it pops
         }
 
-        private void ShatterChunky(Tile tile, float sizeMultiplier)
+        private void ShatterChunky(Tile tile, float sizeMultiplier, bool collateral = false)
         {
             if (tile.IsStone) return;   // crates throw their own wood chunks (WordDropFX.PlayCrateDebris)
             var tileSR = tile.GetComponent<SpriteRenderer>();
             float cell = tileSR != null ? tileSR.bounds.size.x : 0.9f;
             float native = _chunkySprites[0].bounds.size.x;
-            Color tint = ChunkColor(tile);
+            Color tint = ChunkColor(tile, collateral);
             Vector3 tilePos = tile.transform.position;
             for (int i = 0; i < CHUNKY_COUNT; i++)
             {
@@ -264,10 +270,13 @@ namespace WordDrop
         /// Used by the Candy-Crush-style tier-1 pop sequence to spawn
         /// chunkier debris that reads as part of the visible "burst".
         /// </summary>
-        public void Shatter(Tile tile, float sizeMultiplier)
+        public void Shatter(Tile tile, float sizeMultiplier) => Shatter(tile, sizeMultiplier, false);
+        /// <param name="collateral">11-07: the tile was caught by a blast / booster, not part of the word - its chunks are the TILE's
+        /// colour (cream), not the word green.</param>
+        public void Shatter(Tile tile, float sizeMultiplier, bool collateral)
         {
             if (tile == null) return;
-            if (CHUNKY_DEBRIS && _chunkySprites != null) { ShatterChunky(tile, sizeMultiplier); return; }
+            if (CHUNKY_DEBRIS && _chunkySprites != null) { ShatterChunky(tile, sizeMultiplier, collateral); return; }
             if (_debrisSprites == null || _debrisSprites.Length == 0) return;
 
             Vector3 tilePos = tile.transform.position;
