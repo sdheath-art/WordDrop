@@ -4126,6 +4126,7 @@ case RulesEngine.ResolutionPhase.Complete:
                         if (!t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.06f, 0.22f, 6, 0.6f);
                     }
                     HUDManager.Instance?.FlyBook(at, Tile.ShelfBookFlySprite(slot));
+                    HapticsManager.ObstacleTick();   // 11-17 haptics pass
                     if (GameAudio.Instance != null && GameAudio.Instance.HasKit("tome_land")) GameAudio.Instance.PlayKit("tome_land", GameAudio.TOME_LAND_VOL);   // 11-07 pick: a book knocked off the shelf (Book Drop Low A2)
                 }
                 // 11-04 (Spencer "start away" on the list: shelf/safe like the crates) - a propeller flying to the shelf/safe hits it on LANDING
@@ -4179,6 +4180,7 @@ case RulesEngine.ResolutionPhase.Complete:
             t.PopSafeLamp(lamp);
             SafeSparks(lampAt, cell, SAFE_HIT_SPARKS, 1f);
             GridManager.Instance?.ShakeBoard(SAFE_HIT_SHAKE, 0.12f);
+            HapticsManager.Medium();   // 11-17 haptics pass
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("safe_lamp")) GameAudio.Instance.PlayKit("safe_lamp"); else { GameAudio.Instance?.PlayCrateBreak(); GameAudio.Instance?.PlayCoinLand(); }   // 11-07 pick: Metal Latch B3
         }
         private static void SafeSparks(Vector3 at, float cell, int n, float reach)
@@ -4255,6 +4257,7 @@ case RulesEngine.ResolutionPhase.Complete:
             var vault = Make("SafeVault", empty, at, size, SAFE_VAULT_ORDER);
             var drSR = Make("SafeDoor", door, at + new Vector3(0f, 0f, -0.05f), size * SAFE_DOOR_FIT, 64);
             GridManager.Instance?.ShakeBoard(0.24f, 0.32f);   // 11-03: the blast hits harder than a lamp
+            HapticsManager.MegaImpact();   // 11-17 haptics pass
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("safe_open")) GameAudio.Instance.PlayKit("safe_open"); else GameAudio.Instance?.PlayCrateBreak();   // 11-07 pick: Sack Drop On Table Metal Loose B6
             WordDropFX.Instance?.PlayScreenFlash(2);
             WordDropFX.Instance?.PlayChestCoinBurst(at, size);   // gold glow + bubble pop behind the vault

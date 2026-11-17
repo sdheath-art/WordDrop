@@ -127,6 +127,7 @@ namespace WordDrop
         /// </summary>
         public void Show(Action onComplete = null)
         {
+            HapticsManager.Warning();   // 11-17 haptics pass
             if (_canvas == null)
             {
                 // UI not built yet (Awake hasn't run). Fall through so the

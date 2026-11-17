@@ -211,6 +211,7 @@ namespace WordDrop
             _path.Clear();
             _path.AddRange(next);
 
+            if (_path.Count >= 3) HapticsManager.SelectTick();   // 11-17: a tick per tile once the trace is past a swap's two cells
             if (_path.Count >= 2)
             {
                 PressGlow(null);
@@ -289,6 +290,22 @@ namespace WordDrop
                 hand.CommitDragSwap(_path[0], _path[1]);
                 return;
             }
+            // 11-17 FLICK = SWAP (Spencer's first phone build: "swapping tiles is getting confused all the time with swiping making it
+            // almost unplayable"). With a mouse a drag stops on the neighbour; a FINGER flick carries on into the 3rd or 4th tile
+            // (a tile is ~8 mm wide on the phone), and anything over 2 cells was judged as a word swipe -> "not a word". Now a short
+            // trace that does NOT spell a word is what it almost always is: a swap of the first tile with the neighbour the finger
+            // went to. A real word still claims; a long wrong trace (5+ tiles) still gets the "not a word" shake.
+            if (FLICK_SWAP && _path.Count >= 3 && _path.Count <= FLICK_MAX_CELLS)
+            {
+                string frj;
+                bool word = _path.Count >= RulesEngine.SWIPE_MIN_LENGTH && rules.BuildExplicitMatch(_path, out frj) != null;
+                if (!word)
+                {
+                    WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word - treated as a swap ({_path[0].x},{_path[0].y})->({_path[1].x},{_path[1].y})");
+                    hand.CommitDragSwap(_path[0], _path[1]);
+                    return;
+                }
+            }
             // Was a SILENT return — no log, no sound, no feedback of any kind. A refusal the
             // player cannot perceive reads as the feature being broken, which is exactly how it
             // landed. 2026-10-19.
@@ -353,6 +370,8 @@ namespace WordDrop
             if (t != null && !t.IsStone && !t.HasPrimedGlow) t.SetBloomGlow(PRESS_GLOW, PRESS_GLOW_ALPHA, forceDesktop: true);
         }
 
+        public static bool  FLICK_SWAP = true;       // 11-17: a short non-word trace = a swap of its first two tiles (false = old: judged as a swipe)
+        public static int   FLICK_MAX_CELLS = 4;
         public static bool  QUEUE_BUSY_SWAPS = true;
         public static float QUEUE_MAX_WAIT = 3f;   // a remembered swap older than this is dropped
         private bool _queued, _busyDown;

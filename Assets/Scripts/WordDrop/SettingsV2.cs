@@ -454,7 +454,7 @@ namespace WordDrop
             var tr = img.transform;
             var trig = img.gameObject.AddComponent<EventTrigger>();
             var down = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
-            down.callback.AddListener(_ => { GameAudio.Instance?.PlaySettingsPress(); DOTween.Kill(tr); tr.DOScale(0.9f, 0.06f).SetUpdate(true).SetTarget(tr); });
+            down.callback.AddListener(_ => { GameAudio.Instance?.PlaySettingsPress(); HapticsManager.ButtonTap(); DOTween.Kill(tr); tr.DOScale(0.9f, 0.06f).SetUpdate(true).SetTarget(tr); });
             var up = new EventTrigger.Entry { eventID = EventTriggerType.PointerUp };
             up.callback.AddListener(_ => { DOTween.Kill(tr); tr.DOScale(1f, 0.16f).SetEase(Ease.OutBack).SetUpdate(true).SetTarget(tr); });
             trig.triggers.Add(down); trig.triggers.Add(up);

@@ -191,6 +191,7 @@ namespace WordDrop
             PlaceHammer(h, grip, hitDir, hitSize);
             onImpact?.Invoke();
             Starburst(target, c * 2.5f, 0.38f);
+            HapticsManager.ExplosionImpact();   // 11-17 haptics pass
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("mallet_bonk")) GameAudio.Instance.PlayKit("mallet_bonk"); else GameAudio.Instance?.PlayBigExplosion();   // 11-07 pick: Rubber Cup Hit Hand C5
             yield return new WaitForSecondsRealtime(0.17f);   // HIT-STOP: the hammer holds flat on the tile
             // 3 RECOIL: bounces back up off the tile, then drops away and fades
@@ -351,6 +352,7 @@ namespace WordDrop
             var core2 = BoltLayer("BoltCore2", BOLT_CORE, 63, true);
             var flash = FX.MakeFxSprite("RowFlash", WordDropFX.SoftBeam(), new Color(2.2f, 2.3f, 2.6f, 1f), 60);
             flash.transform.position = (a + b) * 0.5f; flash.transform.localScale = new Vector3((b - a).magnitude * 1.1f, c * 2.6f, 1f);
+            HapticsManager.ExplosionImpact();   // 11-17 haptics pass
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("lightning_zap")) GameAudio.Instance.PlayKit("lightning_zap"); else { GameAudio.Instance?.PlayBigExplosion(); GameAudio.Instance?.PlayRocketFire(); }   // 11-07 pick: Wide Zap C6
             Starburst(a, c * 2.2f, 0.3f);
             var forks = new List<SpriteRenderer>();
@@ -497,6 +499,7 @@ namespace WordDrop
             // 4 BITE: hit-stop in the bottom tile, starburst, the trail flares and fades, the axe wobbles in place
             PlaceAxe(axe, end, AXE_CHOP_ROT, c * 1.45f);
             Starburst(bottom, c * 2.4f, 0.36f);
+            HapticsManager.ExplosionImpact();   // 11-17 haptics pass
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("axe_hit")) GameAudio.Instance.PlayKit("axe_hit"); else GameAudio.Instance?.PlayBigExplosion();   // 11-07 pick: Log Fall On Log C3 (the chop lands)
             float bt = 0f, bdur = 0.42f;
             // 11-17 (Spencer: the empty column sat a beat too long before anything fell - "a little bit" bothersome). The tiles used
@@ -588,6 +591,7 @@ namespace WordDrop
             }
             // LOCK ON: zoom + letters light gold one by one
             Starburst(target, c * 2.2f, 0.35f);
+            HapticsManager.Medium();   // 11-17 haptics pass
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("spyglass_reveal")) GameAudio.Instance.PlayKit("spyglass_reveal"); else GameAudio.Instance?.PlayScorePowerup();   // 11-07 pick: Positive Highlight B2
             float zt = 0f;
             while (zt < 0.25f) { zt += Time.unscaledDeltaTime; float k = zt / 0.25f; beam.transform.localScale = Vector3.one * c * Mathf.Lerp(2.6f, 1.6f + 0.6f * word.Count * 0.3f, k); yield return null; }

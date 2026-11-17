@@ -1730,6 +1730,7 @@ namespace WordDrop
             // touch-down
             seq.AppendCallback(() =>
             {
+                HapticsManager.ObstacleBreak();   // 11-17 haptics pass
                 if (GameAudio.Instance != null && GameAudio.Instance.HasKit("tome_land")) GameAudio.Instance.PlayKit("tome_land", GameAudio.TOME_LAND_VOL);   // 11-07 pick: Book Drop Low A2 (the landing was silent)
                 if (s_ringSprite != null)
                 {

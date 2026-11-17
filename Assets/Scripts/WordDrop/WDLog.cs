@@ -61,7 +61,12 @@ namespace WordDrop
         private static void Boot()
         {
             if (!ENABLED) return;
+#if !UNITY_EDITOR && !DEVELOPMENT_BUILD
+            return;   // 11-17: in a release build nothing can read its log, yet it still scanned every object in the scene every 3 s
+#endif
+#pragma warning disable CS0162
             var go = new UnityEngine.GameObject("PerfProbe"); DontDestroyOnLoad(go); go.AddComponent<PerfProbe>();
+#pragma warning restore CS0162
         }
         private float _t0, _worst; private int _frames;
         private void Update()

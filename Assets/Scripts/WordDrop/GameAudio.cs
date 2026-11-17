@@ -816,6 +816,7 @@ namespace WordDrop
         /// must be played ONCE per defrost batch, never per tile. Silent if missing. 2026-07-30.</summary>
         public void PlayIceMelt(float pitch = 1f)
         {
+            HapticsManager.ObstacleTick();   // 11-17 haptics pass
             if (HasKit("ice_crack")) { PlayKit("ice_crack", 0.9f, pitch); return; }   // 11-07 pick: Break Mining Crystals A6
             if (_iceMelt != null) Play(_iceMelt, 0.9f, pitch);
         }
@@ -1515,7 +1516,10 @@ namespace WordDrop
         private static float _coinBurstLastTime = -10f;
         private static float _coinThrottleTime = -10f;
         private const float  COIN_BURST_WINDOW = 0.6f;  // gap that resets the pitch ramp (between chests)
-        private const float  COIN_THROTTLE     = 0.04f;   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
+        // 11-17 (Spencer, on the phone: the coins collecting at the top "sound like a robot"): 25 tings a second, each a semitone up,
+        // quantised by the phone's audio buffer (1024 samples = ~21 ms) into an even machine-gun = a synthetic glide. 0.09 s =
+        // ~11 a second: each ting is heard as a coin and the rise takes ~0.7 s. (0.04 was fine on the Mac's speakers.)
+        public static float  COIN_THROTTLE     = 0.09f;   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
         private float[] _coinBusyUntil; // min gap between AUDIBLE ticks — small (per-frame-ish) so coins aren't skipped ("holes"); the source pool handles overlap without warping
 
         /// <summary>Coin lands on the REWARD counter. Uses the audible line2 ting with two anti-machine-gun
@@ -1656,6 +1660,7 @@ namespace WordDrop
         private float _lastKnockAt = -10f;
         public void PlayCrateKnock()
         {
+            HapticsManager.ObstacleTick();   // 11-17 haptics pass
             if (HasKit("crate_knock")) { PlayKit("crate_knock", 0.75f); return; }   // 11-07 Spencer's pick: Log Fall On Log (6 takes)
             if (!_crateTried) { _crateTried = true; _crate = Resources.Load<AudioClip>("Audio/crate_break"); }
             if (_crate == null || _muted) return;
@@ -1711,6 +1716,7 @@ namespace WordDrop
 
         public void PlayCrateBreak()
         {
+            HapticsManager.ObstacleBreak();   // 11-17 haptics pass
             if (HasKit("crate_break")) { PlayKit("crate_break", 0.9f); return; }   // 11-07 pick: Drop Logs Pile Small B3
             if (!_crateTried) { _crateTried = true; _crate = Resources.Load<AudioClip>("Audio/crate_break"); }
             if (_crate == null) return;

@@ -66,6 +66,35 @@ namespace WordDrop
 
         // ── Aliases for new call sites (now route to new semantic API) ──
 
+        // ── 11-17 HAPTICS PASS (Spencer: "add haptics to anything that should have it"). What already buzzed: swaps, refused swaps,
+        // word pops, power-up fires, buttons, tile landings, the win. What did not: boosters, crates / ice / shelf / safe, the
+        // swipe trace, the Out of Moves banner, the new settings buttons. These are short and DEBOUNCED so a blast that knocks
+        // eight crates is one tap, not a buzz. ──
+        private static float _lastTick = -1f, _lastBreak = -1f, _lastSelect = -1f;
+        /// <summary>A blocker takes a hit (crate knock, ice crack, a shelf book): light and crisp.</summary>
+        public static void ObstacleTick()
+        {
+            if (!_enabled) return; float now = Time.unscaledTime;
+            if (now - _lastTick < 0.07f) return; _lastTick = now;
+            Emphasis(0.30f, 0.70f);
+        }
+        /// <summary>A blocker breaks (crate smashed, the Flying Tome lands): a firmer knock.</summary>
+        public static void ObstacleBreak()
+        {
+            if (!_enabled) return; float now = Time.unscaledTime;
+            if (now - _lastBreak < 0.09f) return; _lastBreak = now;
+            Emphasis(0.50f, 0.55f);
+        }
+        /// <summary>One more tile joins a swipe trace: the faintest tick, so a swipe FEELS different from a swap.</summary>
+        public static void SelectTick()
+        {
+            if (!_enabled) return; float now = Time.unscaledTime;
+            if (now - _lastSelect < 0.03f) return; _lastSelect = now;
+            Emphasis(0.18f, 0.85f);
+        }
+        /// <summary>Out of moves: one low, soft thud.</summary>
+        public static void Warning() { if (_enabled) Emphasis(0.55f, 0.35f); }
+
         public static void TileLand() => TilePlacedOnBoard();
         public static void RisingRow() => Emphasis(0.55f, 0.35f); // pressure cue — bassy for tension feel
         public static void Meltdown() => MeltdownHit();
