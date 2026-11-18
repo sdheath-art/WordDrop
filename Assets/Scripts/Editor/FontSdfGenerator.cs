@@ -76,7 +76,12 @@ public static class FontSdfGenerator
     [MenuItem("WordDrop/Fonts/Generate Nunito Black SDF")]
     public static void GenNunitoBlack() => Generate("Assets/Fonts/Nunito-Black.ttf", "NunitoBlack SDF");
 
-    public static void Generate(string ttfPath, string outName)
+    public static void Generate(string ttfPath, string outName) => Generate(ttfPath, outName, PADDING, ATLAS);
+
+    /// <summary>2026-11-18: same bake with a chosen margin. The win-screen title's soft shadow reaches ~14 atlas texels from the
+    /// letter; at padding 9 it sampled the neighbouring glyphs (a dark hairline on the 'd' of "Spellbound!"). Material values are
+    /// in units of the margin, so a text using a wider-margin asset must convert them (StageClearModal.ConvertForMargin).</summary>
+    public static void Generate(string ttfPath, string outName, int padding, int atlas)
     {
         Font src = AssetDatabase.LoadAssetAtPath<Font>(ttfPath);
         if (src == null)
@@ -89,8 +94,8 @@ public static class FontSdfGenerator
         string outPath = $"Assets/Resources/{outName}.asset";
 
         TMP_FontAsset fa = TMP_FontAsset.CreateFontAsset(
-            src, POINT_SIZE, PADDING, GlyphRenderMode.SDFAA,
-            ATLAS, ATLAS, AtlasPopulationMode.Dynamic, true);
+            src, POINT_SIZE, padding, GlyphRenderMode.SDFAA,
+            atlas, atlas, AtlasPopulationMode.Dynamic, true);
 
         if (fa == null)
         {
@@ -135,7 +140,7 @@ public static class FontSdfGenerator
 
         var info = new FileInfo(outPath);
         Debug.Log($"[FontSDF] created '{outName}' from {Path.GetFileName(ttfPath)} " +
-                  $"(pointSize {POINT_SIZE}, padding {PADDING}) -> {outPath} " +
+                  $"(pointSize {POINT_SIZE}, padding {padding}) -> {outPath} " +
                   $"[{(info.Exists ? info.Length / 1024 : 0)} KB]. " +
                   $"Load it with GameFont.TILE_FONT = \"{outName}\";");
     }

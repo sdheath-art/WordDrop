@@ -989,6 +989,13 @@ namespace WordDrop
             t.overflowMode = TextOverflowModes.Overflow; return t;
         }
         // WordSlop Button: cap height = 0.594 em; the recipe helpers grow the size by RECIPE_MAX_MUL, so divide it back out
+        // 11-18 CARD TEXT HIERARCHY (Spencer + Royal Kingdom's "Quit Level?" card: "match the font sizes for hierarchy on the level
+        // cards"). MEASURED, letter height as a share of the card's width: RK title 8.6% / body 5.3% / button label 9.3%; ours
+        // was 10.0 / 3.9 / 5.2 - a big title over small body text and a weak button. The card canvas is 1000 wide, so these are
+        // in thousandths: title 86 (was 102), body 53 (was 41). He approved the header from the mock; button labels: see
+        // ArtButton.ScaleLabel (RK's size overfilled our smaller buttons - he picked 6.8%).
+        public static float V2_TITLE_CAP = 86f, V2_BODY_CAP = 53f;
+        public const float V2_BODY_WAS = 41f;
         private static float V2FontFor(float capPx) => capPx / 0.594f / HUDManager.RECIPE_MAX_MUL;
 
         private void BuildV2()
@@ -1013,7 +1020,7 @@ namespace WordDrop
             _v2GoalLabel = V2Text("GoalsLabel", _v2GoalBox); _v2BoostLabel = V2Text("BoostLabel", _v2BoostBox);
             foreach (var l in new[] { _v2GoalLabel, _v2BoostLabel })
             {
-                l.fontSize = V2FontFor(41f); HUDManager.ApplyRecipeFlat(l); l.color = V2_LABEL_INK;
+                l.fontSize = V2FontFor(V2_BODY_CAP); HUDManager.ApplyRecipeFlat(l); l.color = V2_LABEL_INK;
             }
             _v2GoalLabel.text = "Goals"; _v2BoostLabel.text = "Select Boosters";
             V2Place(_v2GoalLabel.rectTransform, (V2_CW - 2 * V2_SIDE) / 2f, 52f, 700f, 80f);
@@ -1024,7 +1031,7 @@ namespace WordDrop
             var header = V2Image("HeaderPlate", _v2Root, V2Sprite("header"));
             V2Place(header.rectTransform, 110f - 20f + 410f, 130f - 298f + 179f, 820f, 358f);
             _v2Title = V2Text("Title", _v2Root);
-            _v2Title.fontSize = V2FontFor(102f);
+            _v2Title.fontSize = V2FontFor(V2_TITLE_CAP);
             // 11-16 Spencer ("the text treatment on the Level 2 header ... a lot of shading"; picked B of ~/Desktop/header_text_mock.png): RK
             // style - a THIN edge round the letters and the depth only in the down-right drop, in a deep plate purple instead of near-black
             // navy (the thick .19 navy ring + drop made a muddy dark halo). V2_TITLE_RK = false -> the old .19 / -0.9 navy treatment.
@@ -1120,7 +1127,7 @@ namespace WordDrop
                     V2Place(coin.rectTransform, boxW / 2f, 150f, 120f, 120f);
                 }
                 var line = V2Text("BonusLine", _v2Goals); line.text = "Every word pays coins!";
-                line.fontSize = V2FontFor(36f); HUDManager.ApplyRecipeFlat(line); line.color = V2_LABEL_INK;
+                line.fontSize = V2FontFor(36f * V2_BODY_CAP / V2_BODY_WAS); HUDManager.ApplyRecipeFlat(line); line.color = V2_LABEL_INK;
                 V2Place(line.rectTransform, boxW / 2f, 252f, boxW - 60f, 70f);
             }
             for (int i = 0; i < n; i++)
@@ -1133,9 +1140,9 @@ namespace WordDrop
                 var cnt = V2Text("Count", _v2Goals); cnt.text = goals[i].Count.ToString();
                 // mock caps were in 1080-units x K (1179/1080): 78 -> 85 px real (11-01 Spencer: count read small/thin, 'wonky');
                 // and the mock's heavier band (stroke ~5% cap, drop ~7%) rather than the HUD's thin D
-                cnt.fontSize = V2FontFor(V2_COUNT_CAP * k);   // 11-01 Spencer: 85 'too big' -> 70
-                HUDManager.ApplyRecipeCount(cnt, HUDManager.HUD_INK, HUDManager.D_STROKE, HUDManager.D_DROP);   // 11-01: .22/-.95 fattened the glyph (face dilate = stroke/2) - 'font doesnt match the mock'; D = mock's 5% stroke / 7% drop
-                V2Place(cnt.rectTransform, gx + 60f * k, gy + 38f * k, 160f * k, 130f * k);
+                cnt.fontSize = V2FontFor(HUDManager.GoalCountCap * gsz);   // 11-18: the HUD's rule (was V2_COUNT_CAP 70 = 51% of the icon with its edge)
+                HUDManager.ApplyRecipeCount(cnt, HUDManager.HUD_INK, HUDManager.D_STROKE, HUDManager.D_DROP); RkText.Firm(cnt);   // 11-01: .22/-.95 fattened the glyph (face dilate = stroke/2) - 'font doesnt match the mock'; D = mock's 5% stroke / 7% drop
+                V2Place(cnt.rectTransform, gx + (HUDManager.GOAL_COUNT_X - 0.5f) * gsz, gy + (HUDManager.GOAL_COUNT_Y - 0.5f) * gsz + 5f * k, 160f * k, 130f * k);   // 11-18: was +60 / +38 (measured 90% across, 72% down); +5 = the line box's offset
             }
 
             if (boost)

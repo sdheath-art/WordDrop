@@ -294,6 +294,7 @@ namespace WordDrop
 
         // Music layer volume + mute, persisted separately from SFX so a player
         // can turn music off without losing feedback sounds.
+        public const float FIXED_MUSIC = 0.15f, FIXED_SFX = 0.80f, FIXED_UI = 0.65f;   // the phone mix (11-18); music was 0.30 on the Mac, then 0.20
         private const string PREF_MUSIC_VOLUME = "MusicVolume";
         private const string PREF_MUSIC_MUTED  = "MusicMuted";
         private float _musicVolume = 0.20f; // 11-17 phone: 'the music is mixed too high and the sfx too low' (was 0.30, set on the Mac's speakers)
@@ -398,11 +399,14 @@ namespace WordDrop
             _bigPopSource.pitch       = 0.95f;
 
             // Load saved prefs
-            _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.80f);
+            // 11-18: Settings V2 has on/off switches only - no sliders. A volume saved by an OLD slider build (Spencer's phone has had
+            // builds since June) silently overrode every new default: "i think the music is still too loud" after 0.30 -> 0.20.
+            // With V2 on, the mix is FIXED_* and saved levels are ignored; mute flags are still read.
+            _volume      = SettingsV2.ENABLED ? FIXED_SFX : PlayerPrefs.GetFloat(PREF_VOLUME, 0.80f);
             _muted       = PlayerPrefs.GetInt(PREF_MUTED, 0) == 1;
-            _musicVolume = PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.20f);
+            _musicVolume = SettingsV2.ENABLED ? FIXED_MUSIC : PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.20f);
             _musicMuted  = PlayerPrefs.GetInt(PREF_MUSIC_MUTED, 0) == 1;
-            _uiVolume    = PlayerPrefs.GetFloat(PREF_UI_VOLUME, 0.65f);
+            _uiVolume    = SettingsV2.ENABLED ? FIXED_UI : PlayerPrefs.GetFloat(PREF_UI_VOLUME, 0.65f);
             _uiMuted     = PlayerPrefs.GetInt(PREF_UI_MUTED, 0) == 1;
 
             // Phase 11g: bind to WordDropMixer if present. Group routing
@@ -1519,7 +1523,8 @@ namespace WordDrop
         // 11-17 (Spencer, on the phone: the coins collecting at the top "sound like a robot"): 25 tings a second, each a semitone up,
         // quantised by the phone's audio buffer (1024 samples = ~21 ms) into an even machine-gun = a synthetic glide. 0.09 s =
         // ~11 a second: each ting is heard as a coin and the rise takes ~0.7 s. (0.04 was fine on the Mac's speakers.)
-        public static float  COIN_THROTTLE     = 0.09f;   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
+        public static float  COIN_THROTTLE     = 0.09f;
+        public static float  COIN_SEMITONES_PER_HIT = 0.5f;   // was 1   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
         private float[] _coinBusyUntil; // min gap between AUDIBLE ticks — small (per-frame-ish) so coins aren't skipped ("holes"); the source pool handles overlap without warping
 
         /// <summary>Coin lands on the REWARD counter. Uses the audible line2 ting with two anti-machine-gun
@@ -1770,7 +1775,10 @@ namespace WordDrop
             if (clip == null) return;
 
             int step = Mathf.Clamp(_coinBurstStep, 0, 8);
-            float pitch = Mathf.Pow(2f, step * 1f / 12f); // 1 semitone per hit — gentle rise
+            // 11-18 (Spencer, phone, after the 48 kHz fix: "not completely distorting anymore ... still some weird artifacting on the
+            // last couple coins"): the last coins are the top of the ramp (+8 semitones = played 1.59x fast), where a bright ting
+            // runs out of room on the phone. Half a semitone per hit: the rise stops at +4 semitones (1.26x).
+            float pitch = Mathf.Pow(2f, step * COIN_SEMITONES_PER_HIT / 12f);
 
             // Round-robin the pool so an overlapping earlier ting keeps its own pitch (no mid-note warp glitch).
             // 11-16 (Spencer: "something is going wrong with the coin sound"): round-robin alone reused a source while its 0.38 s ting was

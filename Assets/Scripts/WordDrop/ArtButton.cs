@@ -133,6 +133,7 @@ namespace WordDrop
             if (font == null) { Debug.LogWarning("[ArtButton] no WordSlop font asset — label skipped"); return; }
 
             Color ink  = Hex(_spec.ink), top = Hex(_spec.creamTop), bot = Hex(_spec.creamBottom);
+            if (RkText.ON && RkText.FACE_RAMP) { top = RkText.FACE_TOP; bot = RkText.FACE_BOT; }   // 11-18: one measured cream ramp on every label (RkText.cs)
             var mat = Styled(InkMaterial(font, ink), _key);
 
             // Label box centred on the measured text box (face-local, y from the top), widened so longer labels have
@@ -454,6 +455,20 @@ namespace WordDrop
         /// <summary>Re-scale the art to the root's current size. Call after resizing the root — the resize callback
         /// above only runs in Play mode, and the size at Create time is Unity's default 100x100.</summary>
         public void Refit() { if (_art != null) Fit(); }
+
+        /// <summary>11-18 (card text hierarchy): make this button's label <paramref name="mul"/> x the art's size. The label still
+        /// only ever shrinks to fit the face's width. For the small card buttons (Quit, Reset): Spencer picked 6.8% of the
+        /// card's width from ~/Documents/WordDrop_Art/text_mock_1118/quit_button_label_options.png (was 5.2%; RK's 9.3% sits
+        /// on a bigger button - "the text on the buttons are too big on ours cause our buttons are smaller").</summary>
+        public static float SMALL_BUTTON_LABEL = 6.8f / 5.2f;
+        public void ScaleLabel(float mul)
+        {
+            if (mul <= 0f || Face == null) return;
+            foreach (var t in Face.GetComponentsInChildren<TextMeshProUGUI>(true))
+            { t.fontSizeMax *= mul; t.fontSizeMin *= mul; t.fontSize *= mul; }
+            // the label box is 2 em tall because auto-size also shrinks for HEIGHT (WordSlop's line is ~1.6 em): grow it with the text
+            if (Face.Find("Label") is RectTransform lbl) lbl.sizeDelta = new Vector2(lbl.sizeDelta.x, lbl.sizeDelta.y * mul);
+        }
 
         /// <summary>11-16 (Spencer: "why dont you just extend the buttons by width since arent they 9-sliced? then you can fit all the
         /// letters in there"): widen the pill by <paramref name="extra"/> art px. Frame + face become 9-sliced with fixed ends of

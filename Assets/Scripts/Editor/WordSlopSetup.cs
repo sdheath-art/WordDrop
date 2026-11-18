@@ -31,6 +31,10 @@ public static class WordSlopSetup
     // 2026-11-06: the BOLD Title cut for the level card's "Level N" heading (Spencer). Same bake + kerning file.
     const string TITLE_TTF = "Assets/Fonts/WordSlop-Title.ttf";
     const string TITLE_FONT = "WordSlop Title SDF";
+    // 2026-11-18: the SAME Title cut baked with a wide margin (20 instead of 9) for the win-screen hero title only - its soft
+    // shadow reaches further than a 9-texel margin (Spencer: "a weird hair of black on the D in spellbound").
+    const string TITLE_HERO_FONT = "WordSlop Title Hero SDF";
+    const int HERO_PADDING = 20, HERO_ATLAS = 2048;
 
     // (preset, ring colour, drop colour, top tint) — measured on the rebuilt buttons (vector_buttons/photoshop/*_scene_cfg.jsx).
     // Recipe (2026-10-25, measured at the sheet's 22px-cap resolution): PURE WHITE face + a faint tint of the button colour
@@ -50,8 +54,12 @@ public static class WordSlopSetup
             if (File.Exists(LILITA_TTF) && !File.Exists($"{DIR}/{LILITA_FONT}.asset")) FontSdfGenerator.Generate(LILITA_TTF, LILITA_FONT);
             if (File.Exists(TITLE_MED_TTF) && !File.Exists($"{DIR}/{TITLE_MED_FONT}.asset")) FontSdfGenerator.Generate(TITLE_MED_TTF, TITLE_MED_FONT);
             if (File.Exists(TITLE_TTF) && !File.Exists($"{DIR}/{TITLE_FONT}.asset")) FontSdfGenerator.Generate(TITLE_TTF, TITLE_FONT);
+            if (File.Exists(TITLE_TTF) && !File.Exists($"{DIR}/{TITLE_HERO_FONT}.asset")) FontSdfGenerator.Generate(TITLE_TTF, TITLE_HERO_FONT, HERO_PADDING, HERO_ATLAS);
         };
     }
+
+    [MenuItem("WordDrop/Fonts/Bake hero title font (wide margin)")]
+    public static void BuildHero() { if (File.Exists(TITLE_TTF)) FontSdfGenerator.Generate(TITLE_TTF, TITLE_HERO_FONT, HERO_PADDING, HERO_ATLAS); else Debug.LogError("[WordSlop] " + TITLE_TTF + " not found"); }
 
     [MenuItem("WordDrop/Fonts/Generate WordSlop SDF + button presets")]
     public static void Build()

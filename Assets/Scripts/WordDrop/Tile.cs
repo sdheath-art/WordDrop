@@ -691,7 +691,17 @@ namespace WordDrop
         /// resting face still went through WarmedCopy (hue/sat shift) + ContactEdgeCopy (AO rim, face gradient, cap tint) - made for
         /// the old flat render - which greyed the rim and flattened the gloss. true = the art as painted. false = the old processing.</summary>
         public static bool RESTING_FACE_RAW = true;
-        public static string RESTING_FACE_ASSET = BOARD_C ? "Tiles/ivory_tile@2x" : "Tiles/white_tile_pillow@2x";   // 2026-10-28 PILLOW FAMILY (Spencer: "yes the bottom ones look great"). Hand-painted original: "Tiles/white_tile_2@2x"
+        /// <summary>11-18 TILE FORM (Spencer on the phone: tiles read as a jumble - "nothing rounding the forms", "there isnt a lot of
+        /// seperation between the tiles"; he picked mock B = form only, same cream, same panel). true = ivory_tile_form@2x (face
+        /// lighter at the top / darker + warmer at the bottom, soft darker rim, top highlight, lip 74 -> 88 px) + a contact shadow
+        /// that belongs to each plain letter tile (TileFormShadow). false = ivory_tile@2x exactly as before, no shadow.
+        /// Art + script: ~/Documents/WordDrop_Art/tile_mock_1118/make_form_tile.py. ivory_tile@2x itself is untouched.</summary>
+        public static bool TILE_FORM = true;
+        public static int  TILE_FORM_SHADOW_ORDER = 3;   // board panel 0 < grid 1 < grass 2 < this < tiles 5
+        private static Sprite s_formShadowSprite;
+        public static Sprite FormShadowSprite => s_formShadowSprite;
+        public static Sprite RestingSprite => s_spriteNormal;
+        public static string RESTING_FACE_ASSET = BOARD_C ? (TILE_FORM ? "Tiles/ivory_tile_form@2x" : "Tiles/ivory_tile@2x") : "Tiles/white_tile_pillow@2x";   // 2026-10-28 PILLOW FAMILY (Spencer: "yes the bottom ones look great"). Hand-painted original: "Tiles/white_tile_2@2x"
 
         /// <summary>Hand-painted GOLD face (the high-value letter tile — `s_spriteHighValue`,
         /// labelled "gold-resting" at line 175). Empty string falls back to the old
@@ -1660,6 +1670,14 @@ namespace WordDrop
             // 2026-09-03: OFF for the overlap board — tiles now butt together and
             // stack, so a per-tile drop shadow just muddies the seams. The stacking
             // itself is what reads as depth.
+            if (TILE_FORM)
+            {   // 11-18: contact shadow that rides THIS tile (the 11-06 per-cell baked shadow sat still under moving / special tiles)
+                var fsGO = new GameObject("TileFormShadow");
+                fsGO.transform.SetParent(transform, false);
+                fsGO.transform.localPosition = new Vector3(0f, 0f, 0.1f);
+                var fsSR = fsGO.AddComponent<SpriteRenderer>(); fsSR.sortingOrder = TILE_FORM_SHADOW_ORDER; fsSR.enabled = false;
+                fsGO.AddComponent<TileFormShadow>();
+            }
             if (TILE_DROP_SHADOW && s_dropShadowSprite != null)
             {
                 GameObject shadowGO = new GameObject("TileShadow");
@@ -7298,6 +7316,7 @@ namespace WordDrop
                     new Vector2(0.5f, 0.5f), ppu);
                 s_dropShadowSpriteA = MakeBoardShadow(BoardShadowTexA, ppu);
                 s_dropShadowSpriteB = MakeBoardShadow(BoardShadowTexB, ppu);
+                s_formShadowSprite  = TILE_FORM ? MakeBoardShadow("Tiles/tile_form_shadow@2x", ppu) : null;   // same pixels-per-unit as the face, so it lines up
                 s_dropShadowSprite  = s_useBoardShadowB ? s_dropShadowSpriteB : s_dropShadowSpriteA;
             }
 
@@ -8124,6 +8143,23 @@ namespace WordDrop
             _dissolveMatInstance.SetFloat("_DissolveAmount", 1f);
             IsDissolving = false;
             _dissolveCoroutine = null;
+        }
+    }
+
+    /// <summary>11-18: the plain letter tile's contact shadow. It shows only while its tile is showing the resting letter face
+    /// (not a power-up, crate, gold / primed tile, or a hidden tile) and fades with it - so no tile-shaped smudge is ever left
+    /// under a piece of another shape, and no tile state code has to know about it.</summary>
+    public class TileFormShadow : MonoBehaviour
+    {
+        private SpriteRenderer _sr, _body;
+        private void Awake() { _sr = GetComponent<SpriteRenderer>(); _body = transform.parent != null ? transform.parent.GetComponent<SpriteRenderer>() : null; }
+        private void LateUpdate()
+        {
+            if (_sr == null) return;
+            if (_sr.sprite == null) _sr.sprite = Tile.FormShadowSprite;
+            bool on = Tile.TILE_FORM && _sr.sprite != null && _body != null && _body.enabled && _body.sprite == Tile.RestingSprite && _body.color.a > 0.02f;
+            if (_sr.enabled != on) _sr.enabled = on;
+            if (on) { var c = _sr.color; float a = Mathf.Clamp01(_body.color.a); if (c.a != a) { c.a = a; _sr.color = c; } }
         }
     }
 }

@@ -246,6 +246,8 @@ namespace WordDrop
         /// <summary>Used only if the camera isn't orthographic or the sprite is missing — the old
         /// hardcoded reward-coin scale (Spencer 2026-06-19).</summary>
         private const float     COIN_SCALE_FALLBACK = 1.7f;
+        public static bool  CHUNKY_LEVEL_COINS = true;   // 11-18: level coins fly at the menu coin's size
+        public static float CHUNKY_SETTLE_FROM = 0.70f;   // ...and shrink to the HUD icon's size over the last 30% of the flight
         private const float     REWARD_COIN_ICON = 60f; // vault-level REWARD panel coin (matches LevelMapPanel.COIN_PILL_ICON)
 
         // ── Top-out danger indicator (Survival) ───────────────────────────────────
@@ -2951,6 +2953,12 @@ namespace WordDrop
             float SPIN_FPS = 16f * (flip ? frames.Length / 16f : 1f);
             float spinT = 0f;
             go.transform.position = worldStart;
+            // 11-18 (Spencer: "can we have the same big chunky coins in the menu screen when the coins float to the top?"): in a level the
+            // flying coin was sized to the small HUD coin icon (36 design px); on the menu it is sized to the big coin pill (60).
+            // The in-level coin now FLIES at the menu coin's size and settles to the icon's size over the last stretch, so it
+            // still lands on the icon cleanly.
+            float iconScale = COIN_SCALE;
+            if (CHUNKY_LEVEL_COINS) COIN_SCALE *= Mathf.Max(1f, UIConfig.CoinPillSize / Mathf.Max(1f, UIConfig.CoinHudSize));
             go.transform.localScale = Vector3.one * (COIN_SCALE * 0.5f); // start at HALF size → pops to full as it shoots out
             const float POP_DUR = 0.14f; // how fast the coin grows to full size on launch
 
@@ -3024,6 +3032,7 @@ namespace WordDrop
                 float ec = p * p * p, u = 1f - ec;           // ease-IN cubic = magnet "suck"
                 Vector3 cp = (u * u) * from + (2f * u * ec) * control + (ec * ec) * targetWorld;
                 go.transform.position = cp;
+                if (CHUNKY_LEVEL_COINS) go.transform.localScale = Vector3.one * Mathf.Lerp(COIN_SCALE, iconScale, Mathf.InverseLerp(CHUNKY_SETTLE_FROM, 1f, p));
                 spinT += Time.deltaTime;
                 if (flip) sr.sprite = frames[Mathf.FloorToInt(spinT * SPIN_FPS * 1.4f) % frames.Length]; // spin faster while gathering
                 else go.transform.Rotate(0f, 0f, 560f * Time.deltaTime);
@@ -3080,6 +3089,8 @@ namespace WordDrop
         /// (the tile font) on the goal + reward badges; false = Montserrat Black (the other HUD numbers).</summary>
         public static bool BADGE_FONT_NUNITO = true;
         private static TMP_FontAsset BadgeFont() => BADGE_FONT_NUNITO ? (GameFont.GetTMP() ?? GameFont.GetUITMP()) : GameFont.GetUITMP();
+        public static float GOAL_COUNT_X = 0.88f, GOAL_COUNT_Y = 0.88f, GOAL_COUNT_H = 0.44f;   // of the goal icon (11-18; RK: 85% / 86.5% / 42-44%)
+        public static float GoalCountCap => GOAL_COUNT_H / 1.16f;   // letter height without the 8% edge on each side
         private TextMeshProUGUI _rewardBadge; private int _rewardBadgeShown = -1;
         /// <summary>The outlined count badge on an icon's bottom-right corner (goal pictures + reward coin).</summary>
         private TextMeshProUGUI MakeCornerBadge(RectTransform onIcon, float wide = 1.7f)
@@ -3107,7 +3118,7 @@ namespace WordDrop
             // RM's target badges ("3", "24") are the SAME treatment as its moves number — cream face, navy stroke, lip —
             // not white. 2026-10-22 comparison. (BADGE_OUTLINE kept for reference; the shared RM material now drives it.)
             if (num == null) return;
-            if (HUD_RECIPE_D) { ApplyRecipeCount(num, HUD_INK, D_STROKE, D_DROP); return; }   // 10-31 recipe D
+            if (HUD_RECIPE_D) { ApplyRecipeCount(num, HUD_INK, D_STROKE, D_DROP); RkText.Firm(num); return; }   // 10-31 recipe D; 11-18 badge edge (RkText.FIRM_*)
             ApplyRMNumberStyle(num, RM_MOVES_TOP, RM_MOVES_BOTTOM);
         }
         // GOLD RUSH MULTIPLIER BADGE (2026-10-30, Spencer: "didnt notice the banners really"): a permanent x1/x2/x3/x4 on the
@@ -3278,12 +3289,23 @@ namespace WordDrop
                 var badge = new GameObject("Badge", typeof(RectTransform));
                 badge.transform.SetParent(pic.transform, false);
                 var brt = (RectTransform)badge.transform;
-                brt.anchorMin = new Vector2(0.62f, -0.12f); brt.anchorMax = new Vector2(1.22f, 0.48f);
+                // 11-18 (Spencer: "match the badge orientation and number size of the objectives badge ... our numbers are smaller and
+                // not offset in the corner in the same way as the reference"). MEASURED on RK's HUD: the count's centre sits 85%
+                // across and 86.5% down its icon and it is 42-44% of the icon's height (crate "9", ice "32"). Ours: 92% across,
+                // 77% down, 40% tall. The box moves left 7% and down 9.5% of the icon; the new even 8% edge (RkText.Firm) brings the
+                // height to ~43%. Was (0.62, -0.12) - (1.22, 0.48).
+                // 11-18 ROUND 2 (Spencer: "badge offset on the number of goals left is still not right and it should match on the level
+                // cards" - RK's count "overhangs to the side and down from the icon"). MEASURED after the first move: HUD 86% across /
+                // 91% down / 38% tall (only 1% past the icon's side); level card 90% / 72% / 51%. One rule for HUD + cards now:
+                // the count's centre at GOAL_COUNT_X across and GOAL_COUNT_Y down the icon, GOAL_COUNT_H of its height (edge
+                // included) - so a single digit pokes ~6% past the side and ~10% below, like RK's.
+                float half = 0.30f * GOAL_COUNT_H / 0.38f;
+                brt.anchorMin = new Vector2(GOAL_COUNT_X - half, 1f - GOAL_COUNT_Y - half); brt.anchorMax = new Vector2(GOAL_COUNT_X + half, 1f - GOAL_COUNT_Y + half);
                 brt.offsetMin = brt.offsetMax = Vector2.zero;
                 var num = badge.AddComponent<TextMeshProUGUI>();
                 var f = BadgeFont(); if (f != null) num.font = f;
                 num.alignment = TextAlignmentOptions.Center; num.raycastTarget = false;
-                num.enableAutoSizing = true; num.fontSizeMin = 10f; num.fontSizeMax = 40f;
+                num.enableAutoSizing = true; num.fontSizeMin = 10f; num.fontSizeMax = 40f * GOAL_COUNT_H / 0.38f;
                 num.fontStyle = FontStyles.Bold; num.color = Color.white;
                 StyleBadgeNumber(num);
                 num.enableWordWrapping = false;

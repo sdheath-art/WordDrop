@@ -1799,8 +1799,8 @@ namespace WordDrop
 
             // title + subtitle (recipe lettering, as the level cards)
             var title = RevealText(root, HERO_GOLD ? WIN_PHRASE : "Well Done!", (HERO_GOLD ? HERO_CAP : 150f) * k, new Vector2(0f, H * (0.5f - 0.17f)), new Vector2(W, 260f * k));
-            HUDManager.ApplyRecipeCount(title, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, HERO_GOLD ? Resources.Load<TMP_FontAsset>("WordSlop Title SDF") : null);
-            // 11-02 Spencer: "the text doesnt match the mock ... a kerning problem". Measured: same font and size, but the mock's
+            HUDManager.ApplyRecipeCount(title, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, HERO_GOLD ? HeroFont() : null);   // 11-18: the wide-margin bake (see HeroFont)
+            // 11-02 Spencer: "the text doesnt match the mock" ... a kerning problem". Measured: same font and size, but the mock's
             // title has a much heavier stroke (7.5% of cap) and drop (12%), so its letters touch; the HUD recipe left 15 px gaps.
             // Title-only material: fatter face + stroke + drop, tighter tracking, and the mock's cream face gradient.
             var tm = new Material(title.fontSharedMaterial) { name = "WellDoneTitle" };
@@ -1809,7 +1809,7 @@ namespace WordDrop
             title.fontSharedMaterial = tm; title.characterSpacing = REVEAL_TITLE_TRACK;
             title.enableVertexGradient = true; title.color = Color.white;
             title.colorGradient = new VertexGradient(new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF));
-            if (HERO_GOLD) HeroFace(title, tm);
+            if (HERO_GOLD) { HeroFace(title, tm); ConvertForMargin(tm, 10f); title.UpdateMeshPadding(); }   // values above are for the 9-texel margin
             var sub = RevealText(root, $"Level {LevelMapPanel.DisplayNum(ctx.ClearedStage)} Complete", 62f * k, new Vector2(0f, H * (0.5f - 0.17f) - 165f * k), new Vector2(W, 120f * k));
             HUDManager.ApplyRecipeCount(sub, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f);
             sub.alpha = 0f;
@@ -2184,11 +2184,55 @@ namespace WordDrop
         public static void ApplyHeroStyle(TMP_Text t)
         {
             if (t == null) return;
-            HUDManager.ApplyRecipeCount(t, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, Resources.Load<TMP_FontAsset>("WordSlop Title SDF"));
+            HUDManager.ApplyRecipeCount(t, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, HeroFont());
             var tm = new Material(t.fontSharedMaterial) { name = "HeroText" };
             tm.SetFloat("_UnderlayOffsetY", -REVEAL_TITLE_DROP);
             t.fontSharedMaterial = tm; t.enableVertexGradient = true; t.color = Color.white;
             HeroFace(t, tm);
+            ConvertForMargin(tm, 10f);   // every number above was tuned on the 9-texel-margin font (GradientScale 10)
+            t.UpdateMeshPadding();
+        }
+
+        // 11-18 (Spencer: "theres a weird hair of black on the D in spellbound"): the hero title's soft shadow drops 5.5 atlas
+        // texels and its quads are padded ~8.4, so it reaches 8-14 texels from each letter - past the 9-texel margin the Title
+        // font was baked with - and sampled the NEIGHBOURING glyphs in the atlas; with the letters overlapping (HERO_TRACK -3)
+        // a sliver of that landed on the next letter. "WordSlop Title Hero SDF" is the same cut baked with a 20-texel margin
+        // (Editor/WordSlopSetup bakes it by itself when it is missing; menu WordDrop > Fonts > Bake hero title font).
+        // TextMeshPro's outline / shadow numbers are in units of the margin, so ConvertForMargin rewrites them to keep every
+        // edge and offset the SAME size in the letter. No hero asset (or HERO_WIDE_FONT = false) = the old font, unchanged.
+        public static bool HERO_WIDE_FONT = true;
+        private static TMP_FontAsset HeroFont()
+        {
+            var f = HERO_WIDE_FONT ? Resources.Load<TMP_FontAsset>("WordSlop Title Hero SDF") : null;
+            return f != null ? f : Resources.Load<TMP_FontAsset>("WordSlop Title SDF");
+        }
+        /// <summary>Material values written for a font of GradientScale <paramref name="gs0"/> -> the same look on this material's own
+        /// GradientScale. Follows TMP_ShaderUtilities.UpdateShaderRatios: outline / dilate / softness scale with ratio A x GS; the
+        /// underlay's offset, dilate and softness with ratio C x GS, where ratio C also depends on the weight and face dilate.</summary>
+        public static void ConvertForMargin(Material m, float gs0)
+        {
+            if (m == null || !m.HasProperty("_GradientScale")) return;
+            float gs1 = m.GetFloat("_GradientScale"); if (Mathf.Abs(gs1 - gs0) < 0.5f || gs1 < 2f) return;
+            float weight = m.HasProperty("_WeightBold") ? Mathf.Max(m.GetFloat("_WeightNormal"), m.GetFloat("_WeightBold")) / 4f : 0f;
+            float w0 = m.GetFloat("_OutlineWidth"), d0 = m.GetFloat("_FaceDilate"), s0 = m.HasProperty("_OutlineSoftness") ? m.GetFloat("_OutlineSoftness") : 0f;
+            float rA0 = (gs0 - 1f) / (gs0 * Mathf.Max(1f, weight + d0 + w0 + s0)), rA1 = (gs1 - 1f) / gs1;
+            float kA = rA0 * gs0 / (rA1 * gs1);
+            float w1 = w0 * kA, d1 = d0 * kA, s1 = s0 * kA;
+            m.SetFloat("_OutlineWidth", w1); m.SetFloat("_FaceDilate", d1); if (m.HasProperty("_OutlineSoftness")) m.SetFloat("_OutlineSoftness", s1);
+            if (m.HasProperty("_UnderlayOffsetX"))
+            {
+                float ox0 = m.GetFloat("_UnderlayOffsetX"), oy0 = m.GetFloat("_UnderlayOffsetY"), u0 = m.GetFloat("_UnderlayDilate"), us0 = m.GetFloat("_UnderlaySoftness");
+                float tC0 = Mathf.Max(1f, Mathf.Max(Mathf.Abs(ox0), Mathf.Abs(oy0)) + u0 + us0);
+                float rC0 = (gs0 - 1f) * Mathf.Max(0f, 1f - weight - d0) / (gs0 * tC0);
+                float rC1 = (gs1 - 1f) * Mathf.Max(0.05f, 1f - weight - d1) / gs1;                  // t = 1 on the wide margin (checked below)
+                float kC = rC0 * gs0 / (rC1 * gs1);
+                float ox1 = ox0 * kC, oy1 = oy0 * kC, u1 = u0 * kC, us1 = us0 * kC;
+                float tC1 = Mathf.Max(Mathf.Abs(ox1), Mathf.Abs(oy1)) + u1 + us1;
+                if (tC1 > 1f) Debug.LogWarning($"[HeroFont] shadow still exceeds the margin (t = {tC1:F2}) - bake a wider one");
+                m.SetFloat("_UnderlayOffsetX", ox1); m.SetFloat("_UnderlayOffsetY", oy1); m.SetFloat("_UnderlayDilate", u1); m.SetFloat("_UnderlaySoftness", us1);
+                WDLog.Log($"[HeroFont] margin {gs0 - 1f:F0} -> {gs1 - 1f:F0}: outline {w0:F3}->{w1:F3} dilate {d0:F3}->{d1:F3} | shadow y {oy0:F3}->{oy1:F3} x {ox0:F3}->{ox1:F3} dilate {u0:F3}->{u1:F3} soft {us0:F3}->{us1:F3}");
+            }
+            ShaderUtilities.UpdateShaderRatios(m);
         }
         private static void HeroFace(TMP_Text title, Material tm)
         {   // 11-06 Spencer: gold gradient face, a thin WARM edge (no dark stroke, no bevel), soft drop shadow, WordSlop Title (bold)

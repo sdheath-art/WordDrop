@@ -61,7 +61,7 @@ namespace WordDrop
             {
                 var a = GameAudio.Instance; if (a == null) return;
                 a.MusicMuted = !value;
-                if (value && a.MusicVolume < 0.02f) a.MusicVolume = 0.3f;   // an old slider left at 0% would make "on" silent
+                if (value && a.MusicVolume < 0.02f) a.MusicVolume = GameAudio.FIXED_MUSIC;   // an old slider left at 0% would make "on" silent
             }
         }
         private static bool SoundOn
@@ -167,7 +167,7 @@ namespace WordDrop
         {
             if (s_flyout != null) s_flyout.SetActive(false);   // our card is wider than RK's - the flyout would sit half under it
             const float CH = 834f;
-            var card = BuildCard("QuitLevelCard", SORT_SUB, "Quit Level?", 102f, CH, true, out s_sub, () =>
+            var card = BuildCard("QuitLevelCard", SORT_SUB, "Quit Level?", LevelIntroModal.V2_TITLE_CAP, CH, true, out s_sub, () =>
             {   // X = cancel: back to the level
                 CloseSub(() => { CloseFlyout(); if (!s_quitting) SurvivalManager.Instance?.SetOverlayPaused(false); });
             });
@@ -178,7 +178,7 @@ namespace WordDrop
                 var h = NewImage("BrokenHeart", box, Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f), Color.white);
                 h.preserveAspect = true; Place(h.rectTransform, (CW - 140f) / 2f, 112f, 160f, 160f);
             }
-            var body = Text(box, "You will lose a life!", 41f, new Vector2((CW - 140f) / 2f, 236f), new Vector2(CW - 180f, 90f));
+            var body = Text(box, "You will lose a life!", LevelIntroModal.V2_BODY_CAP, new Vector2((CW - 140f) / 2f, 236f), new Vector2(CW - 180f, 90f));
             HUDManager.ApplyRecipeFlat(body); body.color = LevelIntroModal.V2_LABEL_INK;
 
             var quit = ArtButton.Create(card, "rect_quit", "Quit", lilita: false, titleMedium: false);
@@ -186,6 +186,7 @@ namespace WordDrop
             if (quit != null)
             {
                 SizeButton(quit, CW / 2f, 672f, 204f, 0f);
+                quit.ScaleLabel(ArtButton.SMALL_BUTTON_LABEL);   // 11-18: 5.2% -> 6.8% of the card (his pick B)
                 quit.Button.onClick.AddListener(() =>
                 {
                     if (s_quitting) return;
@@ -231,7 +232,7 @@ namespace WordDrop
             float lastY = ROW0 + (rows - 1) * ROW_STEP;
             float CH = lastY + BTN_H / 2f + (SHOW_VERSION ? 130f : 70f);
 
-            var card = BuildCard("SettingsCard", SORT_CARD, "Settings", 102f, CH, false, out s_card, CloseHome);
+            var card = BuildCard("SettingsCard", SORT_CARD, "Settings", LevelIntroModal.V2_TITLE_CAP, CH, false, out s_card, CloseHome);
 
             // recessed pocket: dark top edge, light catch edge below (raised = tappable, recessed = container)
             var sp = MenuUI.GetRoundedRectSprite(42);
@@ -325,13 +326,16 @@ namespace WordDrop
             if (s_card != null) s_card.SetActive(false);
             var card = BuildCard("ResetCard", SORT_SUB, "Reset Progress?", 72f, CH, true, out s_sub, () => CloseSub(null));
             var box = CreamBox(card, 210f, 300f);
-            var body = Text(box, "Start again from Level 1.\nThis can't be undone.", 41f, new Vector2((CW - 140f) / 2f, 150f), new Vector2(CW - 180f, 220f));
+            // 11-18 Spencer: "text in the reset progress is too big" at the card body size (53) - two lines, the longer 25 letters
+            // against the Quit card's 21: 44 keeps the same margins either side.
+            var body = Text(box, "Start again from Level 1.\nThis can't be undone.", RESET_BODY_CAP, new Vector2((CW - 140f) / 2f, 150f), new Vector2(CW - 180f, 220f));
             HUDManager.ApplyRecipeFlat(body); body.color = LevelIntroModal.V2_LABEL_INK; body.lineSpacing = 8f;
             var go = ArtButton.Create(card, "rect_quit", "Reset", lilita: false, titleMedium: false);
             if (go == null) go = ArtButton.Create(card, "rect_play", "Reset", lilita: false, titleMedium: false);
             if (go != null)
             {
                 SizeButton(go, CW / 2f, 672f, 204f, 0f);
+                go.ScaleLabel(ArtButton.SMALL_BUTTON_LABEL);     // 11-18: same button as Quit
                 go.Button.onClick.AddListener(() => CloseSub(() =>
                 {
                     // 11-17: monkey run 534391 pressed Reset 5 times in 10 minutes and never got past level 5. A real player has to
@@ -533,6 +537,7 @@ namespace WordDrop
             rt.anchoredPosition = new Vector2(x, -y); rt.sizeDelta = new Vector2(w, h);
         }
         /// <summary>Centre-anchored, position from the parent's centre (y up).</summary>
+        public static float RESET_BODY_CAP = 44f;
         private static void PlaceCentre(RectTransform rt, Vector2 pos, Vector2 size)
         {
             rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);

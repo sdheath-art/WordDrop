@@ -117,11 +117,15 @@ namespace WordDrop
             ShaderUtilities.UpdateShaderRatios(m); _label.fontSharedMaterial = m;
         }
 
+        public static float SAFE_BOTTOM_FRACTION = 0.5f;   // 1 = Apple's full strip (the old look)
         private void ApplySafeArea()
         {
             if (_canvasRT == null) { var c = GetComponentInParent<Canvas>(); if (c == null) return; _canvasRT = (RectTransform)c.rootCanvas.transform; }
             float ch = _canvasRT.rect.height; if (ch < 1f || Screen.height <= 0) return;
-            float inset = Screen.safeArea.yMin / Screen.height * ch;
+            // 11-18 (Spencer, phone vs editor screenshot: "how come the bottom hud is so much longer on my actual phone?"): the bar
+            // rose by the WHOLE home-indicator strip (102 px on his iPhone 16), ~50% taller than in the editor. The swipe line only
+            // uses the bottom third of that strip, so the bar now rises by SAFE_BOTTOM_FRACTION of it (he said yes to half).
+            float inset = Screen.safeArea.yMin / Screen.height * ch * SAFE_BOTTOM_FRACTION;
             if (Mathf.Abs(inset - _lastInset) > 0.01f)
             {
                 _lastInset = inset;

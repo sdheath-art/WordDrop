@@ -163,7 +163,7 @@ namespace WordDrop
             if (_titleText != null)
             {
                 _titleText.transform.SetParent(_cardV2, false); _titleText.text = "Continue?";
-                _titleText.fontSize = CvFont(102f);
+                _titleText.fontSize = CvFont(LevelIntroModal.V2_TITLE_CAP);
                 HUDManager.ApplyRecipeCount(_titleText, LevelIntroModal.V2_TITLE_EDGE_RK, LevelIntroModal.V2_TITLE_STROKE_RK, LevelIntroModal.V2_TITLE_DROP_RK, Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF"));
                 _titleText.characterSpacing = 0f; _titleText.enableAutoSizing = false; _titleText.alignment = TextAlignmentOptions.Center;
                 CvPlace(_titleText.rectTransform, CV_W / 2f, 10f - LevelIntroModal.V2_TITLE_LIFT, 760f, 170f);   // 11-17 lifted with every card header
@@ -171,7 +171,7 @@ namespace WordDrop
             if (_bodyText != null)
             {
                 _bodyText.transform.SetParent(box.transform, false);
-                _bodyText.fontSize = CvFont(41f * CV_BODY_K); HUDManager.ApplyRecipeFlat(_bodyText); _bodyText.color = CV_INK; _bodyText.enableAutoSizing = false;
+                _bodyText.fontSize = CvFont(LevelIntroModal.V2_BODY_CAP * CV_BODY_K); HUDManager.ApplyRecipeFlat(_bodyText); _bodyText.color = CV_INK; _bodyText.enableAutoSizing = false;
                 _bodyText.alignment = TextAlignmentOptions.Center;
                 CvPlace(_bodyText.rectTransform, boxW / 2f, 52f, boxW - 40f, 80f);
             }
@@ -259,6 +259,7 @@ namespace WordDrop
         private RectTransform _failGroup; private ArtButton _retryArt; private TextMeshProUGUI _failText;
         private readonly System.Collections.Generic.List<GameObject> _v2ContinueOnly = new System.Collections.Generic.List<GameObject>();
         private Image[] _lifeRow;
+        public static bool HEART_SOCKETS = true; private bool _hasSockets;
         private const float FAIL_H = 940f, FAIL_HEARTS_Y = 570f, FAIL_BTN_Y = 755f;
         /// <summary>11-16: the home Play button with 0 lives - this card in its "No lives left!" state (no life taken). done(true) =
         /// refilled (open the level), done(false) = closed.</summary>
@@ -291,7 +292,7 @@ namespace WordDrop
             _cardV2.sizeDelta = new Vector2(CV_W, FAIL_H);
             int lives = HeartsManager.Current;
             _refilling = false;   // a refill animation cut short by closing the card must not block the next one
-            for (int i = 0; i < _lifeRow.Length; i++) { _lifeRow[i].DOKill(); _lifeRow[i].rectTransform.DOKill(); _lifeRow[i].rectTransform.localScale = Vector3.one; _lifeRow[i].color = i < lives ? Color.white : new Color(0.32f, 0.22f, 0.5f, 0.55f); }
+            for (int i = 0; i < _lifeRow.Length; i++) { _lifeRow[i].DOKill(); _lifeRow[i].rectTransform.DOKill(); _lifeRow[i].rectTransform.localScale = Vector3.one; _lifeRow[i].color = i < lives ? Color.white : _hasSockets ? new Color(1f, 1f, 1f, 0f) : new Color(0.32f, 0.22f, 0.5f, 0.55f); }
             bool none = lives <= 0;
             // 11-16 (shot: the 2-line 0-lives text spilled over the box and under the heart): one line in the box; the price goes on
             // the button with the coin, like Play On
@@ -319,7 +320,7 @@ namespace WordDrop
             box.sprite = CvSprite("cream", new Vector4(52, 52, 52, 52)); box.type = Image.Type.Sliced; box.raycastTarget = false;
             CvPlace(box.rectTransform, CV_W / 2f, CV_BOX_Y0 + CV_BOX_H / 2f, boxW, CV_BOX_H);
             _failText = CvNode("Text", box.transform, typeof(TextMeshProUGUI)).GetComponent<TextMeshProUGUI>();
-            _failText.fontSize = CvFont(41f * CV_BODY_K); HUDManager.ApplyRecipeFlat(_failText); _failText.color = CV_INK;
+            _failText.fontSize = CvFont(LevelIntroModal.V2_BODY_CAP * CV_BODY_K); HUDManager.ApplyRecipeFlat(_failText); _failText.color = CV_INK;
             _failText.alignment = TextAlignmentOptions.Center; _failText.raycastTarget = false;
             _failText.textWrappingMode = TextWrappingModes.NoWrap; _failText.enableAutoSizing = true;
             _failText.fontSizeMax = _failText.fontSize; _failText.fontSizeMin = _failText.fontSize * 0.6f;
@@ -328,8 +329,18 @@ namespace WordDrop
             if (broken != null) { var hb = MakeHeartImage(box.transform, "BrokenHeart", broken, 150f); CvPlace(hb.rectTransform, boxW / 2f, 195f, 150f, 150f); }
             var whole = LoadHeart("heart_whole");
             _lifeRow = new Image[HeartsManager.MAX_HEARTS];
+            var socket = HEART_SOCKETS ? LoadHeart("heart_socket") : null; _hasSockets = socket != null;
             for (int i = 0; i < _lifeRow.Length; i++)
             {
+                // 11-18 (Spencer: "could the hearts spaces ... have a stroke around them or something ... the look like theres an inset
+                // divot for the hearts to go"): a heart-shaped SOCKET under every life (Hearts/heart_socket = heart_whole's own
+                // silhouette: darker recess, shadow under its top edge, a light lip along the bottom). A lost life shows the empty
+                // socket; before, it was the heart itself tinted dark. Art: ~/Documents/WordDrop_Art/heart_socket_1118/make_socket.py
+                if (HEART_SOCKETS && socket != null)
+                {
+                    var sk = MakeHeartImage(_failGroup, "LifeSocket" + i, socket, 84f);
+                    CvPlace(sk.rectTransform, CV_W / 2f + (i - (_lifeRow.Length - 1) / 2f) * 104f, FAIL_HEARTS_Y, 84f, 84f);
+                }
                 _lifeRow[i] = MakeHeartImage(_failGroup, "Life" + i, whole, 84f);
                 CvPlace(_lifeRow[i].rectTransform, CV_W / 2f + (i - (_lifeRow.Length - 1) / 2f) * 104f, FAIL_HEARTS_Y, 84f, 84f);
             }
@@ -440,7 +451,17 @@ namespace WordDrop
                 for (int i = 0; i < ti.characterCount; i++)
                 {
                     var ci = ti.characterInfo[i]; if (!ci.isVisible) continue;
-                    tail = Mathf.Max(tail, ci.baseLine - ci.bottomLeft.y); capH = Mathf.Max(capH, ci.topRight.y - ci.baseLine);
+                    // 11-18 (Spencer's screenshot: "the words Play On for button are not centered" - capitals 8 px low; they were
+                    // 0.5 px off on 11-16): bottomLeft / topRight are the letter's QUAD, which includes the material's padding, so
+                    // the "tail" grew when the text recipe changed the padding - and words with NO tail ("Watch Ad") started
+                    // counting padding as one. Measure the tail from the GLYPH itself: independent of any outline or shadow.
+                    var g = ci.textElement != null ? ci.textElement.glyph : null;
+                    if (g != null)
+                    {
+                        float below = (g.metrics.height - g.metrics.horizontalBearingY) * ci.scale, above = g.metrics.horizontalBearingY * ci.scale;
+                        tail = Mathf.Max(tail, below); capH = Mathf.Max(capH, above);
+                    }
+                    else { tail = Mathf.Max(tail, ci.baseLine - ci.bottomLeft.y); capH = Mathf.Max(capH, ci.topRight.y - ci.baseLine); }
                 }
                 if (capH > 0f && tail > capH * 0.1f) dyTail = -tail * 0.5f * l.transform.lossyScale.y / parentS;
             }
@@ -927,7 +948,7 @@ namespace WordDrop
             if (CARD_V2 && _bodyText != null)
             {   // one line, shrink to fit; centred in the box when there are no goal pictures under it
                 _bodyText.textWrappingMode = TextWrappingModes.NoWrap; _bodyText.enableAutoSizing = true;
-                _bodyText.fontSizeMax = CvFont(41f * CV_BODY_K); _bodyText.fontSizeMin = CvFont(24f);
+                _bodyText.fontSizeMax = CvFont(LevelIntroModal.V2_BODY_CAP * CV_BODY_K); _bodyText.fontSizeMin = CvFont(24f);
                 bool pics = _objectiveIconHolder != null && _objectiveIconHolder.activeSelf && _objectiveIconGO != null;
                 CvPlace(_bodyText.rectTransform, (CV_W - 2f * CV_SIDE) / 2f, pics ? 52f : CV_BOX_H / 2f, CV_W - 2f * CV_SIDE - 60f, 80f);
             }
@@ -990,7 +1011,7 @@ namespace WordDrop
                 var nrt = num.rectTransform; nrt.sizeDelta = new Vector2(step, 50f); nrt.anchoredPosition = new Vector2(0f, -GOALS_LEFT_ICON * 0.5f - 22f);
                 if (CARD_V2)
                 {   // 11-16: the count was the smallest text on the card (12px) - it's the number that matters. Cream with the title's edge.
-                    num.fontSize = CvFont(52f); HUDManager.ApplyRecipeCount(num, LevelIntroModal.V2_TITLE_EDGE_RK, 0.16f, -0.8f);
+                    num.fontSize = CvFont(HUDManager.GoalCountCap * GOALS_LEFT_ICON); HUDManager.ApplyRecipeCount(num, LevelIntroModal.V2_TITLE_EDGE_RK, 0.16f, -0.8f); RkText.Firm(num);   // 11-18: the HUD's size rule (was 52)
                     nrt.sizeDelta = new Vector2(step + 40f, 80f); nrt.anchoredPosition = new Vector2(GOALS_LEFT_ICON * 0.38f, -GOALS_LEFT_ICON * 0.38f);
                     num.alignment = TextAlignmentOptions.Center;
                 }

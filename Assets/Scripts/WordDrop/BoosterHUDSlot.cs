@@ -724,7 +724,12 @@ namespace WordDrop
             // armed when the level was won -> put it away, no charge used (11-16)
             if (SurvivalManager.AwaitingNextLevel) { BoosterManager.Instance.CancelAim(); return; }
             { var own = SurvivalManager.Instance; if (own != null && (own.IsOverlayPaused || own.OutOfMovesLocked)) { BoosterManager.Instance.CancelAim(); return; } }
-            if (!WDInput.GetMouseButtonDown(0) && WDInput.touchCount == 0) return;
+            // 11-18 (Spencer, phone: the glove's pick click "sounds like a grinding gear like it is playing a bunch of times"): this used
+            // to pass on EVERY frame a finger was on the glass (touchCount > 0), so one tap picked, un-picked, picked ... the tile
+            // 60 times a second - a click each time, and the pick glow restarted each time. The mouse path was already one-shot,
+            // which is why the editor never showed it. A touch now counts once, on the frame it lands.
+            bool touchBegan = WDInput.touchCount > 0 && WDInput.GetTouch(0).phase == TouchPhase.Began;
+            if (!WDInput.GetMouseButtonDown(0) && !touchBegan) return;
             if (Camera.main == null) return;
 
             Vector3 screenPos = WDInput.touchCount > 0
@@ -1202,6 +1207,7 @@ namespace WordDrop
                         _chargeBadges[i].color = new Color32(0xFF, 0xF8, 0xD3, 0xFF);
                         _chargeBadges[i].outlineWidth = BADGE_OUTLINE;
                         _chargeBadges[i].outlineColor = new Color32(0x46, 0x04, 0x0C, 0xFF);   // dark crimson ink on the red badge (10-29, Spencer: red)
+                        RkText.Firm(_chargeBadges[i]);   // 11-18: the firmer small-text edge (his pick from badge_numbers_mock.png)
                     }
                     var chargeRT = chargeGO.GetComponent<RectTransform>();
                     chargeRT.anchorMin = Vector2.zero;
@@ -1971,7 +1977,13 @@ namespace WordDrop
                         var img = ba.GetComponent<Image>();
                         var want = ButtonArt(plus ? "booster_badge_plus" : "booster_badge");
                         if (img != null && want != null && img.sprite != want) img.sprite = want;
-                        _chargeBadges[i].outlineColor = plus ? new Color32(0x08, 0x22, 0x06, 0xFF) : new Color32(0x46, 0x04, 0x0C, 0xFF);
+                        // 11-18: only when the colour really changes - the setter swaps the text back to its own material, which
+                        // RkText then has to restyle (one frame of the plain digit on every refresh otherwise)
+                        Color32 ink = plus ? new Color32(0x08, 0x22, 0x06, 0xFF) : new Color32(0x46, 0x04, 0x0C, 0xFF);
+                        var badgeMat = _chargeBadges[i].fontSharedMaterial; bool recolour = true;
+                        if (badgeMat != null && badgeMat.HasProperty("_OutlineColor"))
+                        { Color32 cur = badgeMat.GetColor("_OutlineColor"); recolour = cur.r != ink.r || cur.g != ink.g || cur.b != ink.b; }
+                        if (recolour) _chargeBadges[i].outlineColor = ink;
                     }
                 }
                 if (_chargeBadgeContainers[i] != null)

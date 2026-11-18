@@ -89,7 +89,7 @@ namespace WordDrop
         // Resources/Tiles/swap_pick_glow.png = the armed booster's 3-tier gold glow baked around the pillow tile's silhouette,
         // interior cut out (a RING), canvas 1.8968x the tile sprite. Parented to the tile so it rides its select lift/breathe;
         // sorted above the tiles so the ring isn't hidden under neighbours. Pulses like the armed button.
-        public static float PICK_GLOW_RATIO = 1.8968f;
+        public static float PICK_GLOW_RATIO = 1.8968f, PICK_GLOW_SWELL = 0f;   // swell was 0.04
         private SpriteRenderer _pickGlow; private Coroutine _pickPulse;
         private static Sprite s_pickGlow;
         public void ShowPickGlow(Tile t)
@@ -124,7 +124,11 @@ namespace WordDrop
                 t += Time.unscaledDeltaTime;
                 float pop = Mathf.Clamp01(t / 0.14f);                          // pops in from 80%
                 float breathe = 0.5f + 0.5f * Mathf.Sin(t * Mathf.PI * 2f * 1.1f);
-                tr.localScale = Vector3.one * baseScale * Mathf.Lerp(0.8f, 1f, 1f - (1f - pop) * (1f - pop)) * (1f + 0.04f * breathe);
+                // 11-18 (Spencer, phone: the glow "is not taking on the same animation as the tile so it is stretching bigger than the
+                // tile exposing a black shape behind it at times when its breathing"): the ring is a child of the tile, so it already
+                // rides the tile's lift + breathe; its OWN extra 4% swell opened a gap between the tile's edge and the ring's cut-out
+                // and the dark behind showed through. The ring now keeps the tile's size exactly and breathes in brightness only.
+                tr.localScale = Vector3.one * baseScale * Mathf.Lerp(0.8f, 1f, 1f - (1f - pop) * (1f - pop)) * (1f + PICK_GLOW_SWELL * breathe);
                 sr.color = new Color(1f, 1f, 1f, pop * (0.72f + 0.28f * breathe));
                 yield return null;
             }

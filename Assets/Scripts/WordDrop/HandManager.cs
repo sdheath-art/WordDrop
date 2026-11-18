@@ -2035,7 +2035,11 @@ namespace WordDrop
             WDLog.Log($"[PopTiming] t={Time.unscaledTime:F2} {what}{fps}");
             s_ptFrame = Time.frameCount; s_ptTime = Time.unscaledTime;
         }
-        public static float PLAYER_POP_HOLD  = 0.12f;
+        // 11-18 (Spencer: in Royal Kingdom "when you perform a swap that causes an explosion it is immediate. ours seems to have a
+        // brief pause delay before the pop ... is it possible to make it pop faster"): the pause was this hold - 0.12 s for the
+        // player to see WHICH word it was (his 10-20 ask; 0.35 s until 10-23). Logs: word formed -> explode start 0.13-0.14 s.
+        // 0 = the word pops on the frame the swap lands. Put 0.12 back if words become hard to follow.
+        public static float PLAYER_POP_HOLD  = 0f;
         public static float CASCADE_POP_HOLD = 0f;
         private bool _nextPopIsPlayers;   // set by a swap / swipe, consumed by the first auto-pop after it
         public static void MarkPlayerWordComing() { RulesEngine.BeginPlayerMove(); if (Instance != null) Instance._nextPopIsPlayers = true; }   // also a new move for the cascade cap
