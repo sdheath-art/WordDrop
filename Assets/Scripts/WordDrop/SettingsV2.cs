@@ -298,7 +298,7 @@ namespace WordDrop
             float boxH = (n > 0 ? 50f + n * STEP : 40f) + 110f;
             float CH = 210f + boxH + 70f;
             if (s_card != null) s_card.SetActive(false);   // one card at a time (11-17 Spencer: the stacked pair "looks off")
-            var card = BuildCard("TermsCard", SORT_SUB, "Terms & Privacy", 72f, CH, true, out s_sub, () => CloseSub(null));
+            var card = BuildCard("TermsCard", SORT_SUB, "Terms & Privacy", LONG_TITLE_CAP, CH, true, out s_sub, () => CloseSub(null));
             var box = CreamBox(card, 210f, boxH);
             float bw = CW - 140f, y = 50f + BTN_H / 2f;
             if (terms)
@@ -324,7 +324,7 @@ namespace WordDrop
             if (s_sub != null) return;
             const float CH = 834f;
             if (s_card != null) s_card.SetActive(false);
-            var card = BuildCard("ResetCard", SORT_SUB, "Reset Progress?", 72f, CH, true, out s_sub, () => CloseSub(null));
+            var card = BuildCard("ResetCard", SORT_SUB, "Reset Progress?", LONG_TITLE_CAP, CH, true, out s_sub, () => CloseSub(null));
             var box = CreamBox(card, 210f, 300f);
             // 11-18 Spencer: "text in the reset progress is too big" at the card body size (53) - two lines, the longer 25 letters
             // against the Quit card's 21: 44 keeps the same margins either side.
@@ -538,6 +538,9 @@ namespace WordDrop
         }
         /// <summary>Centre-anchored, position from the parent's centre (y up).</summary>
         public static float RESET_BODY_CAP = 44f;
+        // 11-18 (Spencer's screenshot: "terms & privacy looks like its too big for the header plate"): MEASURED - the 15-letter title
+        // ran 96% of the plate's width at cap 72. 60 leaves the same side margins as "Settings" (about 80% of the plate).
+        public static float LONG_TITLE_CAP = 60f;
         private static void PlaceCentre(RectTransform rt, Vector2 pos, Vector2 size)
         {
             rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
