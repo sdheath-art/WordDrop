@@ -75,6 +75,8 @@ namespace WordDrop
         {
             Running = true; Pending = false;
             // never on top of a board lesson that's already up (both dims would stack)
+            // 11-18: say so - on level 3 (rocket lesson up) the FX menu's BOOSTER INTRO button looked dead for up to 30 s
+            if (TutorialOverlay.Instance != null && TutorialOverlay.Instance.IsShowing) WDLog.Log($"[BoosterIntro] {id}: waiting - a board lesson is on screen (starts when it ends, 30 s at most)");
             { float tw = 0f; while (TutorialOverlay.Instance != null && TutorialOverlay.Instance.IsShowing && tw < 30f) { tw += Time.unscaledDeltaTime; yield return null; } }
             // let pre-level boosters / the board settle first
             float w = 0f; while (w < 6f && MatchController.Instance != null && MatchController.Instance.IsProcessing) { w += Time.unscaledDeltaTime; yield return null; }
@@ -152,8 +154,13 @@ namespace WordDrop
             Camera cam = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
             Vector2 a = RectTransformUtility.WorldToScreenPoint(cam, c[0]), b = RectTransformUtility.WorldToScreenPoint(cam, c[2]);
             var r = Rect.MinMaxRect(Mathf.Min(a.x, b.x), Mathf.Min(a.y, b.y), Mathf.Max(a.x, b.x), Mathf.Max(a.y, b.y));
-            float pad = r.width * 0.08f; return Rect.MinMaxRect(r.xMin - pad, r.yMin - pad, r.xMax + pad, r.yMax + pad);
+            // 11-18 (Spencer, phone photo of the Free Swap lesson: the lit circle "isnt right up to the corners of the button and its
+            // leaving open space or a stroke around the booster button"). MEASURED on his photo: button 174 px across, lit circle
+            // 204 px = 1.17x - the 8% pad each side showed as a pale ring of background. The slot's own rect is the button's gold
+            // edge, so the circle now hugs it (SLOT_HOLE_PAD of the width each side; was 0.08).
+            float pad = r.width * SLOT_HOLE_PAD; return Rect.MinMaxRect(r.xMin - pad, r.yMin - pad, r.xMax + pad, r.yMax + pad);
         }
+        public static float SLOT_HOLE_PAD = 0.01f;
         private static Rect CellsScreenRect(List<Vector2Int> cells)
         {
             var grid = GridManager.Instance; var cam = Camera.main;

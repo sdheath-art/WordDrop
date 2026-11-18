@@ -522,6 +522,7 @@ namespace WordDrop
             _down = true;
             Face.DOKill();
             Face.DOScale(new Vector3(PRESS_X, PRESS_Y, 1f), PRESS_T).SetEase(Ease.OutQuad).SetUpdate(true);
+            if (BigPress) { transform.DOKill(); transform.DOScale(BIG_PRESS_DOWN, PRESS_T).SetEase(Ease.OutQuad).SetUpdate(true); }
             if (PlaySounds) GameAudio.Instance?.PlayMultiPopPress();
             HapticsManager.ButtonTap();
         }
@@ -534,7 +535,20 @@ namespace WordDrop
             DOTween.Sequence().SetTarget(Face).SetUpdate(true)
                 .Append(Face.DOScale(new Vector3(OVERSHOOT, OVERSHOOT, 1f), 0.07f).SetEase(Ease.OutQuad))
                 .Append(Face.DOScale(Vector3.one, 0.09f).SetEase(Ease.InOutSine));
+            if (BigPress)
+            {
+                transform.DOKill();
+                DOTween.Sequence().SetTarget(transform).SetUpdate(true)
+                    .Append(transform.DOScale(BIG_PRESS_POP, 0.08f).SetEase(Ease.OutQuad))
+                    .Append(transform.DOScale(1f, 0.14f).SetEase(Ease.OutBack));
+            }
         }
+
+        /// <summary>11-18 (Spencer: "when you push on the continue button for the well done screen it reacts somehow with an
+        /// animation"): the normal press only squashes the FACE 5% - on a hero button over a busy screen it reads as nothing.
+        /// BigPress moves the WHOLE button: it dips to BIG_PRESS_DOWN under the finger and pops to BIG_PRESS_POP on release.</summary>
+        public bool BigPress;
+        public static float BIG_PRESS_DOWN = 0.90f, BIG_PRESS_POP = 1.10f, BIG_PRESS_HOLD = 0.12f;
 
         private void OnDisable()
         {

@@ -151,11 +151,13 @@ namespace WordDrop
                 Vector2Int c = CellUnder(screenPos, grid);
                 if (c.x >= 0 && !TutorialBeats.AllowsCell(c)) return;   // lesson up: the dimmed tiles don't answer (11-16)
                 if (c.x >= 0) { _anchor = c; _path.Add(c); _active = true; PressGlow(grid.GetTile(c.x, c.y)); }
+                _downAt = Time.unscaledTime; _lastScreen = screenPos;
                 return;
             }
 
             if (_active && held)
             {
+                _lastScreen = screenPos;
                 Vector2Int cur = CellUnder(screenPos, grid);
                 if (cur.x >= 0) RebuildPath(cur, grid, hand);
                 return;
@@ -194,7 +196,16 @@ namespace WordDrop
             {
                 if (dx != 0 && dy != 0 && Mathf.Abs(dx) != Mathf.Abs(dy)) return;
             }
-            else if (dx != 0 && dy != 0) return;
+            else if (dx != 0 && dy != 0)
+            {
+                // 11-18 (Spencer: "the drag over is so finnicky ... meaning to drag over words ... its switching just two tiles"): a
+                // finger that drifted ONE row / column off the line used to freeze the trace at its last good length - often 2
+                // tiles - and letting go there is a swap. A drift of one tile on a trace 2+ tiles long now snaps back onto the line.
+                if (!DRIFT_SNAP) return;
+                if (Mathf.Abs(dy) == 1 && Mathf.Abs(dx) >= 2) dy = 0;
+                else if (Mathf.Abs(dx) == 1 && Mathf.Abs(dy) >= 2) dx = 0;
+                else return;
+            }
 
             int steps = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dy));
             int sx = (dx == 0) ? 0 : (dx > 0 ? 1 : -1);
@@ -295,14 +306,29 @@ namespace WordDrop
             // (a tile is ~8 mm wide on the phone), and anything over 2 cells was judged as a word swipe -> "not a word". Now a short
             // trace that does NOT spell a word is what it almost always is: a swap of the first tile with the neighbour the finger
             // went to. A real word still claims; a long wrong trace (5+ tiles) still gets the "not a word" shake.
-            if (FLICK_SWAP && _path.Count >= 3 && _path.Count <= FLICK_MAX_CELLS)
+            // 11-18: a short non-word trace is only a swap when it LOOKS like one - 3 tiles, and the finger either never reached the
+            // third tile's middle or the whole gesture was a quick flick. A trace that went deliberately across 3-4 letters is a
+            // word being tested: if it is not a word, nothing swaps (it gets the normal "not a word" answer below).
+            bool looksLikeSwap = _path.Count == 3 && (ReachCells() < FLICK_MAX_REACH || Time.unscaledTime - _downAt < FLICK_FAST);
+            if (FLICK_SWAP && _path.Count >= 3 && _path.Count <= FLICK_MAX_CELLS && (!FLICK_NEEDS_SWAP_SHAPE || looksLikeSwap))
             {
                 string frj;
                 bool word = _path.Count >= RulesEngine.SWIPE_MIN_LENGTH && rules.BuildExplicitMatch(_path, out frj) != null;
                 if (!word)
                 {
-                    WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word - treated as a swap ({_path[0].x},{_path[0].y})->({_path[1].x},{_path[1].y})");
-                    hand.CommitDragSwap(_path[0], _path[1]);
+                    // 11-18 (Spencer: "when you click and drag and it doesnt make a word the first two letters will still try to swap
+                    // and fail"): the short trace became a swap of its first two tiles even when that swap makes nothing, so a
+                    // missed swipe ALSO played the no-word bounce. Now it only becomes the swap when the swap would work (it
+                    // makes a word, or joins two power-ups); otherwise the trace just lets go, with nothing moving.
+                    var ca = rules.GetCell(_path[0].x, _path[0].y); var cb = rules.GetCell(_path[1].x, _path[1].y);
+                    bool combo = ca != null && cb != null && ca.SpecialKind != RulesEngine.SPECIAL_NONE && cb.SpecialKind != RulesEngine.SPECIAL_NONE;
+                    bool works = combo || rules.WordsIfSwapped(_path[0], _path[1]).Count > 0;
+                    if (!FLICK_ONLY_IF_WORD || works)
+                    {
+                        WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word - treated as a swap ({_path[0].x},{_path[0].y})->({_path[1].x},{_path[1].y})");
+                        hand.CommitDragSwap(_path[0], _path[1]);
+                    }
+                    else WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word and its first swap makes nothing - let go");
                     return;
                 }
             }
@@ -372,6 +398,20 @@ namespace WordDrop
 
         public static bool  FLICK_SWAP = true;       // 11-17: a short non-word trace = a swap of its first two tiles (false = old: judged as a swipe)
         public static int   FLICK_MAX_CELLS = 4;
+        public static bool  FLICK_NEEDS_SWAP_SHAPE = true, DRIFT_SNAP = true;   // 11-18
+        public static float FLICK_MAX_REACH = 1.9f;   // tiles from the first tile's centre (the third tile's centre is 2.0)
+        public static float FLICK_FAST = 0.16f;       // seconds: quicker than this is a flick however far it got
+        private float _downAt; private Vector3 _lastScreen;
+        /// <summary>How far the finger is from the first tile's centre, in tiles.</summary>
+        private float ReachCells()
+        {
+            var grid = GridManager.Instance; var cam = Camera.main; if (grid == null || cam == null || _path.Count == 0) return 99f;
+            Vector3 w = cam.ScreenToWorldPoint(_lastScreen); w.z = 0f;
+            Vector3 a = grid.CellToWorld(_anchor.x, _anchor.y); a.z = 0f;
+            float pitch = Mathf.Abs(grid.CellToWorld(1, 0).x - grid.CellToWorld(0, 0).x); if (pitch < 1e-4f) return 99f;
+            return Vector3.Distance(w, a) / pitch;
+        }
+        public static bool  FLICK_ONLY_IF_WORD = true;   // 11-18: false = the 11-17 rule (always try the swap, bounce if it makes nothing)
         public static bool  QUEUE_BUSY_SWAPS = true;
         public static float QUEUE_MAX_WAIT = 3f;   // a remembered swap older than this is dropped
         private bool _queued, _busyDown;

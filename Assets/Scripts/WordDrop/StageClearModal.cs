@@ -1977,7 +1977,15 @@ namespace WordDrop
                 crtB.anchorMin = new Vector2(0.5f - 0.25f * CONTINUE_SCALE, 0.165f - 0.05f * CONTINUE_SCALE); crtB.anchorMax = new Vector2(0.5f + 0.25f * CONTINUE_SCALE, 0.165f + 0.05f * CONTINUE_SCALE);
                 crtB.offsetMin = crtB.offsetMax = Vector2.zero; crtB.pivot = new Vector2(0.5f, 0.5f);
                 cont.Refit();
-                cont.Button.onClick.AddListener(() => { _continueByButton = true; OnContinuePressed(); _continueByButton = false; });
+                // 11-18: the button dips and pops under the finger (ArtButton.BigPress), and the screen waits BIG_PRESS_HOLD for the
+                // pop to be SEEN before it starts closing - the dismiss used to begin on the same frame, hiding any reaction.
+                cont.BigPress = true;
+                cont.Button.onClick.AddListener(() =>
+                {
+                    if (_continueQueued || Time.unscaledTime - _shownAtUnscaled < CONTINUE_LOCKOUT) return;
+                    _continueQueued = true;
+                    DOVirtual.DelayedCall(ArtButton.BIG_PRESS_HOLD, () => { _continueQueued = false; if (this == null) return; _continueByButton = true; OnContinuePressed(); _continueByButton = false; }, true);
+                });
                 crtB.localScale = Vector3.zero;
                 crtB.DOScale(1f, 0.35f).SetEase(Ease.OutBack, 2f).SetDelay(CONTINUE_LOCKOUT).SetUpdate(true);
             }
@@ -2358,7 +2366,7 @@ namespace WordDrop
         /// <summary>Continue is ignored this long after the modal appears (2026-10-21: frantic end-of-level clicking pressed
         /// Continue ~1s after Well Done showed, so the celebration flew past unseen).</summary>
         public static float CONTINUE_LOCKOUT = 1.0f;
-        private bool _continueByButton;
+        private bool _continueByButton, _continueQueued;
         private float _shownAtUnscaled = -10f;
 
         private void OnContinuePressed()

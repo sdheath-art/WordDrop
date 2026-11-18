@@ -2549,11 +2549,16 @@ namespace WordDrop
                         tapAt.z = anchor.z;      // keep the badge's depth so sorting is unchanged
                         // the word(s) in this cluster, for the word-instead-of-score pop (2026-10-23)
                         var words = new List<string>(); bool goalHit = false; int longest = 0;
+                        var wordAt = new Dictionary<string, Vector3>(); var wordGold = new HashSet<string>();
                         foreach (var pw in rules.PrimedRegistry.GetAllPrimedWords())
                             if (pw?.Cells != null && pw.Word != null && pw.Word.Length > 1 && pw.Cells.Exists(c => cl[i].cells.Contains(c)) && !words.Contains(pw.Word.ToUpperInvariant()))
                             {
-                                words.Add(pw.Word.ToUpperInvariant()); longest = Mathf.Max(longest, pw.Word.Length);
-                                if (BonusPopup.GOAL_WORD_GOLD && LevelRules.Goals.Count > 0 && rules.WordCellsHitGoal(pw.Cells)) goalHit = true;
+                                string uw = pw.Word.ToUpperInvariant();
+                                words.Add(uw); longest = Mathf.Max(longest, pw.Word.Length);
+                                bool hit = BonusPopup.GOAL_WORD_GOLD && LevelRules.Goals.Count > 0 && rules.WordCellsHitGoal(pw.Cells);
+                                if (hit) { goalHit = true; wordGold.Add(uw); }
+                                Vector3 ws = Vector3.zero; foreach (var c in pw.Cells) ws += _grid.CellToWorld(c.x, c.y);
+                                if (pw.Cells.Count > 0) { ws /= pw.Cells.Count; ws.z = -0.5f; wordAt[uw] = ws; }
                             }
                         // 10-31 (Spencer OK'd the mock goal_word_pop.png): GOLD = this word made goal progress; LONG words pop bigger.
                         BonusPopup.NextPopGold = goalHit; BonusPopup.NextPopLength = longest;
@@ -2561,7 +2566,24 @@ namespace WordDrop
                         string label = words.Count == 0 ? null : words.Count <= BonusPopup.WORD_POPUP_MAX_WORDS ? string.Join("  ", words) : $"{words[0]}  +{words.Count - 1} MORE";
                         _tapPopWords.Clear(); foreach (var w in words) _tapPopWords.Add(w);   // these already got their pop-up here
                         bool firesSpecial = !WORD_POP_OVER_BLAST && cl[i].cells.Exists(c => { var sd = rules.GetCell(c.x, c.y); return sd != null && sd.SpecialKind != RulesEngine.SPECIAL_NONE; });
-                        if (!firesSpecial) ClusterOutline.Instance.PopPayout(tapAt, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc, label);
+                        // 11-18 STAGGERED WORD POPS (Spencer: a power-up is a wild, so moving one makes 2-3 words that "explode and
+                        // cause chaos on the board and then theres no word pop up ... show the word pop ups where it staggers
+                        // showing one at a time"). Several words - or any word that sets off a power-up, which got NO text since
+                        // 11-07 because it landed in the blast - now pop one at a time, longest first, each over its own word,
+                        // starting after the blast. One plain word: the pop-up as before.
+                        if (STAGGER_WORD_POPS && words.Count > 0 && (words.Count >= 2 || firesSpecial))
+                        {
+                            BonusPopup.NextPopGold = false; BonusPopup.NextPopLength = 0;
+                            var ordered = new List<string>(words); ordered.Sort((x, y) => y.Length.CompareTo(x.Length));
+                            for (int wi = 0; wi < ordered.Count; wi++)
+                            {
+                                bool last = wi == WORD_STAGGER_MAX - 1 && ordered.Count > WORD_STAGGER_MAX;
+                                string shownWord = last ? $"+{ordered.Count - wi} MORE" : ordered[wi];
+                                QueueWordPop(shownWord, wordAt.TryGetValue(ordered[wi], out var wa) ? wa : tapAt, !last && wordGold.Contains(ordered[wi]), last ? 0 : ordered[wi].Length, firesSpecial);
+                                if (last) break;
+                            }
+                        }
+                        else if (!firesSpecial) ClusterOutline.Instance.PopPayout(tapAt, cl[i].payout, cl[i].wordCount >= 2, fs, bi, bc, label);
                     }
                     break;
                 }
@@ -2948,10 +2970,15 @@ case RulesEngine.ResolutionPhase.Complete:
                     bool armedA = RulesEngine.Instance != null && match.Cells != null
                         && match.Cells.Count > 0
                         && RulesEngine.Instance.GetPrimedWordsContainingPublic(match.Cells[0]) > 0;
+                    // 11-18 (Spencer: a bunch of lit-up words "that dont read as words" is confusing - "maybe we just dont light these
+                    // words and just explode them"): when ONE swap makes two or more words they are not lit gold / green first; they
+                    // burst as they are, and the staggered pop-ups name them. A single word still lights.
+                    bool quiet = QUIET_MULTI_WORD && InstantPopMode && allNew.Count >= 2;
                     if (armedA)
                     for (int c = 0; c < match.Cells.Count; c++)
                     {
                         Tile t = grid.GetTile(match.Cells[c].x, match.Cells[c].y);
+                        if (t != null && quiet) { scoredTiles.Add(t); continue; }
                         if (t != null)
                         {
                             t.SetPrimedGlow(RulesEngine.Instance != null && RulesEngine.Instance.HasHighValueLetter(match)
@@ -4416,6 +4443,35 @@ case RulesEngine.ResolutionPhase.Complete:
         /// special no longer pops its text - it landed right in the middle of the blast ("ALLY YOGI" over a TNT, L9). The explosion is
         /// that word's payoff (Royal Match puts no text over a blast). The owl still reacts. true = the old text over the blast.</summary>
         public static bool WORD_POP_OVER_BLAST = false;
+        public static bool  QUIET_MULTI_WORD = true;   // 11-18: no gold/green light-up when one swap makes 2+ words
+        public static bool  STAGGER_WORD_POPS = true;
+        public static float WORD_STAGGER_GAP = 0.38f, WORD_STAGGER_AFTER_BLAST = 0.35f;   // seconds between words / after a power-up fires
+        public static int   WORD_STAGGER_MAX = 4;                                        // more than this in one cluster: the last slot says "+N MORE"
+        private struct QueuedPop { public string w; public Vector3 at; public bool gold; public int len; }
+        private readonly List<QueuedPop> _popQueue = new List<QueuedPop>(); private Coroutine _popRun; private float _popNotBefore;
+        private void QueueWordPop(string w, Vector3 at, bool gold, int len, bool afterBlast)
+        {
+            if (string.IsNullOrEmpty(w)) return;
+            if (afterBlast) _popNotBefore = Mathf.Max(_popNotBefore, Time.unscaledTime + WORD_STAGGER_AFTER_BLAST);
+            if (_popQueue.Count >= 8) return;   // a runaway chain never stacks a minute of text
+            _popQueue.Add(new QueuedPop { w = w, at = at, gold = gold, len = len });
+            if (_popRun == null) _popRun = StartCoroutine(RunWordPops());
+        }
+        private IEnumerator RunWordPops()
+        {
+            while (_popQueue.Count > 0)
+            {
+                while (Time.unscaledTime < _popNotBefore) yield return null;
+                var p = _popQueue[0]; _popQueue.RemoveAt(0);
+                if (ClusterOutline.Instance != null && !BonusBlastRunning)
+                {
+                    BonusPopup.NextPopGold = p.gold; BonusPopup.NextPopLength = p.len;
+                    ClusterOutline.Instance.PopPayout(p.at, 0, false, 0f, -1, null, p.w);
+                }
+                _popNotBefore = Time.unscaledTime + WORD_STAGGER_GAP;
+            }
+            _popRun = null;
+        }
         private void PopUpOtherWords(GridManager grid, RulesEngine.StepResult step)
         {
             if (!POPUP_EVERY_WORD || grid == null || step?.PoppedWords == null || ClusterOutline.Instance == null) { _tapPopWords.Clear(); return; }
@@ -4425,11 +4481,13 @@ case RulesEngine.ResolutionPhase.Complete:
             {
                 string w = kv.Key?.ToUpperInvariant();
                 if (string.IsNullOrEmpty(w) || w.Length < 2 || kv.Value == null || kv.Value.Count == 0 || !shown.Add(w)) continue;
-                if (!WORD_POP_OVER_BLAST && step.SpecialsFired != null && step.SpecialsFired.Exists(f => kv.Value.Contains(f.Cell))) continue;   // 11-07: no text over its own blast
+                bool overBlast = !WORD_POP_OVER_BLAST && step.SpecialsFired != null && step.SpecialsFired.Exists(f => kv.Value.Contains(f.Cell));
+                if (overBlast && !STAGGER_WORD_POPS) continue;   // 11-07: no text over its own blast (11-18: it waits for the blast instead)
                 Vector3 sum = Vector3.zero;
                 foreach (var c in kv.Value) sum += grid.CellToWorld(c.x, c.y);
                 Vector3 at = sum / kv.Value.Count; at.z = -0.5f;
-                ClusterOutline.Instance.PopPayout(at, 0, false, 0f, -1, null, w);
+                if (STAGGER_WORD_POPS) QueueWordPop(w, at, false, w.Length, overBlast);   // takes its turn behind any word still showing
+                else ClusterOutline.Instance.PopPayout(at, 0, false, 0f, -1, null, w);
             }
         }
 

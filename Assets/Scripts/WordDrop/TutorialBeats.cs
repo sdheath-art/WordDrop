@@ -411,10 +411,17 @@ namespace WordDrop
         private float _useUntil = -1f;
         private IEnumerator UseBeat()
         {
+            // 11-18 (Spencer's log, L3: the new rocket's lesson "was coming up and it didnt lock my inputs"): between the rocket being
+            // made and this lesson appearing (~0.5 s plus the falls) the board took input - he dragged the rocket into GIST two
+            // frames before the lesson showed, so the spotlight came up on a rocket that was already firing. The board is now
+            // held (the same Pending lock the level-start lessons use, self-clearing after PENDING_MAX) until the lesson is up
+            // or has decided not to show.
+            s_pendingSince = Time.unscaledTime;
             yield return new WaitForSeconds(0.3f);
             float waited = 0f;
             while (!BoardIdle() && waited < 8f) { waited += Time.deltaTime; yield return null; }
             yield return new WaitForSeconds(0.25f);
+            s_pendingSince = -1f;   // from here it is either the forced lesson's own lock or nothing
             if (SurvivalManager.AwaitingNextLevel || s_active) yield break;
             var rules = RulesEngine.Instance; if (rules == null) yield break;
             Vector2Int cell = new Vector2Int(-1, -1);

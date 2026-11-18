@@ -1,0 +1,26 @@
+MONKEY TEST  20261118_110549   seed 476831   ran 10.0 min   ended: time up
+Screen 720x1560.  One fake finger, real game, Play mode.
+
+INPUTS  1049 gestures:  BUTTON 239  MASH BUTTON 77  TAPPABLE 61  BOOSTER TAP 43  MASH BOARD 48  TAP ANYWHERE 72  CELL TAP 91  REAL MOVE 211  RANDOM SWIPE 65  MASH ANYWHERE 38  TAUGHT MOVE 2  RANDOM DRAG 63  DOUBLE TAP 39
+GAME    levels started 13, cleared 12, failed 1;  swaps accepted 148, swiped words 0, boosters used 29;  hearts refilled by the monkey 0x
+FRAMES  worst 346 ms, 4 frame(s) over 250 ms, 35234 frames (59 fps average)
+
+FAULTS  0 different
+        none found in this run (that is not proof there are none - run it again, longer, with another seed)
+
+WARNINGS in the log (not counted as faults), most frequent first:
+       75x  <color=#bc><b>DOTWEEN ► </b></color>Target or field is missing/null (Void TryThrowEditorNullExceptionObject(UnityEngine.Object, System.S
+        8x  [RulesEngine] Step chain hit depth cap () — completing.
+        2x  <color=#bc><b>DOTWEEN ► </b></color>Tween startup failed (NULL target/property - Void TryThrowEditorNullExceptionObject(UnityEngine.Obje
+        1x  [INVARIANT] (,) 'T' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'U' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] GOLD-ART t=. (,) 'R' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'T' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] GOLD-ART t=. (,) 'S' gold-primed but wearing '' (colour=)
+        1x  [INVARIANT] (,) 'P' sortingOrder= expected  — a lift outlived its effect
+        1x  [INVARIANT] (,) 'C' sortingOrder= expected  — a lift outlived its effect
+
+SAVE DATA: the monkey spends coins, changes progress and may flip settings.
+    Copy from before this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/playerprefs_before_20261118_110549.plist
+    To restore: quit Unity, copy that file over ~/Library/Preferences/unity.Spencer Heath.WordDrop.plist, run 'killall cfprefsd', reopen Unity.
+Every input of this run: /Users/spencerheath/GameHarness/output/wordrop/UnityProject/MonkeyReports/monkey_inputs_latest.txt
