@@ -46,7 +46,7 @@ namespace WordDrop
         // the smaller rows as long as we can make it difficult enough to be a puzzle challenge"): BOARD_PRESET 0 = 9x11, 1 = 8x10,
         // 2 = 7x9. Tiles grow 9/8 at 8x10 (~44 pt on a 375 pt phone - Apple's minimum touch target; 9x11 was ~39).
         // SMALL_BOARD = anything below 9x11: smaller blast areas + blockers scaled by cell count (LevelRules.ScaleForBoard).
-        public static int  BOARD_PRESET = 1;
+        public static int  BOARD_PRESET = 2;   // 11-18: 7x9 is the working board. Spencer on the PHONE (11-17): 8x10 read as 'letter soup', 'the smaller board reads better'. Levels are tuned for 7x9 (bot 11-18 x100); the 8x10 game + its numbers = tag checkpoint-2026-11-17-8x10-phone-pass.
         public static bool SMALL_BOARD => BOARD_PRESET != 0;
         public static int COLS       => BOARD_PRESET == 2 ? 7 : BOARD_PRESET == 1 ? 8 : 9;
         public static int MAX_ROWS   => BOARD_PRESET == 2 ? 9 : BOARD_PRESET == 1 ? 10 : 11;
@@ -2094,6 +2094,7 @@ namespace WordDrop
         /// <summary>Bot playtester: specials fired in simulation, by kind (2026-10-23 — how often does the airplane appear?).</summary>
         public static readonly int[] SimFiredByKind = new int[16];
         public static bool AIRPLANE_ON = true;
+        public static bool TOME_NO_SELF_REFILL = true;
         public static bool AirplanePending;   // set by NoteSwapWords, spent by the first eligible swap word's birth
         /// <summary>The swap just armed these words: two or more that don't share a cell earn an airplane.</summary>
         /// <summary>Words the last player swap armed (10-31: a "double word" = 2+, for the big-moment boom; spent by the first blast).</summary>
@@ -2477,6 +2478,18 @@ namespace WordDrop
             ["hole"]      = "########/########/########/########/###..###/###..###/########/########/########/########",
             ["arch"]      = "########/########/########/########/###..###/###..###/########/########/########/########",
         };
+        /// <summary>7x9 versions (11-17, BOARD_PRESET 2 - the phone readability test: Spencer "the smaller board reads better", and
+        /// the shapes "are important"). Odd width like 9x11, so centre holes are 1 wide. The funnel's foot is 5 wide, not 3 (the
+        /// 10-30 lesson: a 3-wide foot takes only 3-letter words). 'lanes' / 'split' / 'legs' / 'sidenotch' are not carried over:
+        /// at 7 wide their lanes would be 3 tiles. Art: Boards/shape_&lt;name&gt;_7x9.png (render_shapes.py).</summary>
+        public static readonly Dictionary<string, string> SHAPES_7x9 = new Dictionary<string, string>
+        {   // 7 wide x 9 tall, top row first
+            ["octagon"]   = "..###../.#####./#######/#######/#######/#######/#######/.#####./..###..",
+            ["funnel"]    = "#######/#######/#######/#######/#######/#######/.#####./.#####./.#####.",
+            ["notches"]   = "###.###/###.###/#######/#######/.#####./#######/#######/###.###/###.###",
+            ["hole"]      = "#######/#######/#######/#######/###.###/###.###/#######/#######/#######",
+            ["arch"]      = "#######/#######/#######/#######/###.###/###.###/#######/#######/#######",
+        };
         /// <summary>Install the void mask for <paramref name="name"/> (null/unknown/size mismatch = rectangle). Call before the
         /// board is filled. Logs [Shape].</summary>
         /// <summary>11-03: the bot's sim snapshot saves/restores the shape - SetupSimLevel installs each level's mask into these
@@ -2486,7 +2499,7 @@ namespace WordDrop
         public static void SetBoardShape(string name)
         {
             BoardShape = null; s_void = null;
-            var table = BOARD_PRESET == 1 ? SHAPES_8x10 : SHAPES;
+            var table = BOARD_PRESET == 1 ? SHAPES_8x10 : BOARD_PRESET == 2 ? SHAPES_7x9 : SHAPES;
             if (string.IsNullOrEmpty(name) || !table.TryGetValue(name, out var mask)) return;
             var rows = mask.Split('/');
             if (rows.Length != ROWS || rows[0].Length != COLS)
@@ -2830,6 +2843,27 @@ namespace WordDrop
                 else if (attempt < count * 37) { if (!GemFits(p, null, true)) continue; }
                 d.HasGem = true; placed++;
             }
+            // 11-17 SWEEP (7x9 bot survey: every level with 6+ gems was unwinnable - the random search above can come up short on
+            // a 63-cell board, and a fixed-gem goal that asks for more gems than exist can never be met). Random tries are not a
+            // guarantee, so finish by walking EVERY cell from a random start, loosening one rule per pass: spaced -> loosely
+            // spaced -> anywhere off the planted words -> on a planted word -> any letter.
+            for (int pass = 0; pass < 5 && placed < count; pass++)
+            {
+                int start = SurvivalRng.Range(0, COLS * ROWS);
+                for (int i = 0; i < COLS * ROWS && placed < count; i++)
+                {
+                    int k = (start + i * 5) % (COLS * ROWS);   // step 5 is coprime with 63 / 80 / 99: visits every cell, scattered
+                    var p = new Vector2Int(k % COLS, k / COLS);
+                    var d = _board[p.x, p.y];
+                    if (d == null || d.IsStone || d.IsFrozen || d.HasGem || d.IsDropTarget || d.SpecialKind != SPECIAL_NONE || !char.IsLetter(d.Letter)) continue;
+                    if (pass < 4 && GEM_LETTERS.IndexOf(char.ToUpperInvariant(d.Letter)) < 0) continue;
+                    if (pass < 3 && keep.Contains(p)) continue;
+                    if (pass == 0 && !GemFits(p)) continue;
+                    if (pass == 1 && !GemFits(p, null, true)) continue;
+                    d.HasGem = true; placed++;
+                }
+            }
+            if (placed < count && !Simulating) WDLog.Log($"[Gems] sweep still short: {placed}/{count}");
             return placed;
         }
 
@@ -8141,6 +8175,18 @@ namespace WordDrop
             var crossUse = new Dictionary<Vector2Int, int>();
             foreach (var cc in crossH) if (crossV.Contains(cc)) crossUse[cc] = 2;
 
+            // 11-17 (Spencer: "if a flying tome is used it shouldnt be able to create another flying tome with the words that it made"):
+            // a Tome is a wild letter, so swapping one into a word while the same swap finished a second word earned a NEW Tome
+            // from that second word. A swap that spends a Tome cannot earn one. Checked before any word resolves (order-proof).
+            if (AirplanePending && TOME_NO_SELF_REFILL)
+                for (int i = 0; i < _stepPendingTriggers.Count && AirplanePending; i++)
+                {
+                    var tw = _primedRegistry.GetById(_stepPendingTriggers[i]);
+                    if (tw?.Cells == null) continue;
+                    foreach (var tc in tw.Cells)
+                        if (InBounds(tc.x, tc.y) && _board[tc.x, tc.y] != null && _board[tc.x, tc.y].SpecialKind == SPECIAL_AIRPLANE)
+                        { AirplanePending = false; if (!Simulating) WDLog.Log($"[Airplane] not earned: '{tw.Word}' spent a Flying Tome in this swap"); break; }
+                }
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
             {
                 int pid = _stepPendingTriggers[i];

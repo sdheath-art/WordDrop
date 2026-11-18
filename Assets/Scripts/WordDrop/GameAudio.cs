@@ -296,7 +296,7 @@ namespace WordDrop
         // can turn music off without losing feedback sounds.
         private const string PREF_MUSIC_VOLUME = "MusicVolume";
         private const string PREF_MUSIC_MUTED  = "MusicMuted";
-        private float _musicVolume = 0.30f; // music sits behind SFX in AAA mobile mix
+        private float _musicVolume = 0.20f; // 11-17 phone: 'the music is mixed too high and the sfx too low' (was 0.30, set on the Mac's speakers)
         private bool  _musicMuted  = false;
 
         public float MusicVolume
@@ -400,7 +400,7 @@ namespace WordDrop
             // Load saved prefs
             _volume      = PlayerPrefs.GetFloat(PREF_VOLUME, 0.80f);
             _muted       = PlayerPrefs.GetInt(PREF_MUTED, 0) == 1;
-            _musicVolume = PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.30f);
+            _musicVolume = PlayerPrefs.GetFloat(PREF_MUSIC_VOLUME, 0.20f);
             _musicMuted  = PlayerPrefs.GetInt(PREF_MUSIC_MUTED, 0) == 1;
             _uiVolume    = PlayerPrefs.GetFloat(PREF_UI_VOLUME, 0.65f);
             _uiMuted     = PlayerPrefs.GetInt(PREF_UI_MUTED, 0) == 1;

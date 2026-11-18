@@ -4150,7 +4150,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 if (lit > 0 && Tile.SafeLampsLit(left) - Tile.SafeLampsLit(left + 1) > 1) t.PopSafeLamp(lit - 1);
                 if (LevelRules.BonusLevelActive && LevelRules.GOLD_RUSH_SAFES && !RulesEngine.Simulating)
                 {   // GOLD RUSH v6: every lamp hit pays a little, straight into the REWARD counter
-                    int pay = LevelRules.GOLD_RUSH_LAMP_COINS;
+                    int pay = LevelRules.GoldRushPay(LevelRules.GOLD_RUSH_LAMP_COINS);
                     CoinWallet.Add(pay); SurvivalManager.PendingBonusCoins += pay; LevelMapPanel.Instance?.AddPendingCoinReward(pay);
                     HUDManager.Instance?.SpawnBonusCoins(new List<Vector3> { Tile.SafeLampWorld(anchor, grid.CellSize, lit) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f) }, pay);
                 }
@@ -4158,7 +4158,7 @@ case RulesEngine.ResolutionPhase.Complete:
             }
             bool rush = LevelRules.BonusLevelActive && LevelRules.GOLD_RUSH_SAFES;
             if (RulesEngine.SAFE_STAYS_OPEN && t != null) t.SetShelf(1, 0);   // 11-04: the tile now draws the open, empty vault (stays on the board); the blast FX plays over it
-            int coins = rush ? LevelRules.GOLD_RUSH_JACKPOT : RulesEngine.SAFE_COINS;   // Gold Rush: the jackpot
+            int coins = rush ? LevelRules.GoldRushPay(LevelRules.GOLD_RUSH_JACKPOT) : RulesEngine.SAFE_COINS;   // Gold Rush: the jackpot
             StartCoroutine(SafeOpenFX(Tile.ShelfCentreWorld(anchor, grid.CellSize) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f), Tile.ShelfWorldSize(grid.CellSize), coins));
             CoinWallet.Add(coins);
             SurvivalManager.PendingBonusCoins += coins;

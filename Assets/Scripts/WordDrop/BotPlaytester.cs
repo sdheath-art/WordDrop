@@ -56,7 +56,7 @@ namespace WordDrop
         public void Run() { if (!Running) { s_only = null; StartCoroutine(RunRoutine(FIRST_LEVEL, LAST_LEVEL, TRIALS)); } }
         // SELECTED LEVELS (2026-10-30, Spencer: "one good thing is that we can iterate and tune very quickly"): run only the levels
         // that changed, with more games each (tighter numbers) - ~4 min instead of ~25. SELECTED = "11,17,19" style list.
-        public static string SELECTED = "8,18,19"; public static int SELECTED_TRIALS = 100;   // 11-03: shelf + safe re-check (was "11,17,19")
+        public static string SELECTED = "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19"; public static int SELECTED_TRIALS = 100;   // 11-03: shelf + safe re-check (was "11,17,19")
         private static System.Collections.Generic.HashSet<int> s_only;
         public void RunSelected()
         {
@@ -93,6 +93,7 @@ namespace WordDrop
             summary.AppendLine("Suggested budget = the CASUAL bot's 95th-percentile net moves (~95% of casual players would finish).\n");
             summary.AppendLine("LVL  name                      budget | EXPERT win%  net p50/p90 | CASUAL win%  net p50/p90  left(wins)  near-miss | SUGGEST | goals");
             var t0 = Time.realtimeSinceStartup;
+            LevelRules.SimGemShortfall = 0;
             for (int lvl = first; lvl <= last; lvl++)
             if (s_only == null || s_only.Contains(lvl))
             {
@@ -123,7 +124,7 @@ namespace WordDrop
                   summary.AppendLine($"       casual board: {(tt > 0 ? (float)cs / tt : 0):F1} common-word swaps per turn, STALE (<{STALE_BELOW}) {(tt > 0 ? 100f * st / tt : 0):F0}% of turns, GOAL-DEAD {(tt > 0 ? 100f * gd / tt : 0):F0}% of turns END-STALL {(games > 0 ? (float)ed / games : 0):F1} turns/game stuck on the last {RulesEngine.ENDGAME_PIECES}, goal help {(games > 0 ? (float)rf / games : 0):F1}/game in {(games > 0 ? 100f * gw / games : 0):F0}% of games (board shuffles {(games > 0 ? (float)sh / games : 0):F1}/game), DRAGS {(games > 0 ? (float)dg / games : 0):F1}/game"); }
             }
             Destroy(simGO);
-            summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). 'near-miss' = casual games that run out with 1-{NEAR_MISS_PIECES} pieces left (Play On moments). Cascade cap {CapLabel}. Casual wastes {CASUAL_NOWORD_RATE:P0} of moves on no-word swaps (human-calibrated), sees common words only: {CASUAL_COMMON_ONLY}, fishing hint: {FISHING_HINT_MODEL}, endgame airplane: {RulesEngine.ENDGAME_AIRPLANE}, re-letter rescue: {RulesEngine.ENDGAME_RESCUE_ON}.");
+            summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. Gem shortfall games: {LevelRules.SimGemShortfall} (should be 0). 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). 'near-miss' = casual games that run out with 1-{NEAR_MISS_PIECES} pieces left (Play On moments). Cascade cap {CapLabel}. Casual wastes {CASUAL_NOWORD_RATE:P0} of moves on no-word swaps (human-calibrated), sees common words only: {CASUAL_COMMON_ONLY}, fishing hint: {FISHING_HINT_MODEL}, endgame airplane: {RulesEngine.ENDGAME_AIRPLANE}, re-letter rescue: {RulesEngine.ENDGAME_RESCUE_ON}.");
             try
             {
                 Directory.CreateDirectory(Folder);

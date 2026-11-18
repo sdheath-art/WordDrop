@@ -1350,7 +1350,7 @@ namespace WordDrop
         {
             if (_shapeGO != null) { UnregisterEntry(_shapeGO.transform); Destroy(_shapeGO); _shapeGO = null; }
             bool shaped = RulesEngine.HasVoids && !string.IsNullOrEmpty(RulesEngine.BoardShape);
-            Texture2D tex = shaped ? Resources.Load<Texture2D>("Boards/shape_" + RulesEngine.BoardShape + (RulesEngine.BOARD_PRESET == 1 ? "_8x10" : "")) : null;   // 11-02: 8x10 art
+            Texture2D tex = shaped ? Resources.Load<Texture2D>("Boards/shape_" + RulesEngine.BoardShape + (RulesEngine.BOARD_PRESET == 1 ? "_8x10" : RulesEngine.BOARD_PRESET == 2 ? "_7x9" : "")) : null;   // 11-02: 8x10 art
             if (shaped && tex == null) WDLog.Log($"[Shape] no art Boards/shape_{RulesEngine.BoardShape} - keeping the rectangular frame");
             bool use = tex != null;
             void Show(GameObject go, bool on) { if (go == null) return; var r = go.GetComponent<SpriteRenderer>(); if (r != null) r.enabled = on; }

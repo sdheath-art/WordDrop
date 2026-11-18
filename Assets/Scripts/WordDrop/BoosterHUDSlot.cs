@@ -2423,6 +2423,7 @@ namespace WordDrop
             if (TutorialBeats.BlocksInput) return;   // tutorial beat up: boosters wait
             if (BoosterManager.CascadeBusy) return;   // 11-17: the last booster is still resolving
             if (slotIndex < 0 || slotIndex >= DISPLAY_ORDER.Length) return;
+            HapticsManager.ButtonTap();   // 11-17 haptics pass: the booster buttons and the gear had a sound but no tap
             var spec = DISPLAY_ORDER[slotIndex];
 
             // Locked during early onboarding — ignore the tap (defensive; the button is also
