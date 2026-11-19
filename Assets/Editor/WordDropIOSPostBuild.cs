@@ -16,6 +16,7 @@ public static class WordDropIOSPostBuild
         var plist = new PlistDocument();
         plist.ReadFromFile(plistPath);
         plist.root.SetBoolean("UIFileSharingEnabled", true);
+        plist.root.SetBoolean("ITSAppUsesNonExemptEncryption", false);   // 11-19: the game uses no custom encryption - skips the export question on every TestFlight upload
         plist.root.SetBoolean("LSSupportsOpeningDocumentsInPlace", true);
         plist.WriteToFile(plistPath);
     }
