@@ -1749,6 +1749,7 @@ namespace WordDrop
 
         private void OnGUI()
         {
+            if (LoadingScreen.Showing) return;   // 11-19: stay off the loading screen
             // Level mode owns its own HUD surface; the SurvivalManager debug
             // indicator (top-left red banner / hint line) belongs only to
             // non-Level modes. Keeps Level-mode playtests visually clean,

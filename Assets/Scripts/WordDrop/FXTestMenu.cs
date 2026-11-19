@@ -38,7 +38,7 @@ namespace WordDrop
         }
 
         // ── UI state ──────────────────────────────────────────────────────────────
-        private bool _open = true;
+        private bool _open = false;   // 11-19 Spencer: "closed until i open it" (was open at launch, dropping over the home screen)
         private Vector2 _scroll;
         private GUIStyle _btnStyle;
         private GUIStyle _toggleStyle;
@@ -259,6 +259,7 @@ namespace WordDrop
         private void OnGUI()
         {
             if (ClaudeScreenshot.Capturing) return;   // stay out of Claude's screenshots (2026-10-23)
+            if (LoadingScreen.Showing) return;   // 11-19: debug menus draw over every canvas - stay off the loading screen
             var prevMatrix = GUI.matrix;
             GUI.matrix = Matrix4x4.Scale(new Vector3(MENU_SCALE, MENU_SCALE, 1f));
             try { DrawMenu(); }

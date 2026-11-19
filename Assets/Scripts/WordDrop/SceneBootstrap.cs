@@ -414,6 +414,7 @@ namespace WordDrop
         // state on the phone so we can see why bloom is absent. Read it off the screen.
         private void OnGUI()
         {
+            if (LoadingScreen.Showing) return;   // 11-19: stay off the loading screen
             if (!SHOW_BLOOM_DEBUG) return;
             var style = new GUIStyle(GUI.skin.label) { fontSize = 30, normal = { textColor = Color.yellow } };
             float y = 60f;

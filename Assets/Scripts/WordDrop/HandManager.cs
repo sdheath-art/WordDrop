@@ -4510,6 +4510,23 @@ case RulesEngine.ResolutionPhase.Complete:
         private void DefrostThawedTiles(GridManager grid, RulesEngine.StepResult step)
         {
             PopUpOtherWords(grid, step);   // pop-ups for words the tap didn't cover (cascade / combo words)
+            // 11-19 BLOCKERS REACT WHEN THE BLAST HITS (Spencer: a bomb beside the safe - "the safe is playing its animation of being
+            // hit and the sound before ... the blast of the bomb is what is causing the impact so the game should reflect this";
+            // same for crates, ice, shelves). All of these fired at the START of the step - before the power-up's swell
+            // (PRE_BURST_SECONDS) and, for a bomb / dynamite, before the burst the bang now waits for (BANG_ON_BURST). When a
+            // power-up fires this step they now wait for that moment. Plain word pops and the end-of-level bonus: unchanged.
+            float hitDelay = 0f;
+            if (BLOCKERS_ON_BLAST && !BonusBlastRunning && step != null && step.SpecialsFired != null && step.SpecialsFired.Count > 0)
+            {
+                hitDelay = PRE_BURST ? PRE_BURST_SECONDS : 0f;
+                if (step.SpecialsFired.Exists(f => RulesEngine.IsBombLike(f.Kind))) hitDelay += WordDropFX.BANG_ON_BURST;
+            }
+            if (hitDelay > 0.01f) { var g2 = grid; var s2 = step; DOVirtual.DelayedCall(hitDelay, () => { if (this != null) ApplyBlockerHits(g2, s2); }, ignoreTimeScale: true); }
+            else ApplyBlockerHits(grid, step);
+        }
+        public static bool BLOCKERS_ON_BLAST = true;
+        private void ApplyBlockerHits(GridManager grid, RulesEngine.StepResult step)
+        {
             HitTreasureTiles(grid, step);   // TREASURE: same moment as the thaw (survivors of this detonation)
             HitCrateTiles(grid, step);      // 11-03 MULTI-HIT CRATE: crates that lost a layer (same moment)
             HitShelfTiles(grid, step);      // 11-03 BOOKSHELF: books knocked off fly to the goal

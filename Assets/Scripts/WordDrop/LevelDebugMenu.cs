@@ -135,6 +135,7 @@ namespace WordDrop
 
         private void OnGUI()
         {
+            if (LoadingScreen.Showing) return;   // 11-19: stay off the loading screen
             if (!_visible) return;
 
             // Unity OnGUI uses raw device pixels — tiny on Retina. Scale the matrix

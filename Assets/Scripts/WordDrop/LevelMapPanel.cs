@@ -1715,6 +1715,9 @@ namespace WordDrop
         /// <summary>True while the map is on screen (fading in, hopping, or holding under the intro). HUDManager
         /// uses this to defer the level-entry spring-in until the map has actually faded off the board.</summary>
         public bool IsShowing => _busy;
+        /// <summary>11-19: the map / home screen is up AND has finished fading in (LoadingScreen waits for this - IsShowing turns true
+        /// while the screen is still transparent, with the board visible through it).</summary>
+        public bool IsFullyShown => _busy && _group != null && _canvas != null && _canvas.gameObject.activeInHierarchy && _group.alpha >= 0.99f;
         /// <summary>The map/home screen is physically covering the board (canvas on and not faded out). The board's input
         /// gates refuse while this is true — 2026-10-23 Spencer made moves on a "phantom board" behind the home screen.</summary>
         public bool BlocksBoard => _canvas != null && _canvas.gameObject.activeInHierarchy && (_group == null || _group.alpha > 0.01f);

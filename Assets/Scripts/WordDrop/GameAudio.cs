@@ -250,15 +250,21 @@ namespace WordDrop
                 _mixer.SetFloat("SFXVol",   _muted      ? -80f : LinearToDb(_volume));
                 _mixer.SetFloat("UIVol",    _uiMuted    ? -80f : LinearToDb(_uiVolume));
                 if (_musicSource != null)
-                    _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+                    _musicSource.volume = _musicMuted ? 0f : Mathf.Clamp01(_musicVolume * _musicBoost);
                 return;
             }
             // Fallback path — mixer asset missing. Drive music attenuation on
             // the source directly so volume controls still work end-to-end.
             // SFX volume is already applied per-call in Play() via volumeMult.
             if (_musicSource != null)
-                _musicSource.volume = _musicMuted ? 0f : _musicVolume;
+                _musicSource.volume = _musicMuted ? 0f : Mathf.Clamp01(_musicVolume * _musicBoost);
         }
+        // 11-19 (Spencer: "the music played during the well done screen as well needs to be louder"): one track can sit above the
+        // general music level. The win-screen music plays at STAGE_CLEAR_MUSIC_BOOST x the music volume; every other track
+        // puts it back to 1.
+        public static float STAGE_CLEAR_MUSIC_BOOST = 1.7f;   // 0.15 -> ~0.26
+        private float _musicBoost = 1f;
+        private void SetMusicBoost(float b) { _musicBoost = b; if (_musicSource != null) _musicSource.volume = _musicMuted ? 0f : Mathf.Clamp01(_musicVolume * _musicBoost); }
 
         /// <summary>
         /// Phase 11g: briefly transition to the DuckMusic snapshot so the music
@@ -1144,8 +1150,19 @@ namespace WordDrop
         /// when a Survival run begins. Quiet no-op (with one-time warning)
         /// if no clip is loaded at Assets/Resources/Music/survival_loop.*.
         /// </summary>
+        // 11-19 NO MUSIC BEHIND THE LOADING SCREEN (Spencer: "it plays the music during the loading screen. and then refires when
+        // you get into the game"). At launch three things ask for music in a row - the menu song (GameManager), the level song
+        // (the board being built behind the picture), then the menu song again (the home screen) - so it started, switched and
+        // restarted. While the loading screen holds, a request is only remembered (the LAST one wins); the screen releases it
+        // as it starts to fade, so the home song starts once, with the home screen.
+        private System.Action _heldMusic;
+        private bool HoldMusic(System.Action request) { if (!LoadingScreen.HoldingMusic) return false; _heldMusic = request; return true; }
+        public void ReleaseHeldMusic() { var a = _heldMusic; _heldMusic = null; a?.Invoke(); }
+
         public void PlaySurvivalMusic()
         {
+            if (HoldMusic(PlaySurvivalMusic)) return;
+            SetMusicBoost(1f);
             if (_musicSource == null) return;
             if (_survivalMusicPool == null || _survivalMusicPool.Length == 0)
             {
@@ -1186,6 +1203,7 @@ namespace WordDrop
         /// </summary>
         public void PlayChestMusic()
         {
+            SetMusicBoost(1f);
             if (_musicSource == null) return;
             if (_chestMusicClip == null) { PlaySurvivalMusic(); return; } // no dedicated track → fall back to rotation
 
@@ -1208,6 +1226,7 @@ namespace WordDrop
         public static bool MAP_USES_MENU_SONG = true;   // 11-01 Spencer: the home/map screen plays the title screen's song (was Skybound_Victory)
         public void PlayLevelMapMusic()
         {
+            if (HoldMusic(PlayLevelMapMusic)) return;
             // same track as the title screen; PlayMenuMusic is idempotent, so title -> home carries on without a restart
             if (MAP_USES_MENU_SONG && _menuMusicPool != null && _menuMusicPool.Length > 0) { PlayMenuMusic(); return; }
             if (_musicSource == null || _victorySkyboundClip == null) return;
@@ -1273,6 +1292,8 @@ namespace WordDrop
 
         public void PlayMenuMusic()
         {
+            if (HoldMusic(PlayMenuMusic)) return;
+            SetMusicBoost(1f);
             if (_musicSource == null) return;
             if (_menuMusicPool == null || _menuMusicPool.Length == 0)
             {
@@ -1313,6 +1334,7 @@ namespace WordDrop
         /// </summary>
         public void PlayVictoryMusic()
         {
+            SetMusicBoost(1f);
             if (_musicSource == null) return;
             if (_victoryMusicPool == null || _victoryMusicPool.Length == 0)
             {
@@ -1384,6 +1406,7 @@ namespace WordDrop
 
             _musicSource.clip = chosen;
             _musicSource.loop = false; // fires once per stage clear, doesn't loop
+            SetMusicBoost(STAGE_CLEAR_MUSIC_BOOST);
             _musicSource.Play();
         }
 
