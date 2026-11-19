@@ -293,6 +293,9 @@ namespace WordDrop
             var rules = RulesEngine.Instance;
             var hand  = HandManager.Instance;
             if (rules == null || hand == null) return;
+            // 11-18 DIAG (Spencer: "the dragging problem is worse now" - no log of what the gesture was judged as). One line per
+            // release: tiles in the trace, how far the finger got, how long it took. TEMP - strip once dragging is settled.
+            WDLog.Log($"[SwipeDiag] release: {_path.Count} tile(s) from ({_anchor.x},{_anchor.y}) to ({(_path.Count > 0 ? _path[_path.Count - 1].x : -1)},{(_path.Count > 0 ? _path[_path.Count - 1].y : -1)}), reach {ReachCells():F2} tiles, {(Time.unscaledTime - _downAt) * 1000f:F0} ms");
             // TWO CELLS = A SWAP (drag a tile onto its neighbour). Decided on release, so a word
             // swipe passing through its 2nd cell is never mistaken for one. Two-letter words
             // don't exist in this game, so nothing is lost. 2026-10-20 Spencer.
@@ -309,7 +312,14 @@ namespace WordDrop
             // 11-18: a short non-word trace is only a swap when it LOOKS like one - 3 tiles, and the finger either never reached the
             // third tile's middle or the whole gesture was a quick flick. A trace that went deliberately across 3-4 letters is a
             // word being tested: if it is not a word, nothing swaps (it gets the normal "not a word" answer below).
-            bool looksLikeSwap = _path.Count == 3 && (ReachCells() < FLICK_MAX_REACH || Time.unscaledTime - _downAt < FLICK_FAST);
+            // 11-18 later (Spencer, on the PHONE: "the dragging problem is worse now"): the first version only let a QUICK gesture be
+            // a swap under 0.16 s, so an ordinary finger swap that slid into the third tile (the very thing 11-17 fixed, and he
+            // confirmed on the phone) was judged a word again; and when its swap made nothing it "let go" with no bounce, which
+            // reads as the game ignoring the finger. Now: anything under FLICK_FAST (0.30 s) across up to 4 tiles is a swap - a
+            // word being TESTED is traced slower than that - and a slower trace is a swap only if it is 3 tiles and barely
+            // entered the third. A swap-shaped gesture always goes to the swap (bounces if it makes nothing, like any swap).
+            float held = Time.unscaledTime - _downAt;
+            bool looksLikeSwap = held < FLICK_FAST || (_path.Count == 3 && ReachCells() < FLICK_MAX_REACH);
             if (FLICK_SWAP && _path.Count >= 3 && _path.Count <= FLICK_MAX_CELLS && (!FLICK_NEEDS_SWAP_SHAPE || looksLikeSwap))
             {
                 string frj;
@@ -400,7 +410,7 @@ namespace WordDrop
         public static int   FLICK_MAX_CELLS = 4;
         public static bool  FLICK_NEEDS_SWAP_SHAPE = true, DRIFT_SNAP = true;   // 11-18
         public static float FLICK_MAX_REACH = 1.9f;   // tiles from the first tile's centre (the third tile's centre is 2.0)
-        public static float FLICK_FAST = 0.16f;       // seconds: quicker than this is a flick however far it got
+        public static float FLICK_FAST = 0.30f;       // seconds: quicker than this is a swap flick however far it got (was 0.16)
         private float _downAt; private Vector3 _lastScreen;
         /// <summary>How far the finger is from the first tile's centre, in tiles.</summary>
         private float ReachCells()
@@ -411,7 +421,7 @@ namespace WordDrop
             float pitch = Mathf.Abs(grid.CellToWorld(1, 0).x - grid.CellToWorld(0, 0).x); if (pitch < 1e-4f) return 99f;
             return Vector3.Distance(w, a) / pitch;
         }
-        public static bool  FLICK_ONLY_IF_WORD = true;   // 11-18: false = the 11-17 rule (always try the swap, bounce if it makes nothing)
+        public static bool  FLICK_ONLY_IF_WORD = false;   // 11-18: false = the 11-17 rule (always try the swap, bounce if it makes nothing)
         public static bool  QUEUE_BUSY_SWAPS = true;
         public static float QUEUE_MAX_WAIT = 3f;   // a remembered swap older than this is dropped
         private bool _queued, _busyDown;

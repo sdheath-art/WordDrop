@@ -2679,7 +2679,8 @@ namespace WordDrop
                                     Tile t = grid.GetTile(sc.x, sc.y);
                                     if (t != null) scoredTiles.Add(t);
                                 }
-                                if (scoredTiles.Count > 0 && WordDropFX.Instance != null)
+                                // 11-18: several words at once are not lit first (QUIET_MULTI_WORD) - they burst plain, like a bomb's tiles
+                                if (scoredTiles.Count > 0 && WordDropFX.Instance != null && !(QUIET_MULTI_WORD && flashCells.Count >= 2))
                                 { WordDropFX.Instance.PlayWordScored(scoredTiles, primedMagenta, wIdx); _flashedWords++; }
 
                                 HapticsManager.Light();
@@ -3886,6 +3887,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 if (t == null || swelling.Contains(t)) continue;
                 swelling.Add(t);
                 t.MarkAnimating(PRE_BURST_SECONDS + 0.1f);
+                t.LiftForFx(PRE_BURST_SECONDS + 0.3f);   // 11-18 Spencer (phone): "when it expands it expands behind the tiles" - the swell now draws OVER its neighbours (self-restoring)
                 t.transform.DOKill();
                 t.transform.DOScale(t.CanonicalRestScalePublic * PRE_BURST_SWELL, PRE_BURST_SECONDS).SetEase(Ease.OutQuad).SetUpdate(true);
                 var sr = t.GetComponent<SpriteRenderer>();
@@ -4288,7 +4290,10 @@ case RulesEngine.ResolutionPhase.Complete:
             var vault = Make("SafeVault", empty, at, size, SAFE_VAULT_ORDER);
             var drSR = Make("SafeDoor", door, at + new Vector3(0f, 0f, -0.05f), size * SAFE_DOOR_FIT, 64);
             GridManager.Instance?.ShakeBoard(0.24f, 0.32f);   // 11-03: the blast hits harder than a lamp
-            HapticsManager.MegaImpact();   // 11-17 haptics pass
+            // 11-18 (Spencer, phone, level 20: "a strong haptic vibration that doesnt suit the game at all"): the safe opening used
+            // MegaImpact - the heavy preset PLUS an 80 ms full-strength buzz, the hardest haptic in the game - and Gold Rush opens
+            // two. Now the same firm tap a power-up blast gives (0.60 / 0.55).
+            HapticsManager.Strong();
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("safe_open")) GameAudio.Instance.PlayKit("safe_open"); else GameAudio.Instance?.PlayCrateBreak();   // 11-07 pick: Sack Drop On Table Metal Loose B6
             WordDropFX.Instance?.PlayScreenFlash(2);
             WordDropFX.Instance?.PlayChestCoinBurst(at, size);   // gold glow + bubble pop behind the vault
@@ -4448,20 +4453,27 @@ case RulesEngine.ResolutionPhase.Complete:
         public static float WORD_STAGGER_GAP = 0.38f, WORD_STAGGER_AFTER_BLAST = 0.35f;   // seconds between words / after a power-up fires
         public static int   WORD_STAGGER_MAX = 4;                                        // more than this in one cluster: the last slot says "+N MORE"
         private struct QueuedPop { public string w; public Vector3 at; public bool gold; public int len; }
-        private readonly List<QueuedPop> _popQueue = new List<QueuedPop>(); private Coroutine _popRun; private float _popNotBefore;
+        private readonly List<QueuedPop> _popQueue = new List<QueuedPop>(); private Coroutine _popRun; private float _popNotBefore; private int _popAliveFrame;
         private void QueueWordPop(string w, Vector3 at, bool gold, int len, bool afterBlast)
         {
             if (string.IsNullOrEmpty(w)) return;
             if (afterBlast) _popNotBefore = Mathf.Max(_popNotBefore, Time.unscaledTime + WORD_STAGGER_AFTER_BLAST);
+            // 11-18 STRANDED QUEUE (Spencer: two words for a tome, "it didnt show word pop ups"). Leaving a level from the menu stops
+            // every routine here (HUDManager.OnMenuClicked / TutorialManager -> StopAllCoroutines). If that landed while a pop-up
+            // was waiting its turn, _popRun stayed set with nothing running it, so every later queued pop-up - i.e. every
+            // multi-word and power-up word - was silently dropped for the rest of the session. The runner now stamps the frame it
+            // last ran; a stamp that has gone stale means it is dead: drop the stale words and start a fresh one.
+            if (_popRun != null && Time.frameCount - _popAliveFrame > 3) { _popRun = null; _popQueue.Clear(); _popNotBefore = 0f; WDLog.Log("[WordPops] the pop-up queue had been stopped mid-run - restarted"); }
             if (_popQueue.Count >= 8) return;   // a runaway chain never stacks a minute of text
             _popQueue.Add(new QueuedPop { w = w, at = at, gold = gold, len = len });
-            if (_popRun == null) _popRun = StartCoroutine(RunWordPops());
+            if (_popRun == null) { _popAliveFrame = Time.frameCount; _popRun = StartCoroutine(RunWordPops()); }
         }
         private IEnumerator RunWordPops()
         {
             while (_popQueue.Count > 0)
             {
-                while (Time.unscaledTime < _popNotBefore) yield return null;
+                _popAliveFrame = Time.frameCount;
+                while (Time.unscaledTime < _popNotBefore) { yield return null; _popAliveFrame = Time.frameCount; }
                 var p = _popQueue[0]; _popQueue.RemoveAt(0);
                 if (ClusterOutline.Instance != null && !BonusBlastRunning)
                 {
@@ -4477,6 +4489,8 @@ case RulesEngine.ResolutionPhase.Complete:
             if (!POPUP_EVERY_WORD || grid == null || step?.PoppedWords == null || ClusterOutline.Instance == null) { _tapPopWords.Clear(); return; }
             var shown = new HashSet<string>(_tapPopWords);
             _tapPopWords.Clear();
+            // TEMP DIAG 11-18 (Spencer: big multi-word bursts are "not showing all the word pop ups"): what this burst popped vs what the tap already showed
+            if (step.PoppedWords.Count >= 2) WDLog.Log($"[WordPops] burst popped {step.PoppedWords.Count} word(s): {string.Join(" ", step.PoppedWords.ConvertAll(k => k.Key))} | already shown at the tap: {(shown.Count > 0 ? string.Join(" ", shown) : "-")} | queue {_popQueue.Count}");
             foreach (var kv in step.PoppedWords)
             {
                 string w = kv.Key?.ToUpperInvariant();
@@ -5206,14 +5220,20 @@ case RulesEngine.ResolutionPhase.Complete:
             // Pre-green ONLY the formed-word tiles with the flat scored tint (no bloom/glow/decay — reverted
             // per Spencer 2026-06-23), then detonate everything in ONE call with wordFlash:false. Splash
             // tiles are left untouched → they pop white.
+            // 11-18 (Spencer: when a wild makes 3-4 words in one move "just make them explode kind of like the bombs do where it just
+            // bursts all at once. no colour change and then the word pop up"): with two or more words in the burst the word tiles are
+            // NOT turned green first, and any green / gold they already wear is taken off, so the whole cluster goes up as plain
+            // tiles in one burst. One word keeps its green.
+            bool quietBurst = QUIET_MULTI_WORD && step.PoppedWords != null && step.PoppedWords.Count >= 2;
             if (wordCells.Count > 0)
             {
                 for (int i = 0; i < dying.Count; i++)
                 {
                     var t = dying[i];
                     if (t == null) continue;
-                    if (wordCells.Contains(new Vector2Int(t.Col, t.Row)) && !t.IsShowingScoredSprite)
-                        t.SetScoredSprite(true); // pre-green the word tile; splash tiles are left white
+                    if (!wordCells.Contains(new Vector2Int(t.Col, t.Row))) continue;
+                    if (quietBurst) { if (t.IsShowingScoredSprite) t.SetScoredSprite(false); if (t.HasPrimedGlow) t.ClearPrimedGlow(); }
+                    else if (!t.IsShowingScoredSprite) t.SetScoredSprite(true); // pre-green the word tile; splash tiles are left white
                 }
             }
 

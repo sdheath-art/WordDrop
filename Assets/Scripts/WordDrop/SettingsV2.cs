@@ -265,7 +265,8 @@ namespace WordDrop
 
             if (SHOW_VERSION)
             {
-                var v = Text(card, "Version " + Application.version, 26f, new Vector2(CW / 2f, lastY + BTN_H / 2f + 62f), new Vector2(700f, 60f));
+                // 11-18: a number after the version = how many times ClockGuard had to un-freeze the game clock on this device
+                var v = Text(card, "Version " + Application.version + (ClockGuard.Fired > 0 || ClockGuard.Errors > 0 ? "  \u00b7 c" + ClockGuard.Fired + " e" + ClockGuard.Errors : ""), 26f, new Vector2(CW / 2f, lastY + BTN_H / 2f + 62f), new Vector2(700f, 60f));
                 HUDManager.ApplyRecipeFlat(v); v.color = new Color32(176, 150, 240, 255);
             }
         }

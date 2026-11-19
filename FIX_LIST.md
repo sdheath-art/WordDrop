@@ -30,3 +30,4 @@ Started 2026-10-21 during Spencer's playtest. Add as we go; tick off when Spence
 - [x] Bonus "ray gun" SFX stutter — power-up sound rate-limited (2026-10-21) — awaiting Spencer confirm.
 - [x] Row rise firing on level entry before any move (2026-10-21) — awaiting Spencer confirm.
 - [x] Rain no longer replaces row rises (2026-10-21) — rain only as the "LETTER SHOWER!" reward.
+- [ ] Booster becomes available: the claim SFX plays but nothing draws the eye to WHAT unlocked (2026-11-18, Spencer on phone). Needs a visual cue on the booster itself. Ask on the look before building (art/feel).

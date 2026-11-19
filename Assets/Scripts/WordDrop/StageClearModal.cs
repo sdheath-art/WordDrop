@@ -1964,7 +1964,12 @@ namespace WordDrop
                     var darkFrame = Resources.Load<Sprite>("UI/Buttons/pill_play_frame_dark");
                     if (fr != null && darkFrame != null && fr.GetComponent<Image>() is Image fi) fi.sprite = darkFrame;
                     // 11-16 Spencer: "can you remove the dark purple around the continue button as well?" - no frame at all, just the green pill
-                    if (CONTINUE_NO_FRAME && fr != null && fr.GetComponent<Image>() is Image fi2) fi2.enabled = false;
+                    // 11-18 (Spencer: "the continue button on the well done screen needs the same push down effect as the other buttons"):
+                    // the FRAME image is the only part of an ArtButton that takes touches (ArtButton: "the frame takes the touch"), and
+                    // this line switched it OFF - so since 11-16 the button never received a press at all: taps fell through to the
+                    // full-screen tap-to-continue layer, which is why it continued but never reacted. The frame is now invisible
+                    // instead of disabled, so it still catches the finger and the normal press plays.
+                    if (CONTINUE_NO_FRAME && fr != null && fr.GetComponent<Image>() is Image fi2) fi2.color = new Color(1f, 1f, 1f, 0f);
                 }
                 // 11-07 Spencer: "the continue button needs the same button sounds as the others" - the ArtButton plays its own press
                 // (pointer down) + release like every button; ContinueDismiss skips its release pop when the button triggered it
@@ -1979,7 +1984,7 @@ namespace WordDrop
                 cont.Refit();
                 // 11-18: the button dips and pops under the finger (ArtButton.BigPress), and the screen waits BIG_PRESS_HOLD for the
                 // pop to be SEEN before it starts closing - the dismiss used to begin on the same frame, hiding any reaction.
-                cont.BigPress = true;
+                cont.BigPress = CONTINUE_BIG_PRESS;   // false = the same face press as every other button (his ask); true = the whole button dips + pops
                 cont.Button.onClick.AddListener(() =>
                 {
                     if (_continueQueued || Time.unscaledTime - _shownAtUnscaled < CONTINUE_LOCKOUT) return;
@@ -2176,6 +2181,7 @@ namespace WordDrop
         }
         public static float REVEAL_STREAMER_SHARE = 0f;   // 11-06 Spencer: remove the long slender pieces (was 0.15)
         public static float CONTINUE_SCALE = 1.25f;
+        public static bool CONTINUE_BIG_PRESS = false;
         public static bool CONTINUE_NO_FRAME = true;   // 11-16: Continue = the green pill only (beats CONTINUE_DARK_FRAME)
         public static bool CONTINUE_DARK_FRAME = true;   // 11-16: Continue on the win screen drops the lavender outer ring
         public static int REVEAL_CONFETTI = 80;   // 11-16 Spencer: "lighten up again on the confetti" (140 -> 80)   // 11-06 Spencer: "there might be too much confetti" (was 240)   // total over 3 volleys x 2 cannons
