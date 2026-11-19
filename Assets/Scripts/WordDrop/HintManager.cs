@@ -108,7 +108,7 @@ namespace WordDrop
         // levels (teaching), 10 s after that (a looking player finds their own word first), back to 5 s in the last few moves.
         // The quick nets for real struggle are unchanged (3 missed swaps -> 1.5 s, stale board -> 4 s).
         public static bool  HINT_BY_STRUGGLE = true;
-        public static int   HINT_TEACH_LEVELS = 3;        // levels 1..this keep SWAP_IDLE_SECONDS
+        public static int   HINT_TEACH_LEVELS = 8;        // levels 1..this keep SWAP_IDLE_SECONDS. 11-19: 3 -> 8 (through the first booster level). Spencer on the TestFlight build: "considerably harder" - phone log: slow hint from L4 = 61% of moves used (fast hint 48%), 2 fails in 23 levels incl. LEVEL 4; an early fail is the churn risk, so the opening stays gentle
         public static float HINT_LATER_SECONDS = 10f;     // idle wait from the next level on
         public static int   HINT_LAST_MOVES = 3;          // this many moves left or fewer: back to SWAP_IDLE_SECONDS
         public static float SwapIdleNow
