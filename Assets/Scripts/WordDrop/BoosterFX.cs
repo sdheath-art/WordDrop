@@ -90,12 +90,14 @@ namespace WordDrop
         // interior cut out (a RING), canvas 1.8968x the tile sprite. Parented to the tile so it rides its select lift/breathe;
         // sorted above the tiles so the ring isn't hidden under neighbours. Pulses like the armed button.
         public static float PICK_GLOW_RATIO = 1.8968f, PICK_GLOW_SWELL = 0f;   // swell was 0.04
+        public static bool PICK_GLOW_OVER_LESSON = true;
         private SpriteRenderer _pickGlow; private Coroutine _pickPulse;
         private static Sprite s_pickGlow;
         public void ShowPickGlow(Tile t)
         {
             HidePickGlow();
             if (!ON || t == null) return;
+
             if (s_pickGlow == null)
             {
                 var tex = Resources.Load<Texture2D>("Tiles/swap_pick_glow");
@@ -103,6 +105,21 @@ namespace WordDrop
                 s_pickGlow = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
             }
             var tsr = t.GetComponent<SpriteRenderer>(); if (tsr == null || tsr.sprite == null) return;
+            // 11-19 (Spencer's screenshot, glove lesson on L8: "the glow is wrong" -> "now you just removed the glow"): in the booster
+            // lesson the screen is dimmed except a window over the two tiles, and that dim is UI drawn ABOVE the board - it sliced
+            // the ring off at the window's edge. In the lesson the same ring is drawn ON the lesson's canvas, above the dim,
+            // following the tile every frame (position, lift, breathe), so it glows over the dimmed neighbours as it should.
+            var lessonRoot = PICK_GLOW_OVER_LESSON ? BoosterIntro.GlowParent : null;
+            if (lessonRoot != null && Camera.main != null)
+            {
+                var ugo = new GameObject("SwapPickGlowUI", typeof(RectTransform), typeof(UnityEngine.UI.Image));
+                ugo.transform.SetParent(lessonRoot, false); ugo.transform.SetSiblingIndex(BoosterIntro.GlowSiblingIndex);
+                var urt = (RectTransform)ugo.transform; urt.anchorMin = urt.anchorMax = Vector2.zero; urt.pivot = new Vector2(0.5f, 0.5f);
+                var uimg = ugo.GetComponent<UnityEngine.UI.Image>(); uimg.sprite = s_pickGlow; uimg.raycastTarget = false; uimg.color = new Color(1f, 1f, 1f, 0f);
+                _pickGlowUI = ugo;
+                _pickPulse = StartCoroutine(PickPulseUI(t, tsr, urt, uimg));
+                return;
+            }
             var go = new GameObject("SwapPickGlow"); go.transform.SetParent(t.transform, false);
             go.transform.localPosition = new Vector3(0f, 0f, -0.01f);
             _pickGlow = go.AddComponent<SpriteRenderer>(); _pickGlow.sprite = s_pickGlow;
@@ -115,6 +132,30 @@ namespace WordDrop
             if (_pickPulse != null) { StopCoroutine(_pickPulse); _pickPulse = null; }
             if (_pickGlow != null) Destroy(_pickGlow.gameObject);
             _pickGlow = null;
+            if (_pickGlowUI != null) Destroy(_pickGlowUI);
+            _pickGlowUI = null;
+        }
+        private GameObject _pickGlowUI;
+        private IEnumerator PickPulseUI(Tile tile, SpriteRenderer tsr, RectTransform rt, UnityEngine.UI.Image img)
+        {
+            float t = 0f; float aspect = s_pickGlow.rect.height / s_pickGlow.rect.width;
+            while (rt != null && tile != null && tsr != null)
+            {
+                var cam = Camera.main; if (cam == null) yield break;
+                t += Time.unscaledDeltaTime;
+                float pop = Mathf.Clamp01(t / 0.14f);
+                float breathe = 0.5f + 0.5f * Mathf.Sin(t * Mathf.PI * 2f * 1.1f);
+                float grow = Mathf.Lerp(0.8f, 1f, 1f - (1f - pop) * (1f - pop));
+                Vector3 c = tile.transform.position;
+                float halfW = tsr.sprite.bounds.size.x * tile.transform.lossyScale.x * PICK_GLOW_RATIO * 0.5f * grow;
+                float px = Mathf.Abs(cam.WorldToScreenPoint(c + Vector3.right * halfW).x - cam.WorldToScreenPoint(c - Vector3.right * halfW).x);
+                Vector3 sp = cam.WorldToScreenPoint(c);
+                rt.anchoredPosition = new Vector2(sp.x, sp.y);
+                rt.sizeDelta = new Vector2(px, px * aspect);
+                img.color = new Color(1f, 1f, 1f, pop * (0.72f + 0.28f * breathe));
+                yield return null;
+            }
+            if (rt != null) Destroy(rt.gameObject);
         }
         private IEnumerator PickPulse(Transform tr, SpriteRenderer sr, float baseScale)
         {

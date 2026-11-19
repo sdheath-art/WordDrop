@@ -103,8 +103,27 @@ namespace WordDrop
         /// more think time.</summary>
         public static float SWAP_IDLE_SECONDS = 5f;           // 2026-10-22: 6 -> 15, a SAFETY NET for the stuck, not a move-by-move crutch. 11-04: 15 -> 8, 11-06: 8 -> 5 (L1-20 recording: static boards 10-13.5 s; RM nudges at ~4 s) (Spencer, after a full L1-20 run at ~12 s/move: "its mostly word hunting, finding no words and then waiting for the hint system to kick in" - the WAIT was the boredom; RM hints at ~5 s)
         public static float SWAP_OUTLINE_EXTRA_SECONDS = 5f;  // free hint: lean only, then the word outline this much later. 11-04: 10 -> 5 (full word shown at 13 s idle, was 25 s)
+        // 11-19 HINT BY STRUGGLE (Spencer's phone runs 11-18: with hints he cleared levels in 5-8 moves of 12-24, L10-12 in 2-3;
+        // with hints off he went over budget on L1 and L7 - the 5 s hint was playing the game for him. He OK'd: 5 s on the first
+        // levels (teaching), 10 s after that (a looking player finds their own word first), back to 5 s in the last few moves.
+        // The quick nets for real struggle are unchanged (3 missed swaps -> 1.5 s, stale board -> 4 s).
+        public static bool  HINT_BY_STRUGGLE = true;
+        public static int   HINT_TEACH_LEVELS = 3;        // levels 1..this keep SWAP_IDLE_SECONDS
+        public static float HINT_LATER_SECONDS = 10f;     // idle wait from the next level on
+        public static int   HINT_LAST_MOVES = 3;          // this many moves left or fewer: back to SWAP_IDLE_SECONDS
+        public static float SwapIdleNow
+        {
+            get
+            {
+                var sm = SurvivalManager.Instance;
+                if (!HINT_BY_STRUGGLE || sm == null) return SWAP_IDLE_SECONDS;
+                if (LevelMapPanel.DisplayNum(sm.CurrentStageIndex) <= HINT_TEACH_LEVELS) return SWAP_IDLE_SECONDS;
+                if (SurvivalManager.MoveLimitMode && sm.CurrentStageMovesRemaining <= HINT_LAST_MOVES) return SWAP_IDLE_SECONDS;
+                return Mathf.Max(SWAP_IDLE_SECONDS, HINT_LATER_SECONDS);
+            }
+        }
         private float IdleThreshold => SurvivalManager.FullBoardActive
-            ? (HandManager.NoWordStreak >= FISHING_SWAPS ? FISHING_HINT_SECONDS : _staleNow ? STALE_HINT_SECONDS : SWAP_IDLE_SECONDS)
+            ? (HandManager.NoWordStreak >= FISHING_SWAPS ? FISHING_HINT_SECONDS : _staleNow ? STALE_HINT_SECONDS : SwapIdleNow)
             : IDLE_THRESHOLD;
         /// <summary>FISHING HINT (2026-10-23: Spencer's run — 54% of swaps made no word although the bot measured ~17 common-word
         /// swaps on every board: the words were THERE, he couldn't see them). After FISHING_SWAPS no-word swaps in a row the
@@ -582,7 +601,7 @@ namespace WordDrop
             else WiggleLoop(mover, from, dir);
             _swapCells.Add(moverIsB ? b : a);
             // Free hint shows the WORD only after a further SWAP_OUTLINE_EXTRA_SECONDS of idling; the Spyglass shows it at once.
-            bool showWord = _strongHint || _idleTime >= SWAP_IDLE_SECONDS + SWAP_OUTLINE_EXTRA_SECONDS;
+            bool showWord = _strongHint || _idleTime >= SwapIdleNow + SWAP_OUTLINE_EXTRA_SECONDS;
             if (showWord) { EnsureOutline(); if (_outline != null) _outline.Show(cells); }
             if (_strongHint) PlaythroughStats.Spyglass++; else PlaythroughStats.FreeHints++;
             WDLog.Log($"[Hint] {(_strongHint ? "SPYGLASS" : "free")} swap ({a.x},{a.y})<->({b.x},{b.y}) {cells.Count}-letter word, outline={(showWord ? "on" : "not yet")}");

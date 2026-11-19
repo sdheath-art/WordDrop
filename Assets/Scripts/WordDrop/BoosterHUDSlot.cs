@@ -386,6 +386,11 @@ namespace WordDrop
             if (badge != null) badge.DOScale(1f, 0.3f).SetEase(Ease.OutBack, 2.5f).SetUpdate(true);
         }
 
+        private static bool s_entryHooked; private static int s_entryStage = -1;
+        public static bool  UNLOCK_AT_NEXT_LEVEL = true;
+        public static float UNLOCK_MOMENT_SECONDS = 1.5f;   // padlock rattle + click + icon pop, start to finish
+        /// <summary>Real time until which a slot's unlock moment is still playing (BoosterIntro holds its dim until then).</summary>
+        public static float UnlockPlayingUntil;
         private void PlayUnlocksIfAny()
         {
             if (!SurvivalManager.FullBoardActive || _slotButtons == null) return;
@@ -400,6 +405,7 @@ namespace WordDrop
                 int ord = BoosterOrdinal(spec.BoosterId);
                 if (ord < seen || ord >= open || _slotButtons[i] == null) continue;
                 WDLog.Log($"[Booster] slot {ord} UNLOCKED ({spec.BoosterId})");
+                UnlockPlayingUntil = Time.unscaledTime + 0.35f + UNLOCK_MOMENT_SECONDS;
                 if (_slotArt[i] != null) { StartCoroutine(ArtUnlockRoutine(i, 0.35f)); continue; }   // round art: the full unlock moment
                 var slot = _slotButtons[i].transform;
                 var icon = slot.Find("BoosterIcon");
@@ -712,7 +718,25 @@ namespace WordDrop
                          | (TutorialLocks.BagLocked ? 2 : 0)
                          | (TutorialLocks.BoostersLocked ? 4 : 0)
                          | (TutorialLocks.BoosterSlotsOpen() << 3);
-            if (lockHash != _lastLockHash)
+            // 11-19 UNLOCK AT THE NEXT LEVEL (Spencer: the unlock sound plays "as soon as you achieve the last objective" while he is
+            // watching the win fanfare - "theres nothing that clearly presents that the booster has been unlocked"). The level
+            // number advances the instant the last goal lands, so the padlock opened in the bottom bar during the celebration.
+            // Royal Match shows nothing until the next level starts. The check now waits for the next level to begin; the
+            // padlock opens with the board in view, then the booster lesson (BoosterIntro waits for UnlockPlayingUntil).
+            // 11-19 (2): "it is firing when you hit the game screen. shouldnt it fire once you enter the level that is being
+            // unlocked?" - the between-levels flag clears as soon as the next level is SET UP, before its board has slid in. The
+            // hold now lasts until the level entry has finished (HUDManager.OnLevelEntryDone: bars in, board in).
+            // 11-19 (3): the hold is tied to the LEVEL, not to the between-levels flag (a debug jump / skip never raises that flag,
+            // and the next level is set up while the HOME screen is still showing - log 07:24: unlock on the same frame as the
+            // level 8 setup). The slots only change once the entry of the level we are now on has finished.
+            if (!s_entryHooked) { s_entryHooked = true; HUDManager.OnLevelEntryDone += () => { var se = SurvivalManager.Instance; s_entryStage = se != null ? se.CurrentStageIndex : -1; }; }
+            var smh = SurvivalManager.Instance;
+            bool entered = smh == null || !SurvivalManager.FullBoardActive || s_entryStage == smh.CurrentStageIndex
+                           || BoosterIntro.Running || smh.CurrentStageMoveBudget - smh.CurrentStageMovesRemaining > 0;   // safety: never stuck locked
+            // ...and never while the home / map screen is still covering the board (Spencer: "it needs to wait until the player
+            // clicks to enter the level").
+            if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.IsShowing) entered = false;
+            if (lockHash != _lastLockHash && !(UNLOCK_AT_NEXT_LEVEL && !entered))
             {
                 _lastLockHash = lockHash;
                 RebuildSlots();

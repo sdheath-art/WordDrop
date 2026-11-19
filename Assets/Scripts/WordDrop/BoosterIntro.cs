@@ -81,6 +81,8 @@ namespace WordDrop
             // let pre-level boosters / the board settle first
             float w = 0f; while (w < 6f && MatchController.Instance != null && MatchController.Instance.IsProcessing) { w += Time.unscaledDeltaTime; yield return null; }
             yield return new WaitForSecondsRealtime(0.2f);
+            // 11-19: the slot's padlock opens first (it now plays at the start of this level), then the lesson dims the screen
+            { float uw = 0f; while (Time.unscaledTime < BoosterHUDSlot.UnlockPlayingUntil && uw < 3f) { uw += Time.unscaledDeltaTime; yield return null; } }
             var bm = BoosterManager.Instance; var slot = BoosterHUDSlot.Instance; var hand = HandManager.Instance;
             if (bm == null || slot == null || slot.SlotRect(id) == null) { Running = false; yield break; }
             int have = bm.GetCharges(id); if (have < 3) bm.AddCharges(id, 3 - have);   // the gift (RK: new booster arrives with 3)
@@ -177,6 +179,10 @@ namespace WordDrop
         }
 
         // ── UI ──
+        /// <summary>11-19: where a glow that must show OVER the lesson's dim goes (BoosterFX pick glow): the lesson canvas, just
+        /// under the "Free" tag / arrow and above the dim and its rounded corners. Null when no lesson overlay is up.</summary>
+        public static RectTransform GlowParent => Instance != null && Running ? Instance._root : null;
+        public static int GlowSiblingIndex => Instance != null && Instance._free != null ? Instance._free.GetSiblingIndex() : 0;
         private void Build()
         {
             if (_canvas != null) return;
