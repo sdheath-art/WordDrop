@@ -1274,11 +1274,133 @@ namespace WordDrop
         }
         /// <summary>Spherical blast in the rocket palette: core snaps out in ~0.07s and burns out first, flame sphere
         /// swells to the blast radius, flickers and thins; sparks fly out radially (pooled).</summary>
-        private System.Collections.IEnumerator Fireball(Vector3 centre, float radius, float cell)
+        // ── BLAST V2 (11-19, Spencer: bomb + dynamite to look "more like around 22:56-22:59" of his Royal Match recording, "the VFX
+        // layer with the smoke and particle effects"; he picked the mock bomb_vfx_mock_v2.png, with a worry about "the big smoke
+        // flume"). MEASURED there: a 1-cell white core flash -> a lobed cream cloud with a warm rim, full size in ~0.1 s and
+        // bright ~0.3 s -> chunks thrown out, tumbling and falling -> the cloud breaks into small puffs and pale haze with
+        // confetti, ~0.8 s in all. No dark smoke, no screen dim. Textures: Resources/FX/blast_*.png (bake script in
+        // ~/Documents/WordDrop_Art/bomb_vfx_mock_1119). The cloud lands with the bang and the tile burst (BANG_ON_BURST).
+        // BLAST_V2 = false -> the old rays + flame exactly as before. Every size / time below is a knob.
+        public static bool  BLAST_V2 = true, BLAST_V2_RAYS = false;
+        public static float BLAST_V2_FLAME = 0.55f;          // the old orange flame sphere, shrunk to a core flash
+        public static float BLAST_CLOUD_SIZE = 0.80f;        // cloud width as a fraction of the cleared square's width
+        public static float BLAST_CLOUD_ALPHA = 0.95f, BLAST_CLOUD_IN = 0.10f, BLAST_CLOUD_HOLD = 0.08f, BLAST_CLOUD_OUT = 0.20f;   // v3: gone before the tiles above start to fall (was hold .16 / out .24)
+        public static int   BLAST_CLOUD_PUFFS = 9, BLAST_PUFFS = 5, BLAST_WISPS = 5, BLAST_CONFETTI = 22, BLAST_CHUNKS = 11;
+        public static float BLAST_HAZE_ALPHA = 0.38f, BLAST_HAZE_LIFE = 0.55f;
+        private static readonly Dictionary<string, Sprite> s_blastSprites = new Dictionary<string, Sprite>();
+        private static Sprite s_blastSquare;
+        private static Sprite BlastSprite(string name)
         {
+            if (s_blastSprites.TryGetValue(name, out var sp)) return sp;
+            var tex = Resources.Load<Texture2D>("FX/" + name);
+            sp = tex != null ? Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), tex.width) : null;   // 1 world unit wide at scale 1
+            return s_blastSprites[name] = sp;
+        }
+        private static SpriteRenderer BlastQuad(string name, Sprite sp, Vector3 pos, float size, int order, Color c)
+        {
+            var go = new GameObject(name); go.transform.position = pos; go.transform.localScale = Vector3.one * size;
+            var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = sp; sr.sortingOrder = order; sr.color = c;
+            return sr;
+        }
+        /// <summary>One flying / drifting piece: moves by vel (+ gravity), spins, scales s0 -> s1, fades out over the last part of its life.</summary>
+        private System.Collections.IEnumerator BlastBit(SpriteRenderer sr, Vector3 vel, float gravity, float spin, float life, float fadeFrom, float s0, float s1, float alpha)
+        {
+            float t = 0f; var tr = sr.transform; Color c = sr.color;
+            while (t < life && sr != null)
+            {
+                float dt = Time.deltaTime; t += dt; float k = Mathf.Clamp01(t / life);
+                vel.y -= gravity * dt; tr.position += vel * dt; tr.Rotate(0f, 0f, spin * dt);
+                tr.localScale = Vector3.one * Mathf.Lerp(s0, s1, 1f - (1f - k) * (1f - k));
+                c.a = alpha * (k < fadeFrom ? 1f : 1f - (k - fadeFrom) / Mathf.Max(0.001f, 1f - fadeFrom)); sr.color = c;
+                yield return null;
+            }
+            if (sr != null) Destroy(sr.gameObject);
+        }
+        private System.Collections.IEnumerator BlastV2(Vector3 centre, float radius, float cell)
+        {
+            bool bonus = HandManager.BonusBlastRunning;
+            if (!bonus && BANG_ON_BURST > 0f) yield return new WaitForSecondsRealtime(BANG_ON_BURST);   // with the bang + the tile burst
+            float dia = radius * 2f * BLAST_CLOUD_SIZE;
+            // 1 CLOUD (v3, 11-19 after Movie_022 - Spencer: "isnt quite the same as royal match"; the single outlined cloud sprite read
+            // as a flat sticker that scaled as one piece). Now: a white-hot flash + a warm glow that BLOOM (HDR, additive), and the
+            // body is ~9 soft feathered puffs, each bursting outward on its own, so the edge boils and breaks up by itself.
             var dot = SoftDot();
+            var flash = MakeFxSprite("BlastFlash", dot, new Color(3.2f, 3.0f, 2.4f, 1f), 50); flash.transform.position = centre;
+            StartCoroutine(BlastBit(flash, Vector3.zero, 0f, 0f, 0.14f, 0.0f, dia * 0.5f, dia * 1.25f, 1f));
+            var glow = MakeFxSprite("BlastGlow", dot, new Color(2.0f, 1.35f, 0.45f, 1f), 48); glow.transform.position = centre;
+            StartCoroutine(BlastBit(glow, Vector3.zero, 0f, 0f, 0.34f, 0.15f, dia * 0.9f, dia * 1.9f, 0.85f));
+            var soft = BlastSprite("blast_soft");
+            if (soft != null)
+            {
+                float life = BLAST_CLOUD_IN + BLAST_CLOUD_HOLD + BLAST_CLOUD_OUT;
+                for (int i = 0; i < BLAST_CLOUD_PUFFS; i++)
+                {
+                    bool mid = i == 0;
+                    float ang = (i + Random.Range(-0.35f, 0.35f)) / (BLAST_CLOUD_PUFFS - 1) * Mathf.PI * 2f; Vector3 d = mid ? Vector3.zero : new Vector3(Mathf.Cos(ang), Mathf.Sin(ang), 0f);
+                    float off = dia * Random.Range(0.24f, 0.34f), sz = dia * (mid ? 0.78f : Random.Range(0.46f, 0.62f)), l = life * Random.Range(0.85f, 1.1f);
+                    var sr = BlastQuad("BlastCloudPuff", soft, centre + d * off * 0.25f, sz * 0.3f, 49, new Color(1f, 1f, 1f, BLAST_CLOUD_ALPHA));
+                    StartCoroutine(BlastBit(sr, d * off * 0.95f / l + Vector3.up * cell * 0.15f, 0f, 0f, l, (BLAST_CLOUD_IN + BLAST_CLOUD_HOLD) / life, sz * 0.3f, sz * 1.12f, BLAST_CLOUD_ALPHA));
+                }
+            }
+            // 2 CHUNKS: big cream pieces thrown out, tumbling, falling past the board
+            var ch = BlastSprite("blast_chunk");
+            if (ch != null && !bonus)
+                for (int i = 0; i < BLAST_CHUNKS; i++)
+                {
+                    Vector2 d = Random.insideUnitCircle.normalized; float sz = cell * Random.Range(0.42f, 0.70f);   // v3: bigger pieces
+                    var sr = BlastQuad("BlastChunk", ch, centre + (Vector3)(d * radius * Random.Range(0.2f, 0.6f)), sz, 50, Color.white);
+                    sr.transform.Rotate(0f, 0f, Random.Range(0f, 360f));
+                    Vector3 v = new Vector3(d.x * Random.Range(3.5f, 7f), d.y * Random.Range(2.5f, 5f) + Random.Range(2f, 5f), 0f) * cell;
+                    StartCoroutine(BlastBit(sr, v, 26f * cell, Random.Range(-540f, 540f), Random.Range(0.60f, 0.85f), 0.72f, sz, sz * 0.85f, 1f));
+                }
+            // 3 CONFETTI: small bits in the tile's own colours (cream, navy, gold)
+            if (s_blastSquare == null) s_blastSquare = Sprite.Create(Texture2D.whiteTexture, new Rect(0, 0, Texture2D.whiteTexture.width, Texture2D.whiteTexture.height), new Vector2(0.5f, 0.5f), Texture2D.whiteTexture.width);
+            int nConf = bonus ? BLAST_CONFETTI / 3 : BLAST_CONFETTI;
+            for (int i = 0; i < nConf; i++)
+            {
+                Vector2 d = Random.insideUnitCircle; float sz = cell * Random.Range(0.045f, 0.09f); float pick = Random.value;
+                Color col = pick < 0.45f ? new Color(1f, 0.957f, 0.871f) : pick < 0.7f ? new Color(0.11f, 0.14f, 0.38f) : pick < 0.9f ? new Color(0.98f, 0.77f, 0.25f) : Color.white;
+                var sr = BlastQuad("BlastConfetti", s_blastSquare, centre + (Vector3)(d * radius * 0.5f), sz, 50, col);
+                Vector3 v = new Vector3(d.x * Random.Range(2f, 5f), d.y * Random.Range(2f, 4f) + Random.Range(1f, 3f), 0f) * cell;
+                StartCoroutine(BlastBit(sr, v, 9f * cell, Random.Range(-720f, 720f), Random.Range(0.55f, 0.95f), 0.6f, sz, sz, 1f));
+            }
+            if (bonus) yield break;
+            yield return new WaitForSeconds(BLAST_CLOUD_IN + BLAST_CLOUD_HOLD);
+            // 4 a few small soft puffs keep drifting outward as it clears...
+            if (soft != null)
+                for (int i = 0; i < BLAST_PUFFS; i++)
+                {
+                    float ang = (i + Random.Range(-0.3f, 0.3f)) / BLAST_PUFFS * Mathf.PI * 2f; Vector3 d = new Vector3(Mathf.Cos(ang), Mathf.Sin(ang) * 0.9f, 0f);
+                    float sz = dia * Random.Range(0.20f, 0.30f);
+                    var sr = BlastQuad("BlastPuff", soft, centre + d * dia * Random.Range(0.34f, 0.46f), sz, 49, new Color(1f, 1f, 1f, 0.6f));
+                    StartCoroutine(BlastBit(sr, d * cell * Random.Range(0.9f, 1.8f) + Vector3.up * cell * 0.35f, 0f, 0f, Random.Range(0.26f, 0.36f), 0.1f, sz, sz * 1.5f, 0.6f));
+                }
+            // ...and pale HAZE over the cleared cells
+            var ws = BlastSprite("blast_wisp");
+            if (ws != null)
+                for (int i = 0; i < BLAST_WISPS; i++)
+                {
+                    Vector3 p = centre + new Vector3(Random.Range(-0.7f, 0.7f), Random.Range(-0.6f, 0.6f), 0f) * radius; float sz = radius * Random.Range(1.1f, 1.7f);
+                    var sr = BlastQuad("BlastWisp", ws, p, sz, 46, new Color(1f, 1f, 1f, BLAST_HAZE_ALPHA));
+                    sr.transform.Rotate(0f, 0f, Random.Range(-25f, 25f));
+                    StartCoroutine(BlastBit(sr, new Vector3(Random.Range(-0.3f, 0.3f), Random.Range(0.15f, 0.5f), 0f) * cell, 0f, Random.Range(-8f, 8f), BLAST_HAZE_LIFE * Random.Range(0.8f, 1.2f), 0.2f, sz * 0.8f, sz * 1.15f, BLAST_HAZE_ALPHA));
+                }
+        }
+        public static float BANG_ON_BURST = 0.17f;   // seconds from the fireball's first frame to the bang (0 = with the first frame, as before)
+        private System.Collections.IEnumerator Fireball(Vector3 centre, float radius, float cell, bool v2 = false)
+        {
+            v2 = v2 && BLAST_V2;   // 11-19 Spencer: "i only meant for the bombs and dynamite explosions" - only those two pass v2; combos keep the old fireball
+            var dot = SoftDot();
+            // 11-19 BANG ON THE BURST (Spencer: "the bomb is often off in timing with the sound"). MEASURED on Movie_021 + the log, 5
+            // bombs: the bang fired with the first frame of the fireball's rays, but the thing the eye reads as the explosion -
+            // the white flash and the word tiles + bomb bursting - came 11 frames (0.18 s) later, every time. The bang now waits
+            // for that burst. Not in the end-of-level bonus (rapid fire, no build-up).
+            if (BANG_ON_BURST > 0f && !HandManager.BonusBlastRunning)
+                DOVirtual.DelayedCall(BANG_ON_BURST, () => GameAudio.Instance?.PlayBigExplosion(), ignoreTimeScale: true);
+            else
             GameAudio.Instance?.PlayBigExplosion();   // bomb / TNT / combo fireball
-            if (FIREBALL_SUNRAYS) StartCoroutine(SunRays(centre, radius));
+            if (v2) StartCoroutine(BlastV2(centre, radius, cell));
+            if (FIREBALL_SUNRAYS && !(v2 && !BLAST_V2_RAYS)) StartCoroutine(SunRays(centre, radius));
             // 2026-10-22 capture: the white-hot core bloomed into a flat white disc over the whole 5x5. Fireball core is now
             // dimmer (under the bloom wash-out) and smaller, the flame a touch softer — rays + glint carry the brightness.
             var flame = MakeFxSprite("FireballFlame", dot, FIREBALL_FLAME, 47);
@@ -1299,7 +1421,7 @@ namespace WordDrop
                 float grow = 1f - Mathf.Pow(1f - Mathf.Clamp01(t / 0.12f), 3f);           // fast out-cubic swell
                 float flick = 0.92f + 0.16f * Mathf.PerlinNoise(Time.time * 28f, centre.x * 5f);
                 core.transform.localScale  = Vector3.one * radius * 1.1f * grow * (1f - 0.5f * k);
-                flame.transform.localScale = Vector3.one * radius * 2.2f * grow * flick;
+                flame.transform.localScale = Vector3.one * radius * 2.2f * grow * flick * (v2 ? BLAST_V2_FLAME : 1f);   // V2: a core flash, the cloud is the body
                 core.color  = new Color(1f, 1f, 1f, 0.9f * (1f - Mathf.Clamp01(k * 3f)));   // core burns out fast
                 flame.color = new Color(1f, 1f, 1f, 0.8f * (1f - k * k));                   // flame lingers, then thins
                 yield return null;
@@ -2330,7 +2452,7 @@ namespace WordDrop
                 // explosion but it matches in the colour and vibe of the rockets"). Same palette as the rocket line: a
                 // white-hot core blooming out inside an orange flame sphere, a thin shock ring, and a radial spark burst.
                 float radius = ((powered ? RulesEngine.BOMB_RADIUS_POWERED : RulesEngine.BOMB_RADIUS_BASIC) + 0.5f) * cell;   // fireball matches the cleared square
-                StartCoroutine(Fireball(origin, radius, cell));
+                StartCoroutine(Fireball(origin, radius, cell, v2: f.Kind == RulesEngine.SPECIAL_BOMB || f.Kind == RulesEngine.SPECIAL_TNT));
                 if (BLAST_RING)
                 {
                     var ring = MakeFxSprite("BombRing", s_ringSprite, ROCKET_FLAME * 0.8f, 47);

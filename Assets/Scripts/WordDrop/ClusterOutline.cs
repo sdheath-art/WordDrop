@@ -328,7 +328,7 @@ namespace WordDrop
         /// DIGIT_CELL_WORLD * POP_GROW. Public because the level map has to match that final
         /// size, and comparing against the base size made the map digits look 1.8x too small.
         /// 2026-10-19.</summary>
-        public static float FOUND_POP_SCALE = 1.3f;   // 10-31: a DRAGGED word's pop-up is this much bigger (found it)
+        public static float FOUND_POP_SCALE = 1.0f;   // 11-19 Spencer: a swiped word "doesnt have to be bigger. it just has to be the same size as the others" (was 1.3)   // 10-31: a DRAGGED word's pop-up is this much bigger (found it)
         public const  float POP_GROW           = 1.8f;
 
         public static float DIGIT_CELL_WORLD   = 0.40f;   // 1.30 -> 0.65 -> 0.325 -> 0.36 -> 0.40
@@ -626,7 +626,10 @@ namespace WordDrop
                 if (gold) BonusPopup.ApplyWordPopGold(wt);   // 10-31: the word made goal progress
                 float lenScale = BonusPopup.NextPopScale(); BonusPopup.NextPopGold = false; BonusPopup.NextPopLength = 0;
                 bool found = RulesEngine.DRAG_REWARD && label != null && RulesEngine.SwipedWords.Remove(label.Trim().ToUpperInvariant());
-                BonusPopup.SizeWordPop(wt, POP_GROW * lenScale * (found ? FOUND_POP_SCALE : 1f));   // RM size; long / gold / dragged words pop bigger (10-31)
+                // 11-19 (Spencer: a swiped word's pop-up "was smaller than the others"): SizeWordPop sets the START size to
+                // (final size / grow) and the leap then grows it by the FIXED POP_GROW - so multiplying grow by the bonus made
+                // long / gold / dragged words end up SMALLER (dragged: 1/1.3). The bonus now divides, so they end up bigger.
+                BonusPopup.SizeWordPop(wt, POP_GROW / (lenScale * (found ? FOUND_POP_SCALE : 1f)));   // RM size; long / gold / dragged words pop bigger (10-31)
                 wt.sortingOrder = WORD_POP_ORDER;   // 11-01 Spencer: above the goal pieces flying to the HUD (200-205); was BADGE_ORDER + 40 = 170
                 var wsh = BonusPopup.AddWordPopSoftShadow(wt);   // 10-31: soft shadow so the cream word lifts off the white tiles
                 wt.ForceMeshUpdate();

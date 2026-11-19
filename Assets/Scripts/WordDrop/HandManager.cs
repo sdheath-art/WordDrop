@@ -3879,6 +3879,8 @@ case RulesEngine.ResolutionPhase.Complete:
         public static float PRE_BURST_SWELL   = 1.2f;
         private IEnumerator PreBurstSpecials(GridManager grid, RulesEngine.StepResult step)
         {
+            if (step != null && step.SpecialsFired != null && step.SpecialsFired.Count > 0)   // TEMP DIAG 11-19 [BombSync]
+                WDLog.Log($"[BombSync] t={Time.unscaledTime:F2} step fires {step.SpecialsFired.Count} power-up(s): {string.Join(" ", step.SpecialsFired.ConvertAll(x => $"kind{x.Kind}@({x.Cell.x},{x.Cell.y}) delay {x.Delay:F2}"))} | swell {(PRE_BURST && !BonusBlastRunning ? "yes" : BonusBlastRunning ? "NO (bonus blast)" : "NO (off)")}");
             if (!PRE_BURST || BonusBlastRunning || grid == null || step == null || step.SpecialsFired == null || step.SpecialsFired.Count == 0) yield break;
             var swelling = new List<Tile>();
             foreach (var f in step.SpecialsFired)
@@ -3893,7 +3895,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 var sr = t.GetComponent<SpriteRenderer>();
                 if (sr != null) { sr.DOKill(); sr.color = Color.white; sr.DOColor(new Color(1.7f, 1.6f, 1.4f, 1f), PRE_BURST_SECONDS).SetUpdate(true); }
             }
-            if (swelling.Count == 0) yield break;
+            if (swelling.Count == 0) { WDLog.Log("[BombSync] no tile found to swell (power-up made and fired in one step?)"); yield break; }
             yield return new WaitForSecondsRealtime(PRE_BURST_SECONDS);
         }
 

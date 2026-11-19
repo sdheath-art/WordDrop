@@ -396,7 +396,7 @@ namespace WordDrop
             _rumbleSource.playOnAwake = false;
             _bigPopSource = gameObject.AddComponent<AudioSource>();
             _bigPopSource.playOnAwake = false;
-            _bigPopSource.pitch       = 0.95f;
+            _bigPopSource.pitch       = GameAudio.NP(0.95f);
 
             // Load saved prefs
             // 11-18: Settings V2 has on/off switches only - no sliders. A volume saved by an OLD slider build (Spencer's phone has had
@@ -672,7 +672,7 @@ namespace WordDrop
                 var ps = FreePitchSource(clip.length / Mathf.Max(0.05f, Mathf.Abs(pitch)));
                 if (ps != null)
                 {
-                    ps.pitch = pitch;
+                    ps.pitch = GameAudio.NP(pitch);
                     ps.PlayOneShot(clip, _volume * volumeMult);
                 }
             }
@@ -904,7 +904,7 @@ namespace WordDrop
             var src = _pitchedSource;
             if (src == null) { Play(_tilePrimed, 0.6f); return; } // no pitched source → plain play
             int step = Mathf.Clamp(_primeStep, 0, 8);
-            src.pitch = Mathf.Pow(2f, step / 12f); // +1 semitone per successive prime, capped ~an octave
+            src.pitch = GameAudio.NP(Mathf.Pow(2f, step / 12f)); // +1 semitone per successive prime, capped ~an octave
             LogDirect(_tilePrimed);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.PlayOneShot(_tilePrimed, _volume * 0.6f);
         }
@@ -1510,7 +1510,7 @@ namespace WordDrop
 
             var src = _line2Source != null ? _line2Source : _pitchedSource;
             if (src == null) { Play(clip, 0.9f); return; }
-            src.pitch = pitch;
+            src.pitch = GameAudio.NP(pitch);
             LogDirect(clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.PlayOneShot(clip, _volume * 0.9f);
         }
@@ -1523,8 +1523,14 @@ namespace WordDrop
         // 11-17 (Spencer, on the phone: the coins collecting at the top "sound like a robot"): 25 tings a second, each a semitone up,
         // quantised by the phone's audio buffer (1024 samples = ~21 ms) into an even machine-gun = a synthetic glide. 0.09 s =
         // ~11 a second: each ting is heard as a coin and the rise takes ~0.7 s. (0.04 was fine on the Mac's speakers.)
+        /// <summary>11-19 TEST (Spencer: "i think this is the problem we are having with the sound. can you try removing all the
+        /// pitch effects for now just to see what it sounds like?"). true = EVERY sound plays at its natural pitch: no rising
+        /// runs (words, lines, primed tiles, goal hits, coins, win-screen pops), no random variation, no pitched-down big pop.
+        /// Every place a source's pitch is set goes through NP(). false = all the pitch effects back exactly as they were.</summary>
+        public static bool NO_PITCH = true;
+        public static float NP(float p) => NO_PITCH ? 1f : p;
         public static float  COIN_THROTTLE     = 0.09f;
-        public static float  COIN_SEMITONES_PER_HIT = 0.5f;   // was 1   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
+        public static float  COIN_SEMITONES_PER_HIT = 0f;   // 11-19 TEST (Spencer: the coin artifact "maybe has to do with it being pitched up?"): no rise, every coin at natural pitch. Was 0.5 (11-18), before that 1   // 11-16: was 0.018 - a bunched finale fired ~30 ticks/s (a buzz, not a rhythm)
         private float[] _coinBusyUntil; // min gap between AUDIBLE ticks — small (per-frame-ish) so coins aren't skipped ("holes"); the source pool handles overlap without warping
 
         /// <summary>Coin lands on the REWARD counter. Uses the audible line2 ting with two anti-machine-gun
@@ -1562,10 +1568,12 @@ namespace WordDrop
             if (!_bigBoomTried) { _bigBoomTried = true; _bigBoom = Resources.Load<AudioClip>("Audio/explosion_big"); }
             if (_bigBoom == null) return;
             float now = Time.unscaledTime;
-            if (now - _lastBoomAt < BOOM_SFX_MIN_GAP) return;
+            // TEMP DIAG 11-19 [BombSync] (Spencer: "the bomb is often off in timing with the sound"): when the bang plays, or why not
+            if (now - _lastBoomAt < BOOM_SFX_MIN_GAP) { WDLog.Log($"[BombSync] t={now:F2} bang SKIPPED (another bang {now - _lastBoomAt:F2}s ago)"); return; }
             if (now - _boomBurstStart > 0.8f) { _boomBurstStart = now; _boomBurstCount = 0; }
-            if (_boomBurstCount >= BOOM_SFX_BURST_MAX) return;
+            if (_boomBurstCount >= BOOM_SFX_BURST_MAX) { WDLog.Log($"[BombSync] t={now:F2} bang SKIPPED (already {_boomBurstCount} in this burst)"); return; }
             _boomBurstCount++; _lastBoomAt = now;
+            WDLog.Log($"[BombSync] t={now:F2} bang PLAYED");
             Play(_bigBoom, BOOM_SFX_VOL);
         }
 
@@ -1611,7 +1619,7 @@ namespace WordDrop
                 if (_source != null) _shakeBoomSource.outputAudioMixerGroup = _source.outputAudioMixerGroup;
             }
             if (_muted) return true;
-            _shakeBoomSource.pitch = 1f;
+            _shakeBoomSource.pitch = GameAudio.NP(1f);
             // 10-31 (Spencer: "the timing doesnt seem right"): the log had the boom ON the first burst, but detonation_alt swells
             // for 0.12s and peaks at 0.26s - so the bang came ~a quarter second late. Start past the swell.
             _shakeBoomSource.clip = _shakeBoom; _shakeBoomSource.volume = _volume * SHAKE_BOOM_VOL;
@@ -1642,7 +1650,7 @@ namespace WordDrop
                 if (_source != null) _shimmerSource.outputAudioMixerGroup = _source.outputAudioMixerGroup;
             }
             // PlayOneShot so overlapping chimes ring out instead of cutting each other off
-            _shimmerSource.pitch = 1f;
+            _shimmerSource.pitch = GameAudio.NP(1f);
             LogDirect(_shimmer);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             _shimmerSource.PlayOneShot(_shimmer, _volume * SHIMMER_VOL);
         }
@@ -1671,7 +1679,7 @@ namespace WordDrop
             if (_crate == null || _muted) return;
             float now = Time.unscaledTime; if (now - _lastKnockAt < 0.05f) return; _lastKnockAt = now;
             if (_crateSource == null) { _crateSource = gameObject.AddComponent<AudioSource>(); _crateSource.playOnAwake = false; _crateSource.spatialBlend = 0f; if (_source != null) _crateSource.outputAudioMixerGroup = _source.outputAudioMixerGroup; }
-            _crateSource.pitch = CRATE_KNOCK_PITCH * Random.Range(0.96f, 1.04f);
+            _crateSource.pitch = GameAudio.NP(CRATE_KNOCK_PITCH * Random.Range(0.96f, 1.04f));
             LogDirect(_crate);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             _crateSource.PlayOneShot(_crate, _volume * CRATE_VOL * CRATE_KNOCK_VOL);
         }
@@ -1736,7 +1744,7 @@ namespace WordDrop
             // quieter (x CRATE_BURST_FALLOFF per crate) - the first still hits at CRATE_VOL.
             if (_muted) return;
             if (_crateSource == null) { _crateSource = gameObject.AddComponent<AudioSource>(); _crateSource.playOnAwake = false; _crateSource.spatialBlend = 0f; if (_source != null) _crateSource.outputAudioMixerGroup = _source.outputAudioMixerGroup; }
-            _crateSource.pitch = Random.Range(0.94f, 1.08f);
+            _crateSource.pitch = GameAudio.NP(Random.Range(0.94f, 1.08f));
             LogDirect(_crate);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             _crateSource.PlayOneShot(_crate, _volume * CRATE_VOL * Mathf.Pow(CRATE_BURST_FALLOFF, _crateBurstCount - 1));
         }
@@ -1797,7 +1805,7 @@ namespace WordDrop
             }
             src = src ?? _coinSource ?? _pitchedSource;
             if (src == null) { Play(clip, 0.9f); return; }
-            src.pitch = pitch;
+            src.pitch = GameAudio.NP(pitch);
             LogDirect(clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.PlayOneShot(clip, _volume * 0.9f);
         }
@@ -1817,7 +1825,7 @@ namespace WordDrop
         {
             src.Stop();
             src.clip   = _coinJackpot;   // Play() loads the (non-preloaded) clip and starts from 0
-            src.pitch  = 1f;
+            src.pitch  = GameAudio.NP(1f);
             src.volume = _volume;
             LogDirect(src.clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.Play();
@@ -1840,7 +1848,7 @@ namespace WordDrop
         {
             src.Stop();
             src.clip   = _chickenCluck;
-            src.pitch  = 1f;
+            src.pitch  = GameAudio.NP(1f);
             src.volume = _volume; // full SFX volume — cluck was at 0.9×, bumped up so it lands on the bottom hit. 2026-06-23
             LogDirect(src.clip);   // TEMP 11-07 sound-sync pass (LogSfxFiring)
             src.Play();
@@ -2121,7 +2129,7 @@ namespace WordDrop
             //   nudge < 0 → start partway into the clip → transient EARLIER
             //               (trims that much of the leading swell)
             _bigPopSource.clip   = _bigPop;
-            _bigPopSource.pitch  = 0.95f;
+            _bigPopSource.pitch  = GameAudio.NP(0.95f);
             _bigPopSource.volume = _volume * 0.8f;
             _bigPopSource.time   = nudge < 0f ? Mathf.Min(-nudge, _bigPop.length - 0.05f) : 0f;
             if (LogSfxFiring) WDLog.Log($"[SOUND] BigPop → {(_bigPopSource.clip != null ? _bigPopSource.clip.name : "?")} (direct, delay {nudge:F3}s)");   // TEMP 11-07 sound-sync pass
