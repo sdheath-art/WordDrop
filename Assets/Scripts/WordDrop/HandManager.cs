@@ -2042,7 +2042,22 @@ namespace WordDrop
         public static float PLAYER_POP_HOLD  = 0f;
         public static float CASCADE_POP_HOLD = 0f;
         private bool _nextPopIsPlayers;   // set by a swap / swipe, consumed by the first auto-pop after it
-        public static void MarkPlayerWordComing() { RulesEngine.BeginPlayerMove(); if (Instance != null) Instance._nextPopIsPlayers = true; }   // also a new move for the cascade cap
+        // 11-19 READ BEAT (first outside testers, build 6. Cameron: "It's very fast and often I don't see the words until they're
+        // displayed after a solve"; the boss was lost on level 1). Since 11-18 a word burst on the frame the swap landed
+        // (PLAYER_POP_HOLD 0), so the player never saw it standing as a word. The player's OWN single word now stays lit for a
+        // short beat first - longer on the first levels, where the game is being learned. Words the fall makes, and a swap
+        // that makes several words at once (they burst unlit, by his 11-18 choice), are unchanged. READ_BEAT = false -> as 11-18.
+        public static bool  READ_BEAT = true;
+        public static int   READ_BEAT_EARLY_LEVELS = 8;
+        public static float READ_BEAT_EARLY = 0.35f, READ_BEAT_LATER = 0.18f;
+        private bool _readBeatSkip;   // this swap made 2+ words (quiet burst): no beat
+        private static float ReadBeatSeconds()
+        {
+            var sm = SurvivalManager.Instance;
+            bool early = sm == null || LevelMapPanel.DisplayNum(sm.CurrentStageIndex) <= READ_BEAT_EARLY_LEVELS;
+            return early ? READ_BEAT_EARLY : READ_BEAT_LATER;
+        }
+        public static void MarkPlayerWordComing() { RulesEngine.BeginPlayerMove(); if (Instance != null) { Instance._nextPopIsPlayers = true; Instance._readBeatSkip = false; } }   // also a new move for the cascade cap
 
         /// <summary>Only words this long pop BY THEMSELVES. Shorter ones light up and wait: tap to
         /// cash one in, or extend it and the longer word pops (taking the short one with it, both
@@ -2083,7 +2098,7 @@ namespace WordDrop
             IsInteractable = false;
             MatchController.Instance?.BeginProcessing();
             float hold = INSTANT_POP_HOLD;
-            if (QUICK_POP && SurvivalManager.FullBoardActive) hold = _nextPopIsPlayers ? PLAYER_POP_HOLD : CASCADE_POP_HOLD;
+            if (QUICK_POP && SurvivalManager.FullBoardActive) hold = _nextPopIsPlayers ? (READ_BEAT && !_readBeatSkip ? ReadBeatSeconds() : PLAYER_POP_HOLD) : CASCADE_POP_HOLD;
             _nextPopIsPlayers = false;
             float t = 0f;
             while (t < hold) { t += Time.deltaTime; yield return null; }
@@ -2975,6 +2990,7 @@ case RulesEngine.ResolutionPhase.Complete:
                     // words and just explode them"): when ONE swap makes two or more words they are not lit gold / green first; they
                     // burst as they are, and the staggered pop-ups name them. A single word still lights.
                     bool quiet = QUIET_MULTI_WORD && InstantPopMode && allNew.Count >= 2;
+                    if (quiet) _readBeatSkip = true;
                     if (armedA)
                     for (int c = 0; c < match.Cells.Count; c++)
                     {
@@ -3093,7 +3109,9 @@ case RulesEngine.ResolutionPhase.Complete:
         private readonly System.Collections.Generic.HashSet<Tile> _nudging = new System.Collections.Generic.HashSet<Tile>();
 
         private static System.Collections.Generic.List<RulesWordMatch> s_bouncePre;   // what the bounce pre-check saw (LATE BOUNCE diag)
-        public static bool  BOUNCE_NO_WORD   = true;
+        // 11-20 TILES STAY (tester #3: "once you move a piece, it stays there"; Spencer after a 20-level run: "feels more like a word
+        // game where you have agency"): false = every swap stays and costs a move. true = the 10-30 bounce-back rule.
+        public static bool  BOUNCE_NO_WORD   = false;
         public static bool  SPECIALS_LOCKED  = true;    // 11-03 Spencer: the DYNAMITE can't be moved (rockets/bombs/discos can; two power-ups still combo)
         public static bool  BOUNCE_SPECIALS  = true;    // 10-30 Spencer: specials follow the same rule (no word -> bounce); double-tap still fires one for a move, two specials still combo    // false = the old rule: every swap stays and costs a move
         public static float BOUNCE_OUT = 0.13f, BOUNCE_HOLD = 0.05f, BOUNCE_BACK = 0.17f;
@@ -3583,6 +3601,8 @@ case RulesEngine.ResolutionPhase.Complete:
             WDLog.Log($"[BoardSwapMove] swap resolved. formedWord={allNew.Count > 0} survival={SurvivalManager.IsSurvivalMode} editsCountAsMoves={(SurvivalManager.Instance != null ? SurvivalManager.Instance.EditsCountAsMoves.ToString() : "null")} → {((SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && SurvivalManager.Instance.EditsCountAsMoves) ? "COUNTING" : "not counted")}");
             NoWordStreak = allNew.Count > 0 ? 0 : NoWordStreak + 1;   // fishing detector (HintManager)
             bool freeSwap = _freeSwap; _freeSwap = false;
+            PlaythroughStats.StayRule = !BOUNCE_NO_WORD;
+            if (allNew.Count == 0 && !freeSwap) PlaythroughStats.NoWordMoves++;   // 11-20: a swap that stayed and made nothing (for tuning the tiles-stay budgets)
             if (freeSwap) WDLog.Log("[FreeSwap] booster swap — no move spent");
             else if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                 && SurvivalManager.Instance.EditsCountAsMoves)
@@ -3847,6 +3867,9 @@ case RulesEngine.ResolutionPhase.Complete:
         }
 
         public static bool  SPECIAL_MERGE_ANIM   = true;
+        public static float NEW_SPECIAL_LIFT     = 0.5f;   // 11-20: seconds a new power-up stays above the pop flash (0 = off)
+        public static bool  MERGE_ALL_CROSSING   = true;   // 11-20: false = only the word that owns the new power-up slides into it
+        public static bool  NO_MERGE_WHEN_FIRING = true;   // 11-20: false = the old behaviour (slide even while a power-up is firing; bang runs ~0.2s early)
         public static float SPECIAL_CONVERGE_DUR = 0.2f;   // letters slide into the new special
         private readonly Dictionary<Vector2Int, Vector2Int> _convergeTo = new Dictionary<Vector2Int, Vector2Int>();
 
@@ -3887,6 +3910,7 @@ case RulesEngine.ResolutionPhase.Complete:
             {
                 var t = grid.GetTile(f.Cell.x, f.Cell.y);
                 if (t == null || swelling.Contains(t)) continue;
+                if (WaitForPlane(step, f) > 0f) continue;   // 11-19: it goes off when the tome lands - no early swell
                 swelling.Add(t);
                 t.MarkAnimating(PRE_BURST_SECONDS + 0.1f);
                 t.LiftForFx(PRE_BURST_SECONDS + 0.3f);   // 11-18 Spencer (phone): "when it expands it expands behind the tiles" - the swell now draws OVER its neighbours (self-restoring)
@@ -3917,18 +3941,33 @@ case RulesEngine.ResolutionPhase.Complete:
                 {
                     var t = grid.GetTile(kv.Key.x, kv.Key.y);
                     if (t == null) continue;
-                    t.ClearPrimedGlow();
                     // MERGE (2026-10-21 Spencer: "where the tiles slide and converge into the tile" — Candy Crush / Royal
                     // Match). The word's other letters slide into the birth tile (ExplodeWordsThenSplash), and the special
                     // pops in as they arrive.
-                    bool merge = SPECIAL_MERGE_ANIM && step.SpecialSources != null && step.SpecialSources.TryGetValue(kv.Key, out var src);
+                    // 11-20 BOMB SYNC (Spencer: the bang comes before the letters blow "when the letters are being sucked in to create
+                    // another powerup"): the slide makes every tile in the step wait SPECIAL_CONVERGE_DUR, but a power-up firing in the
+                    // same step has already started its blast and bang. So when one is firing, no slide: the new one just pops in.
+                    bool firingToo = NO_MERGE_WHEN_FIRING && step.SpecialsFired != null && step.SpecialsFired.Count > 0;
+                    bool merge = SPECIAL_MERGE_ANIM && !firingToo && step.SpecialSources != null && step.SpecialSources.ContainsKey(kv.Key);
+                    // 11-20 (Spencer, bomb lesson KITE x TOAD: "the tile you moved turns green and then back to the regular tile" and
+                    // "one word folds and retracts to make the bomb but the other word does not"): the birth tile keeps its colour
+                    // until the power-up appears, and EVERY popped word that runs through the birth tile slides in, not only the
+                    // word that owns the power-up.
+                    // 11-20 (Spencer: the new bomb forms under the word's white flash): the birth tile is drawn above the board's effects
+                    // while the power-up appears, so the flash reads as a glow behind it.
+                    if (NEW_SPECIAL_LIFT > 0f) t.LiftForFx(SPECIAL_CONVERGE_DUR + NEW_SPECIAL_LIFT);
+                    if (!merge) t.ClearPrimedGlow();
                     if (merge)
                         foreach (var c in step.SpecialSources[kv.Key]) if (c != kv.Key) _convergeTo[c] = kv.Key;
+                    if (merge && MERGE_ALL_CROSSING && step.PoppedWords != null)
+                        foreach (var pwc in step.PoppedWords)
+                            if (pwc.Value != null && pwc.Value.Contains(kv.Key))
+                                foreach (var c in pwc.Value) if (c != kv.Key && !_convergeTo.ContainsKey(c)) _convergeTo[c] = kv.Key;
                     if (merge)
                     {
                         var tt = t; int kind = kv.Value;
                         tt.transform.DOPunchScale(Vector3.one * 0.06f, SPECIAL_CONVERGE_DUR, 6, 0.5f);   // braces as the letters come in
-                        DOVirtual.DelayedCall(SPECIAL_CONVERGE_DUR, () => { if (tt != null) tt.SetSpecial(kind, pop: true); }, ignoreTimeScale: true);
+                        DOVirtual.DelayedCall(SPECIAL_CONVERGE_DUR, () => { if (tt != null) { tt.ClearPrimedGlow(); tt.SetSpecial(kind, pop: true); } }, ignoreTimeScale: true);
                     }
                     else t.SetSpecial(kv.Value, pop: true);
                 }
@@ -3939,11 +3978,11 @@ case RulesEngine.ResolutionPhase.Complete:
                 // as they travel into them?"). Tiles a special clears were "splash" and all popped together at the END of the
                 // detonation, so the rocket art flew over letters that were still standing. Each cleared cell now gets the time
                 // the FX reaches it; ExplodeWordsThenSplash pops it then. Rocket head = DOMove over ROCKET_FLIGHT, InQuad.
-                int fj = 0;
+                int fj = 0; bool iceSoundDone = false;
                 float windup = StepComboWindup(step);   // 2026-10-28: a combo winds up first; everything in the step waits for its burst
                 foreach (var f in step.SpecialsFired)
                 {
-                    float fire = (BonusBlastRunning ? fj * BONUS_FIRE_STAGGER : 0f) + windup;
+                    float fire = (BonusBlastRunning ? fj * BONUS_FIRE_STAGGER : 0f) + windup + WaitForPlane(step, f);   // 11-19: a power-up a flying tome is heading for waits for the landing
                     fj++;
                     if (f.Cleared == null) continue;
                     bool rocket = f.Kind == RulesEngine.SPECIAL_ROCKET_H || f.Kind == RulesEngine.SPECIAL_ROCKET_V;
@@ -3986,6 +4025,15 @@ case RulesEngine.ResolutionPhase.Complete:
                         else
                             t = fire + 0.08f + 0.035f * k;
                         if (!_specialPopDelay.TryGetValue(c, out float was) || t < was) _specialPopDelay[c] = t;
+                        // 11-20 (Spencer: "rockets going through iced tiles and no ice debris" / "there should be ice debris that is
+                        // coloured like the ice along with the tiles debris when it hits"): a frozen tile a blast DESTROYS had no ice
+                        // effect at all (only tiles that survive a word got the melt). It now throws ice shards as the blast reaches it.
+                        if (ICE_ON_ARRIVAL && f.Ice != null && f.Ice.Contains(c))
+                        {
+                            Vector3 icePos = grid.CellToWorld(c.x, c.y) + new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
+                            bool first = !iceSoundDone; iceSoundDone = true;
+                            DOVirtual.DelayedCall(Mathf.Max(0.01f, t), () => { WordDropFX.Instance?.PlayIceShatter(icePos); if (first) GameAudio.Instance?.PlayIceMelt(); }, ignoreTimeScale: true);
+                        }
                     }
                 }
                 // 11-04 (Spencer: "the bookshelf and any objective needs to wait to blow up until the flying propeller hits it"):
@@ -4010,7 +4058,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 foreach (var f in step.SpecialsFired)
                 {
                     var ff = f;
-                    float delay = (BonusBlastRunning ? fi * BONUS_FIRE_STAGGER : 0f) + windup + ff.Delay;   // bonus: one quick ripple, no pauses
+                    float delay = (BonusBlastRunning ? fi * BONUS_FIRE_STAGGER : 0f) + windup + ff.Delay + WaitForPlane(step, ff);   // bonus: one quick ripple, no pauses
                     if (delay <= 0f) WordDropFX.Instance.PlaySpecialFire(ff);
                     else DOVirtual.DelayedCall(delay, () => { if (WordDropFX.Instance != null) WordDropFX.Instance.PlaySpecialFire(ff); }, ignoreTimeScale: true);
                     fi++;
@@ -4070,6 +4118,17 @@ case RulesEngine.ResolutionPhase.Complete:
         /// <summary>The longest combo wind-up among this step's specials (0 in the bonus blast, which stays one quick ripple).</summary>
         /// <summary>Seconds until a propeller (or plane+bomb combo) fired this step lands on <paramref name="cell"/>; 0 if none is
         /// flying there. Same timing as the target's pop in the special-pop schedule (windup + the plane's own delay + takeoff + flight).</summary>
+        /// <summary>11-19 (Spencer: "if a flying tome is flying towards a dynamite the dynamite blows up before it hits it"). The rules
+        /// queue a power-up caught by another one with no delay, so a dynamite / bomb / rocket sitting on a flying tome's TARGET
+        /// fired at the start of the step while the tome was still in the air. Seconds this power-up must wait for a tome that
+        /// is flying to its cell (0 when none is; a tome itself never waits).</summary>
+        public static bool PLANE_TARGET_WAITS = true;
+        private static float WaitForPlane(RulesEngine.StepResult step, RulesEngine.SpecialFire f)
+        {
+            if (!PLANE_TARGET_WAITS || BonusBlastRunning) return 0f;
+            if (f.Kind == RulesEngine.SPECIAL_AIRPLANE || f.Kind == RulesEngine.SPECIAL_COMBO_PLANE_BOMB || f.Kind == RulesEngine.SPECIAL_COMBO_PLANES) return 0f;
+            return PlaneLandDelay(step, f.Cell);
+        }
         private static float PlaneLandDelay(RulesEngine.StepResult step, Vector2Int cell)
         {
             if (step?.SpecialsFired == null) return 0f;
@@ -4525,6 +4584,8 @@ case RulesEngine.ResolutionPhase.Complete:
             else ApplyBlockerHits(grid, step);
         }
         public static bool BLOCKERS_ON_BLAST = true;
+        public static bool ICE_SHARDS_ON_WORD = true;   // 11-20: false = ice a word breaks only sparkles and melts, no shards
+        public static bool ICE_ON_ARRIVAL = true;   // 11-20: false = ice hit by a power-up melts at the start of the blast, no shards
         private void ApplyBlockerHits(GridManager grid, RulesEngine.StepResult step)
         {
             HitTreasureTiles(grid, step);   // TREASURE: same moment as the thaw (survivors of this detonation)
@@ -4542,8 +4603,21 @@ case RulesEngine.ResolutionPhase.Complete:
                     thawed.ClearPrimedGlow(); // thawed tile becomes a PLAIN letter — no lingering magenta (obscured the melt). 2026-07-07 Spencer.
                     float land = PlaneLandDelay(step, step.ThawedCells[i]);   // 11-04: ice a propeller is flying to breaks when it LANDS
                     var tt = thawed;
-                    if (land > 0f) DOVirtual.DelayedCall(land, () => { if (tt != null) { tt.PlayDefrost(); GameAudio.Instance?.PlayIceMelt(); } }, ignoreTimeScale: true);
-                    else { thawed.PlayDefrost(); anyThawed = true; }
+                    if (land > 0f) DOVirtual.DelayedCall(land, () => { if (tt != null) { tt.PlayDefrost(); GameAudio.Instance?.PlayIceMelt(); if (ICE_SHARDS_ON_WORD) WordDropFX.Instance?.PlayIceShatter(tt.transform.position); } }, ignoreTimeScale: true);
+                    // 11-20 (Spencer: "rockets going through iced tiles and no ice debris falling"): ice a power-up breaks now waits
+                    // for the head / blast to reach it (same timing as the crates) and throws ice shards. Ice melted by a word: as before.
+                    else if (ICE_ON_ARRIVAL && step.SpecialsFired != null && step.SpecialsFired.Count > 0)
+                    {
+                        StartCoroutine(KnockWhenBlastArrives(step.ThawedCells[i], () => { if (tt != null) { tt.PlayDefrost(); WordDropFX.Instance?.PlayIceShatter(tt.transform.position); } }));
+                        anyThawed = true;
+                    }
+                    else
+                    {
+                        thawed.PlayDefrost(); anyThawed = true;
+                        // 11-20 (Spencer: "i dont think the ice chunks are appearing when you swipe to make a word over it"): a word
+                        // breaking ice throws the same shards, at the moment the frost cracks (PlayDefrost's 0.10 s flash).
+                        if (ICE_SHARDS_ON_WORD) DOVirtual.DelayedCall(0.10f, () => { if (tt != null) WordDropFX.Instance?.PlayIceShatter(tt.transform.position); }, ignoreTimeScale: true);
+                    }
                 }
             }
             // ONE melt sound per batch. The clip is a ~0.94s ascending run of pops, so playing it

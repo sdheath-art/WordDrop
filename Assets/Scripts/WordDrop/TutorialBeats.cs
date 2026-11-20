@@ -34,7 +34,7 @@ namespace WordDrop
         private const string PREF = "tut2_";
         public static bool Done(string key) => PlayerPrefs.GetInt(PREF + key, 0) == 1;
         private static void MarkDone(string key) { PlayerPrefs.SetInt(PREF + key, 1); PlayerPrefs.Save(); }
-        public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "use" };
+        public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "use", "move", "hint", "wild" };
         public static void ResetAll() { foreach (var k in KEYS) PlayerPrefs.DeleteKey(PREF + k); MechanicSplash.ResetAll(); BoosterIntro.ResetAll(); PlayerPrefs.Save();   /* 11-06: booster intros too - they never replayed after a reset */ WDLog.Log("[Tut] all beats + splashes reset"); }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -149,8 +149,126 @@ namespace WordDrop
             var window = new List<Vector2Int>(wordCells);
             if (!window.Contains(a)) window.Add(a);
             if (!window.Contains(b)) window.Add(b);
+            // 11-20 MOVE BEAT (tiles stay; three testers "didn't know what to do"): the first guided move makes NO word - the
+            // lesson letter starts one cell further away and the player slides it next to the word. Then this beat runs again
+            // ("Slide again to spell X!"). No safe spot to park the letter -> the one-move lesson as before.
+            if (MOVE_BEAT && !HandManager.BOUNCE_NO_WORD && !Done("move") && TryParkTeachLetter(rules, from, to, wordCells, out var parked))
+            {
+                var w2 = new List<Vector2Int>(window); if (!w2.Contains(parked)) w2.Add(parked);
+                BeginForced("move", parked, from);
+                TutorialOverlay.Ensure().Show(w2, "Slide a letter to move it!", parked, from);
+                WDLog.Log($"[Tut] LEVEL 1: beat 'move' ({parked.x},{parked.y})->({from.x},{from.y}), then '{word}'");
+                return;
+            }
             BeginForced("swap", a, b);
-            TutorialOverlay.Ensure().Show(window, $"Slide to spell {word}!"   /* 11-06 balanced lines: 472 / WORD / 501 */, from, to);
+            TutorialOverlay.Ensure().Show(window, s_afterMove ? $"Slide again to spell {word}!" : $"Slide to spell {word}!"   /* 11-06 balanced lines: 472 / WORD / 501 */, from, to);
+            s_afterMove = false;
+        }
+
+        // ── 11-20 HINT LESSON (Spencer's boss played L1 without knowing the leaning tile was a hint): the FIRST time a free hint
+        // leans, the board dims around it with one line. Only that swap goes through; the tile keeps leaning. Once per install
+        // (key "hint"). The usual watchdog releases it if the board changes under it. HINT_BEAT = false: off. ──
+        public static bool HINT_BEAT = true;
+        public static bool HintBeatUp => s_active && s_key == "hint";
+        public static void OnFreeHintShown(Vector2Int a, Vector2Int b, List<Vector2Int> cells, bool moverIsB)
+        {
+            if (!NEW_TUTORIAL || !HINT_BEAT || Instance == null || s_active || Pending || Done("hint")) return;
+            if (Instance._tipUntil > 0f || Instance._useUntil > 0f || !SurvivalManager.FullBoardActive || SurvivalManager.AwaitingNextLevel) return;
+            if (BoosterIntro.Running || BoosterIntro.Pending || cells == null) return;
+            var window = new List<Vector2Int>(cells);
+            if (!window.Contains(a)) window.Add(a);
+            if (!window.Contains(b)) window.Add(b);
+            s_active = true; s_key = "hint"; s_allowA = a; s_allowB = b;   // not BeginForced: that resets the idle timer and the hint would stop
+            TutorialOverlay.Ensure().Show(window, "Stuck? Follow the nudge!", moverIsB ? b : a, moverIsB ? a : b);
+            WDLog.Log($"[Tut] beat 'hint' on ({a.x},{a.y})<->({b.x},{b.y})");
+        }
+
+        // ── 11-20 WILD LESSON (testers: "didnt know til level 7 that you can move the power ups"; "I end up just moving the
+        // powerups"). Once the rocket lessons are done, the first time a power-up sits one slide away from a word that runs
+        // through the cell it moves INTO, that slide becomes a forced beat. Checked twice a second on an idle board, twice in a
+        // row before it shows. Dynamite is skipped (it cannot be moved). Once per install (key "wild"). WILD_BEAT = false: off. ──
+        public static bool WILD_BEAT = true;
+        private float _wildAt; private int _wildSeen; private Vector2Int _wildA, _wildB;
+        private void WatchForWildLesson()
+        {
+            if (!WILD_BEAT || !NEW_TUTORIAL || Time.unscaledTime < _wildAt) return;
+            _wildAt = Time.unscaledTime + 0.5f;
+            if (Done("wild") || !Done("use") || s_active || Pending || _tipUntil > 0f || !SurvivalManager.FullBoardActive || SurvivalManager.AwaitingNextLevel
+                || BoosterIntro.Running || BoosterIntro.Pending || !BoardIdle() || (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard)) { _wildSeen = 0; return; }
+            var sm = SurvivalManager.Instance; var rules = RulesEngine.Instance;
+            if (sm == null || rules == null || sm.IsOverlayPaused || LevelRules.For(LevelMapPanel.RunLevel(sm.CurrentStageIndex)).Bonus) { _wildSeen = 0; return; }
+            for (int x = 0; x < RulesEngine.COLS; x++)
+                for (int y = 0; y < RulesEngine.LEVEL_ROWS; y++)
+                {
+                    var c = rules.GetCell(x, y);
+                    if (c == null || c.SpecialKind == RulesEngine.SPECIAL_NONE || c.SpecialKind == RulesEngine.SPECIAL_TNT || c.IsFrozen) continue;
+                    var a = new Vector2Int(x, y);
+                    foreach (var d in s_dirs4)
+                    {
+                        var b = a + d; var cb = rules.GetCell(b.x, b.y);
+                        if (!PlainLetter(cb)) continue;
+                        foreach (var w in rules.WordsIfSwapped(a, b))
+                        {
+                            if (w.Cells == null || !w.Cells.Contains(b)) continue;   // the word must run through where the power-up lands
+                            if (_wildSeen > 0 && _wildA == a && _wildB == b)
+                            {
+                                var window = new List<Vector2Int>(w.Cells); if (!window.Contains(a)) window.Add(a);
+                                BeginForced("wild", a, b);
+                                TutorialOverlay.Ensure().Show(window, "Power-ups are wild! Slide one into a word!", a, b);
+                                WDLog.Log($"[Tut] beat 'wild': power-up kind {c.SpecialKind} ({a.x},{a.y})->({b.x},{b.y}) makes '{w.Word}'");
+                                _wildSeen = 0;
+                                return;
+                            }
+                            _wildSeen = 1; _wildA = a; _wildB = b;
+                            return;
+                        }
+                    }
+                }
+            _wildSeen = 0;
+        }
+
+        public static bool MOVE_BEAT = true;
+        private static bool s_afterMove;
+        private static readonly Vector2Int[] s_dirs4 = { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) };
+        private static bool PlainLetter(RulesCellData c) => c != null && !c.IsStone && !c.IsFrozen && !c.HasGem && !c.IsRainGold && !c.IsWild && !c.IsDropTarget && c.SpecialKind == RulesEngine.SPECIAL_NONE;
+        /// <summary>Moves the lesson's letter from <paramref name="from"/> to a neighbour (letters trade places, board redrawn) so that
+        /// sliding it back is a move that makes no word. False = nothing changed.</summary>
+        private static bool TryParkTeachLetter(RulesEngine rules, Vector2Int from, Vector2Int to, List<Vector2Int> wordCells, out Vector2Int parked)
+        {
+            parked = default;
+            var grid = GridManager.Instance;
+            if (grid == null || wordCells == null || wordCells.Contains(from)) { WDLog.Log($"[Tut] move beat: no park - lesson letter ({from.x},{from.y}) is inside the word"); return false; }
+            var cf = rules.GetCell(from.x, from.y);
+            if (!PlainLetter(cf) || grid.GetTile(from.x, from.y) == null) { WDLog.Log($"[Tut] move beat: no park - lesson letter ({from.x},{from.y}) is not a plain tile ({DescribeCell(cf)})"); return false; }
+            foreach (var d in s_dirs4)
+            {
+                var c = from + d;
+                if (c == to || wordCells.Contains(c) || grid.GetTile(c.x, c.y) == null) continue;
+                var cc = rules.GetCell(c.x, c.y);
+                if (!PlainLetter(cc) || cc.Letter == cf.Letter) { WDLog.Log($"[Tut] move beat: ({c.x},{c.y}) rejected - {DescribeCell(cc)}"); continue; }
+                var w1 = rules.WordsIfSwapped(c, from);
+                if (w1.Count != 0) { WDLog.Log($"[Tut] move beat: ({c.x},{c.y}) rejected - parking there makes '{w1[0].Word}'"); continue; }   // the parked board must not hold a word here
+                char t = cc.Letter; cc.Letter = cf.Letter; cf.Letter = t;           // park it
+                var w2 = rules.WordsIfSwapped(c, from);                              // sliding it back must make no word
+                if (w2.Count != 0) { t = cc.Letter; cc.Letter = cf.Letter; cf.Letter = t; WDLog.Log($"[Tut] move beat: ({c.x},{c.y}) rejected - sliding back makes '{w2[0].Word}'"); continue; }
+                grid.SyncToRulesState(rules);
+                parked = c;
+                return true;
+            }
+            return false;
+        }
+        private static string DescribeCell(RulesCellData c) => c == null ? "no cell" : $"'{c.Letter}' stone={c.IsStone} ice={c.IsFrozen} gem={c.HasGem} gold={c.IsRainGold} wild={c.IsWild} drop={c.IsDropTarget} special={c.SpecialKind}";
+        private IEnumerator AfterMoveBeat()
+        {
+            s_pendingSince = Time.unscaledTime;   // no free moves between the two steps
+            yield return new WaitForSeconds(0.3f);
+            float waited = 0f;
+            while (!BoardIdle() && waited < 8f) { waited += Time.deltaTime; yield return null; }
+            s_pendingSince = -1f;
+            if (SurvivalManager.AwaitingNextLevel || Done("swap")) yield break;
+            s_afterMove = true;
+            BeatSwap();
+            s_afterMove = false;
         }
 
         // ── L2: SWIPE — words already on the board are claimed by swiping across them (2026-10-23 Spencer). The level build
@@ -360,6 +478,7 @@ namespace WordDrop
             OwlPortrait.Play(key == "swap" ? "proud" : "happy");   // 11-01: lesson done
             WDLog.Log($"[Tut] beat '{key}' done");
             // 11-17: the FIRST power-up lesson (rocket) has a second step - how to fire one. Taught once; bomb / orb / tome just get made.
+            if (key == "move") { Instance.StartCoroutine(Instance.AfterMoveBeat()); return; }   // 11-20: step 2 of the L1 lesson
             if (key == "rocket" && USE_BEAT && !Done("use")) Instance.StartCoroutine(Instance.UseBeat());
             // 11-16: L1 beat 2 - the gem word (a gem only counts when the word runs THROUGH it); falls back to the goal tip
             if (key == "swap") Instance.StartCoroutine(LevelRules.HasGemGoal && !RulesEngine.GEM_ADJACENT_COLLECT && !Done("gem") ? Instance.GemBeat() : Instance.GoalTip());
@@ -477,6 +596,7 @@ namespace WordDrop
             {
                 var d = rules.GetCell(s_allowA.x, s_allowA.y); ok = d != null && d.SpecialKind != RulesEngine.SPECIAL_NONE;
             }
+            else if (s_key == "move") ok = true;   // 11-20: this step makes no word on purpose; both tiles are plain and nothing else can move them
             else if (s_allowA.x >= 0 && s_allowB.x >= 0) ok = rules.WordsIfSwapped(s_allowA, s_allowB).Count > 0;
             if (ok) { _goneFor = 0f; return; }
             _goneFor += 0.5f;
@@ -494,6 +614,7 @@ namespace WordDrop
         {
             if (_useUntil > 0f && s_active && s_key == "use" && Time.unscaledTime > _useUntil) EndUse("timed out - let go");
             WatchLesson();
+            WatchForWildLesson();
             if (_tipUntil > 0f && Time.unscaledTime > _tipUntil) EndTip();
             else if (_tapCloseAfter > 0f && Time.unscaledTime > _tapCloseAfter && WDInput.GetMouseButtonDown(0)) EndTip();   // show-and-tell tips close on a tap
             // Leaving the level mid-beat (quit, map, lose) must never strand the dim or the input lock.

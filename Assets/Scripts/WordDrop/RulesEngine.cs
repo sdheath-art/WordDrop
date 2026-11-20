@@ -2168,6 +2168,7 @@ namespace WordDrop
         // ROUND 2 (2026-10-21): still "any exchange i make creates a word" — 17 of 19 swaps. Simulated 2,400 random swaps on
         // full boards: 3+ letters 54% hit, 4+ letters 12%. So in full-board mode EVERY word is 4+ (FULL_MIN_LEN), swaps and
         // swipes included. FULL_SHORT_BY_SWAP = true brings back round 1 (3-letter words allowed when the swap makes them).
+        public static bool ONE_SPECIAL_PER_STEP = true;   // 11-20: false = every word in an explosion can make its own power-up
         public static int  FULL_MIN_LEN      = 4;
         public static bool FULL_SHORT_BY_SWAP = false;
         // Words the FALL makes must also be COMMON (Resources/common_words.txt = common-words sweep ∩ core, ~4.7k words).
@@ -2204,7 +2205,7 @@ namespace WordDrop
         /// <summary>One-shot: the next tap detonation seeds EVERY armed word (the bonus blast fires all its specials in one
         /// detonation, no gaps). Consumed by BeginTapDetonation.</summary>
         public static bool SeedAllOnNextTap;
-        public struct SpecialFire { public Vector2Int Cell; public int Kind; public char Letter; public string Word; public List<Vector2Int> Cleared; public Vector2Int Target; public float Delay; public List<Vector2Int> Gold; }   // Gold: gold coin tiles this blast took (Gold Rush, 10-30)   // Target: airplane only; Delay: extra launch delay (airplane combo, 2026-10-28)
+        public struct SpecialFire { public List<Vector2Int> Ice;   /* 11-20: frozen tiles this blast destroyed (ice shards) */ public Vector2Int Cell; public int Kind; public char Letter; public string Word; public List<Vector2Int> Cleared; public Vector2Int Target; public float Delay; public List<Vector2Int> Gold; }   // Gold: gold coin tiles this blast took (Gold Rush, 10-30)   // Target: airplane only; Delay: extra launch delay (airplane combo, 2026-10-28)
         // ── POWER-UPS ARE WILD (2026-11-03, Spencer: drop the letter badge so power-ups read cleanly, "these letters count as wilds if
         // they make words"; Claude's limit, Spencer "ok lets try it": ONE wild per word so word-spotting stays the skill).
         // A power-up cell reads as '?' in every word scan (auto scanners + swipes); a word with exactly one '?' is valid if any letter
@@ -5796,7 +5797,21 @@ namespace WordDrop
             var saved = new Dictionary<Vector2Int, char>();
             void Set(Vector2Int c, char l) { if (!saved.ContainsKey(c)) saved[c] = _board[c.x, c.y].Letter; Put(c, l); }
             void Undo() { foreach (var kv in saved) Put(kv.Key, kv.Value); saved.Clear(); }
-            bool Standing(IEnumerable<Vector2Int> cs) { foreach (var c in cs) if (FindNewWords(c.x, c.y).Count > 0) return true; return false; }
+            string standWhat = null; int standLogged = 0;   // TEMP DIAG 11-20: which word blocks the tome lesson on L10
+            bool Standing(IEnumerable<Vector2Int> cs) { foreach (var c in cs) { var fw = FindNewWords(c.x, c.y); if (fw.Count > 0) { standWhat = $"'{fw[0].Word}' through ({c.x},{c.y}) cells {fw[0].CellKey}"; return true; } } return false; }
+            // 11-20 TOME LESSON never showed on L10: FindNewWords(c) also returns a word lying elsewhere in c's row / column. An old
+            // word in column 2 ('USED', cells (2,2)-(2,5)) blocked every placement, and the tome layout is 7 cells wide on a 7-wide
+            // board, so every placement crossed that column. For the tome only: a word counts as standing if it uses a planted cell.
+            bool StandingOnPlant(List<Vector2Int> cs)
+            {
+                foreach (var c in cs)
+                    foreach (var w in FindNewWords(c.x, c.y))
+                    {
+                        if (w.Cells == null) continue;
+                        foreach (var wc in w.Cells) if (cs.Contains(wc)) { standWhat = $"'{w.Word}' cells {w.CellKey}"; return true; }
+                    }
+                return false;
+            }
             var H = new Vector2Int(1, 0); var V = new Vector2Int(0, -1);
             List<Vector2Int> Line(Vector2Int p0, Vector2Int dir, int n) { var l = new List<Vector2Int>(); for (int i = 0; i < n; i++) { var c = p0 + dir * i; if (!Plain(c)) return null; l.Add(c); } return l; }
             var origins = new List<Vector2Int>();
@@ -5863,7 +5878,7 @@ namespace WordDrop
                     foreach (var dirA in new[] { H, V }) foreach (bool flip in new[] { false, true })
                     {
                         var dirB = dirA.x != 0 ? V : H;
-                        for (int tries = 0; tries < 8; tries++)
+                        for (int tries = 0; tries < (bomb ? 8 : 24); tries++)   // 11-20: the tome has few slots that fit, so each gets more word pairs
                         {
                             List<Vector2Int> A, B; Vector2Int from, to; string wa, wb;
                             if (bomb)
@@ -5904,7 +5919,7 @@ namespace WordDrop
                             for (int fi = 0; fi < (bomb ? FILL.Length : 1) && !ok; fi++)
                             {
                                 if (bomb) { char fl = FILL[(fi + p0.x + p0.y) % FILL.Length]; if (fl == Get(from)) continue; Put(to, fl); }
-                                if (Standing(all)) { nStand++; continue; }
+                                if (bomb ? Standing(all) : StandingOnPlant(all)) { nStand++; if (!Simulating && !bomb && standLogged++ < 8) WDLog.Log($"[Teach] {kind} try '{wa}'+'{wb}' at ({from.x},{from.y})<->({to.x},{to.y}): standing {standWhat}"); continue; }
                                 bool ha = false, hb = false, stray = false;
                                 foreach (var m in WordsIfSwapped(from, to))
                                 {
@@ -8187,6 +8202,33 @@ namespace WordDrop
                         if (InBounds(tc.x, tc.y) && _board[tc.x, tc.y] != null && _board[tc.x, tc.y].SpecialKind == SPECIAL_AIRPLANE)
                         { AirplanePending = false; if (!Simulating) WDLog.Log($"[Airplane] not earned: '{tw.Word}' spent a Flying Tome in this swap"); break; }
                 }
+            // 11-20 ONE POWER-UP PER EXPLOSION (Spencer's screenshot: one move made a bomb AND a rocket stacked beside a firing
+            // dynamite - "should we make a rule that only one power up can be formed from an explosion?"). When the words popping
+            // in this step would earn more than one, only the best is made: orb > bomb > rocket; the swap's Flying Tome is dropped
+            // too if a better one is earned. A later chain step is its own explosion. Ranked here with the same tests the loop
+            // below uses, before any word resolves. Not on the bonus level (its payout was tuned with the old rule).
+            int onlySpecialFor = int.MinValue;
+            if (ONE_SPECIAL_PER_STEP && SurvivalManager.FullBoardActive && SpecialTilesActive && !LevelRules.BonusLevelActive)
+            {
+                int bestRank = 0;
+                for (int i = 0; i < _stepPendingTriggers.Count; i++)
+                {
+                    var qw = _primedRegistry.GetById(_stepPendingTriggers[i]);
+                    if (qw == null || qw.Word == null || qw.Cells == null) continue;
+                    bool fires = false; bool crosses = false;
+                    foreach (var qc in qw.Cells)
+                    {
+                        if (InBounds(qc.x, qc.y) && _board[qc.x, qc.y] != null && _board[qc.x, qc.y].SpecialKind != SPECIAL_NONE) fires = true;
+                        if (qw.Word.Length < 6 && crossUse.TryGetValue(qc, out int qn) && qn >= 2) crosses = true;
+                    }
+                    if (fires) continue;
+                    int qBonus = (DRAG_REWARD && SwipedPrimedIds.Contains(qw.Id)) ? DRAG_SPECIAL_BONUS : 0;
+                    int qLen = qw.Word.Length + qBonus;
+                    if (!((qLen >= 5 && qw.Cells.Count + qBonus >= 5) || crosses)) continue;
+                    int rank = qLen >= 6 ? 3 : crosses ? 2 : 1;
+                    if (rank > bestRank) { bestRank = rank; onlySpecialFor = qw.Id; }
+                }
+            }
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
             {
                 int pid = _stepPendingTriggers[i];
@@ -8267,6 +8309,11 @@ namespace WordDrop
                         if (sd == null || sd.IsFrozen || sd.IsDropTarget || sd.SpecialKind != SPECIAL_NONE || specialSurvivors.Contains(sc)) continue;
                         specialKind = SPECIAL_AIRPLANE; specialAt = sc; AirplanePending = false; break;
                     }
+                if (onlySpecialFor != int.MinValue && pw.Id != onlySpecialFor && specialKind != SPECIAL_NONE)
+                {
+                    if (!Simulating) WDLog.Log($"[Special] one per explosion: '{pw.Word}' would have made {SpecialName(specialKind)} - skipped");
+                    specialKind = SPECIAL_NONE; specialAt = new Vector2Int(-1, -1);
+                }
 
                 for (int c = 0; c < pw.Cells.Count; c++)
                 {
@@ -8519,7 +8566,7 @@ namespace WordDrop
                             // A special's blast takes ICE too (2026-10-21 Spencer: a rocket on the ice level left frozen tiles in its
                             // row — "it should destroy the whole row"). Candy Crush / Royal Match specials break blockers in their
                             // path; the "only a word melts ice" rule stays for ordinary splash. Pays the ice bounty.
-                            if (d.IsFrozen) { _stepTotalScore += ICE_BOUNTY; d.IsFrozen = false; }   // destroyed, not thawed — no defrost anim on a dying tile
+                            if (d.IsFrozen) { _stepTotalScore += ICE_BOUNTY; d.IsFrozen = false; (f.Ice ??= new List<Vector2Int>()).Add(p); }   // destroyed, not thawed — no defrost anim on a dying tile
                             if (d.SpecialKind != SPECIAL_NONE) specialQueue.Enqueue(new SpecialFire { Cell = p, Kind = d.SpecialKind, Letter = d.Letter });
                             if (d.IsRainGold && LevelRules.BonusLevelActive) (f.Gold ??= new List<Vector2Int>()).Add(p);   // GOLD RUSH coin tile
                             _board[p.x, p.y] = null;

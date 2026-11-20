@@ -223,7 +223,7 @@ namespace WordDrop
                 }
                 else deadStreak = 0;
                 // NO WORDS -> SHUFFLE (2026-10-30): the game re-deals the plain letters when no swap makes a common word
-                if (HandManager.BOUNCE_NO_WORD && BoardShuffle.ON && sim.CountCommonWordSwaps() < BoardShuffle.SHUFFLE_BELOW)
+                if (BoardShuffle.ON && sim.CountCommonWordSwaps() < BoardShuffle.SHUFFLE_BELOW)   // 11-20: the game shuffles a stuck board under either swap rule
                     { sim.ShuffleForWords(BoardShuffle.TARGET_SWAPS, s_shuffleRng); res.shuffles++; }
                 var cands = sim.EnumerateWordSwaps(casual && CASUAL_COMMON_ONLY);   // casual: only words a person would spot
                 if (casual) { res.turns++; int common = CASUAL_COMMON_ONLY ? cands.Count : sim.EnumerateWordSwaps(true).Count; res.commonSum += common; if (common < STALE_BELOW) res.staleTurns++; }

@@ -188,6 +188,7 @@ namespace WordDrop
             line.fontSize = CvFont(38f * CV_BODY_K); HUDManager.ApplyRecipeCount(line, LevelIntroModal.V2_TITLE_EDGE_RK, 0.12f, -0.6f);
             CvPlace(line.rectTransform, CV_W / 2f, CV_LINE_Y, CV_W - 80f, 70f);
             _v2ContinueOnly.Add(line.gameObject);
+            _v2LineCG = line.gameObject.AddComponent<CanvasGroup>(); _v2LineCG.blocksRaycasts = false;   // 11-20: fades in with the rest (was visible while the card dropped)
 
             // buttons: the Level card's Play art; clicks go to the old handlers (the old buttons are hidden, not removed)
             _playArt = ArtButton.Create(_cardV2, "pill_play", "Play On" + COIN_GAP + "50", lilita: false, titleMedium: false);
@@ -227,6 +228,7 @@ namespace WordDrop
             // "You will lose a life!" - broken heart + one line
             var life = CvNode("LoseLife", _cardV2);
             _v2ContinueOnly.Add(life.gameObject);
+            _v2LifeCG = life.gameObject.AddComponent<CanvasGroup>(); _v2LifeCG.blocksRaycasts = false;
             CvPlace(life, CV_W / 2f, CV_LIFE_Y, 700f, 80f);
             var heartSp = LoadHeart("heart_broken");
             var lifeTxt = CvNode("Text", life, typeof(TextMeshProUGUI)).GetComponent<TextMeshProUGUI>();
@@ -258,6 +260,7 @@ namespace WordDrop
         private Image _retryCoin; private string _retryCoinFor; private float _retryCoinSize = -1f;
         private RectTransform _failGroup; private ArtButton _retryArt; private TextMeshProUGUI _failText;
         private readonly System.Collections.Generic.List<GameObject> _v2ContinueOnly = new System.Collections.Generic.List<GameObject>();
+        private CanvasGroup _v2LineCG, _v2LifeCG;   // 11-20 Spencer: "make these words pop onto the screen with everything else" - "Get +5 moves to finish!" and "You will lose a life!"
         private Image[] _lifeRow;
         public static bool HEART_SOCKETS = true; private bool _hasSockets;
         private const float FAIL_H = 940f, FAIL_HEARTS_Y = 570f, FAIL_BTN_Y = 755f;
@@ -1060,6 +1063,8 @@ namespace WordDrop
             if (_adButtonCG       != null) _adButtonCG.alpha       = 0f;
             if (_giveUpButtonCG   != null) _giveUpButtonCG.alpha   = 0f;
             if (_coinDisplayCG    != null) _coinDisplayCG.alpha    = 0f;
+            if (_v2LineCG != null) { _v2LineCG.DOKill(); _v2LineCG.alpha = 0f; }
+            if (_v2LifeCG != null) { _v2LifeCG.DOKill(); _v2LifeCG.alpha = 0f; }
 
             _canvas.gameObject.SetActive(true);
             // Continue-modal entry sting per Spencer 2026-06-01. Distinct
@@ -1127,6 +1132,7 @@ namespace WordDrop
             {
                 FadeInText(_bodyText, CHILD_FADE_DUR);
                 if (_objectiveIconCG != null) _objectiveIconCG.DOFade(1f, CHILD_FADE_DUR);
+                FadeInCanvasGroup(_v2LineCG, CHILD_FADE_DUR);
             });
             seq.AppendInterval(STAGGER);
             seq.AppendCallback(() =>
@@ -1141,7 +1147,7 @@ namespace WordDrop
                 StartButtonPulse(_adButtonGO);
             });
             seq.AppendInterval(STAGGER);
-            seq.AppendCallback(() => FadeInCanvasGroup(_giveUpButtonCG, CHILD_FADE_DUR));
+            seq.AppendCallback(() => { FadeInCanvasGroup(_giveUpButtonCG, CHILD_FADE_DUR); FadeInCanvasGroup(_v2LifeCG, CHILD_FADE_DUR); });
             seq.AppendInterval(STAGGER);
             seq.AppendCallback(() => FadeInCanvasGroup(_coinDisplayCG, CHILD_FADE_DUR));
 

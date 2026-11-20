@@ -1302,6 +1302,25 @@ namespace WordDrop
             var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = sp; sr.sortingOrder = order; sr.color = c;
             return sr;
         }
+        // 11-20 ICE SHARDS (Spencer: "no ice debris falling" when a rocket breaks ice): pale blue chunks thrown up and out, tumbling
+        // and falling, from the blast's own chunk art. First pass - sizes, count and colour are knobs.
+        public static int   ICE_SHARDS = 9;
+        public static Color ICE_SHARD_COLOR = new Color(0.62f, 0.86f, 1f, 0.95f), ICE_SHARD_LIGHT = new Color(0.90f, 0.97f, 1f, 0.95f);   // the frost art's blue / its highlights
+        public void PlayIceShatter(Vector3 pos)
+        {
+            // plain white squares tinted ice colours (the cream chunk art cannot be tinted blue)
+            if (s_blastSquare == null) s_blastSquare = Sprite.Create(Texture2D.whiteTexture, new Rect(0, 0, Texture2D.whiteTexture.width, Texture2D.whiteTexture.height), new Vector2(0.5f, 0.5f), Texture2D.whiteTexture.width);
+            var ch = s_blastSquare;
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 1f;
+            for (int i = 0; i < ICE_SHARDS; i++)
+            {
+                Vector2 d = Random.insideUnitCircle.normalized; float sz = cell * Random.Range(0.10f, 0.22f);
+                var sr = BlastQuad("IceShard", ch, pos + (Vector3)(d * cell * Random.Range(0.05f, 0.30f)), sz, 51, i % 3 == 0 ? ICE_SHARD_LIGHT : ICE_SHARD_COLOR);
+                sr.transform.Rotate(0f, 0f, Random.Range(0f, 360f));
+                Vector3 v = new Vector3(d.x * Random.Range(1.5f, 3.5f), d.y * Random.Range(1f, 2.5f) + Random.Range(1.5f, 3.5f), 0f) * cell;
+                StartCoroutine(BlastBit(sr, v, 26f * cell, Random.Range(-540f, 540f), Random.Range(0.55f, 0.80f), 0.7f, sz, sz * 0.8f, 1f));
+            }
+        }
         /// <summary>One flying / drifting piece: moves by vel (+ gravity), spins, scales s0 -> s1, fades out over the last part of its life.</summary>
         private System.Collections.IEnumerator BlastBit(SpriteRenderer sr, Vector3 vel, float gravity, float spin, float life, float fadeFrom, float s0, float s1, float alpha)
         {

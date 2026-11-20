@@ -317,6 +317,15 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            // TEST RULES (11-19, tester #3: "once you move a piece, it stays there"). Live switches so Spencer can compare in one
+            // session. Defaults in HandManager are unchanged - these only last until play stops.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"RULE: tiles STAY where moved: {(HandManager.BOUNCE_NO_WORD ? "OFF (bounce back)" : "ON (costs a move)")}", _btnStyle))
+                HandManager.BOUNCE_NO_WORD = !HandManager.BOUNCE_NO_WORD;
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"RULE: read beat before pop: {(HandManager.READ_BEAT ? "ON" : "OFF")}", _btnStyle))
+                HandManager.READ_BEAT = !HandManager.READ_BEAT;
+            innerY += BTN_H + GAP;
+
             // TEMP (11-04): watch the crate slide slowly (Spencer saw a letter "thread between a crate in a very odd pattern")
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"FALL SLOW-MO: x{GridManager.FALL_SLOWMO:0}  (tap to toggle x4)", _btnStyle))
                 GridManager.FALL_SLOWMO = GridManager.FALL_SLOWMO > 1f ? 1f : 4f;

@@ -68,7 +68,7 @@ public static class AnalyticsManager
             if (eventName == "stage_clear" || eventName == "stage_fail")
             {
                 sb.Append($" bounces={PlaythroughStats.Bounces} shuffles={PlaythroughStats.Shuffles} refreshes={PlaythroughStats.Refreshes} free_hints={PlaythroughStats.FreeHints} spyglass={PlaythroughStats.Spyglass}");
-                sb.Append($" think_sec={PlaythroughStats.ThinkSec:0} busy_sec={PlaythroughStats.BusySec:0}");   // 11-04 pace
+                sb.Append($" think_sec={PlaythroughStats.ThinkSec:0} busy_sec={PlaythroughStats.BusySec:0} no_word_moves={PlaythroughStats.NoWordMoves} stay={(PlaythroughStats.StayRule ? 1 : 0)}");   // 11-04 pace
                 PlaythroughStats.Reset();
             }
 #if UNITY_EDITOR
@@ -258,12 +258,13 @@ public static class AnalyticsManager
 /// <summary>Per-attempt counters for the playthrough log (reset after each stage_clear / stage_fail line).</summary>
 public static class PlaythroughStats
 {
-    public static int Bounces, Shuffles, Refreshes, FreeHints, Spyglass;
+    public static int Bounces, Shuffles, Refreshes, FreeHints, Spyglass, NoWordMoves;   // NoWordMoves (11-20): swaps that STAYED, cost a move and made no word (tiles-stay rule)
     // 11-04 PACE (Spencer: "i was pretty bored through it but i dont know if it was the game or me"; his run measured ~12 s per move).
     // THINK = board idle until the player commits a move; BUSY = from the move until the board is idle again (animations, cascades).
     public static float ThinkSec, BusySec;
+    public static bool StayRule;   // set by HandManager each swap: the tiles-stay rule was on (this assembly cannot see HandManager)
     private static float s_moveAt = -1f, s_idleAt = -1f;
-    public static void Reset() { Bounces = Shuffles = Refreshes = FreeHints = Spyglass = 0; ThinkSec = BusySec = 0f; s_moveAt = -1f; s_idleAt = -1f; }
+    public static void Reset() { Bounces = Shuffles = Refreshes = FreeHints = Spyglass = NoWordMoves = 0; ThinkSec = BusySec = 0f; s_moveAt = -1f; s_idleAt = -1f; }
     /// <summary>The player committed a move (swap / swipe).</summary>
     public static void MoveCommitted()
     {

@@ -305,7 +305,7 @@ namespace WordDrop
             var sm = SurvivalManager.Instance;
             if (sm == null || !SurvivalManager.IsSurvivalMode) { GateDiag("no survival run"); return false; }
             if (SurvivalManager.AwaitingNextLevel) { GateDiag("level won / awaiting next"); return false; }
-            if (TutorialBeats.BlocksInput) { GateDiag("tutorial beat"); return false; }
+            if (TutorialBeats.BlocksInput && !TutorialBeats.HintBeatUp) { GateDiag("tutorial beat"); return false; }   // 11-20: the hint lesson keeps its own hint leaning
             if (sm.IsOverlayPaused) { GateDiag("overlay paused"); return false; }
             if (LevelMapPanel.Instance != null && LevelMapPanel.Instance.BlocksBoard) { GateDiag("map/home on screen"); return false; }
             if (StageClearModal.Instance != null && StageClearModal.Instance.IsVisible) { GateDiag("stage clear modal"); return false; }
@@ -605,6 +605,7 @@ namespace WordDrop
             if (showWord) { EnsureOutline(); if (_outline != null) _outline.Show(cells); }
             if (_strongHint) PlaythroughStats.Spyglass++; else PlaythroughStats.FreeHints++;
             WDLog.Log($"[Hint] {(_strongHint ? "SPYGLASS" : "free")} swap ({a.x},{a.y})<->({b.x},{b.y}) {cells.Count}-letter word, outline={(showWord ? "on" : "not yet")}");
+            if (!_strongHint) TutorialBeats.OnFreeHintShown(a, b, cells, moverIsB);   // 11-20: the first free hint gets a one-line lesson
         }
         /// <summary>Empty space between two tiles' drawn edges along the axis joining them (0 if they meet or overlap).</summary>
         private static float TileGapAlong(Tile a, Tile b, Vector3 dir, float centreDist)
