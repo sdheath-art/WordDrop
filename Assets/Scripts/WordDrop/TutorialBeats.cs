@@ -32,6 +32,7 @@ namespace WordDrop
         private float _tapCloseAfter = -1f;   // 11-06 show-and-tell tips (shelf / safe): a tap after this time closes the tip
 
         private const string PREF = "tut2_";
+        public static bool GEM_TIP_SPOTLIGHT = true;   // 11-23: the L1 "Use gem letters..." line dims the board and lights the gem tiles. false: plain line as before
         public static bool Done(string key) => PlayerPrefs.GetInt(PREF + key, 0) == 1;
         private static void MarkDone(string key) { PlayerPrefs.SetInt(PREF + key, 1); PlayerPrefs.Save(); }
         public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "use", "move", "hint", "wild" };
@@ -517,9 +518,23 @@ namespace WordDrop
             while (!BoardIdle() && waited < 8f) { waited += Time.deltaTime; yield return null; }
             if (SurvivalManager.AwaitingNextLevel) yield break;
             string what = LevelRules.HasGemGoal ? "gems" : LevelRules.HasCrateGoal ? "crates" : null;
-            string text = what == "gems" ? "Collect all the gems!" : what == "crates" ? "Break all the crates!" : "Finish the goal to win!";   // 11-06 Spencer: cut to RM length
-            TutorialOverlay.Ensure().Show(null, text, new Vector2Int(-1, -1), new Vector2Int(-1, -1));
-            _tipUntil = Time.unscaledTime + 3.5f;
+            string text = what == "gems" ? "Use gem letters in words to collect them all!"   /* 11-23 Spencer's line (tester: "i cant tell what the strategy was") - states the RULE; was "Collect all the gems!" */ : what == "crates" ? "Break all the crates!" : "Finish the goal to win!";   // 11-06 Spencer: cut to RM length
+            // 11-23 (Spencer: "should there be something drawing their attention to these gems"): the board dims and only the gem
+            // tiles stay lit while the line is up (same look as the shelf / safe show-and-tell; no hand, a tap closes it).
+            List<Vector2Int> lit = null;
+            var rules = RulesEngine.Instance;
+            if (GEM_TIP_SPOTLIGHT && what == "gems" && rules != null)
+            {
+                lit = new List<Vector2Int>();
+                for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++)
+                { var d = rules.GetCell(x, y); if (d != null && d.HasGem) lit.Add(new Vector2Int(x, y)); }
+                if (lit.Count == 0) lit = null;
+                else _tapCloseAfter = Time.unscaledTime + TIP_TAP_GUARD;
+                WDLog.Log($"[Tut] goal tip lights {(lit == null ? 0 : lit.Count)} gem tile(s)");
+            }
+            TutorialOverlay.HolesOnlyNext = lit != null;   // scattered gems: light each tile, not the box around them all
+            TutorialOverlay.Ensure().Show(lit, text, new Vector2Int(-1, -1), new Vector2Int(-1, -1));
+            _tipUntil = Time.unscaledTime + (what == "gems" ? 5f : 3.5f);   // 11-23: the gem line is 9 words, give it time to be read
         }
         // ── 11-17 "USE IT" (RM L4: "Swipe the PROPELLER to see what it does!"). Right after the rocket lesson's swap the new rocket
         // sits on the board: it alone is lit and only a double-tap on it does anything ("Double-tap the ROCKET to fire it!").

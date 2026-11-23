@@ -72,6 +72,37 @@ namespace WordDrop
         // the board never dimmed in Spencer's first look — no masks now, nothing to go wrong: plain sprites, no overlaps.
         private Transform _follow;                       // rides GridManager.BoardSlideOffsetX every frame (board slides in)
         private readonly SpriteRenderer[] _rects = new SpriteRenderer[4];    // above, below, left, right
+        /// <summary>11-23 (Spencer: "the spotlight is on the whole board instead of just gems"): set true right before Show() and
+        /// the window is dimmed again everywhere EXCEPT the listed cells (square holes), for cells scattered over the board.
+        /// One-shot: Show() clears it.</summary>
+        public static bool HolesOnlyNext;
+        private readonly List<SpriteRenderer> _fill = new List<SpriteRenderer>();   // extra dim inside the window (HolesOnlyNext)
+        private int _fillUsed;
+        // 11-23 (Spencer: "hug up to the corners of the piece itself rather than showing the square board around it"): each lit
+        // cell is covered by a dim square with a rounded-rectangle hole the size of a tile.
+        public static float HOLE_SIZE = 0.93f;     // hole width/height in cells (a tile measures ~0.90 of a cell)
+        public static float HOLE_RADIUS = 0.20f;   // hole corner radius in cells
+        private readonly List<SpriteRenderer> _holes = new List<SpriteRenderer>();
+        private int _holesUsed;
+        private static Sprite s_hole; private static float s_holeSize, s_holeRadius;
+        private static Sprite HoleSprite()
+        {
+            if (s_hole != null && s_holeSize == HOLE_SIZE && s_holeRadius == HOLE_RADIUS) return s_hole;
+            const int N = 128;
+            var t = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            var px = new Color[N * N];
+            float h = HOLE_SIZE * 0.5f * N, r = Mathf.Min(HOLE_RADIUS * N, h);
+            for (int j = 0; j < N; j++) for (int i = 0; i < N; i++)
+            {
+                float dx = Mathf.Abs(i + 0.5f - N * 0.5f) - (h - r), dy = Mathf.Abs(j + 0.5f - N * 0.5f) - (h - r);
+                float d = new Vector2(Mathf.Max(dx, 0f), Mathf.Max(dy, 0f)).magnitude + Mathf.Min(Mathf.Max(dx, dy), 0f) - r;   // signed distance to the rounded rect, px
+                px[j * N + i] = new Color(1f, 1f, 1f, Mathf.Clamp01(d + 0.5f));   // dim outside, clear inside, 1 px soft edge
+            }
+            t.SetPixels(px); t.Apply();
+            s_hole = Sprite.Create(t, new Rect(0, 0, N, N), new Vector2(0.5f, 0.5f), N);
+            s_holeSize = HOLE_SIZE; s_holeRadius = HOLE_RADIUS;
+            return s_hole;
+        }
         private readonly SpriteRenderer[] _corners = new SpriteRenderer[4];  // TL, TR, BL, BR
         private static Sprite s_corner;
         private const int CORNER_PX = 64;
@@ -242,7 +273,12 @@ namespace WordDrop
             _bubble.gameObject.SetActive(on); _hand.enabled = on;
         }
 
-        private void SetDimVisible(bool on) { for (int i = 0; i < 4; i++) { _rects[i].enabled = on; _corners[i].enabled = on; } }
+        private void SetDimVisible(bool on)
+        {
+            for (int i = 0; i < 4; i++) { _rects[i].enabled = on; _corners[i].enabled = on; }
+            for (int i = 0; i < _fill.Count; i++) _fill[i].enabled = on && i < _fillUsed;
+            for (int i = 0; i < _holes.Count; i++) _holes[i].enabled = on && i < _holesUsed;
+        }
 
         private void LateUpdate()
         {
@@ -251,6 +287,8 @@ namespace WordDrop
             if (grid != null) _follow.position = new Vector3(grid.BoardSlideOffsetX, 0f, 0f);   // follow the board, always
             var c = DIM; c.a = _dimAlpha;
             for (int i = 0; i < 4; i++) { _rects[i].color = c; _corners[i].color = c; }
+            for (int i = 0; i < _fillUsed && i < _fill.Count; i++) _fill[i].color = c;
+            for (int i = 0; i < _holesUsed && i < _holes.Count; i++) _holes[i].color = c;
             _hudDim.color = c;
         }
 
@@ -276,6 +314,11 @@ namespace WordDrop
             IsShowing = true;
             SetAllVisible(true);
             bool dim = cells != null && cells.Count > 0;
+            bool holes = HolesOnlyNext && dim; HolesOnlyNext = false;
+            _fillUsed = 0;
+            for (int i = 0; i < _fill.Count; i++) _fill[i].enabled = false;   // a later plain lesson must not keep old holes
+            _holesUsed = 0;
+            for (int i = 0; i < _holes.Count; i++) _holes[i].enabled = false;
 
             // Positions are BOARD-LOCAL (no slide): _follow carries the slide every frame.
             float big = cam.orthographicSize * 4f + 20f;   // far past every screen edge
@@ -288,8 +331,16 @@ namespace WordDrop
                     Vector3 p = grid.CellToWorld(c.x, c.y);
                     minX = Mathf.Min(minX, p.x); maxX = Mathf.Max(maxX, p.x); minY = Mathf.Min(minY, p.y); maxY = Mathf.Max(maxY, p.y);
                 }
-                float pad = cs * WINDOW_PAD;
+                float pad = cs * (holes ? 0.5f : WINDOW_PAD);   // holes: the window is exactly the cells, every cell gets its own piece of dim
                 minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+                // 11-23 (Spencer's 07:30 screenshot: thin dark lines across the dimmed board): many dim pieces sit edge to edge, and
+                // an edge landing on the middle of a screen pixel got drawn by both neighbours. Every edge is moved onto a pixel
+                // boundary, so a rounding error can no longer tip a pixel into two pieces (or into none).
+                float upp = 2f * cam.orthographicSize / Mathf.Max(1, cam.pixelHeight);
+                float ox = cc.x - cam.orthographicSize * cam.aspect, oy = cc.y - cam.orthographicSize;
+                float SnapX(float w) => holes ? ox + Mathf.Round((w - ox) / upp) * upp : w;
+                float SnapY(float w) => holes ? oy + Mathf.Round((w - oy) / upp) * upp : w;
+                minX = SnapX(minX); maxX = SnapX(maxX); minY = SnapY(minY); maxY = SnapY(maxY);
                 float r = Mathf.Min(cs * 0.30f, (maxX - minX) * 0.5f, (maxY - minY) * 0.5f);
                 const float Z = -1f;
                 void Rect(SpriteRenderer sr, float x0, float y0, float x1, float y1)
@@ -301,6 +352,53 @@ namespace WordDrop
                 Vector3[] at = { new Vector3(minX + r * 0.5f, maxY - r * 0.5f, Z), new Vector3(maxX - r * 0.5f, maxY - r * 0.5f, Z),
                                  new Vector3(minX + r * 0.5f, minY + r * 0.5f, Z), new Vector3(maxX - r * 0.5f, minY + r * 0.5f, Z) };
                 for (int i = 0; i < 4; i++) { _corners[i].transform.localPosition = at[i]; _corners[i].transform.localScale = Vector3.one * r; }
+
+                if (holes)
+                {   // dim the window again, row by row, leaving a one-cell hole at each listed cell. Runs share exact edges with
+                    // each other and with the four outer rects (two see-through sprites overlapping would read darker).
+                    int cx0 = int.MaxValue, cx1 = int.MinValue, cy0 = int.MaxValue, cy1 = int.MinValue;
+                    var set = new HashSet<Vector2Int>(cells);
+                    foreach (var c in cells) { cx0 = Mathf.Min(cx0, c.x); cx1 = Mathf.Max(cx1, c.x); cy0 = Mathf.Min(cy0, c.y); cy1 = Mathf.Max(cy1, c.y); }
+                    float half = cs * 0.5f;
+                    for (int y = cy0; y <= cy1; y++)
+                    {
+                        // a shared edge is computed ONE way (the upper/right cell's near side), so both neighbours get the same number
+                        float lo = y == cy0 ? minY : SnapY(grid.CellToWorld(cx0, y).y - half);
+                        float hi = y == cy1 ? maxY : SnapY(grid.CellToWorld(cx0, y + 1).y - half);
+                        int x = cx0;
+                        while (x <= cx1)
+                        {
+                            if (set.Contains(new Vector2Int(x, y)))
+                            {
+                                if (_holesUsed >= _holes.Count)
+                                {
+                                    var hs = new GameObject("TutHole" + _holes.Count).AddComponent<SpriteRenderer>();
+                                    hs.transform.SetParent(_follow, false); hs.sortingOrder = SCRIM_ORDER; hs.color = _rects[0].color;
+                                    _holes.Add(hs);
+                                }
+                                var hole = _holes[_holesUsed++];
+                                hole.sprite = HoleSprite(); hole.enabled = true;
+                                float hl = x == cx0 ? minX : SnapX(grid.CellToWorld(x, y).x - half);
+                                float hr = x == cx1 ? maxX : SnapX(grid.CellToWorld(x + 1, y).x - half);
+                                Rect(hole, hl, lo, hr, hi);   // the sprite is 1 unit square: same edges as its neighbours
+                                x++; continue;
+                            }
+                            int x1 = x; while (x1 + 1 <= cx1 && !set.Contains(new Vector2Int(x1 + 1, y))) x1++;
+                            float l = x == cx0 ? minX : SnapX(grid.CellToWorld(x, y).x - half);
+                            float rr = x1 == cx1 ? maxX : SnapX(grid.CellToWorld(x1 + 1, y).x - half);
+                            if (_fillUsed >= _fill.Count)
+                            {
+                                var f = new GameObject("TutFill" + _fill.Count).AddComponent<SpriteRenderer>();
+                                f.transform.SetParent(_follow, false); f.sprite = s_white; f.sortingOrder = SCRIM_ORDER; f.color = _rects[0].color;
+                                _fill.Add(f);
+                            }
+                            Rect(_fill[_fillUsed++], l, lo, rr, hi);
+                            x = x1 + 1;
+                        }
+                    }
+                    for (int i = 0; i < 4; i++) _corners[i].enabled = false;   // the window's own rounded corners would sit on top of this dim (darker patches)
+                }
+                for (int i = 0; i < _fill.Count; i++) _fill[i].enabled = i < _fillUsed;
 
                 // ── HUD strip: from the board's top edge to the top of the screen ──
                 float boardTop = grid.CellToWorld(0, RulesEngine.ROWS - 1).y + cs * 0.75f;
@@ -347,6 +445,18 @@ namespace WordDrop
             float top = grid.CellToWorld(0, RulesEngine.ROWS - 1).y + cs * 0.5f;
             float by = maxY + cs * 0.25f + bubbleH * 0.5f;
             if (by + bubbleH * 0.5f > top) by = minY - cs * 0.25f - bubbleH * 0.5f;
+            if (holes)
+            {   // 11-23: scattered lit cells - the bubble sits over the highest band of rows with the fewest lit cells under it
+                // (it used to land wherever "above the window" fell and could cover a gem).
+                int span = Mathf.Max(1, Mathf.CeilToInt(bubbleH / cs)), bestRow = RulesEngine.ROWS - span, bestHits = int.MaxValue;
+                for (int y0 = RulesEngine.ROWS - span; y0 >= 0; y0--)
+                {
+                    int hits = 0;
+                    foreach (var c in cells) if (c.y >= y0 && c.y < y0 + span) hits++;
+                    if (hits < bestHits) { bestHits = hits; bestRow = y0; }
+                }
+                by = (grid.CellToWorld(0, bestRow).y + grid.CellToWorld(0, bestRow + span - 1).y) * 0.5f;
+            }
             float bx = grid.CellToWorld(RulesEngine.COLS / 2, 0).x;   // centred on the board (board-local), like RM
             _bubble.localPosition = new Vector3(bx, by, -1.2f);
             if (BUBBLE_GOLD)

@@ -241,7 +241,7 @@ namespace WordDrop
         {
             if (s_card != null) return;
             bool support = SHOW_DEAD_LINKS || !string.IsNullOrEmpty(SUPPORT_EMAIL);
-            int rows = (support ? 1 : 0) + 1;
+            int rows = (support ? 1 : 0) + 1 + (HELP_IN_HOME ? 1 : 0);
             const float ROW0 = 685f, ROW_STEP = 225f, BTN_H = 190f;
             float lastY = ROW0 + (rows - 1) * ROW_STEP;
             float CH = lastY + BTN_H / 2f + (SHOW_VERSION ? 130f : 70f);
@@ -268,6 +268,12 @@ namespace WordDrop
             }
 
             float y = ROW0;
+            if (HELP_IN_HOME)
+            {   // 11-23 Spencer: How to Play was only behind the gear inside a level - it belongs in the Settings screen too
+                var h = ArtButton.Create(card, "rect_map", "How to Play", lilita: false, titleMedium: false);
+                if (h != null) { SizeButton(h, CW / 2f, y, BTN_H, 373f); h.Button.onClick.AddListener(ShowHelpCard); }
+                y += ROW_STEP;
+            }
             if (support)
             {
                 var s = ArtButton.Create(card, "rect_map", "Support", lilita: false, titleMedium: false);
@@ -393,6 +399,7 @@ namespace WordDrop
         //  one row per thing: picture, name, one or two short lines. Rows the player has not met yet are hidden.
         // ═════════════════════════════════════════════════════════════════════════════════════════
         public static bool HELP_BUTTON = true;       // the ? in the gear's fly-out
+        public static bool HELP_IN_HOME = true;      // 11-23: a "How to Play" button on the home Settings card as well
         public static bool HELP_HIDE_UNMET = true;   // false = every row from level 1
         public static float HELP_BODY_CAP = 30f, HELP_TAB_CAP = 28f;   // pass 2: were 34 / 41 ("Power-ups" was wider than its tab); 4 tabs: 34 -> 28
         private static readonly Color HELP_Q_LINE = new Color32(22, 78, 10, 255);
@@ -474,9 +481,12 @@ namespace WordDrop
         {
             if (s_sub != null) return;
             if (s_flyout != null) s_flyout.SetActive(false);   // same as the Quit card: the card covers the fly-out's column
+            bool fromHome = s_flyout == null && s_card != null;   // 11-23: opened from the home Settings card, not from a level
+            if (fromHome) s_card.SetActive(false);                // one card at a time, like Terms & Privacy
             const float CH = 1590f, BOX_Y = 306f, BOX_H = 1159f, BW = CW - 140f;
             var card = BuildCard("HowToPlayCard", SORT_SUB, "How to Play", LevelIntroModal.V2_TITLE_CAP, CH, true, out s_sub, () =>
             {
+                if (fromHome) { CloseSub(null); return; }           // back to the Settings card; no level to un-pause
                 CloseSub(() => { CloseFlyout(); if (!s_quitting) SurvivalManager.Instance?.SetOverlayPaused(false); });
             });
             var box = CreamBox(card, BOX_Y, BOX_H);

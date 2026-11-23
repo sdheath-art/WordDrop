@@ -246,7 +246,8 @@ namespace WordDrop
             { "2spyglass", new Vector2(0f, 0.025f) },
         };
         private static Vector2 IconShift(string boosterId) { var f = BoosterIconFile(boosterId); return f != null && ART_ICON_SHIFT.TryGetValue(f, out var v) ? v : Vector2.zero; }
-        public static float BADGE_OUTLINE = 0.12f, BADGE_TEXT_MARGIN = 0.17f;   // 11-02: was outline 0.25 (closed the 9's counter), no margin
+        public static float BADGE_OUTLINE = 0.12f, BADGE_TEXT_MARGIN = 0.10f /* 11-23: 0.17 -> 0.14 -> 0.10, the ring is gone so 2-3 digits get the room */;
+        public static float BADGE_NUM = 0.74f;   // 11-23 Spencer: the badge number "a hair bigger" (was 0.62 of the badge; 0.67 = "seems the same to me")   // 11-02: was outline 0.25 (closed the 9's counter), no margin
         private static Sprite ButtonArt(string n) => Resources.Load<Sprite>("UI/Buttons/" + n);
         /// <summary>11-17: the settings gear's slot (SettingsV2 stacks its flyout above it). Null before the row is built.</summary>
         public RectTransform SettingsSlotRT
@@ -1222,11 +1223,11 @@ namespace WordDrop
                     if (badgeArt)
                     {   // cream number with a dark-green ink ring, like the button labels
                         float bd = slotSize * ART_BADGE_FRAC;
-                        _chargeBadges[i].fontSize = bd * 0.62f;
+                        _chargeBadges[i].fontSize = bd * BADGE_NUM;
                         // 11-02 (Spencer: "somethings going on with the numbers in the badge"): the 0.25 ink ring grew INTO the heavy
                         // glyphs and closed the counters (the 9's hole became a dot) -> BADGE_OUTLINE; and two digits (97) crowded the
                         // rim -> auto-size inside a side margin, so one digit keeps the full size and two digits shrink to fit.
-                        _chargeBadges[i].enableAutoSizing = true; _chargeBadges[i].fontSizeMax = bd * 0.62f; _chargeBadges[i].fontSizeMin = bd * 0.30f;
+                        _chargeBadges[i].enableAutoSizing = true; _chargeBadges[i].fontSizeMax = bd * BADGE_NUM; _chargeBadges[i].fontSizeMin = bd * 0.30f;
                         _chargeBadges[i].margin = new Vector4(bd * BADGE_TEXT_MARGIN, 0f, bd * BADGE_TEXT_MARGIN, 0f);
                         _chargeBadges[i].color = new Color32(0xFF, 0xF8, 0xD3, 0xFF);
                         _chargeBadges[i].outlineWidth = BADGE_OUTLINE;

@@ -322,7 +322,12 @@ namespace WordDrop
         // approximation of the mocked tier-1 gold (composition/library_home/goal_word_pop.png).
         public static bool  GOAL_WORD_GOLD = true;
         public static bool  NextPopGold; public static int NextPopLength;
-        public static float GOLD_POP_SCALE = 1.15f, LONG_POP_STEP = 0.10f;   // +10% size per letter past 4 (cap 3 steps)
+        // 11-23 (tester: "i cant tell what the strategy was"; Spencer picked mock A = gold, bigger, with the goal piece beside the
+        // word): the goal piece this word hit, drawn right after the word. null = no picture. ClusterOutline reads and clears it.
+        public static bool   GOAL_WORD_ICON = false;   // 11-23 Spencer after seeing it: "turn it back to the way it used to be but the word turns orange" - no picture
+        public static Sprite NextPopIcon;
+        public static float  GOAL_ICON_CAPS = 1.05f, GOAL_ICON_GAP = 0.10f;   // picture height / gap, in cap heights of the word
+        public static float GOLD_POP_SCALE = 1.00f /* 11-23: 1.15 -> 1.30 (mock A) -> 1.00: same size as any word, colour only (Spencer) */, LONG_POP_STEP = 0.10f;   // +10% size per letter past 4 (cap 3 steps)
         public static Color GOLD_TOP = new Color32(0xFF, 0xF2, 0xA0, 0xFF), GOLD_BOT = new Color32(0xF5, 0xD1, 0x47, 0xFF);
         public static Color GOLD_RIM = new Color32(0xC9, 0x60, 0x0C, 0xFF), GOLD_LIP = new Color32(0x6E, 0x2A, 0x05, 0xFF);
         private static Material s_wordPopGoldMat;

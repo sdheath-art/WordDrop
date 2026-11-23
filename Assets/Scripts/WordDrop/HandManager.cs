@@ -2567,18 +2567,19 @@ namespace WordDrop
                         // the word(s) in this cluster, for the word-instead-of-score pop (2026-10-23)
                         var words = new List<string>(); bool goalHit = false; int longest = 0;
                         var wordAt = new Dictionary<string, Vector3>(); var wordGold = new HashSet<string>();
+                        var wordIcon = new Dictionary<string, Sprite>(); Sprite goalIcon = null;   // 11-23: the goal piece each gold word hit
                         foreach (var pw in rules.PrimedRegistry.GetAllPrimedWords())
                             if (pw?.Cells != null && pw.Word != null && pw.Word.Length > 1 && pw.Cells.Exists(c => cl[i].cells.Contains(c)) && !words.Contains(pw.Word.ToUpperInvariant()))
                             {
                                 string uw = pw.Word.ToUpperInvariant();
                                 words.Add(uw); longest = Mathf.Max(longest, pw.Word.Length);
-                                bool hit = BonusPopup.GOAL_WORD_GOLD && LevelRules.Goals.Count > 0 && rules.WordCellsHitGoal(pw.Cells);
-                                if (hit) { goalHit = true; wordGold.Add(uw); }
+                                bool hit = BonusPopup.GOAL_WORD_GOLD && LevelRules.Goals.Count > 0 && rules.WordCellsHitGoal(pw.Cells, pw.Word);
+                                if (hit) { goalHit = true; wordGold.Add(uw); var gs = GoalIconForWord(rules, pw.Cells); wordIcon[uw] = gs; if (goalIcon == null) goalIcon = gs; }
                                 Vector3 ws = Vector3.zero; foreach (var c in pw.Cells) ws += _grid.CellToWorld(c.x, c.y);
                                 if (pw.Cells.Count > 0) { ws /= pw.Cells.Count; ws.z = -0.5f; wordAt[uw] = ws; }
                             }
                         // 10-31 (Spencer OK'd the mock goal_word_pop.png): GOLD = this word made goal progress; LONG words pop bigger.
-                        BonusPopup.NextPopGold = goalHit; BonusPopup.NextPopLength = longest;
+                        BonusPopup.NextPopGold = goalHit; BonusPopup.NextPopLength = longest; BonusPopup.NextPopIcon = goalHit ? goalIcon : null;
                         OwlPortrait.Play(longest >= 7 ? "starry" : longest >= 6 ? "proud" : (goalHit && Random.value < 0.35f ? "wink" : "happy"));   // 11-01 owl (7+ letters = starry)
                         string label = words.Count == 0 ? null : words.Count <= BonusPopup.WORD_POPUP_MAX_WORDS ? string.Join("  ", words) : $"{words[0]}  +{words.Count - 1} MORE";
                         _tapPopWords.Clear(); foreach (var w in words) _tapPopWords.Add(w);   // these already got their pop-up here
@@ -2590,13 +2591,13 @@ namespace WordDrop
                         // starting after the blast. One plain word: the pop-up as before.
                         if (STAGGER_WORD_POPS && words.Count > 0 && (words.Count >= 2 || firesSpecial))
                         {
-                            BonusPopup.NextPopGold = false; BonusPopup.NextPopLength = 0;
+                            BonusPopup.NextPopGold = false; BonusPopup.NextPopLength = 0; BonusPopup.NextPopIcon = null;
                             var ordered = new List<string>(words); ordered.Sort((x, y) => y.Length.CompareTo(x.Length));
                             for (int wi = 0; wi < ordered.Count; wi++)
                             {
                                 bool last = wi == WORD_STAGGER_MAX - 1 && ordered.Count > WORD_STAGGER_MAX;
                                 string shownWord = last ? $"+{ordered.Count - wi} MORE" : ordered[wi];
-                                QueueWordPop(shownWord, wordAt.TryGetValue(ordered[wi], out var wa) ? wa : tapAt, !last && wordGold.Contains(ordered[wi]), last ? 0 : ordered[wi].Length, firesSpecial);
+                                QueueWordPop(shownWord, wordAt.TryGetValue(ordered[wi], out var wa) ? wa : tapAt, !last && wordGold.Contains(ordered[wi]), last ? 0 : ordered[wi].Length, firesSpecial, !last && wordIcon.TryGetValue(ordered[wi], out var wic) ? wic : null);
                                 if (last) break;
                             }
                         }
@@ -4515,9 +4516,36 @@ case RulesEngine.ResolutionPhase.Complete:
         public static bool  STAGGER_WORD_POPS = true;
         public static float WORD_STAGGER_GAP = 0.38f, WORD_STAGGER_AFTER_BLAST = 0.35f;   // seconds between words / after a power-up fires
         public static int   WORD_STAGGER_MAX = 4;                                        // more than this in one cluster: the last slot says "+N MORE"
-        private struct QueuedPop { public string w; public Vector3 at; public bool gold; public int len; }
+        private struct QueuedPop { public string w; public Vector3 at; public bool gold; public int len; public Sprite icon; }
+        /// <summary>11-23: the picture of the goal piece a word hits (gem in it / ice in it / crate beside it), in the level's goal
+        /// order; bookshelf and safe levels fall back to their own piece. null = no picture (the word still pops gold).</summary>
+        private static Sprite GoalIconForWord(RulesEngine rules, List<Vector2Int> cells)
+        {
+            if (rules == null || cells == null) return null;
+            bool gem = false, ice = false, crate = false;
+            foreach (var c in cells)
+            {
+                var d = rules.GetCell(c.x, c.y); if (d == null) continue;
+                if (d.HasGem) gem = true;
+                if (d.IsFrozen) ice = true;
+                foreach (var o in new[] { new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1) })
+                { var n = rules.GetCell(c.x + o.x, c.y + o.y); if (n != null && n.IsStone && !n.IsDropTarget) crate = true; }
+            }
+            foreach (var g in LevelRules.Goals)
+            {
+                if (g.Type == LevelRules.GoalType.Gems && gem) return Tile.GemSprite;
+                if (g.Type == LevelRules.GoalType.Ice && ice) return Tile.IceArtSprite;
+                if (g.Type == LevelRules.GoalType.Crates && crate) return Tile.CrateSprite;
+            }
+            foreach (var g in LevelRules.Goals)
+            {
+                if (g.Type == LevelRules.GoalType.Books) return Tile.ShelfBookFlySprite(0);
+                if (g.Type == LevelRules.GoalType.Safes) return Tile.SafeSprite;
+            }
+            return null;
+        }
         private readonly List<QueuedPop> _popQueue = new List<QueuedPop>(); private Coroutine _popRun; private float _popNotBefore; private int _popAliveFrame;
-        private void QueueWordPop(string w, Vector3 at, bool gold, int len, bool afterBlast)
+        private void QueueWordPop(string w, Vector3 at, bool gold, int len, bool afterBlast, Sprite icon = null)
         {
             if (string.IsNullOrEmpty(w)) return;
             if (afterBlast) _popNotBefore = Mathf.Max(_popNotBefore, Time.unscaledTime + WORD_STAGGER_AFTER_BLAST);
@@ -4528,7 +4556,7 @@ case RulesEngine.ResolutionPhase.Complete:
             // last ran; a stamp that has gone stale means it is dead: drop the stale words and start a fresh one.
             if (_popRun != null && Time.frameCount - _popAliveFrame > 3) { _popRun = null; _popQueue.Clear(); _popNotBefore = 0f; WDLog.Log("[WordPops] the pop-up queue had been stopped mid-run - restarted"); }
             if (_popQueue.Count >= 8) return;   // a runaway chain never stacks a minute of text
-            _popQueue.Add(new QueuedPop { w = w, at = at, gold = gold, len = len });
+            _popQueue.Add(new QueuedPop { w = w, at = at, gold = gold, len = len, icon = icon });
             if (_popRun == null) { _popAliveFrame = Time.frameCount; _popRun = StartCoroutine(RunWordPops()); }
         }
         private IEnumerator RunWordPops()
@@ -4540,7 +4568,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 var p = _popQueue[0]; _popQueue.RemoveAt(0);
                 if (ClusterOutline.Instance != null && !BonusBlastRunning)
                 {
-                    BonusPopup.NextPopGold = p.gold; BonusPopup.NextPopLength = p.len;
+                    BonusPopup.NextPopGold = p.gold; BonusPopup.NextPopLength = p.len; BonusPopup.NextPopIcon = p.gold ? p.icon : null;
                     ClusterOutline.Instance.PopPayout(p.at, 0, false, 0f, -1, null, p.w);
                 }
                 _popNotBefore = Time.unscaledTime + WORD_STAGGER_GAP;

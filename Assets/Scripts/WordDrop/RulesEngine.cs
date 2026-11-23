@@ -5481,6 +5481,14 @@ namespace WordDrop
         /// <summary>Does this word make goal progress (ice / gem / crate beside / collect / theme / under a duck)?</summary>
         /// <summary>Word pop-up colour (10-31): does the armed word on these cells make goal progress (crate beside, ice, gem,
         /// collect letter, theme, duck)? Same test the hint uses.</summary>
+        /// <summary>11-23 (Spencer: gold goal-word pop-ups "not changing the colour or the size"): the version below asks
+        /// BuildExplicitMatch, which REFUSES any cell that is already part of an armed word - and at pop time the word IS the armed
+        /// word, so it answered false every time and no pop-up had gone gold. This one scores the word it is handed.</summary>
+        public bool WordCellsHitGoal(List<Vector2Int> cells, string word)
+        {
+            if (cells == null || cells.Count < 2 || string.IsNullOrEmpty(word)) return false;
+            return TouchesGoal(new RulesWordMatch { Word = word, Cells = cells });
+        }
         public bool WordCellsHitGoal(List<Vector2Int> cells)
         {
             if (cells == null || cells.Count < 2) return false;

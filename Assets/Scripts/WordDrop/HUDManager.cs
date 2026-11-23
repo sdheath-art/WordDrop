@@ -3437,10 +3437,15 @@ namespace WordDrop
             StartCoroutine(FlyTileCoroutine(startWorld, book, Color.white, new Color(2.2f, 1.6f, 0.7f, 1f), '\0', target.position, OnBookLanded,
                 delay, 1.28f, 200, GOLD_FLY_END_SCALE, GOLD_FLY_SUCK_SCALE));
         }
+        public static bool GOAL_MATCHLINE = true, GOAL_MATCHLINE_EVERY = false;
         private float _goalHitAt = -10f; private int _goalHitStep;
         private void GoalHitSound()
         {   // a run of goal items landing climbs a little in pitch (like the coin ramp), resets after a pause
             float now = Time.unscaledTime; _goalHitStep = now - _goalHitAt < 0.6f ? Mathf.Min(_goalHitStep + 1, 8) : 0; _goalHitAt = now;
+            // 11-23 Spencer: SFX/matchline when a goal item hits the HUD (the plop was "just a faint noise"). First item of a run
+            // only (GOAL_MATCHLINE_EVERY = false): the clip is 2.5 s and items land 0.09 s apart - the rest keep the small plop.
+            if (GOAL_MATCHLINE && (GOAL_MATCHLINE_EVERY || _goalHitStep == 0) && GameAudio.Instance != null
+                && GameAudio.Instance.PlayGoalMatchLine(Mathf.Pow(2f, _goalHitStep / 12f))) return;
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("goal_hit")) GameAudio.Instance.PlayKit("goal_hit", 1f, Mathf.Pow(2f, _goalHitStep / 12f));
             else GameAudio.Instance?.PlayCoinLand();
         }

@@ -612,6 +612,21 @@ namespace WordDrop
 
             if (wordLabel)
             {
+                // 11-23 BAKED LETTERING (PopLetters): the picked mock, drawn from pre-made letter art. Same final size as the text
+                // version: its caps end WORD_POP_CAP_CELLS of a tile tall after the pop's swell, times the long / goal bonus.
+                if (PopLetters.CanDraw(label))
+                {
+                    bool pg = BonusPopup.NextPopGold; float ps = BonusPopup.NextPopScale();
+                    BonusPopup.NextPopGold = false; BonusPopup.NextPopLength = 0; BonusPopup.NextPopIcon = null;
+                    bool pf = RulesEngine.DRAG_REWARD && RulesEngine.SwipedWords.Remove(label.Trim().ToUpperInvariant());
+                    float pcell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.95f;
+                    float cap = PopLetters.CAP_CELLS * pcell * ps * (pf ? FOUND_POP_SCALE : 1f) / POP_GROW;
+                    if (PopLetters.Build(textGO.transform, label, pg, cap, WORD_POP_ORDER, out float phw, out float phh, out var pAlpha) != null)
+                    {
+                        AnimatePopTransform(go, at, Mathf.Max(phw, 0.05f), Mathf.Max(phh, 0.05f), pAlpha, true);
+                        return;
+                    }
+                }
                 // EXACTLY the score pop-up's text (BonusPopup.FlyScoreToHUD + FlushAccum): same font, size ladder by points,
                 // normal weight, the RM number style (font + gradient + outline + lip). Only the leap-up motion is this pop's.
                 var wt = textGO.AddComponent<TextMeshPro>();
@@ -634,7 +649,22 @@ namespace WordDrop
                 var wsh = BonusPopup.AddWordPopSoftShadow(wt);   // 10-31: soft shadow so the cream word lifts off the white tiles
                 wt.ForceMeshUpdate();
                 Vector3 wext = wt.textBounds.extents;
-                AnimatePopTransform(go, at, Mathf.Max(wext.x, 0.05f), Mathf.Max(wext.y, 0.05f), v => { if (wt != null) wt.alpha = v; if (wsh != null) wsh.alpha = v; }, true);
+                // 11-23 mock A: the goal piece the word hit sits right after a gold word; word + picture are centred as one.
+                SpriteRenderer gi = null; float halfW = Mathf.Max(wext.x, 0.05f);
+                var icon = BonusPopup.NextPopIcon; BonusPopup.NextPopIcon = null;
+                if (gold && BonusPopup.GOAL_WORD_ICON && icon != null && icon.bounds.size.y > 0.001f)
+                {
+                    float capH = wext.y * 2f, ih = capH * BonusPopup.GOAL_ICON_CAPS, k = ih / icon.bounds.size.y;
+                    float iw = icon.bounds.size.x * k, gap = capH * BonusPopup.GOAL_ICON_GAP, shift = (iw + gap) * 0.5f;
+                    var ig = new GameObject("WordPopGoalIcon"); ig.transform.SetParent(go.transform, false);
+                    gi = ig.AddComponent<SpriteRenderer>(); gi.sprite = icon; gi.sortingOrder = WORD_POP_ORDER;
+                    ig.transform.localScale = Vector3.one * k;
+                    Vector3 tc = wt.textBounds.center;
+                    textGO.transform.localPosition = new Vector3(-shift, 0f, 0f);
+                    ig.transform.localPosition = new Vector3(tc.x - shift + wext.x + gap + iw * 0.5f, tc.y, 0f);
+                    halfW = wext.x + shift;
+                }
+                AnimatePopTransform(go, at, halfW, Mathf.Max(wext.y, 0.05f), v => { if (wt != null) wt.alpha = v; if (wsh != null) wsh.alpha = v; if (gi != null) { var c = gi.color; c.a = v; gi.color = c; } }, true);
                 return;
             }
 

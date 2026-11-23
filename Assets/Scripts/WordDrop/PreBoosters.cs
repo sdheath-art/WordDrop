@@ -237,7 +237,7 @@ namespace WordDrop
                 var bi = bd.GetComponent<Image>(); bi.sprite = badge; bi.preserveAspect = true; bi.raycastTarget = false;
                 var num = NewUI("Num", bd, typeof(TMPro.TextMeshProUGUI)); Place(num, 248f / 498f * BW, 246.5f / 534f * BH, 92f, 80f);
                 var nt = num.GetComponent<TMPro.TextMeshProUGUI>(); nt.alignment = TMPro.TextAlignmentOptions.Center; nt.raycastTarget = false;
-                nt.fontSize = 35f / 0.594f / HUDManager.RECIPE_MAX_MUL;
+                nt.fontSize = 42f / 0.594f / HUDManager.RECIPE_MAX_MUL;   // 11-23 Spencer: "a hair bigger" (35 -> 38 = "seems the same to me" -> 42, +20%)
                 HUDManager.ApplyRecipeCount(nt, new Color32(0x46, 0x04, 0x0C, 0xFF), 0.2f, 0f);
                 var chk = NewUI("Check", bd, typeof(Image)); Place(chk, 248f / 498f * BW, 246.5f / 534f * BH, 84f, 84f);   // alone on the plate: a touch bigger
                 var ci = chk.GetComponent<Image>(); ci.sprite = CheckSprite(); ci.preserveAspect = true; ci.raycastTarget = false;

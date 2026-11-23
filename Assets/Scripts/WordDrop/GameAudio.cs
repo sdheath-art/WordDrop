@@ -1730,6 +1730,18 @@ namespace WordDrop
             return _kit[key] = list.ToArray();
         }
         public bool HasKit(string key) => Kit(key).Length > 0;
+
+        // 11-23 (Spencer: the goal landing "is just a faint noise" - wants SFX/matchline there). Measured loudest 100 ms: goal_hit
+        // -22 dB (heard ~-24), matchline -9.6 dB; at 0.6 it sits beside the word pop (~-14 dB). The clip is 2.5 s long.
+        public static float GOAL_MATCHLINE_VOL = 0.6f;
+        private AudioClip _goalMatchLine; private bool _goalMatchLineTried;
+        public bool PlayGoalMatchLine(float pitch = 1f)
+        {
+            if (!_goalMatchLineTried) { _goalMatchLineTried = true; _goalMatchLine = Resources.Load<AudioClip>("SFX/matchline"); }
+            if (_goalMatchLine == null) return false;
+            Play(_goalMatchLine, GOAL_MATCHLINE_VOL, pitch);
+            return true;
+        }
         public void PlayKit(string key, float vol = 1f, float pitch = 1f)
         {
             var a = Kit(key); if (a.Length == 0) return;
