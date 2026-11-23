@@ -1782,7 +1782,37 @@ namespace WordDrop
         // 11-03 Spencer: "can it tint to almost black for the well done card?" - its own, deeper dim (the shared MODAL_DIM is a deep
         // purple #1A0B2E at 91%); near-black with a hint of violet so the rays, glow and coins carry all the colour.
         public static Color REVEAL_DIM_COLOR = new Color32(0x07, 0x03, 0x0E, 0xFD);   // 11-03 v2: alpha 95% -> 99.2%. The project is LINEAR, so a UI dim blends in linear light: 95% left the library at sRGB lum ~30 (measured). 99.2% lands ~13-18 = RM's reveal (9-17), with a faint ghost of the scene
-        private static Color REVEAL_DIM => REVEAL_DIM_COLOR;
+        private static Color REVEAL_DIM => REVEAL_BANNER ? REVEAL_BANNER_DIM : REVEAL_DIM_COLOR;
+        // ── 11-23 WIN BANNER (art pass; Spencer: the win screen is "really not good", then picked mock C, built after his Royal
+        // Kingdom reference): the title sits on a FULL-WIDTH band in the game's own purple with gold trims (the Out of Moves band's
+        // family) instead of floating on black; the dim is the world's deep purple, not near-black; the title is the cream
+        // card lettering, "Level N Complete" is gold under the band. Coins, count, Continue and every animation are unchanged.
+        // REVEAL_BANNER = false: the 11-03 near-black screen with the gold hero title, exactly as before.
+        public static bool  REVEAL_BANNER = true;
+        public static Color REVEAL_BANNER_DIM = new Color32(0x16, 0x09, 0x2C, 0xF2);
+        public static float BANNER_H = 330f, BANNER_Y = 4f, BANNER_SUB_GAP = 78f;   // mock px (1179 wide): band height, band centre vs title centre, band bottom -> subtitle
+        public static Color BANNER_SUB = new Color32(0xFF, 0xD3, 0x5A, 0xFF);
+        public static float BANNER_TITLE_Y = 0.27f, BANNER_OWL_W = 480f, BANNER_OWL_TUCK = 50f;   // band centre from the top (was 0.17 with no owl); owl width / how far its cut edge hides behind the band, mock px
+        private static Sprite s_bandSprite;
+        private static Sprite BandSprite()
+        {
+            if (s_bandSprite != null) return s_bandSprite;
+            const int N = 256; var t = new Texture2D(4, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            Color C(int hex) => new Color32((byte)(hex >> 16), (byte)((hex >> 8) & 255), (byte)(hex & 255), 255);
+            for (int y = 0; y < N; y++)
+            {
+                float v = 1f - (y + 0.5f) / N;   // 0 = top of the band
+                Color c;
+                if (v < 0.070f) c = Color.Lerp(C(0xFFE08A), C(0xE9A21E), v / 0.070f);                    // top gold trim, lit from above
+                else if (v < 0.084f) c = C(0x2A0E5C);                                                    // dark line under it
+                else if (v < 0.916f) c = Color.Lerp(C(0x6A3AE0), C(0x3E1C9A), (v - 0.084f) / 0.832f);   // the purple field
+                else if (v < 0.930f) c = C(0x2A0E5C);
+                else c = Color.Lerp(C(0xF6BE3C), C(0xB8730E), (v - 0.930f) / 0.070f);                    // bottom gold trim
+                for (int x = 0; x < 4; x++) t.SetPixel(x, y, c);
+            }
+            t.Apply();
+            return s_bandSprite = Sprite.Create(t, new Rect(0, 0, 4, N), new Vector2(0.5f, 0.5f), 100f);
+        }
 
         private void AnimateReveal(SurvivalManager.StageClearContext ctx, int coins)
         {
@@ -1798,8 +1828,29 @@ namespace WordDrop
             var crt = (RectTransform)_canvas.transform;
             float W = Mathf.Max(1f, crt.rect.width), H = Mathf.Max(1f, crt.rect.height), k = W / 1179f;   // mock px -> canvas units
 
+            float ty = REVEAL_BANNER ? BANNER_TITLE_Y : 0.17f;   // title centre, as a share of the screen height from the top
+            if (REVEAL_BANNER)
+            {
+                // the owl pops up from BEHIND the band's top edge (art: UI/win_owl, 1024 sq, chest cut on the bottom edge; Spencer's
+                // "Joyful Owl" 11-23, cleaned in WordDrop_Art/owl_win)
+                var owlTex = Resources.Load<Texture2D>("UI/win_owl");
+                if (owlTex != null)
+                {
+                    var owl = NewRevealImage(root, "WinOwl", Sprite.Create(owlTex, new Rect(0, 0, owlTex.width, owlTex.height), new Vector2(0.5f, 0f), 100f), Color.white);
+                    owl.preserveAspect = true;
+                    var ort = owl.rectTransform; ort.pivot = new Vector2(0.5f, 0f); ort.sizeDelta = Vector2.one * BANNER_OWL_W * k;
+                    ort.anchoredPosition = new Vector2(0f, H * (0.5f - ty) + (BANNER_Y + BANNER_H * 0.5f - BANNER_OWL_TUCK) * k);
+                    ort.localScale = Vector3.zero;
+                    ort.DOScale(1f, 0.38f).SetEase(Ease.OutBack, 1.8f).SetDelay(0.22f).SetUpdate(true);
+                }
+                var band = NewRevealImage(root, "WinBand", BandSprite(), Color.white);
+                band.rectTransform.sizeDelta = new Vector2(W + 40f, BANNER_H * k);
+                band.rectTransform.anchoredPosition = new Vector2(0f, H * (0.5f - ty) + BANNER_Y * k);
+                band.transform.localScale = new Vector3(1f, 0f, 1f);
+                band.transform.DOScaleY(1f, 0.24f).SetEase(Ease.OutBack, 1.4f).SetUpdate(true);   // the band opens, then the letters land on it
+            }
             // title + subtitle (recipe lettering, as the level cards)
-            var title = RevealText(root, HERO_GOLD ? WIN_PHRASE : "Well Done!", (HERO_GOLD ? HERO_CAP : 150f) * k, new Vector2(0f, H * (0.5f - 0.17f)), new Vector2(W, 260f * k));
+            var title = RevealText(root, HERO_GOLD ? WIN_PHRASE : "Well Done!", (HERO_GOLD ? HERO_CAP : 150f) * k, new Vector2(0f, H * (0.5f - ty)), new Vector2(W, 260f * k));
             HUDManager.ApplyRecipeCount(title, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f, HERO_GOLD ? HeroFont() : null);   // 11-18: the wide-margin bake (see HeroFont)
             // 11-02 Spencer: "the text doesnt match the mock" ... a kerning problem". Measured: same font and size, but the mock's
             // title has a much heavier stroke (7.5% of cap) and drop (12%), so its letters touch; the HUD recipe left 15 px gaps.
@@ -1810,13 +1861,15 @@ namespace WordDrop
             title.fontSharedMaterial = tm; title.characterSpacing = REVEAL_TITLE_TRACK;
             title.enableVertexGradient = true; title.color = Color.white;
             title.colorGradient = new VertexGradient(new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF));
-            if (HERO_GOLD) { HeroFace(title, tm); ConvertForMargin(tm, 10f); title.UpdateMeshPadding(); }   // values above are for the 9-texel margin
-            var sub = RevealText(root, $"Level {LevelMapPanel.DisplayNum(ctx.ClearedStage)} Complete", 62f * k, new Vector2(0f, H * (0.5f - 0.17f) - 165f * k), new Vector2(W, 120f * k));
+            if (HERO_GOLD) { if (!REVEAL_BANNER) HeroFace(title, tm); ConvertForMargin(tm, 10f); title.UpdateMeshPadding(); }   // values above are for the 9-texel margin
+            var sub = RevealText(root, $"Level {LevelMapPanel.DisplayNum(ctx.ClearedStage)} Complete", 62f * k, new Vector2(0f, H * (0.5f - ty) - (REVEAL_BANNER ? (BANNER_H * 0.5f - BANNER_Y + BANNER_SUB_GAP) : 165f) * k), new Vector2(W, 120f * k));
             HUDManager.ApplyRecipeCount(sub, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f);
+            if (REVEAL_BANNER) { sub.enableVertexGradient = false; sub.color = BANNER_SUB; }
             sub.alpha = 0f;
             // 11-02 Spencer: "text animation maybe staggered by letter like in royal match" - each letter drops in and pops
             // past full size, one after another (TMP vertex animation; the recipe outline/drop ride along in the SDF material)
-            _revealWave = StartCoroutine(REVEAL_SLAM ? LetterWave(title, SLAM_STAGGER, SLAM_EACH, REVEAL_TITLE_ARCH) : LetterWave(title, 0.05f, 0.42f, REVEAL_TITLE_ARCH));
+            float arch = REVEAL_BANNER ? 0f : REVEAL_TITLE_ARCH;   // a straight band wants a straight line of letters
+            _revealWave = StartCoroutine(REVEAL_SLAM ? LetterWave(title, SLAM_STAGGER, SLAM_EACH, arch) : LetterWave(title, 0.05f, 0.42f, arch));
             // 11-16 Spencer ("what happened to the people cheering SFX from the well done screen? can we bring it back when spellbound
             // appears?"): the old Well Done (AnimateEntrance) played SFX/yay 0.6 s in; the REVEAL_V2 rebuild never called it.
             if (REVEAL_CHEER) GameAudio.Instance?.PlayYay();
