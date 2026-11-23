@@ -1789,9 +1789,19 @@ namespace WordDrop
         // card lettering, "Level N Complete" is gold under the band. Coins, count, Continue and every animation are unchanged.
         // REVEAL_BANNER = false: the 11-03 near-black screen with the gold hero title, exactly as before.
         public static bool  REVEAL_BANNER = true;
-        public static Color REVEAL_BANNER_DIM = new Color32(0x16, 0x09, 0x2C, 0xF2);
+        // 11-23 (his 12:26 screenshot): at 95% the home screen showed clearly through and fought the banner (the project is LINEAR, so
+        // a UI dim leaves far more of the scene than the same alpha in a mock - see REVEAL_DIM_COLOR). 98.5% = a faint purple ghost.
+        public static Color REVEAL_BANNER_DIM = new Color32(0x1E, 0x0C, 0x3C, 0xFB);
         public static float BANNER_H = 330f, BANNER_Y = 4f, BANNER_SUB_GAP = 78f;   // mock px (1179 wide): band height, band centre vs title centre, band bottom -> subtitle
         public static Color BANNER_SUB = new Color32(0xFF, 0xD3, 0x5A, 0xFF);
+        public static string BANNER_CONTINUE_FONT = "WordSlop Title SDF";   // 11-23 Spencer: Continue in the mock's font (the title font); null = WordSlop Button as before
+        // measured mock vs the 12:33 screenshot (720 wide): subtitle 323 px wide vs 403 -> 62 * 0.80; coin pile 267 vs 239 -> x1.12;
+        // Continue centre 33 px lower -> 0.165 - 0.021; its label x0.85.
+        public static float BANNER_SUB_SIZE = 50f, BANNER_COINS = 1.12f, BANNER_CONTINUE_Y = 0.144f, BANNER_CONTINUE_LABEL = 0.85f;
+        public static float BANNER_TITLE_LINE = 0.065f, BANNER_TITLE_LIP = 0.10f;   // of the capital height: dark line all round, lip straight down (mock: 4-5 px and 8 px on 74 px caps)
+        public static bool  BANNER_HALO = true; public static Color BANNER_HALO_COLOR = new Color(1f, 0.67f, 0.47f, 0.42f); public static float BANNER_HALO_SIZE = 900f;   // mock px wide
+        public static bool  BANNER_COUNT_ON_PILE = true; public static float BANNER_COUNT_Y = 150f;   // mock px below the pile centre (pile bottom is ~175 with the 1.12 coins; 96 px digits)
+        public static bool  BANNER_PILE_GLOW = false;   // the pink-gold glow behind the coin pile: off on the banner screen
         public static float BANNER_TITLE_Y = 0.27f, BANNER_OWL_W = 480f, BANNER_OWL_TUCK = 50f;   // band centre from the top (was 0.17 with no owl); owl width / how far its cut edge hides behind the band, mock px
         private static Sprite s_bandSprite;
         private static Sprite BandSprite()
@@ -1861,10 +1871,15 @@ namespace WordDrop
             title.fontSharedMaterial = tm; title.characterSpacing = REVEAL_TITLE_TRACK;
             title.enableVertexGradient = true; title.color = Color.white;
             title.colorGradient = new VertexGradient(new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xFB, 0xEA, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF), new Color32(0xFF, 0xEF, 0xB8, 0xFF));
-            if (HERO_GOLD) { if (!REVEAL_BANNER) HeroFace(title, tm); ConvertForMargin(tm, 10f); title.UpdateMeshPadding(); }   // values above are for the 9-texel margin
-            var sub = RevealText(root, $"Level {LevelMapPanel.DisplayNum(ctx.ClearedStage)} Complete", 62f * k, new Vector2(0f, H * (0.5f - ty) - (REVEAL_BANNER ? (BANNER_H * 0.5f - BANNER_Y + BANNER_SUB_GAP) : 165f) * k), new Vector2(W, 120f * k));
+            if (HERO_GOLD) { if (!REVEAL_BANNER) HeroFace(title, tm); ConvertForMargin(tm, 10f); title.UpdateMeshPadding(); }
+            // 11-23 Spencer: "and the text treatment on spellbound too" (match the mock). The mock's lettering: a dark line ~6-7% of
+            // the capital height all round, and the same shape dropped STRAIGHT down ~10% as the lip. The game's standard label look
+            // (RkText) is 4% with a shadow leaning down-right, and it replaces whatever is written on the material - so the banner's
+            // three texts register their own numbers with it instead.
+            if (REVEAL_BANNER) RkText.Custom(title, BANNER_TITLE_LINE, 0f, BANNER_TITLE_LIP);
+            var sub = RevealText(root, $"Level {LevelMapPanel.DisplayNum(ctx.ClearedStage)} Complete", (REVEAL_BANNER ? BANNER_SUB_SIZE : 62f) * k, new Vector2(0f, H * (0.5f - ty) - (REVEAL_BANNER ? (BANNER_H * 0.5f - BANNER_Y + BANNER_SUB_GAP) : 165f) * k), new Vector2(W, 120f * k));
             HUDManager.ApplyRecipeCount(sub, new Color32(0x1E, 0x0A, 0x52, 0xFF), 0.19f, -0.9f);
-            if (REVEAL_BANNER) { sub.enableVertexGradient = false; sub.color = BANNER_SUB; }
+            if (REVEAL_BANNER) { sub.enableVertexGradient = false; sub.color = BANNER_SUB; RkText.Custom(sub, 0.05f, 0f, 0.06f); }
             sub.alpha = 0f;
             // 11-02 Spencer: "text animation maybe staggered by letter like in royal match" - each letter drops in and pops
             // past full size, one after another (TMP vertex animation; the recipe outline/drop ride along in the SDF material)
@@ -1882,7 +1897,7 @@ namespace WordDrop
             // 11-03 (Spencer: the Layer Lab Item_Food_Glow look "behind whatever they won"): a baked 3-tier glow that HUGS the coin pile
             // (cream rim -> gold -> wide magenta haze, the measured Neon2 stack; ~/Documents/WordDrop_Art/hero_glow_1103/make_glow.py).
             // It replaces the round additive glow; REVEAL_PILE_GLOW = false brings that back.
-            if (REVEAL_PILE_GLOW)
+            if (REVEAL_PILE_GLOW && !(REVEAL_BANNER && !BANNER_PILE_GLOW))   // 11-23 Spencer on the banner screen: "even the glow behind it. i think it needs to go to match" (the mock has none)
             {
                 var pgTex = Resources.Load<Texture2D>("UI/well_done_pile_glow");
                 if (pgTex != null)
@@ -1900,11 +1915,15 @@ namespace WordDrop
             var glow = ProgressComet.AddFx(root, ProgressComet.GlowSprite, new Color(1f, 0.85f, 0.45f, 0.9f), REVEAL_GLOW_SIZE * k);
             glow.raycastTarget = false; glow.transform.SetAsFirstSibling();
             if (REVEAL_PILE_GLOW) glow.gameObject.SetActive(false);
+            // 11-23 Spencer: "in the mock up there is like a glowing kind of halo behind the gold coins" - the mock's soft warm peach
+            // halo (not the pink-gold baked glow): the round glow, wider, peach, low strength.
+            bool halo = REVEAL_BANNER && BANNER_HALO;
+            if (halo) { glow.gameObject.SetActive(true); glow.color = BANNER_HALO_COLOR; }
             var grt = glow.rectTransform; grt.anchorMin = grt.anchorMax = new Vector2(0.5f, 0.5f); grt.pivot = new Vector2(0.5f, 0.5f);
-            grt.anchoredPosition = new Vector2(0f, cy + REVEAL_RAYS_LIFT * k); grt.sizeDelta = Vector2.one * REVEAL_GLOW_SIZE * k;
+            grt.anchoredPosition = new Vector2(0f, cy + (halo ? 0f : REVEAL_RAYS_LIFT) * k); grt.sizeDelta = halo ? new Vector2(BANNER_HALO_SIZE, BANNER_HALO_SIZE * 0.78f) * k : Vector2.one * REVEAL_GLOW_SIZE * k;
             grt.localScale = Vector3.zero;
             grt.DOScale(1f, 0.35f).SetEase(Ease.OutQuad).SetDelay(0.3f).SetUpdate(true)
-                .OnComplete(() => { if (glow != null) glow.DOFade(0.55f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetLink(glow.gameObject); });
+                .OnComplete(() => { if (glow != null && !halo) glow.DOFade(0.55f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetLink(glow.gameObject); });   // the banner's halo holds still, as in the mock
 
             // coin pile: the HUD coin (the game's coin ramp), three coins popping in one after another
             var coinTex = Resources.Load<Texture2D>("UI/HudBar/hud_coin");
@@ -1915,7 +1934,8 @@ namespace WordDrop
             {
                 var c = NewRevealImage(root, "Coin", coinSpr, Color.white); c.preserveAspect = true; _revealCoins.Add(c);
                 int coinIdx = i;   // loop variable captured per coin (closures)
-                c.rectTransform.anchoredPosition = new Vector2(pile[i].x * k, cy + pile[i].y * k); c.rectTransform.sizeDelta = Vector2.one * pile[i].z * k;
+                float pk = k * (REVEAL_BANNER ? BANNER_COINS : 1f);   // 11-23: coin pile sized to the mock
+                c.rectTransform.anchoredPosition = new Vector2(pile[i].x * pk, cy + pile[i].y * pk); c.rectTransform.sizeDelta = Vector2.one * pile[i].z * pk;
                 c.transform.localScale = Vector3.zero;
                 if (REVEAL_COIN_SLAM && i == pile.Length - 1)
                 {   // 11-06 (RM 3:04: the star comes in HUGE - bigger than the card - and slams onto its cushion with a sparkle
@@ -1974,14 +1994,14 @@ namespace WordDrop
 
             // green ribbon with the count (tallies up)
             var ribbon = new GameObject("Ribbon", typeof(RectTransform)).GetComponent<RectTransform>(); ribbon.SetParent(root, false);
-            ribbon.anchoredPosition = new Vector2(0f, cy - (REVEAL_PLAIN_COUNT ? REVEAL_PLAIN_DROP_Y : 185f) * k); ribbon.sizeDelta = new Vector2(380f * k, 110f * k);   // 11-04: the plain count sits a little lower
+            ribbon.anchoredPosition = new Vector2(0f, cy - (REVEAL_BANNER && BANNER_COUNT_ON_PILE ? BANNER_COUNT_Y : REVEAL_PLAIN_COUNT ? REVEAL_PLAIN_DROP_Y : 185f) * k);   // 11-23: on the banner screen the count sits ON the bottom of the pile, like a badge (his Royal Kingdom "250" reference) ribbon.sizeDelta = new Vector2(380f * k, 110f * k);   // 11-04: the plain count sits a little lower
             var rs = MenuUI.GetRoundedRectSprite(Mathf.Max(4, Mathf.RoundToInt(REVEAL_BADGE_RADIUS * k)));   // 11-02 Spencer: squared off like the mock, no ribbon ends
             var rsHi = MenuUI.GetRoundedRectSprite(Mathf.Max(3, Mathf.RoundToInt((REVEAL_BADGE_RADIUS - 4f) * k)));
             if (REVEAL_PLAIN_COUNT)
             {   // 11-04 (Spencer chose the mock's right-hand style, ref "100" from his screenshot): no green badge - the count alone,
                 // our HUD number recipe (cream->pale-yellow gradient face, solid purple outline + drop), a bit bigger than it was
                 // on the badge. Same language as "Well Done!" and the HUD. false = the green badge.
-                _revealCount = RevealText(ribbon, "+0", REVEAL_PLAIN_SIZE * k, Vector2.zero, ribbon.sizeDelta);
+                _revealCount = RevealText(ribbon, REVEAL_BANNER && BANNER_COUNT_ON_PILE ? "0" : "+0", REVEAL_PLAIN_SIZE * k, Vector2.zero, ribbon.sizeDelta);
                 HUDManager.ApplyRecipeCount(_revealCount, HUDManager.HUD_INK, REVEAL_PLAIN_STROKE, REVEAL_PLAIN_DROP);
             }
             else
@@ -1996,7 +2016,7 @@ namespace WordDrop
             ribbon.localScale = Vector3.zero;
             ribbon.DOScale(1f, 0.3f).SetEase(Ease.OutBack).SetDelay(0.7f).SetUpdate(true);
             int shown = 0;
-            _coinCountTween = DOTween.To(() => shown, v => { shown = v; if (_revealCount != null) { _revealCount.text = "+" + v; if (REVEAL_PLAIN_COUNT) CentreOnInk(_revealCount); } }, coins, 0.6f).SetDelay(REVEAL_COIN_SLAM ? REVEAL_IMPACT_AT + 0.05f : 0.8f).SetUpdate(true);
+            _coinCountTween = DOTween.To(() => shown, v => { shown = v; if (_revealCount != null) { _revealCount.text = (REVEAL_BANNER && BANNER_COUNT_ON_PILE ? "" : "+") + v;   /* 11-23 Spencer: "drop the plus" (badge on the pile) */ if (REVEAL_PLAIN_COUNT) CentreOnInk(_revealCount); } }, coins, 0.6f).SetDelay(REVEAL_COIN_SLAM ? REVEAL_IMPACT_AT + 0.05f : 0.8f).SetUpdate(true);
             if (REVEAL_COIN_SLAM && _revealCount != null)
             {   // 11-06 (recording #3: "+0" sat under the coin while it was still slamming in) - the count appears as the coin lands
                 _revealCount.alpha = 0f; _revealCount.DOFade(1f, 0.15f).SetDelay(REVEAL_IMPACT_AT).SetUpdate(true);
@@ -2006,7 +2026,7 @@ namespace WordDrop
             // tap prompt (appears once the tap lockout ends)
             // 11-06 Spencer: "add a continue button" (RM's card has a green Continue) - the level card's green pill, popping in
             // when the tap lockout ends. Tapping anywhere still continues too.
-            ArtButton cont = REVEAL_CONTINUE_BUTTON ? ArtButton.Create(root, "pill_play", "Continue", lilita: false, titleMedium: false)   /* 11-06 Spencer: Title Medium, then back to WordSlop Button */ : null;
+            ArtButton cont = REVEAL_CONTINUE_BUTTON ? ArtButton.Create(root, "pill_play", "Continue", lilita: false, titleMedium: false, font: REVEAL_BANNER ? BANNER_CONTINUE_FONT : null)   /* 11-06 Spencer: Title Medium, then back to WordSlop Button */ : null;
             if (cont != null)
             {
                 cont.name = "BtnContinue";
@@ -2033,9 +2053,17 @@ namespace WordDrop
                 if (lbl is RectTransform lrt) lrt.anchoredPosition += new Vector2(0f, CONTINUE_LABEL_LIFT * lrt.sizeDelta.y * 0.5f);
                 var crtB = (RectTransform)cont.transform;
                 // 11-16: 25% bigger like Play (was 0.25..0.75 x 0.115..0.215), same centre
-                crtB.anchorMin = new Vector2(0.5f - 0.25f * CONTINUE_SCALE, 0.165f - 0.05f * CONTINUE_SCALE); crtB.anchorMax = new Vector2(0.5f + 0.25f * CONTINUE_SCALE, 0.165f + 0.05f * CONTINUE_SCALE);
+                float contY = REVEAL_BANNER ? BANNER_CONTINUE_Y : 0.165f;
+                crtB.anchorMin = new Vector2(0.5f - 0.25f * CONTINUE_SCALE, contY - 0.05f * CONTINUE_SCALE); crtB.anchorMax = new Vector2(0.5f + 0.25f * CONTINUE_SCALE, contY + 0.05f * CONTINUE_SCALE);
                 crtB.offsetMin = crtB.offsetMax = Vector2.zero; crtB.pivot = new Vector2(0.5f, 0.5f);
                 cont.Refit();
+                if (REVEAL_BANNER)
+                {   // 11-23 Spencer: "match the size of the continue as well and its treatment to the mock up". Measured mock vs game
+                    // (12:33 screenshot): label 252 px wide vs 298 on the same 410 px button -> x0.85; the mock's dark edge drops
+                    // STRAIGHT down (the button style also leans it right).
+                    cont.ScaleLabel(BANNER_CONTINUE_LABEL);
+                    foreach (var t in cont.GetComponentsInChildren<TextMeshProUGUI>(true)) RkText.Custom(t, 0.06f, 0f, 0.09f);
+                }
                 // 11-18: the button dips and pops under the finger (ArtButton.BigPress), and the screen waits BIG_PRESS_HOLD for the
                 // pop to be SEEN before it starts closing - the dismiss used to begin on the same frame, hiding any reaction.
                 cont.BigPress = CONTINUE_BIG_PRESS;   // false = the same face press as every other button (his ask); true = the whole button dips + pops

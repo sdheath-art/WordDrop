@@ -65,7 +65,7 @@ namespace WordDrop
 
         /// <summary>Builds the button under <paramref name="parent"/>, or returns null if its art is missing (callers
         /// keep their old button then). The root is centre-anchored; set its size with FrameAspect.</summary>
-        public static ArtButton Create(Transform parent, string key, string label = null, bool? lilita = null, bool? titleMedium = null)
+        public static ArtButton Create(Transform parent, string key, string label = null, bool? lilita = null, bool? titleMedium = null, string font = null)
         {
             var frame = Resources.Load<Sprite>($"UI/Buttons/{key}_frame");
             var face  = Resources.Load<Sprite>($"UI/Buttons/{key}_face");
@@ -79,6 +79,7 @@ namespace WordDrop
             go.transform.SetParent(parent, false);
             var ab = go.AddComponent<ArtButton>();
             ab._lilitaOverride = lilita;
+            ab._fontName = font;   // 11-23: a named font asset for this one button (the win banner's Continue)
             ab._titleMediumOverride = titleMedium;   // 11-06 Spencer: Play stays WordSlop Button
             ab._key = key;
             ab.Build(frame, face, JsonUtility.FromJson<Spec>(json.text), label);
@@ -127,6 +128,8 @@ namespace WordDrop
             // Per-button override (2026-10-31: the home Level button went back to WordSlop after the library-home mockup).
             var font = ((_lilitaOverride ?? LABEL_LILITA) ? Resources.Load<TMP_FontAsset>("LilitaOne Button SDF") : null);
             _lilita = font != null;
+            var forced = string.IsNullOrEmpty(_fontName) ? null : Resources.Load<TMP_FontAsset>(_fontName);
+            if (forced != null) { font = forced; _lilita = false; }
             // 2026-11-06 Spencer: WordSlop Title Medium on the labels (more distinct). LABEL_TITLE_MEDIUM = false -> WordSlop Button.
             if (font == null && (_titleMediumOverride ?? LABEL_TITLE_MEDIUM)) font = Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF");
             if (font == null) font = Resources.Load<TMP_FontAsset>("WordSlop Button SDF") ?? Resources.Load<TMP_FontAsset>("WordSlop SDF");
@@ -183,6 +186,7 @@ namespace WordDrop
         public static float LILITA_SIZE = 0.594f / 0.702f, LILITA_TRACKING = 0f;
         private bool _lilita;
         private bool? _titleMediumOverride;
+        private string _fontName;
         private string _key;
 
         // Per-button label look on top of ArtButtonLabel.mat (11-06 Spencer: Play like RK's "Continue" button ref, Desktop

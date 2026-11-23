@@ -43,6 +43,11 @@ namespace WordDrop
         private static readonly HashSet<int> s_firm = new HashSet<int>();
         /// <summary>Give this text the firmer small-text edge, whether or not its own material has a working outline.</summary>
         public static void Firm(TMP_Text t) { if (t != null) s_firm.Add(t.GetInstanceID()); }
+        // 11-23 (win banner: the title, subtitle and Continue must match the mock's lettering, and every value written straight
+        // onto their materials was being replaced by the standard look here): a text can carry its OWN stroke / shadow, in the
+        // same units as STROKE / DX / DY (fractions of the capital height), and still go through the calibrated conversion.
+        private static readonly Dictionary<int, Vector3> s_custom = new Dictionary<int, Vector3>();
+        public static void Custom(TMP_Text t, float stroke, float dx, float dy) { if (t != null) s_custom[t.GetInstanceID()] = new Vector3(stroke, dx, dy); }
 
         private static readonly Dictionary<string, Material> s_map = new Dictionary<string, Material>();   // source material + line colour + kind -> RK copy
         private static readonly HashSet<int> s_ours = new HashSet<int>();                            // ids of the RK copies
@@ -81,8 +86,10 @@ namespace WordDrop
 
         /// <summary>Write the RK stroke + shadow onto <paramref name="m"/> (colour = <paramref name="line"/>).</summary>
         public static void Apply(Material m, TMP_FontAsset font, Color line, bool firm = false)
+            => Apply(m, font, line, firm ? FIRM_STROKE : STROKE, firm ? FIRM_DX : DX, firm ? FIRM_DY : DY);
+        public static void Apply(Material m, TMP_FontAsset font, Color line, float stroke, float dx, float dy)
         {
-            Params(font, m, firm ? FIRM_STROKE : STROKE, firm ? FIRM_DX : DX, firm ? FIRM_DY : DY, out float w, out float d, out float u, out float ox, out float oy);
+            Params(font, m, stroke, dx, dy, out float w, out float d, out float u, out float ox, out float oy);
             m.EnableKeyword("OUTLINE_ON");
             m.SetFloat("_OutlineWidth", w); m.SetColor("_OutlineColor", line);
             m.SetFloat("_FaceDilate", d);
@@ -145,11 +152,12 @@ namespace WordDrop
                     Color line = m.HasProperty("_OutlineColor") ? m.GetColor("_OutlineColor") : Color.black;
                     // keyed on the line colour too: a label whose code re-colours its outline later (badge: red count / green "+")
                     // comes back with its own material in the new colour and must get a copy in THAT colour, not the first one
-                    string key = id + "|" + ColorUtility.ToHtmlStringRGB(line) + (firm ? "|firm" : "");
+                    bool custom = s_custom.TryGetValue(t.GetInstanceID(), out var cs);
+                    string key = id + "|" + ColorUtility.ToHtmlStringRGB(line) + (firm ? "|firm" : "") + (custom ? $"|c{cs.x:F3}_{cs.y:F3}_{cs.z:F3}" : "");
                     if (!s_map.TryGetValue(key, out var rk) || rk == null)
                     {
                         rk = new Material(m) { name = m.name + " RK" };          // a COPY: never write into a font's or an asset's material
-                        Apply(rk, font, line, firm);
+                        if (custom) Apply(rk, font, line, cs.x, cs.y, cs.z); else Apply(rk, font, line, firm);
                         s_map[key] = rk; s_ours.Add(rk.GetInstanceID());
                     }
                     t.fontSharedMaterial = rk;                                   // (sets the padding and queues the rebuild itself)
