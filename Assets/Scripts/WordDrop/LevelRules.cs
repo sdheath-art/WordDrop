@@ -550,6 +550,8 @@ namespace WordDrop
         /// demand climbs ~12%/level (L1 50, L3 67, L5 84, L8 123). TUNE FROM tools/balance_report.py.</summary>
         public static int MovesFor(int stage) => 24 + (Mathf.Max(1, stage) - 1) / 3;
 
+        public static bool HARD_BY_LIST = true;
+        public static readonly int[] HARD_LEVELS = { 14, 17, 19 };
         /// <summary>Royal-Match-style base coins for clearing a level (2026-10-21): 10 normal, 20 hard, 30 boss.
         /// Boss = every 5th level from 10 (the table's BOSS rows and the procedural slot-4 boss). Hard = a 4+ letter
         /// minimum, heavy ice (8+), or a rise every move.</summary>
@@ -557,6 +559,9 @@ namespace WordDrop
         {
             stage = Mathf.Max(1, stage);
             if (stage >= 10 && stage % 5 == 0) return 30;
+            // 11-20: inside the authored table "hard" = the levels the bot finds hard (casual win rate lowest: 14, 17, 19), not
+            // the drop-game test below - that paid 20 on L11 (ice count) and 10 on the two hardest levels.
+            if (HARD_BY_LIST && stage <= TABLE.Length) return System.Array.IndexOf(HARD_LEVELS, stage) >= 0 ? 20 : 10;
             var r = For(stage);
             if (r.MinWordLength >= 4 || r.IceCount >= 8 || r.RiseCadence <= 1) return 20;
             return 10;

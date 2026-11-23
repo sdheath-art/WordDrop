@@ -26,6 +26,7 @@ namespace WordDrop
         public static float OWL_SHIFT_X = 0.034f;   // fraction of the portrait width (~10 screen px on a 1179 phone), owl inside the frame (11-02)
         private static string Dir => OWL_3D ? "Owl3D/" : "Owl/";
         public static float IDLE_SLEEP_SECS = 20f;
+        public static bool TALK_THEN_LOOK = true;   // 11-20: no look-down while the beak is flapping (false = old behaviour)
         private static OwlPortrait I;
 
         [System.Serializable] private class Layout { public float head_cx, head_cy, view_w; }
@@ -388,7 +389,11 @@ namespace WordDrop
             }
             if (_mood == null && _t < _sideUntil) look = _sideLook;
             if (_tutorial) { _lookUntil = _t + 0.3f; _lastActivity = _t; }
-            bool looking = _t < _lookUntil && (_mood == null || _mood == "happy" || _mood == "think");
+            // 11-20 Spencer: "when the tutorial shows up the owl stutters from its normal look to looking down very quickly" - the lesson
+            // makes him talk AND look down; the talk face (eyes ahead) and the look-down face swapped 6x a second. He now says the
+            // line first and looks down when he has finished.
+            bool talking = TALK_THEN_LOOK && _mood == null && _t < _talkUntil;
+            bool looking = !talking && _t < _lookUntil && (_mood == null || _mood == "happy" || _mood == "think");
             _lookAmt = Mathf.MoveTowards(_lookAmt, looking ? 1f : 0f, Time.unscaledDeltaTime * 5f);
             float la = Mathf.SmoothStep(0f, 1f, _lookAmt);
             if (OWL_3D) { bool ld = _lookAmt > 0.5f && _eyeState == "open" && (_mood == null || _mood == "think"); if (ld != _lookDown3D) { _lookDown3D = ld; Head3D(); } }

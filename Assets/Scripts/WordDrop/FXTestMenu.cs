@@ -491,6 +491,16 @@ namespace WordDrop
                                   + (bot != null && !string.IsNullOrEmpty(bot.Status) ? $"  ({bot.Status})" : "");
                 if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), botLabel, _btnStyle) && bot != null && !bot.Running) bot.Run();
                 innerY += BTN_H + GAP;
+                // 11-20 TEMP: the casual bot plays like a lost player (see BotPlaytester.RANDOM_PLAYER). Turning it on fills in levels 1-7.
+                {
+                    string[] rl = { "BOT PLAYER: normal", "BOT PLAYER: RANDOM moves only", "BOT PLAYER: RANDOM + follows nudges" };
+                    if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), rl[Mathf.Clamp(BotPlaytester.RANDOM_PLAYER, 0, 2)], _btnStyle) && bot != null && !bot.Running)
+                    {
+                        BotPlaytester.RANDOM_PLAYER = (BotPlaytester.RANDOM_PLAYER + 1) % 3;
+                        BotPlaytester.SELECTED = BotPlaytester.RANDOM_PLAYER > 0 ? "1,2,3,4,5,6,7" : "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19";
+                    }
+                    innerY += BTN_H + GAP;
+                }
                 // SELECTED LEVELS (10-30): type the levels, then run just those with more games each
                 BotPlaytester.SELECTED = GUI.TextField(new Rect(0, innerY, (PANEL_W - 20) * 0.32f, BTN_H), BotPlaytester.SELECTED);
                 if (GUI.Button(new Rect((PANEL_W - 20) * 0.34f, innerY, (PANEL_W - 20) * 0.66f, BTN_H), $"BOT: ONLY THESE x{BotPlaytester.SELECTED_TRIALS}", _btnStyle) && bot != null && !bot.Running) bot.RunSelected();

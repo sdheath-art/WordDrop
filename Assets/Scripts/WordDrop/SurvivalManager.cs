@@ -774,6 +774,7 @@ namespace WordDrop
         public const int COIN_CAP_PER_STAGE = 60;
         /// <summary>Move-limit mode: coins per move left over when the level is cleared (on top of LevelRules.BaseCoinsFor).</summary>
         public static int COINS_PER_LEFTOVER_MOVE = 3;
+        public static bool PAY_LEFTOVER_WITH_BLAST = true;   // 11-20: the flat per-move coins are paid on top of the bonus blast (false = blast only)
         public static bool BONUS_BLAST_ENABLED  = true;
         public static int  BONUS_MAX_ROCKETS    = 10;
         public static int  COINS_PER_BONUS_TILE = 1;
@@ -1036,6 +1037,10 @@ namespace WordDrop
                 if (MoveLimitMode && BONUS_BLAST_ENABLED && HandManager.Instance != null)
                 {
                     coinsEarned = LevelRules.BaseCoinsFor(LevelMapPanel.RunLevel(clearedStage));
+                    // 11-20 (Spencer: "why would a player get less rewards for more moves left over"). 207 logged blasts: rockets are
+                    // capped at BONUS_MAX_ROCKETS and a 63-tile board saturates, so 7 moves left paid ~42 and 10-25 left ~49 (20 left
+                    // once paid 33, 6 left 45). Every leftover move now ALSO pays a flat amount, no cap; the rockets stay the show.
+                    if (PAY_LEFTOVER_WITH_BLAST) coinsEarned += movesLeftAtClear * COINS_PER_LEFTOVER_MOVE;
                     // GOLD RUSH fix (2026-10-30, Spencer: "the amount of rewards changed to 35 ... when i was at like 300 something"):
                     // the bonus level's coins are ALREADY in PendingBonusCoins (paid as they were earned). Zeroing it here, and starting
                     // the blast's counter at the base alone, dropped the readout from 300+ to base 30 + blast 5 - and the Well Done

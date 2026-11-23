@@ -512,6 +512,7 @@ namespace WordDrop
             int swapsDelta = Mathf.Max(0, summary.SwapsAfter   - summary.SwapsBefore);
             int coinsDelta = Mathf.Max(0, ctx.CoinsEarned) + Mathf.Max(0, SurvivalManager.PendingBonusCoins);   // + bonus blast coins
             SurvivalManager.PendingBonusCoins = 0;
+            WDLog.Log($"[Coins] Well Done shows +{coinsDelta} (level {ctx.CoinsEarned} + bonus {coinsDelta - Mathf.Max(0, ctx.CoinsEarned)}); HUD reward readout = {(HUDManager.Instance != null ? HUDManager.Instance.RewardShownForLog : -1)}");   // TEMP DIAG 11-20
 
             if (_editChip != null) _editChip.SetActive(editsDelta > 0);
             if (_swapChip != null) _swapChip.SetActive(swapsDelta > 0);

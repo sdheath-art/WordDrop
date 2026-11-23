@@ -556,6 +556,11 @@ namespace WordDrop
             WDLog.Log($"[Tut] beat 'use' at ({cell.x},{cell.y})");
         }
         /// <summary>HandManager.FireSpecialAt calls this when a power-up was set off by hand.</summary>
+        /// <summary>11-20 (Spencer: "if you double tap the power-up before the tutorial showing you they count as wilds comes up it
+        /// will bug out a bit"): the first tap landed, the lesson appeared, the second tap fired the power-up the lesson was
+        /// pointing at - leaving the lesson up over a tile that was gone. While a lesson is up, a double-tap fires a power-up
+        /// only in the lesson that teaches the double-tap ("use").</summary>
+        public static bool AllowsDoubleTap => !s_active || s_key == "use";
         public static void OnSpecialFired(Vector2Int cell)
         {
             if (Instance == null || !s_active || s_key != "use") return;

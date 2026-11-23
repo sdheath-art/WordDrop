@@ -1325,6 +1325,7 @@ namespace WordDrop
                                 if (InstantPopMode && boardTap.x == _rewriteTargetCol && boardTap.y == _rewriteTargetRow
                                     && Time.unscaledTime - _selectedAt <= DOUBLE_TAP_WINDOW && !SurvivalManager.AwaitingNextLevel && !BoosterManager.CascadeBusy
                                     && (SurvivalManager.Instance == null || !SurvivalManager.Instance.OutOfMovesLocked)   // 11-17 monkey 436301: double-tapped power-ups after the last move -> "moves used 12 past the budget 10"
+                                    && TutorialBeats.AllowsDoubleTap   // 11-20: a slide lesson is up -> its power-up cannot be fired from under it
                                     && TutorialBeats.AllowsCell(boardTap))   // 11-17: a lesson is up -> only its own tiles (monkey 98181: a Royal Orb double-tapped on the DIMMED board cleared letters and the swipe lesson's word PIKE fell apart)
                                 {
                                     var sc = RulesEngine.Instance != null ? RulesEngine.Instance.GetCell(boardTap.x, boardTap.y) : null;
@@ -2132,7 +2133,7 @@ namespace WordDrop
                 WDLog.Log("[Bonus] nothing to blast (no moves left, no specials)"); return;
             }
             BonusBlastRunning = true;
-            HUDManager.RewardFromPayouts = true;   // 10-31: the REWARD readout follows the real payout from here (see PayBonusCoins)
+            HUDManager.RewardFromPayouts = true; HUDManager.RewardFinal = false;   // 10-31: the REWARD readout follows the real payout from here (see PayBonusCoins)
             // 10-31 v3 (Spencer: still "+10 at the very end", log: the whole finale is ONE chained tap -> ONE payout at the end): the
             // readout's target is now LIVE - base + every tile destroyed so far x COINS_PER_BONUS_TILE - so the chain/word extras
             // count in as the tiles explode, not in a lump after.
@@ -2353,7 +2354,8 @@ namespace WordDrop
             if (fast) Time.timeScale = 1f;   // 11-07: end of the fast-forward
             HUDManager.RewardFromPayouts = false;   // final: exact total (by now the coins have counted it up)
             HUDManager.Instance?.SetRewardTotal(s_bonusBaseCoins + coins);
-            WDLog.Log($"[Bonus] done — {coins} coin(s) from the blast");
+            HUDManager.RewardFinal = true;   // 11-20: coins still flying only punch the number from here
+            WDLog.Log($"[Bonus] done — {coins} coin(s) from the blast (readout final at {s_bonusBaseCoins + coins})");
             try { AnalyticsManager.Log("bonus_blast", "rockets", rockets, "moves_left", movesLeft, "coins", coins, "skipped", skip ? 1 : 0); AnalyticsManager.FlushToDisk(); }
             catch (System.Exception) { }
             if (counter != null)

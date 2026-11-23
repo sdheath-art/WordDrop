@@ -130,9 +130,23 @@ namespace WordDrop
             MakeToggle(root, "Vibration", "ic_vibe", new Vector2(x, centre.y + FLY_STEP * 1f), FLY_DIA, () => VibeOn, v => VibeOn = v, 0);
             MakeToggle(root, "Sound", "ic_sound", new Vector2(x, centre.y + FLY_STEP * 2f), FLY_DIA, () => SoundOn, v => SoundOn = v, 1);
             MakeToggle(root, "Music", "ic_music", new Vector2(x, centre.y + FLY_STEP * 3f), FLY_DIA, () => MusicOn, v => MusicOn = v, 2);
+            // 11-20 (tester: "some kind of thing that explains what each piece does ... how boosters work"): a ? button -> How to Play
+            int top = 4;
+            if (HELP_BUTTON)
+            {
+                var help = RoundButton(root, "HelpBtn", "ic_hint", false, FLY_DIA, out _);
+                var hic = help.transform.Find("Icon"); if (hic != null) hic.gameObject.SetActive(false);
+                var q = Text(help.transform, "?", FLY_DIA * 0.50f, Vector2.zero, Vector2.zero);
+                PlaceCentre(q.rectTransform, new Vector2(0f, FLY_DIA * 0.024f), new Vector2(FLY_DIA, FLY_DIA));
+                HUDManager.ApplyRecipeCount(q, HELP_Q_LINE, 0.19f, -0.9f);
+                PlaceCentre((RectTransform)help.transform, new Vector2(x, centre.y + FLY_STEP * 4f), RoundSize(FLY_DIA));
+                PopStagger(help.transform, 3);
+                help.onClick.AddListener(ShowHelpCard);
+                top = 5;
+            }
             var exit = RoundButton(root, "ExitBtn", "ic_exit", true, FLY_DIA, out _);
-            PlaceCentre((RectTransform)exit.transform, new Vector2(x, centre.y + FLY_STEP * 4f), RoundSize(FLY_DIA));
-            PopStagger(exit.transform, 3);
+            PlaceCentre((RectTransform)exit.transform, new Vector2(x, centre.y + FLY_STEP * top), RoundSize(FLY_DIA));
+            PopStagger(exit.transform, top - 1);
             exit.onClick.AddListener(OnExitTapped);
             return true;
         }
@@ -372,6 +386,178 @@ namespace WordDrop
             var go = s_sub; s_sub = null;
             FadeOutAndDestroy(go);
             then?.Invoke();
+        }
+
+        // ═════════════════════════════════════════════════════════════════════════════════════════
+        //  HOW TO PLAY CARD (11-20). Mock approved by Spencer ("that looks great"): three tabs - Power-ups / Boosters / Pieces -
+        //  one row per thing: picture, name, one or two short lines. Rows the player has not met yet are hidden.
+        // ═════════════════════════════════════════════════════════════════════════════════════════
+        public static bool HELP_BUTTON = true;       // the ? in the gear's fly-out
+        public static bool HELP_HIDE_UNMET = true;   // false = every row from level 1
+        public static float HELP_BODY_CAP = 30f, HELP_TAB_CAP = 28f;   // pass 2: were 34 / 41 ("Power-ups" was wider than its tab); 4 tabs: 34 -> 28
+        private static readonly Color HELP_Q_LINE = new Color32(22, 78, 10, 255);
+        private static readonly Color HELP_INK2 = new Color32(96, 70, 150, 255), HELP_RULE = new Color32(226, 208, 170, 255);
+        private static readonly Color HELP_TAB_ON = new Color32(244, 232, 203, 255), HELP_TAB_ON_EDGE = new Color32(250, 190, 60, 255);
+        private static readonly Color HELP_TAB_OFF = new Color32(44, 20, 118, 255), HELP_TAB_OFF_EDGE = new Color32(112, 78, 210, 255);
+        private sealed class HelpRow
+        {
+            public string Art, Name, A, B; public int From; public string BoosterId;
+            public HelpRow(string art, string name, string a, string b, int from, string boosterId = null) { Art = art; Name = name; A = a; B = b; From = from; BoosterId = boosterId; }
+        }
+        // From = the level the thing is first taught / appears on (LevelRules table). Boosters: the slot's unlock level.
+        private static readonly HelpRow[] HELP_POWER =
+        {
+            new HelpRow("Specials/special_rocket",   "Rocket",      "Spell a 5-letter word.",      "Clears a whole row or column.",    3),
+            new HelpRow("Specials/special_disco",    "Royal Orb",   "Spell 6 letters or more.",    "Clears every tile of one letter.", 5),
+            new HelpRow("Specials/special_bomb",     "Bomb",        "Cross two words.",            "Blows up the tiles around it.",    4),
+            new HelpRow("Specials/special_airplane", "Flying Tome", "Make two words in one move.", "Flies to a goal and hits it.",     10),
+        };
+        private static readonly HelpRow[] HELP_BOOST =
+        {
+            new HelpRow(null, "Glove",     "Swap any two tiles.",   null, 0, BoosterManager.ID_FREE_SWAP),
+            new HelpRow(null, "Hammer",    "Smash one tile.",       null, 1, BoosterManager.ID_MALLET),
+            new HelpRow(null, "Lightning", "Clear a whole row.",    null, 2, BoosterManager.ID_BRAMBLE_SWEEP),
+            new HelpRow(null, "Axe",       "Clear a whole column.", null, 3, BoosterManager.ID_AXE),
+            new HelpRow(null, "Spyglass",  "Shows the best word.",  null, 4, BoosterManager.ID_SPYGLASS),
+        };
+        private static readonly HelpRow[] HELP_PIECE =
+        {
+            new HelpRow("Tiles/gem_teal",     "Gem",       "Use its letter in a word.",          null, 1),
+            new HelpRow("Blockers/crate",     "Crate",     "Make a word next to it.",            null, 6),
+            new HelpRow("Tiles/ice_overlay",  "Ice",       "Use the frozen letter in a word.",   null, 9),
+            new HelpRow("Blockers/bookshelf", "Bookshelf", "Make words next to it.",             null, 13),
+            new HelpRow("Blockers/safe",      "Safe",      "Make words next to it to open it.",  null, 18),
+        };
+        private static Sprite ResSprite(string path)
+        {
+            string key = "R/" + path; if (s_sprites.TryGetValue(key, out var sp) && sp != null) return sp;
+            sp = Resources.Load<Sprite>(path);
+            if (sp == null) { var tex = Resources.Load<Texture2D>(path); if (tex != null) sp = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f); }
+            s_sprites[key] = sp; return sp;
+        }
+        private static TextMeshProUGUI HelpText(Transform parent, string s, float cap, float x, float y, float w, bool left, bool body)
+        {
+            var t = Text(parent, s, cap, new Vector2(left ? x + w / 2f : x, y), new Vector2(w, cap * 1.7f));
+            HUDManager.ApplyRecipeFlat(t);
+            if (body)
+            {   // the lighter second voice: the button face font, like the lesson bubbles
+                var bf = Resources.Load<TMP_FontAsset>("WordSlop Button SDF");
+                if (bf != null) { t.font = bf; t.fontSharedMaterial = bf.material; }
+                t.color = HELP_INK2;
+            }
+            else t.color = LevelIntroModal.V2_LABEL_INK;
+            if (left) t.alignment = TextAlignmentOptions.MidlineLeft;
+            return t;
+        }
+        /// <summary>Three stacked blocks: a baked picture (2 source px = 1 mock px at 720; 0.828 card px per source px) + one line.</summary>
+        private static void BuildBasicsPage(Transform page, float bw)
+        {
+            const float K = 0.828f;
+            (string art, float w, float h, float cy, string a, string b, float ty)[] blocks =
+            {
+                ("UI/Help/basics_slide", 512f, 512f, 180f, "Slide a letter to move it.", null, 326f),
+                ("UI/Help/basics_word", 1024f, 256f, 492f, "Line up 4 or more letters", "to spell a word.", 624f),
+                ("UI/Help/basics_goal", 1024f, 256f, 876f, "Finish the goal before", "your moves run out.", 1018f),
+            };
+            for (int i = 0; i < blocks.Length; i++)
+            {
+                var bl = blocks[i];
+                var sp = ResSprite(bl.art);
+                if (sp != null) { var im = NewImage("Pic", page, sp, Color.white); Place(im.rectTransform, bw / 2f, bl.cy, bl.w * K, bl.h * K); }
+                else Debug.LogWarning($"[SettingsV2] missing art {bl.art}");
+                HelpText(page, bl.a, 44f, bw / 2f, bl.ty, bw - 60f, false, false);
+                if (bl.b != null) HelpText(page, bl.b, 44f, bw / 2f, bl.ty + 57f, bw - 60f, false, false);
+                if (i > 0) { var rule = NewImage("Rule", page, null, HELP_RULE); Place(rule.rectTransform, bw / 2f, i == 1 ? 376f : 750f, bw - 80f, 4f); }
+            }
+        }
+        private static void ShowHelpCard()
+        {
+            if (s_sub != null) return;
+            if (s_flyout != null) s_flyout.SetActive(false);   // same as the Quit card: the card covers the fly-out's column
+            const float CH = 1590f, BOX_Y = 306f, BOX_H = 1159f, BW = CW - 140f;
+            var card = BuildCard("HowToPlayCard", SORT_SUB, "How to Play", LevelIntroModal.V2_TITLE_CAP, CH, true, out s_sub, () =>
+            {
+                CloseSub(() => { CloseFlyout(); if (!s_quitting) SurvivalManager.Instance?.SetOverlayPaused(false); });
+            });
+            var box = CreamBox(card, BOX_Y, BOX_H);
+
+            var sm = SurvivalManager.Instance;
+            int lvl = sm != null ? LevelMapPanel.RunLevel(sm.CurrentStageIndex) : 1;
+            int slots = TutorialLocks.BoosterSlotsOpen();
+            var sets = new[] { HELP_POWER, HELP_BOOST, HELP_PIECE };
+            // 11-20 BASICS TAB (the level-1 card was one gem row and blank; the tester who was lost needed the three rules, not the
+            // pieces). Tab 0, always there, opens first until the first power-up level. Pictures: UI/Help/basics_*.png (baked).
+            string[] names = { "Basics", "Power-ups", "Boosters", "Pieces" };
+            string[] foot = { null, "Boosters cost no moves.", "Power-ups clear all of these too." };
+            string[] none = { "Power-ups arrive at level 3.", $"Boosters unlock at level {TutorialLocks.BOOSTER_SLOT_UNLOCKS[0]}.", "" };
+            const int NT = 4;
+            var pages = new GameObject[NT]; var tabOn = new GameObject[NT]; var tabOff = new GameObject[NT];
+            for (int pg = 0; pg < NT; pg++)
+            {
+                var page = new GameObject("Page" + names[pg], typeof(RectTransform)); page.transform.SetParent(box, false);
+                Stretch((RectTransform)page.transform); pages[pg] = page;
+                if (pg == 0) { BuildBasicsPage(page.transform, BW); continue; }
+                int p = pg - 1;
+                bool two = p == 0; float step = two ? 212f : 185f, y = two ? 127f : 124f; int shown = 0;
+                foreach (var r in sets[p])
+                {
+                    bool met = !HELP_HIDE_UNMET || (r.BoosterId != null ? r.From < slots : lvl >= r.From);
+                    if (!met) continue;
+                    if (shown > 0) { var rule = NewImage("Rule", page.transform, null, HELP_RULE); Place(rule.rectTransform, BW / 2f, y - step / 2f, BW - 80f, 4f); }
+                    var sp = r.BoosterId != null ? BoosterHUDSlot.BoosterIcon(r.BoosterId) : ResSprite(r.Art);
+                    if (sp != null) { var ic = NewImage("Pic", page.transform, sp, Color.white); ic.preserveAspect = true; Place(ic.rectTransform, 116f, y, 138f, 138f); }
+                    // 11-20 pass 2 (his screenshots): body 34 ran past the box ("Clears every tile of one letter." 390 px of 371
+                    // on a 720 screen) and sat tight under the name -> body 30, name lifted, lines spread.
+                    HelpText(page.transform, r.Name, 47f, 212f, y - (two ? 52f : 26f), 620f, true, false);
+                    HelpText(page.transform, r.A, HELP_BODY_CAP, 212f, y + (two ? 6f : 30f), 620f, true, true);
+                    if (r.B != null) HelpText(page.transform, r.B, HELP_BODY_CAP, 212f, y + 48f, 620f, true, true);
+                    y += step; shown++;
+                }
+                if (shown == 0) HelpText(page.transform, none[p], 41f, BW / 2f, BOX_H / 2f, BW - 80f, false, false);
+                else
+                {
+                    if (p == 0)
+                    {
+                        var rule = NewImage("Rule", page.transform, null, HELP_RULE); Place(rule.rectTransform, BW / 2f, 869f, BW - 80f, 4f);
+                        HelpText(page.transform, "To set one off:", 41f, BW / 2f, 932f, BW - 80f, false, false);
+                        HelpText(page.transform, "slide it into a word, or double-tap it.", HELP_BODY_CAP, BW / 2f, 992f, BW - 80f, false, true);
+                        HelpText(page.transform, "A double-tap costs one move.", HELP_BODY_CAP, BW / 2f, 1040f, BW - 80f, false, true);
+                    }
+                    else if (p != 2 || !HELP_HIDE_UNMET || lvl >= HELP_POWER[0].From)   // "Power-ups clear all of these too." only once a power-up has been met
+                        HelpText(page.transform, foot[p], 38f, BW / 2f, 1068f, BW - 80f, false, false);
+                }
+            }
+            int first = lvl < HELP_POWER[0].From ? 0 : 1;
+
+            System.Action<int> select = null;
+            for (int p = 0; p < NT; p++)
+            {
+                int pi = p; float tx = 161f + 226f * p;
+                var hit = NewImage("Tab" + names[p], card, null, new Color(1f, 1f, 1f, 0f)); hit.raycastTarget = true;
+                Place(hit.rectTransform, tx, 207f, 216f, 110f);
+                for (int k = 0; k < 2; k++)
+                {
+                    bool on = k == 0;
+                    var edge = NewImage(on ? "On" : "Off", hit.transform, MenuUI.GetRoundedRectSprite(36), on ? HELP_TAB_ON_EDGE : HELP_TAB_OFF_EDGE); edge.type = Image.Type.Sliced;
+                    Stretch(edge.rectTransform);
+                    var fill = NewImage("Fill", edge.transform, MenuUI.GetRoundedRectSprite(31), on ? HELP_TAB_ON : HELP_TAB_OFF); fill.type = Image.Type.Sliced;
+                    Stretch(fill.rectTransform); fill.rectTransform.offsetMin = new Vector2(5f, 5f); fill.rectTransform.offsetMax = new Vector2(-5f, -5f);
+                    var lab = Text(edge.transform, names[p], HELP_TAB_CAP, Vector2.zero, Vector2.zero);
+                    PlaceCentre(lab.rectTransform, new Vector2(0f, 2f), new Vector2(216f, 110f));
+                    if (on) { HUDManager.ApplyRecipeFlat(lab); lab.color = LevelIntroModal.V2_LABEL_INK; }
+                    else HUDManager.ApplyRecipeCount(lab, LevelIntroModal.V2_TITLE_LINE, 0.19f, -0.9f);
+                    if (on) tabOn[p] = edge.gameObject; else tabOff[p] = edge.gameObject;
+                }
+                var tb = hit.gameObject.AddComponent<Button>(); tb.transition = Selectable.Transition.None;
+                tb.onClick.AddListener(() => { GameAudio.Instance?.PlaySettingsRelease(); select(pi); });
+            }
+            select = sel =>
+            {
+                for (int p = 0; p < NT; p++) { pages[p].SetActive(p == sel); tabOn[p].SetActive(p == sel); tabOff[p].SetActive(p != sel); }
+            };
+            select(first);
+            try { AnalyticsManager.Log("help_open", "level", lvl); } catch (System.Exception) { }
+            WDLog.Log($"[SettingsV2] How to Play opened at level {lvl} (booster slots open {slots}, first tab {names[first]})");
         }
 
         // ═════════════════════════════════════════════════════════════════════════════════════════

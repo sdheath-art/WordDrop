@@ -29,6 +29,10 @@ namespace WordDrop
         public static int   FIRST_LEVEL = 1, LAST_LEVEL = 20, TRIALS = 40;
         /// <summary>Share of the CASUAL bot's moves that make no word (calibrated from Spencer's 10-23 run: 54%). 0 = old bot.</summary>
         public static float CASUAL_NOWORD_RATE = 0.5f;
+        // 11-20 RANDOM PLAYER (tester: "had no idea what was going on ... just started randomly moving things and said she was
+        // passing levels"). The casual bot stops looking for words: every move is a random legal swap; a word only happens by luck.
+        // 1 = random only. 2 = random, but it follows the game's own nudge when one would show (a lost player with hints on).
+        public static int RANDOM_PLAYER = 0;
         private static readonly System.Random s_shuffleRng = new System.Random(1234);
         private static int GoalPiecesLeftSim() => RulesEngine.GoalPiecesLeft();
         /// <summary>Casual bot only sees COMMON words (people don't spot GAGE / TARO). Stale turn = fewer than STALE_BELOW common-word swaps.</summary>
@@ -232,9 +236,10 @@ namespace WordDrop
                 // L10 "seemed impossible". The casual bot now spends that share of its moves on a swap that makes no word.
                 // FISHING HINT model: after HintManager.FISHING_SWAPS misses in a row the game shows the goal-aware hint — the
                 // casual player takes it (no waste roll that turn, and the hint's pick replaces its own).
-                bool hinted = casual && FISHING_HINT_MODEL && (missStreak >= HintManager.FISHING_SWAPS || hintNext); hintNext = false;
+                bool rnd = casual && RANDOM_PLAYER > 0;
+                bool hinted = casual && FISHING_HINT_MODEL && (missStreak >= HintManager.FISHING_SWAPS || hintNext) && (!rnd || RANDOM_PLAYER == 2); hintNext = false;
                 if (hinted && sim.FindSwapHint(false, out var ha, out var hb, out _)) { cands.Clear(); cands.Add((ha, hb, 1)); }
-                else if (casual && CASUAL_NOWORD_RATE > 0f && Random.value < CASUAL_NOWORD_RATE) cands.Clear();
+                else if (rnd || (casual && CASUAL_NOWORD_RATE > 0f && Random.value < CASUAL_NOWORD_RATE)) cands.Clear();
                 if (casual && cands.Count > CASUAL_SEES)
                 {   // a person spots a handful of the available words, not all of them — keep a random few
                     for (int i = 0; i < CASUAL_SEES; i++) { int j = Random.Range(i, cands.Count); var tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; }
@@ -242,7 +247,7 @@ namespace WordDrop
                 }
                 // DRAG (10-31, Spencer: "teach it to drag"): words already lying on the board. A casual player notices one only
                 // some of the time (BOT_DRAG_SEE) and takes it when it beats the best swap it sees; the expert always considers them.
-                if (BOT_DRAGS && !hinted)
+                if (BOT_DRAGS && !hinted && !rnd)
                 {
                     var drags = sim.EnumerateSwipeWords(casual && CASUAL_COMMON_ONLY);
                     if (drags.Count > 0 && (!casual || Random.value < BOT_DRAG_SEE))

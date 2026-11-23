@@ -3545,11 +3545,14 @@ namespace WordDrop
         /// <summary>True from the bonus blast's start until reward mode ends: the REWARD readout is driven by the real payout
         /// (SetRewardTotal), and landing coins only punch it.</summary>
         public static bool RewardFromPayouts;
+        /// <summary>11-20: the bonus blast has paid everything and snapped the readout - late coins must not add to it.</summary>
+        public static bool RewardFinal;
+        public int RewardShownForLog => _rewardShown;
         public static System.Func<int> RewardLiveTarget;   // set by the bonus blast: live paid-so-far total
         private int _rewardTarget, _bonusCoinsInFlight, _bonusValueInFlight;
         public void ExitRewardMode()
         {
-            RewardFromPayouts = false; RewardLiveTarget = null; _rewardTarget = 0; _bonusCoinsInFlight = 0; _bonusValueInFlight = 0;
+            RewardFromPayouts = false; RewardFinal = false; RewardLiveTarget = null; _rewardTarget = 0; _bonusCoinsInFlight = 0; _bonusValueInFlight = 0;
             if (!_rewardMode) return;
             _rewardMode = false;
             SetRewardLayout(false);
@@ -3639,7 +3642,10 @@ namespace WordDrop
             if (_rewardMode)
             {
                 _bonusCoinsInFlight = Mathf.Max(0, _bonusCoinsInFlight - 1); _bonusValueInFlight = Mathf.Max(0, _bonusValueInFlight - share);
-                _rewardShown += share;   // counts up as each coin hits; any payout the coins didn't carry is topped up once none are in flight
+                // 11-20 (Spencer: "the number it said in the hud doesnt match how many i got"): on a fast-forwarded bonus the blast
+                // ends (and the readout is snapped to the paid total) while coins are still in the air - they fly in real time -
+                // and each late landing then added its share ON TOP of the final total. Once the total is final, coins only punch.
+                if (!RewardFinal) _rewardShown += share;   // counts up as each coin hits; any payout the coins didn't carry is topped up once none are in flight
                 if (_scorePanelNum != null)
                 {
                     _scorePanelNum.text = _rewardShown.ToString("N0");
