@@ -1700,6 +1700,33 @@ namespace WordDrop
             }
         }
 
+        /// <summary>11-24 OWLS FALL OUT: the owl's tile has reached the bottom row of <paramref name="col"/> on its way out (the data
+        /// counted it when the fall was planned). It drops into its nest, the goal count ticks, and the win is checked once the
+        /// board is still.</summary>
+        public void OwlArrived(int col, Vector3 world)
+        {
+            HUDManager.Instance?.FlyCollectLetter(world, '\0');   // nests: no flight - settles the count at once
+            GameAudio.Instance?.PlayDuckQuack(0);
+            HapticsManager.Strong();
+            OwlNests.Land(col, world);
+            if (!_owlClearCheck) StartCoroutine(OwlClearCheckRoutine());
+        }
+        private bool _owlClearCheck;
+        private System.Collections.IEnumerator OwlClearCheckRoutine()
+        {
+            _owlClearCheck = true;
+            float waited = 0f;
+            while (waited < 20f)
+            {
+                var hm = HandManager.Instance; var rules = RulesEngine.Instance;
+                bool busy = (rules != null && rules.IsResolving) || (hm != null && hm.IsResolvingChain) || (MatchController.Instance != null && MatchController.Instance.IsProcessing) || _duckCollecting;
+                if (!busy) break;
+                waited += Time.unscaledDeltaTime; yield return null;
+            }
+            _owlClearCheck = false;
+            if (FullBoardActive && LevelRules.HasDuckGoal && !_currentStageCleared) CheckStageClear();
+        }
+
         private void TickDuckCollect()
         {
             if (_duckCollecting || !FullBoardActive || !LevelRules.HasDuckGoal || !LevelRules.GoalsActiveFor(_currentStageIndex)) return;

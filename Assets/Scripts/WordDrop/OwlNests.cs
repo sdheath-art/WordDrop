@@ -105,6 +105,14 @@ namespace WordDrop
         public static void Land(int col, Vector3 fromWorld)
         {
             if (!ON || !STAY_IN_NEST) return;
+            // an owl that slid round a crate can come out of a column that is not its own (or one already full): nearest free nest
+            var home = RulesEngine.DuckHomeColumns(LevelRules.DuckGoalTarget);
+            if (home.Count > 0 && (!home.Contains(col) || RulesEngine.DuckColsHome.Contains(col)))
+            {
+                int best = -1;
+                foreach (int h in home) if (!RulesEngine.DuckColsHome.Contains(h) && (best < 0 || Mathf.Abs(h - col) < Mathf.Abs(best - col))) best = h;
+                if (best >= 0) col = best;
+            }
             if (RulesEngine.DuckColsHome.Add(col)) { s_landFrom[col] = fromWorld; WDLog.Log($"[Nest] owl home in column {col} ({RulesEngine.DuckColsHome.Count} home)"); }
         }
 

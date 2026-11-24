@@ -31,3 +31,7 @@ Started 2026-10-21 during Spencer's playtest. Add as we go; tick off when Spence
 - [x] Row rise firing on level entry before any move (2026-10-21) — awaiting Spencer confirm.
 - [x] Rain no longer replaces row rises (2026-10-21) — rain only as the "LETTER SHOWER!" reward.
 - [ ] Booster becomes available: the claim SFX plays but nothing draws the eye to WHAT unlocked (2026-11-18, Spencer on phone). Needs a visual cue on the booster itself. Ask on the look before building (art/feel).
+
+## 2026-11-24 (Spencer)
+- **Flying Tome (airplane power-up) holds the letters from falling until its flight animation is done.** Spencer: "these are things that need to get done at some point ... even if its risky". Same family as the owl hang fixed today (visual waits on an animation before gravity runs). Not investigated yet.
+- **Axe hitting a power-up: the power-up only fires after the chop AND its fall have finished** (Spencer 11-24: "the axe does not trigger boosters until the animation is done"). Log 10:29 run: `[Axe] Chopped column 3: 7 tiles` at frame 1925 (the power-up at (3,5) is left out of the cleared list), the cascade completes at 1961, and only then `[Booster] hit a AIRPLANE at (3,0) -> fires` at 1962 - i.e. it falls to the bottom first and goes off from there ~0.6 s late. Wanted: it fires the moment the blade reaches it, from where it was. Same family as the tome hold.

@@ -2609,8 +2609,42 @@ namespace WordDrop
         }
         public static bool IsFixedTile(Tile t) => t != null && (t.IsAnchored || (RulesEngine.FIXED_CRATES && SurvivalManager.FullBoardActive && t.IsStone && !t.IsDropTargetVisual));
 
+        /// <summary>11-24 OWLS FALL OUT (see RulesEngine.OwlsFallOutInData): take the owls the data has just sent home off the grid,
+        /// BEFORE this fall is planned, and let each one fall on its own to the bottom row of its exit column and on into its nest.
+        /// The column above it then falls all the way in the same pass.</summary>
+        private void OwlsFallOutVisual()
+        {
+            if (RulesEngine.OwlsLeft.Count == 0) return;
+            var list = new List<RulesEngine.OwlExit>(RulesEngine.OwlsLeft); RulesEngine.OwlsLeft.Clear();
+            bool levelUniform = GameManager.IsLevelMode;
+            foreach (var e in list)
+            {
+                Vector3 target = CellToWorld(e.Col, 0);
+                Tile t = (e.From.x >= 0 && e.From.x < COLS && e.From.y >= 0 && e.From.y < ROWS) ? _tiles[e.From.x, e.From.y] : null;
+                if (t == null || !t.IsDropTargetVisual)
+                {   // the picture has no owl there (should not happen): still count it home so the level can finish
+                    WDLog.Log($"[Owl] fall-out: NO owl tile at ({e.From.x},{e.From.y}) - sent home without the fall");
+                    SurvivalManager.Instance?.OwlArrived(e.Col, target + new Vector3(_boardSlideOffsetX, 0f, 0f));
+                    continue;
+                }
+                _tiles[e.From.x, e.From.y] = null; _cells[e.From.x, e.From.y] = null;
+                float dist = Vector3.Distance(t.transform.position, target);
+                if (dist > 0.02f) t.AnimateGravityFall(target, levelUniform ? 0.30f : dist / FallSpeed, levelUniform ? 0f : e.From.x * 0.045f);   // the same fall the column above it gets
+                StartCoroutine(OwlFallOutRoutine(t, e.Col, target));
+            }
+        }
+        private IEnumerator OwlFallOutRoutine(Tile t, int col, Vector3 target)
+        {
+            yield return null;
+            float waited = 0f;
+            while (t != null && waited < 4f && (t.IsAnimating || Mathf.Abs(t.transform.position.y - target.y) > CellSize * 0.06f)) { waited += Time.deltaTime; yield return null; }
+            SurvivalManager.Instance?.OwlArrived(col, target + new Vector3(_boardSlideOffsetX, 0f, 0f));
+            if (t != null) ReturnTile(t);
+        }
+
         public IEnumerator ApplyGravity()
         {
+            OwlsFallOutVisual();   // 11-24: owls the data sent home leave the grid before the fall is planned
             // Per-column stagger — cascades feel organic instead of synchronized.
             // Candy Crush / Royal Match use ~40-60ms per column.
             // Phase 9.10: Level mode uses uniform (no-stagger, fixed-duration)
@@ -2948,6 +2982,7 @@ namespace WordDrop
 
         public IEnumerator ApplyGravityFromEvents(Dictionary<Vector2Int, Vector2Int> tileMoves)
         {
+            OwlsFallOutVisual();   // 11-24: owls the data sent home leave the grid before the moves are played
             if (tileMoves == null) tileMoves = new Dictionary<Vector2Int, Vector2Int>();
             if (tileMoves.Count == 0 && !SurvivalManager.FullBoardActive)
             {

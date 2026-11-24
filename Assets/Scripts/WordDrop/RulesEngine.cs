@@ -4449,9 +4449,56 @@ namespace WordDrop
         /// Compacts each column downward in the logical board data.
         /// Returns a dictionary mapping old positions to new positions for tiles that moved.
         /// </summary>
+        // ── OWLS FALL OUT (11-24, Spencer's recording Movie_031: an owl left the bottom row and its square stayed an open hole for
+        // ~1 s, the tile above hanging, because the square was only cleared once the whole move had finished resolving. Spencer:
+        // "we need to fix this stuff even if its risky"). The owl leaving is now PART OF THE FALL: when a fall would end with an owl
+        // on the bottom row (or one is already there), the owl leaves the board in that same gravity pass - its cell is emptied
+        // BEFORE the plan is made, so the column above falls all the way in one motion and no hole is ever left. Nothing is
+        // cleared under a live step: this runs at the one point where the board is being compacted anyway.
+        // The data decides (here) and records each exit in OwlsLeft; the visual (GridManager.OwlsFallOutVisual, first thing in both
+        // of its gravity entry points) takes exactly those tiles off the grid and lets them fall out into their nests.
+        // OWLS_FALL_OUT = false: the old way (owl sits on the bottom row, SurvivalManager collects it when the board is still). ──
+        public static bool OWLS_FALL_OUT = true;
+        public static bool OwlsFallOutOn => OWLS_FALL_OUT && OwlNests.ON && OwlNests.STAY_IN_NEST && SurvivalManager.FullBoardActive;
+        public struct OwlExit { public Vector2Int From; public int Col; }
+        /// <summary>Exits the data has decided and the visual has not played yet (live game only). The grid consumes it.</summary>
+        public static readonly List<OwlExit> OwlsLeft = new List<OwlExit>();
+        private void OwlsFallOutInData()
+        {
+            bool any = false;   // no owl on the board (every other level, and most gravity passes): nothing to plan
+            for (int x = 0; x < COLS && !any; x++) for (int y = 0; y < ROWS; y++) if (_board[x, y] != null && _board[x, y].IsDropTarget) { any = true; break; }
+            if (!any) return;
+            for (int guard = 0; guard < 4; guard++)   // an owl leaving can bring another one down to the bottom row
+            {
+                var occ = new bool[COLS, ROWS]; var fix = new bool[COLS, ROWS];
+                for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
+                { var d = _board[x, y]; if (d == null) continue; occ[x, y] = true; fix[x, y] = IsFixedCell(d); }
+                var leaving = new List<OwlExit>();
+                for (int x = 0; x < COLS; x++) if (_board[x, 0] != null && _board[x, 0].IsDropTarget) leaving.Add(new OwlExit { From = new Vector2Int(x, 0), Col = x });
+                foreach (var m in PlanFall(occ, fix, FallSpawnRows))
+                {
+                    if (m.from.y >= ROWS || m.to.y != 0) continue;
+                    var d = _board[m.from.x, m.from.y];
+                    if (d != null && d.IsDropTarget) leaving.Add(new OwlExit { From = m.from, Col = m.to.x });
+                }
+                if (leaving.Count == 0) return;
+                foreach (var e in leaving)
+                {
+                    ClearCell(e.From.x, e.From.y);
+                    if (LevelRules.HasDuckGoal)
+                    {
+                        LevelRules.Collected++;
+                        if (!Simulating) { LevelRules.CollectAwaitingFly++; LevelRules.CollectAwaitingSince = Time.unscaledTime; }   // the HUD count waits for the owl to reach its nest
+                    }
+                    if (!Simulating) { OwlsLeft.Add(e); WDLog.Log($"[Owl] falls out: from ({e.From.x},{e.From.y}) through column {e.Col} -> {LevelRules.Collected} home"); }
+                }
+            }
+        }
+
         private Dictionary<Vector2Int, Vector2Int> ApplyGravityInData()
         {
             var moves = new Dictionary<Vector2Int, Vector2Int>();
+            if (OwlsFallOutOn) OwlsFallOutInData();
 
             // One shared plan (PlanFall) for the data AND GridManager.ApplyGravity - both read the same occupancy + fixed cells,
             // so the visual can't drift from the data (HANDOFF 4.2). Positions come from where each cell IS in _board, never
