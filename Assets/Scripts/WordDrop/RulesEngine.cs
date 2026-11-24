@@ -6598,6 +6598,7 @@ namespace WordDrop
             public List<Vector2Int> ThawedCells;
             public List<KeyValuePair<string, List<Vector2Int>>> PoppedWords;
             public List<Vector2Int> GemsCollectedOnSpecials;   // gem tiles that became a special this step (collected, tile survives)   // every armed word this step exploded + its cells (word pop-ups, 2026-10-28)
+            public List<Vector2Int> GemCollectedCells;   // 11-24: cells whose gem was collected when they exploded this step
             public List<KeyValuePair<Vector2Int, int>> ShelfHits;   // BOOKSHELF (11-03): shelf anchor (bottom-left) -> slot of the book knocked off
             public List<Vector2Int> TreasureHitCells, TreasureOpenedCells, CrateHitCells;   // CrateHitCells: crates that lost a layer (11-03)   // treasure lost a band (survives) / opened (cleared, pays coins)
             public List<KeyValuePair<Vector2Int, int>> SpecialsCreated;   // cell -> kind, born this step
@@ -9076,11 +9077,12 @@ namespace WordDrop
                 foreach (var c in allExplodedCells) if (InBounds(c.x, c.y) && preLetters[c.x, c.y] == collectL) got++;
                 if (got > 0) { LevelRules.Collected += got; LevelRules.CollectAwaitingFly += got; LevelRules.CollectAwaitingSince = Time.unscaledTime; WDLog.Log($"[Goal] collected {got} '{collectL}' -> {LevelRules.Collected}"); }
             }
+            List<Vector2Int> gemCells = null;   // 11-24: which cells gave up a gem this step (goal-word pop-ups)
             if (preGems != null)
             {
                 int gg = 0;
                 var where = new System.Text.StringBuilder();
-                foreach (var c in allExplodedCells) if (InBounds(c.x, c.y) && preGems[c.x, c.y]) { gg++; where.Append($" ({c.x},{c.y})"); }
+                foreach (var c in allExplodedCells) if (InBounds(c.x, c.y) && preGems[c.x, c.y]) { gg++; where.Append($" ({c.x},{c.y})"); (gemCells ??= new List<Vector2Int>()).Add(c); }
                 if (gg > 0) { LevelRules.Collected += gg; LevelRules.CollectAwaitingFly += gg; LevelRules.CollectAwaitingSince = Time.unscaledTime; WDLog.Log($"[Goal] collected {gg} gem(s) at{where} -> {LevelRules.Collected}"); }
             }
             ExplodedTilesTotal += allExplodedCells.Count;   // running count — bonus coins read the delta (full board refills, so occupancy can't)
@@ -9096,6 +9098,7 @@ namespace WordDrop
                 ThawedCells = thawedCells,
                 PoppedWords = _poppedWords.Count > 0 ? _poppedWords : null,
                 GemsCollectedOnSpecials = _gemsOnSpecials.Count > 0 ? _gemsOnSpecials : null,
+                GemCollectedCells = gemCells,
                 TreasureHitCells = _treasureHitCells.Count > 0 ? _treasureHitCells : null,
                 CrateHitCells = _crateHitCells.Count > 0 ? _crateHitCells : null,
                 ShelfHits = _shelfHits.Count > 0 ? _shelfHits : null,

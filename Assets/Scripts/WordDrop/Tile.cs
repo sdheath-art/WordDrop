@@ -3371,6 +3371,44 @@ namespace WordDrop
         // rounded rect. White tint = the art's own colours. ICE_ART = false -> the old procedural film + sheen.
         public static bool  ICE_ART = true;
         public static float ICE_ART_ALPHA = 0.66f, ICE_ART_SIZE = 1.10f;
+        // 11-23 ICE LETTER (art pass; Spencer picked mock B): the frozen letter went pale blue under pale frost - the one letter the
+        // player has to READ to melt it. The ice keeps its full look (his 11-03 "obscured ... but not too hard to see"); a second
+        // copy of the tile's letter is drawn IN FRONT of the ice at ICE_LETTER_ALPHA, so it reads as a dark letter inside the ice.
+        // It follows the real letter every frame and fades with the frost when it melts. ICE_LETTER = false: as before.
+        public static bool  ICE_LETTER = true;
+        public static float ICE_LETTER_ALPHA = 0.45f;
+        private TextMeshPro _iceLetter;
+        private class IceLetterSync : MonoBehaviour { public Tile tile; private void LateUpdate() { if (tile != null) tile.SyncIceLetter(); } }
+        private void EnsureIceLetter()
+        {
+            if (!ICE_LETTER || _iceLetter != null || _letterTMP == null) return;
+            var go = new GameObject("IceLetter"); go.transform.SetParent(transform, false); go.tag = "Untagged";
+            _iceLetter = go.AddComponent<TextMeshPro>();
+            _iceLetter.font = _letterTMP.font; _iceLetter.fontSharedMaterial = _letterTMP.fontSharedMaterial;
+            _iceLetter.fontStyle = _letterTMP.fontStyle; _iceLetter.alignment = _letterTMP.alignment;
+            _iceLetter.enableAutoSizing = false; _iceLetter.textWrappingMode = TextWrappingModes.NoWrap; _iceLetter.overflowMode = TextOverflowModes.Overflow;
+            _iceLetter.rectTransform.sizeDelta = _letterTMP.rectTransform.sizeDelta;
+            _iceLetter.text = "";
+            go.AddComponent<IceLetterSync>().tile = this;
+            SyncIceLetter();
+        }
+        private void SyncIceLetter()
+        {
+            if (_iceLetter == null) return;
+            bool show = ICE_LETTER && _frostGO != null && _frostGO.activeInHierarchy && _frostSR != null
+                        && _letterTMP != null && _letterTMP.enabled && _letterTMP.gameObject.activeInHierarchy && !string.IsNullOrEmpty(_letterTMP.text);
+            var mr = _iceLetter.renderer; if (mr != null && mr.enabled != show) mr.enabled = show;
+            if (!show) return;
+            if (_iceLetter.text != _letterTMP.text) _iceLetter.text = _letterTMP.text;
+            if (!Mathf.Approximately(_iceLetter.fontSize, _letterTMP.fontSize)) _iceLetter.fontSize = _letterTMP.fontSize;
+            var lt = _letterTMP.transform; var it = _iceLetter.transform;
+            var lp = lt.localPosition; it.localPosition = new Vector3(lp.x, lp.y, FROST_REST_LOCAL_POS.z - 0.01f);   // just in front of the ice
+            it.localScale = lt.localScale; it.localRotation = lt.localRotation;
+            _iceLetter.sortingLayerID = _letterTMP.sortingLayerID; _iceLetter.sortingOrder = _frostSR.sortingOrder + 1;
+            float frost = Mathf.Clamp01(_frostSR.color.a / Mathf.Max(0.01f, FROST_TINT.a));                            // fades as the ice melts
+            var c = LETTER_INK; c.a = ICE_LETTER_ALPHA * frost * _letterTMP.alpha;
+            if (_iceLetter.color != c) _iceLetter.color = c;
+        }
         private static readonly Color FROST_TINT_OLD = new Color(0.62f, 0.84f, 0.97f, 0.62f); // icy light-blue, translucent
         private static Color FROST_TINT => (ICE_ART && IceArtSprite != null) ? new Color(1f, 1f, 1f, ICE_ART_ALPHA) : FROST_TINT_OLD;
         private static Sprite s_iceArt; private static bool s_iceArtTried;
@@ -3486,6 +3524,7 @@ namespace WordDrop
             if (active)
             {
                 EnsureFrostOverlay();
+                EnsureIceLetter();   // 11-23: the readable copy of the letter in front of the ice
                 if (_frostGO != null)
                 {
                     _frostGO.SetActive(true);

@@ -2118,11 +2118,30 @@ namespace WordDrop
         /// that ever broke mid-way can never soft-lock the level end.</summary>
         public static bool BonusBlastHoldsModal => BonusBlastRunning && Time.unscaledTime - s_bonusStartedAt < 25f;
 
+        public static bool DROP_ARMED_AT_WIN = false;   // 11-24: superseded the same day by POP_ARMED_AT_WIN (Spencer: "let it pop before bonus")
+        public static bool POP_ARMED_AT_WIN = true;
+        /// <summary>True while a word left lit at the win is popping, just before the bonus: its pop-up is allowed (the bonus hides them).</summary>
+        public static bool BonusPrePop { get; private set; }
         public void BeginBonusBlast(int rockets, int movesLeft, int baseCoins = 0, int alreadyShown = 0)
         {
             if (BonusBlastRunning) return;
             bool anySpecial = false;
             var rules = RulesEngine.Instance;
+            // 11-24 (Spencer: he won with the mallet, the fall made a word and it "stayed green for the bonus"). Log: the booster's
+            // fall armed MATE on the frame the last crate broke; auto-pop does nothing once the level is won, so the word sat lit
+            // through the bonus and then went off with the first rocket (pop-up and points included). A word left armed at the
+            // win is now let go here: its tiles go back to plain letters and it is no longer part of any detonation.
+            if (DROP_ARMED_AT_WIN && rules != null && rules.PrimedRegistry != null)
+            {
+                var left = new List<PrimedWordRegistry.PrimedWord>(rules.PrimedRegistry.GetAllPrimedWords());
+                foreach (var pw in left)
+                {
+                    if (pw == null) continue;
+                    if (pw.Cells != null && _grid != null) foreach (var c in pw.Cells) _grid.GetTile(c.x, c.y)?.ClearPrimedGlow();
+                    rules.PrimedRegistry.RemovePrimedWord(pw.Id);
+                    WDLog.Log($"[Bonus] '{pw.Word}' was still armed at the win - let go");
+                }
+            }
             if (rules != null)
                 for (int x = 0; x < RulesEngine.COLS && !anySpecial; x++)
                     for (int y = 0; y < RulesEngine.ROWS && !anySpecial; y++)
@@ -2181,6 +2200,32 @@ namespace WordDrop
                 if (BONUS_TAP_SKIPS) return true;
                 if (!fast) WDLog.Log("[Bonus] tap — fast-forward");
                 fast = true; return false;
+            }
+            // 11-24 (Spencer: "let it pop before bonus"): a word still lit when the level was won (his mallet win: the fall spelled
+            // MATE on the winning frame, and auto-pop is off once the level is won) pops now, as the last word of the level - its
+            // pop-up shows, then the bonus begins. Tiles it clears are not bonus tiles (the coin count starts after this).
+            if (POP_ARMED_AT_WIN && rules != null && rules.PrimedRegistry != null)
+            {
+                float w0 = 0f;
+                while (w0 < 3f && ((MatchController.Instance != null && MatchController.Instance.IsProcessing) || _tapDetonating)) { w0 += Time.unscaledDeltaTime; yield return null; }
+                for (int prePop = 0; prePop < 4; prePop++)
+                {
+                    var armed = rules.PrimedRegistry.GetAllPrimedWords();
+                    PrimedWordRegistry.PrimedWord next = null;
+                    foreach (var pw in armed) if (pw != null && pw.Cells != null && pw.Cells.Count > 0) { next = pw; break; }
+                    if (next == null) break;
+                    WDLog.Log($"[Bonus] '{next.Word}' was still lit at the win - it pops before the bonus");
+                    BonusPrePop = true;
+                    bool started = TryTapDetonate(next.Cells[0]);
+                    float w1 = 0f;
+                    while (started && w1 < 4f && (_tapDetonating || (MatchController.Instance != null && MatchController.Instance.IsProcessing) || WordDropFX.HasActiveExplosions)) { w1 += Time.unscaledDeltaTime; yield return null; }
+                    BonusPrePop = false;
+                    if (!started)
+                    {   // could not be fired: let it go so it never rides along with a bonus rocket
+                        foreach (var c in next.Cells) _grid?.GetTile(c.x, c.y)?.ClearPrimedGlow();
+                        rules.PrimedRegistry.RemovePrimedWord(next.Id);
+                    }
+                }
             }
             // Let the winning move finish (its pops, gravity, landing points) before the show starts.
             float waited = 0f;
@@ -4575,6 +4620,31 @@ case RulesEngine.ResolutionPhase.Complete:
             }
             _popRun = null;
         }
+        public static bool GOAL_GOLD_FROM_STEP = true;   // false = goal colour only from the word's own letters at the tap, as before
+        /// <summary>Did this word make goal progress in this step? Direct: one of its cells gave up a gem / melted ice, or a crate,
+        /// shelf or safe beside it was hit. Indirect: the word set off a power-up and the step made goal progress.</summary>
+        private static bool StepWordHitsGoal(RulesEngine.StepResult step, List<Vector2Int> cells)
+        {
+            if (step == null || cells == null || cells.Count == 0 || LevelRules.Goals.Count == 0 || SurvivalManager.AwaitingNextLevel) return false;
+            bool gemGoal = LevelRules.HasGemGoal, crateGoal = LevelRules.HasCrateGoal, iceGoal = false, bigGoal = false;
+            foreach (var g in LevelRules.Goals) { if (g.Type == LevelRules.GoalType.Ice) iceGoal = true; if (g.Type == LevelRules.GoalType.Books || g.Type == LevelRules.GoalType.Safes) bigGoal = true; }
+            bool gems = gemGoal && ((step.GemCollectedCells != null && step.GemCollectedCells.Count > 0) || (step.GemsCollectedOnSpecials != null && step.GemsCollectedOnSpecials.Count > 0));
+            bool ice = iceGoal && step.ThawedCells != null && step.ThawedCells.Count > 0;
+            bool crates = crateGoal && step.CrateHitCells != null && step.CrateHitCells.Count > 0;
+            bool big = bigGoal && ((step.ShelfHits != null && step.ShelfHits.Count > 0) || (step.TreasureHitCells != null && step.TreasureHitCells.Count > 0) || (step.TreasureOpenedCells != null && step.TreasureOpenedCells.Count > 0));
+            if (!gems && !ice && !crates && !big) return false;
+            if (step.SpecialsFired != null && step.SpecialsFired.Exists(f => cells.Contains(f.Cell))) return true;   // its power-up did it
+            foreach (var c in cells)
+            {
+                if (gems && ((step.GemCollectedCells != null && step.GemCollectedCells.Contains(c)) || (step.GemsCollectedOnSpecials != null && step.GemsCollectedOnSpecials.Contains(c)))) return true;
+                if (ice && step.ThawedCells.Contains(c)) return true;
+                if (crates)
+                    foreach (var o in new[] { Vector2Int.right, Vector2Int.left, Vector2Int.up, Vector2Int.down })
+                        if (step.CrateHitCells.Contains(c + o)) return true;
+            }
+            if (big && !gems && !ice && !crates) return true;   // shelf / safe levels: a hit this step is all the step reports (no per-word cell list)
+            return false;
+        }
         private void PopUpOtherWords(GridManager grid, RulesEngine.StepResult step)
         {
             if (!POPUP_EVERY_WORD || grid == null || step?.PoppedWords == null || ClusterOutline.Instance == null) { _tapPopWords.Clear(); return; }
@@ -4582,6 +4652,17 @@ case RulesEngine.ResolutionPhase.Complete:
             _tapPopWords.Clear();
             // TEMP DIAG 11-18 (Spencer: big multi-word bursts are "not showing all the word pop ups"): what this burst popped vs what the tap already showed
             if (step.PoppedWords.Count >= 2) WDLog.Log($"[WordPops] burst popped {step.PoppedWords.Count} word(s): {string.Join(" ", step.PoppedWords.ConvertAll(k => k.Key))} | already shown at the tap: {(shown.Count > 0 ? string.Join(" ", shown) : "-")} | queue {_popQueue.Count}");
+            // 11-24 GOAL COLOUR FROM WHAT HAPPENED (testers: "not always sure why I'm rewarded"; the goal colour was decided at the tap
+            // from the word's own letters, so a word whose POWER-UP collected the gems, and every word made by falling tiles, popped
+            // in the ordinary colour even while the goal counter went up). A word still waiting in the queue is upgraded here.
+            if (GOAL_GOLD_FROM_STEP)
+                foreach (var kv in step.PoppedWords)
+                {
+                    string qw = kv.Key?.ToUpperInvariant(); if (string.IsNullOrEmpty(qw) || kv.Value == null) continue;
+                    for (int qi = 0; qi < _popQueue.Count; qi++)
+                        if (!_popQueue[qi].gold && _popQueue[qi].w == qw && StepWordHitsGoal(step, kv.Value))
+                        { var q = _popQueue[qi]; q.gold = true; _popQueue[qi] = q; WDLog.Log($"[WordPops] '{qw}' upgraded to the goal colour (its power-up / blast made goal progress)"); }
+                }
             foreach (var kv in step.PoppedWords)
             {
                 string w = kv.Key?.ToUpperInvariant();
@@ -4591,7 +4672,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 Vector3 sum = Vector3.zero;
                 foreach (var c in kv.Value) sum += grid.CellToWorld(c.x, c.y);
                 Vector3 at = sum / kv.Value.Count; at.z = -0.5f;
-                if (STAGGER_WORD_POPS) QueueWordPop(w, at, false, w.Length, overBlast);   // takes its turn behind any word still showing
+                if (STAGGER_WORD_POPS) QueueWordPop(w, at, GOAL_GOLD_FROM_STEP && StepWordHitsGoal(step, kv.Value), w.Length, overBlast);   // takes its turn behind any word still showing
                 else ClusterOutline.Instance.PopPayout(at, 0, false, 0f, -1, null, w);
             }
         }

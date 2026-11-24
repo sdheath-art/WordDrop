@@ -1794,13 +1794,14 @@ namespace WordDrop
         public static Color REVEAL_BANNER_DIM = new Color32(0x1E, 0x0C, 0x3C, 0xFB);
         public static float BANNER_H = 330f, BANNER_Y = 4f, BANNER_SUB_GAP = 78f;   // mock px (1179 wide): band height, band centre vs title centre, band bottom -> subtitle
         public static Color BANNER_SUB = new Color32(0xFF, 0xD3, 0x5A, 0xFF);
-        public static string BANNER_CONTINUE_FONT = "WordSlop Title SDF";   // 11-23 Spencer: Continue in the mock's font (the title font); null = WordSlop Button as before
+        public static string BANNER_CONTINUE_FONT = null;   /* 11-24 Spencer: "change the font back to how it used to be for the play and continue buttons" -> WordSlop Button again (was "WordSlop Title SDF" 11-23). Level card Play reads this too. */ //   // 11-23 Spencer: Continue in the mock's font (the title font); null = WordSlop Button as before
         // measured mock vs the 12:33 screenshot (720 wide): subtitle 323 px wide vs 403 -> 62 * 0.80; coin pile 267 vs 239 -> x1.12;
         // Continue centre 33 px lower -> 0.165 - 0.021; its label x0.85.
         public static float BANNER_SUB_SIZE = 50f, BANNER_COINS = 1.12f, BANNER_CONTINUE_Y = 0.144f, BANNER_CONTINUE_LABEL = 0.85f;
         public static float BANNER_TITLE_LINE = 0.065f, BANNER_TITLE_LIP = 0.10f;   // of the capital height: dark line all round, lip straight down (mock: 4-5 px and 8 px on 74 px caps)
         public static bool  BANNER_HALO = true; public static Color BANNER_HALO_COLOR = new Color(1f, 0.67f, 0.47f, 0.42f); public static float BANNER_HALO_SIZE = 900f;   // mock px wide
         public static bool  BANNER_COUNT_ON_PILE = true; public static float BANNER_COUNT_Y = 150f;   // mock px below the pile centre (pile bottom is ~175 with the 1.12 coins; 96 px digits)
+        public static bool  BANNER_CONTINUE_FRAME = true;   // the full Play frame (dark ring + lavender line) round Continue on the banner screen; false = no frame (his 11-16 choice for the black screen)
         public static bool  BANNER_PILE_GLOW = false;   // the pink-gold glow behind the coin pile: off on the banner screen
         public static float BANNER_TITLE_Y = 0.27f, BANNER_OWL_W = 480f, BANNER_OWL_TUCK = 50f;   // band centre from the top (was 0.17 with no owl); owl width / how far its cut edge hides behind the band, mock px
         private static Sprite s_bandSprite;
@@ -2032,7 +2033,7 @@ namespace WordDrop
                 cont.name = "BtnContinue";
                 // 11-16 Spencer: "the purple light line doesnt really make sense here since its not sitting on a purple panel" - the Play
                 // frame's light lavender outer ring belongs to the purple card; on the dark win screen use the dark-ring-only frame.
-                if (CONTINUE_DARK_FRAME)
+                if (CONTINUE_DARK_FRAME && !(REVEAL_BANNER && BANNER_CONTINUE_FRAME))   // 11-23 Spencer (crop of the mock): "put the lines back on around the button" - the banner screen is purple again, so the Play frame with its lavender line belongs
                 {
                     var fr = cont.transform.Find("Art/Frame") ?? FindDeep(cont.transform, "Frame");
                     var darkFrame = Resources.Load<Sprite>("UI/Buttons/pill_play_frame_dark");
@@ -2062,7 +2063,7 @@ namespace WordDrop
                     // (12:33 screenshot): label 252 px wide vs 298 on the same 410 px button -> x0.85; the mock's dark edge drops
                     // STRAIGHT down (the button style also leans it right).
                     cont.ScaleLabel(BANNER_CONTINUE_LABEL);
-                    foreach (var t in cont.GetComponentsInChildren<TextMeshProUGUI>(true)) RkText.Custom(t, 0.06f, 0f, 0.09f);
+                    foreach (var t in cont.GetComponentsInChildren<TextMeshProUGUI>(true)) RkText.Custom(t, 0.06f, 0f, ArtButton.PILL_LIP);
                 }
                 // 11-18: the button dips and pops under the finger (ArtButton.BigPress), and the screen waits BIG_PRESS_HOLD for the
                 // pop to be SEEN before it starts closing - the dismiss used to begin on the same frame, hiding any reaction.

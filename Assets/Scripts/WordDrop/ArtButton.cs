@@ -177,6 +177,7 @@ namespace WordDrop
             if (INNER_SHADE) { var shade = NewText("InnerShade", root, font, ShadeMaterial(font, top), text); shade.color = Color.white; }
         }
 
+        public static float PILL_LIP = 0.075f;   // 11-23 Spencer: the lip under the Play / Continue letters "just a hair tighter" (was 0.09 of the capital height)
         public static bool INNER_SHADE = false;
         public static bool LABEL_LILITA = true;
         public static bool LABEL_TITLE_MEDIUM = true;
@@ -202,7 +203,8 @@ namespace WordDrop
                 // Level header - THIN edge, depth in a down-right drop, deep green instead of near-black olive. Play + Continue share it.
                 // v2 (above) was (0.22, 0.20, -0.40, #223308).
                 // 11-16 later (Spencer: the mock's drop offset "is too much"): firmer edge .08 -> .11, drop halved (.45/-.90 -> .25/-.50)
-                ["pill_play"] = (0.11f, 0.25f, -0.50f, new Color32(0x24, 0x4E, 0x10, 0xFF)),
+                // 11-23 Spencer: the green edge behind Play / Continue darker - between his mock steps 183A0A and 0E2606 (was 244E10)
+                ["pill_play"] = (0.11f, 0.25f, -0.50f, new Color32(0x0E, 0x26, 0x06, 0xFF)),   // then "use 2": 0E2606 (133008 was the in-between)
             };
         private static readonly Dictionary<string, Material> s_styled = new Dictionary<string, Material>();
         private static Material Styled(Material baseMat, string key)
@@ -460,6 +462,18 @@ namespace WordDrop
         /// above only runs in Play mode, and the size at Create time is Unity's default 100x100.</summary>
         public void Refit() { if (_art != null) Fit(); }
 
+        /// <summary>11-23 (level card hierarchy, Spencer picked mock C): the same button, <paramref name="x"/> times as wide at the
+        /// same height. The art is squeezed sideways (fine for a few percent on a pill); the label is un-squeezed so the
+        /// letters keep their shape.</summary>
+        private float _narrow = 1f;
+        public void SetNarrow(float x)
+        {
+            if (x <= 0.01f || Face == null) return;
+            var lbl = Face.Find("Label");
+            if (lbl != null) { var ls = lbl.localScale; lbl.localScale = new Vector3(ls.x * _narrow / x, ls.y, ls.z); }
+            _narrow = x; if (_art != null) Fit();
+        }
+
         /// <summary>11-18 (card text hierarchy): make this button's label <paramref name="mul"/> x the art's size. The label still
         /// only ever shrinks to fit the face's width. For the small card buttons (Quit, Reset): Spencer picked 6.8% of the
         /// card's width from ~/Documents/WordDrop_Art/text_mock_1118/quit_button_label_options.png (was 5.2%; RK's 9.3% sits
@@ -512,7 +526,7 @@ namespace WordDrop
             if (size.x <= 1f || size.y <= 1f) return;
             var fb = _spec.frameBox;
             float s = Mathf.Min(size.x / fb[2], size.y / fb[3]);
-            _art.localScale = new Vector3(s, s, 1f);
+            _art.localScale = new Vector3(s * _narrow, s, 1f);
             // canvas centre -> frame centre, in art px (y up)
             float dx = _canvas.x * 0.5f - (fb[0] + fb[2] * 0.5f);
             float dy = (fb[1] + fb[3] * 0.5f) - _canvas.y * 0.5f;

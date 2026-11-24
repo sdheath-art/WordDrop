@@ -127,7 +127,8 @@ namespace WordDrop
         // 2026-10-25: the Level button is the Photoshop art (gold frame + green face, label drawn live so the number
         // changes). false = the old code-drawn navy/green button below, untouched.
         private const bool   USE_ART_BUTTON = true;
-        private const string ART_BUTTON_KEY = "level_blue";    // Spencer 2026-10-27: blue (was purple 10-25; or level_green / level_purple)
+        public static string LEVEL_BUTTON_FONT = null;   // 11-23: Spencer wants the lettering it had on the blue button (WordSlop Button, standard edge). "WordSlop Title SDF" = the Play / Continue lettering (my misread)
+        private const string ART_BUTTON_KEY = "level_lime";   /* 11-23: orange tried in game, then "match it to this button" = Royal Kingdom's green home button (face ramp measured from his reference) */ //   // 11-23 Spencer: "lets try orange" (art pass: navy on the purple carpet was the quietest thing on the home screen). Was "level_blue" since 10-27; also level_green / level_purple
         private ArtButton _artBtn;
         private int             _homeLevel = 1;
         private bool _holdForIntro;       // true in the map-flow: keep the map UP while the play modal drops over it
@@ -1252,7 +1253,11 @@ namespace WordDrop
 
             if (USE_ART_BUTTON)
             {
-                _artBtn = ArtButton.Create(_canvas.transform, ART_BUTTON_KEY, "Level 1", lilita: false);   // 10-31 Spencer: WordSlop on the Level button
+                _artBtn = ArtButton.Create(_canvas.transform, ART_BUTTON_KEY, "Level 1", lilita: false, font: LEVEL_BUTTON_FONT);
+                // 11-23 Spencer: "make sure its the font we picked" - the same lettering as Play / Continue: WordSlop Title, dark line 6%
+                // of the capital height, lip straight down
+                if (_artBtn != null && !string.IsNullOrEmpty(LEVEL_BUTTON_FONT))
+                    foreach (var lt in _artBtn.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true)) RkText.Custom(lt, 0.06f, 0f, ArtButton.PILL_LIP);   // 10-31 Spencer: WordSlop on the Level button
                 if (_artBtn != null)
                 {
                     _artBtn.name = "PlayButton";

@@ -76,6 +76,7 @@ namespace WordDrop
         /// the window is dimmed again everywhere EXCEPT the listed cells (square holes), for cells scattered over the board.
         /// One-shot: Show() clears it.</summary>
         public static bool HolesOnlyNext;
+        public static bool CELLS_ONLY = true;
         private readonly List<SpriteRenderer> _fill = new List<SpriteRenderer>();   // extra dim inside the window (HolesOnlyNext)
         private int _fillUsed;
         // 11-23 (Spencer: "hug up to the corners of the piece itself rather than showing the square board around it"): each lit
@@ -314,7 +315,12 @@ namespace WordDrop
             IsShowing = true;
             SetAllVisible(true);
             bool dim = cells != null && cells.Count > 0;
-            bool holes = HolesOnlyNext && dim; HolesOnlyNext = false;
+            // 11-24 (Spencer's screenshot of the bomb lesson: a 5 x 4 block lit for two crossing words - "a giant area ... rather than
+            // just the tiles that are important to the interaction"): the window was the BOX around the lesson's tiles. Every lesson
+            // now lights only its own tiles, each through its own tile-shaped hole (built 11-23 for the gem line). CELLS_ONLY = false:
+            // the box, as before.
+            bool scatter = HolesOnlyNext && dim;                 // tiles spread over the whole board: the bubble goes where they are not
+            bool holes = (HolesOnlyNext || CELLS_ONLY) && dim; HolesOnlyNext = false;
             _fillUsed = 0;
             for (int i = 0; i < _fill.Count; i++) _fill[i].enabled = false;   // a later plain lesson must not keep old holes
             _holesUsed = 0;
@@ -445,7 +451,7 @@ namespace WordDrop
             float top = grid.CellToWorld(0, RulesEngine.ROWS - 1).y + cs * 0.5f;
             float by = maxY + cs * 0.25f + bubbleH * 0.5f;
             if (by + bubbleH * 0.5f > top) by = minY - cs * 0.25f - bubbleH * 0.5f;
-            if (holes)
+            if (scatter)
             {   // 11-23: scattered lit cells - the bubble sits over the highest band of rows with the fewest lit cells under it
                 // (it used to land wherever "above the window" fell and could cover a gem).
                 int span = Mathf.Max(1, Mathf.CeilToInt(bubbleH / cs)), bestRow = RulesEngine.ROWS - span, bestHits = int.MaxValue;

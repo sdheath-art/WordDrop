@@ -41,6 +41,11 @@ namespace WordDrop
 
         private const int   HALO_ORDER   = 128;    // IN FRONT of every tile, per the reference
         private const int   BADGE_ORDER  = 130;    // above tiles
+        // 11-24 (Spencer's screenshot: ORAL popped after BORA but drew underneath it): every pop-up used the same drawing order, so
+        // which one sat on top was arbitrary. Each new pop now takes the next slot up; the newest is always on top. A slot is 6
+        // orders (a pop-up's own layers use 5); 40 slots, then it starts again - far more than are ever on screen together.
+        private static int s_popSlot;
+        private static int NextPopOrder() { s_popSlot = (s_popSlot + 1) % 40; return WORD_POP_ORDER + s_popSlot * 6; }
         public static int   WORD_POP_ORDER = 230;   // word pop-ups: over the goal flights (HUDManager 200-205)
         private const float THIN         = 0.035f; // single-word outline thickness (world units)
         private const float BOLD         = 0.075f; // 2+ words
@@ -542,7 +547,7 @@ namespace WordDrop
 
         public void PopPayout(Vector3 at, int payout, bool group, float fromFontSize = 0f, int badgeIdx = -1, Color? textCol = null, string label = null)
         {
-            if (!PAYOUT_POPUP_ON || HandManager.BonusBlastRunning) { if (badgeIdx >= 0) HideBadge(badgeIdx); return; }   // bonus: no pop-ups (2026-10-28)
+            if (!PAYOUT_POPUP_ON || (HandManager.BonusBlastRunning && !HandManager.BonusPrePop)) { if (badgeIdx >= 0) HideBadge(badgeIdx); return; }   // bonus: no pop-ups (2026-10-28)
             // payout 0 = a cascade/combo word from HandManager.PopUpOtherWords: it has a LABEL and must still pop (2026-10-29: this
             // early-out was silently dropping every one of them - Spencer asked 10-28 for every popped word to get a pop-up)
             if ((payout <= 0 && (string.IsNullOrEmpty(label) || !BonusPopup.WORD_INSTEAD_OF_SCORE)) || UIAnimations.ReducedMotion) return;   // never a "+0"
@@ -621,7 +626,7 @@ namespace WordDrop
                     bool pf = RulesEngine.DRAG_REWARD && RulesEngine.SwipedWords.Remove(label.Trim().ToUpperInvariant());
                     float pcell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.95f;
                     float cap = PopLetters.CAP_CELLS * pcell * ps * (pf ? FOUND_POP_SCALE : 1f) / POP_GROW;
-                    if (PopLetters.Build(textGO.transform, label, pg, cap, WORD_POP_ORDER, out float phw, out float phh, out var pAlpha) != null)
+                    if (PopLetters.Build(textGO.transform, label, pg, cap, NextPopOrder(), out float phw, out float phh, out var pAlpha) != null)
                     {
                         AnimatePopTransform(go, at, Mathf.Max(phw, 0.05f), Mathf.Max(phh, 0.05f), pAlpha, true);
                         return;
@@ -645,7 +650,7 @@ namespace WordDrop
                 // (final size / grow) and the leap then grows it by the FIXED POP_GROW - so multiplying grow by the bonus made
                 // long / gold / dragged words end up SMALLER (dragged: 1/1.3). The bonus now divides, so they end up bigger.
                 BonusPopup.SizeWordPop(wt, POP_GROW / (lenScale * (found ? FOUND_POP_SCALE : 1f)));   // RM size; long / gold / dragged words pop bigger (10-31)
-                wt.sortingOrder = WORD_POP_ORDER;   // 11-01 Spencer: above the goal pieces flying to the HUD (200-205); was BADGE_ORDER + 40 = 170
+                int popOrder = NextPopOrder(); wt.sortingOrder = popOrder;   // 11-01 Spencer: above the goal pieces flying to the HUD (200-205); was BADGE_ORDER + 40 = 170
                 var wsh = BonusPopup.AddWordPopSoftShadow(wt);   // 10-31: soft shadow so the cream word lifts off the white tiles
                 wt.ForceMeshUpdate();
                 Vector3 wext = wt.textBounds.extents;
@@ -657,7 +662,7 @@ namespace WordDrop
                     float capH = wext.y * 2f, ih = capH * BonusPopup.GOAL_ICON_CAPS, k = ih / icon.bounds.size.y;
                     float iw = icon.bounds.size.x * k, gap = capH * BonusPopup.GOAL_ICON_GAP, shift = (iw + gap) * 0.5f;
                     var ig = new GameObject("WordPopGoalIcon"); ig.transform.SetParent(go.transform, false);
-                    gi = ig.AddComponent<SpriteRenderer>(); gi.sprite = icon; gi.sortingOrder = WORD_POP_ORDER;
+                    gi = ig.AddComponent<SpriteRenderer>(); gi.sprite = icon; gi.sortingOrder = popOrder;
                     ig.transform.localScale = Vector3.one * k;
                     Vector3 tc = wt.textBounds.center;
                     textGO.transform.localPosition = new Vector3(-shift, 0f, 0f);

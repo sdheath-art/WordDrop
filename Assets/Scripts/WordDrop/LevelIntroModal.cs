@@ -757,6 +757,7 @@ namespace WordDrop
 
         // ── UI construction ─────────────────────────────────────────────────────
 
+        public static bool PLAY_MATCH_CONTINUE = true; public static float PLAY_LABEL = 1.02f, PLAY_NARROW = 0.915f;   // 11-23: Play letters 54 px on a 720 screen (0.85 = 45 = Continue), button face 53% of the screen width
         private void BuildUI()
         {
             var canvasGO = new GameObject("LevelIntroCanvas");
@@ -839,7 +840,7 @@ namespace WordDrop
             // 2026-10-27 Spencer: the green PILL Play art button (v3 style) replaces the flat orange one. ArtButton brings
             // its own press squeeze and the two-stage press/release SFX, so none are added here. Falls back to the old
             // button if the art is missing.
-            ArtButton artPlay = USE_ART_PLAY ? ArtButton.Create(_panel.transform, "pill_play", "Play", lilita: false, titleMedium: false) : null;   // 11-01 Spencer: WordSlop, same as the home Level button
+            ArtButton artPlay = USE_ART_PLAY ? ArtButton.Create(_panel.transform, "pill_play", "Play", lilita: false, titleMedium: false, font: PLAY_MATCH_CONTINUE ? StageClearModal.BANNER_CONTINUE_FONT : null) : null;   // 11-01 Spencer: WordSlop, same as the home Level button
             if (artPlay != null)
             {
                 artPlay.name = "BtnPlay";
@@ -847,6 +848,14 @@ namespace WordDrop
                 prt.anchorMin = new Vector2(0.26f, 0.05f); prt.anchorMax = new Vector2(0.74f, 0.26f);   // same slot as before;
                 prt.offsetMin = prt.offsetMax = Vector2.zero; prt.pivot = new Vector2(0.5f, 0.5f);          // the art keeps its aspect inside it
                 artPlay.Refit();
+                if (PLAY_MATCH_CONTINUE)
+                {   // 11-23 Spencer: Play matches the win screen's Continue - same font (WordSlop Title), same letter height, same
+                    // dark line and straight-down lip. "Play" is short, so unlike "Continue" it never auto-shrank: PLAY_LABEL
+                    // brings its letters down to Continue's height (9.6% of the button face vs 12.7%).
+                    artPlay.ScaleLabel(PLAY_LABEL);
+                    artPlay.SetNarrow(PLAY_NARROW);
+                    foreach (var t in artPlay.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true)) RkText.Custom(t, 0.06f, 0f, ArtButton.PILL_LIP);
+                }
                 artPlay.Button.onClick.AddListener(OnPlay);
                 _btnPlay = artPlay.gameObject;
                 _btnGroup = _btnPlay.AddComponent<CanvasGroup>();
@@ -995,6 +1004,13 @@ namespace WordDrop
         // in thousandths: title 86 (was 102), body 53 (was 41). He approved the header from the mock; button labels: see
         // ArtButton.ScaleLabel (RK's size overfilled our smaller buttons - he picked 6.8%).
         public static float V2_TITLE_CAP = 86f, V2_BODY_CAP = 53f;
+        // 11-23 LEVEL CARD HIERARCHY, matched to Royal Kingdom's level card (his phone screenshot, measured as % of screen width:
+        // title 8.4, Play 8.9, labels 3.6; ours was 7.4 / 6.9 / 4.6): title up, labels down, Play up. Play stops at 7.5% (54 px on
+        // a 720 screen, his pick) - RK's flat rectangle has more room than our bevelled pill. LEVEL CARD ONLY: the other cards
+        // (Settings, How to Play, Quit, Continue) still use V2_TITLE_CAP as it is.
+        public static float CARD_TITLE_MUL = 1.14f, CARD_LABEL_MUL = 0.79f;
+        public static bool CARD_TITLE_AS_BUTTON = true;
+        public static string CARD_TITLE_FONT = "WordSlop Title Medium SDF";   /* 11-23: tried bold "WordSlop Title SDF" in game, then "please try the other font" -> back to Medium, with the new size + treatment */   // 11-23 Spencer on the mock: "the level header looks better as this font too" - the bold Title cut, same as Play / Continue (was Title Medium since 11-06)
         public const float V2_BODY_WAS = 41f;
         private static float V2FontFor(float capPx) => capPx / 0.594f / HUDManager.RECIPE_MAX_MUL;
 
@@ -1020,7 +1036,7 @@ namespace WordDrop
             _v2GoalLabel = V2Text("GoalsLabel", _v2GoalBox); _v2BoostLabel = V2Text("BoostLabel", _v2BoostBox);
             foreach (var l in new[] { _v2GoalLabel, _v2BoostLabel })
             {
-                l.fontSize = V2FontFor(V2_BODY_CAP); HUDManager.ApplyRecipeFlat(l); l.color = V2_LABEL_INK;
+                l.fontSize = V2FontFor(V2_BODY_CAP * CARD_LABEL_MUL); HUDManager.ApplyRecipeFlat(l); l.color = V2_LABEL_INK;
             }
             _v2GoalLabel.text = "Goals"; _v2BoostLabel.text = "Select Boosters";
             V2Place(_v2GoalLabel.rectTransform, (V2_CW - 2 * V2_SIDE) / 2f, 52f, 700f, 80f);
@@ -1031,11 +1047,14 @@ namespace WordDrop
             var header = V2Image("HeaderPlate", _v2Root, V2Sprite("header"));
             V2Place(header.rectTransform, 110f - 20f + 410f, 130f - 298f + 179f, 820f, 358f);
             _v2Title = V2Text("Title", _v2Root);
-            _v2Title.fontSize = V2FontFor(V2_TITLE_CAP);
+            _v2Title.fontSize = V2FontFor(V2_TITLE_CAP * CARD_TITLE_MUL);
+            // 11-23 Spencer: the title drawn like the Play / Continue lettering - line 6% of the capital height, lip straight down
+            // (RkText.Custom; the standard label look is 4% with a shadow leaning down-right). CARD_TITLE_AS_BUTTON = false: standard.
+            if (CARD_TITLE_AS_BUTTON) RkText.Custom(_v2Title, 0.06f, 0f, ArtButton.PILL_LIP);
             // 11-16 Spencer ("the text treatment on the Level 2 header ... a lot of shading"; picked B of ~/Desktop/header_text_mock.png): RK
             // style - a THIN edge round the letters and the depth only in the down-right drop, in a deep plate purple instead of near-black
             // navy (the thick .19 navy ring + drop made a muddy dark halo). V2_TITLE_RK = false -> the old .19 / -0.9 navy treatment.
-            if (V2_TITLE_RK) HUDManager.ApplyRecipeCount(_v2Title, V2_TITLE_EDGE_RK, V2_TITLE_STROKE_RK, V2_TITLE_DROP_RK, Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF"));
+            if (V2_TITLE_RK) HUDManager.ApplyRecipeCount(_v2Title, V2_TITLE_EDGE_RK, V2_TITLE_STROKE_RK, V2_TITLE_DROP_RK, Resources.Load<TMP_FontAsset>(CARD_TITLE_FONT) ?? Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF"));
             else HUDManager.ApplyRecipeCount(_v2Title, V2_TITLE_LINE, 0.19f, -0.9f, Resources.Load<TMP_FontAsset>("WordSlop Title Medium SDF"));   // 11-06 Spencer: tried bold "WordSlop Title SDF", now the MEDIUM cut (same metrics as Button; missing -> Button)
             _v2Title.characterSpacing = 0f;   // 11-06 Spencer: normal kerning (was V2_TITLE_TRACK -5.5; ChapterEndCard still uses it). 11-01 Spencer: match the mock's kerning. -3 (the mock's 0.03 em) MEASURED looser in game: gaps 7-8 px vs 4-5 at a 105 px cap -> -5.5
             V2Place(_v2Title.rectTransform, V2_CW / 2f, 10f - V2_TITLE_LIFT, 760f, 170f);
