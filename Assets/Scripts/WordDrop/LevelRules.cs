@@ -224,6 +224,7 @@ namespace WordDrop
         public static float PendingThemeSince;
         public static readonly System.Collections.Generic.List<System.Collections.Generic.List<Vector2Int>> PendingThemeWords
             = new System.Collections.Generic.List<System.Collections.Generic.List<Vector2Int>>();
+        public static int DuckGoalTarget { get { foreach (var g in Goals) if (g.Type == GoalType.Ducks) return g.Target; return 0; } }
         public static bool HasDuckGoal { get { foreach (var g in Goals) if (g.Type == GoalType.Ducks) return true; return false; } }
         /// <summary>Ducks the next refill should bring in: never more than DUCKS_ON_BOARD at once, never more than the goal still needs.</summary>
         public static int DuckRefillNeed(int onBoard)
@@ -428,7 +429,7 @@ namespace WordDrop
         public static bool AllGoalsDone() { foreach (var g in Goals) if (GoalProgress(g) < g.Target) return false; return Goals.Count > 0; }
         public static string GoalsHudTitle()
             => HUDManager.GOAL_ICONS_HUD ? (Goals.Count > 1 ? "GOALS" : Goals.Count == 1 ? (Goals[0].Type == GoalType.Theme ? ThemeSingular(Goals[0].Theme) + " WORDS" : "GOAL") : "SCORE")   // 2026-10-22: the pictures say WHAT
-             : Goals.Count > 1 ? "GOALS" : Goals.Count == 1 ? (Goals[0].Type == GoalType.Ducks ? "DUCKS" : Goals[0].Type == GoalType.Theme ? Goals[0].Theme.ToUpperInvariant() : Goals[0].Type == GoalType.Crates ? "CRATES" : Goals[0].Type == GoalType.Ice ? "ICE" : Goals[0].Type == GoalType.Gems ? "GEMS" : "COLLECT") : "SCORE";
+             : Goals.Count > 1 ? "GOALS" : Goals.Count == 1 ? (Goals[0].Type == GoalType.Ducks ? "OWLS" : Goals[0].Type == GoalType.Theme ? Goals[0].Theme.ToUpperInvariant() : Goals[0].Type == GoalType.Crates ? "CRATES" : Goals[0].Type == GoalType.Ice ? "ICE" : Goals[0].Type == GoalType.Gems ? "GEMS" : "COLLECT") : "SCORE";
         public static string GoalsHudText()
         {
             var sb = new System.Text.StringBuilder();
@@ -437,7 +438,7 @@ namespace WordDrop
                 if (sb.Length > 0) sb.Append("   ");
                 // A lone collect goal shows just "3/15" — the violet letter icon beside it says which letter.
                 string label = g.Type == GoalType.Collect ? (Goals.Count > 1 ? $"{g.Letter} " : "")
-                             : Goals.Count > 1 ? (g.Type == GoalType.Ducks ? "Ducks " : g.Type == GoalType.Theme ? char.ToUpperInvariant(g.Theme[0]) + g.Theme.Substring(1) + " " : g.Type == GoalType.Ice ? "Ice " : g.Type == GoalType.Gems ? "Gems " : g.Type == GoalType.Books ? "Books " : g.Type == GoalType.Safes ? "Safes " : "Crates ") : "";
+                             : Goals.Count > 1 ? (g.Type == GoalType.Ducks ? "Owls " : g.Type == GoalType.Theme ? char.ToUpperInvariant(g.Theme[0]) + g.Theme.Substring(1) + " " : g.Type == GoalType.Ice ? "Ice " : g.Type == GoalType.Gems ? "Gems " : g.Type == GoalType.Books ? "Books " : g.Type == GoalType.Safes ? "Safes " : "Crates ") : "";
                 bool flies = g.Type == GoalType.Collect || g.Type == GoalType.Gems || g.Type == GoalType.Ducks;
                 int shown = flies ? Mathf.Max(0, GoalProgress(g) - HUDManager.CollectInFlight - CollectAwaitingFly)
                           : g.Type == GoalType.Books ? Mathf.Max(0, GoalProgress(g) - HUDManager.BooksInFlight - BooksAwaitingFly) : GoalProgress(g);
@@ -536,6 +537,7 @@ namespace WordDrop
             /* 18 */ Make("The Vault",      safes:1,              moves:26),   // 11-20 TILES STAY (bot 07:48 x100, casual): moves 18->26.   // 11-17 7x9 PASS 2 (bot 15:17 x40): moves 15->18.   // 11-17 7x9 PASS 1 (bots 14:21 + 14:51 x40; the 8x10 numbers live in tag checkpoint-2026-11-17-8x10-phone-pass): moves 18->15.   // 11-04 pass 28 (bot 09:30 x40): 16->18 (88%, relief target ~92)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 14->16 moves   // 11-03 SAFE intro (Spencer's safe; alone, relief slot). Was: Make("Cold Hands",     ice:7, gems:6,        moves:11, iceLayout:"spread", shape:"hole"),                    // relief-ish ~80%   // 10-31 pass 11: 22->19 (bot w/ drags)   // pass 12: 19->17   // 11-02 pass 13: 17->14 (bot after gem-touch + goal re-deal off)   // 11-02 pass 14: 14->12 (bot 11:35 rerun)   // 11-02 pass 15: 12->13 (bot 13:18, diagonal crates)   // 11-02 pass 16: 13->14 (bot 13:36)   // 11-02 pass 17 CURVE: 14->13 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 13->12   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 12->11   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 12->16   // 11-03 pass 22 (bot 17:37 x80, diagonal-aware bot): 16->14
             /* 19 */ Make("Gauntlet",       crates:6, ice:6, gems:6, moves:36, crateLayout:"lid", iceLayout:"spread", crateHits:"2", shape:"arch"),   // 11-20 pass 3 (one power-up per explosion, bot 09:50 x100): 33->36.   // 11-20 TILES STAY (bot 07:48 x100, casual): moves 21->33.   // 11-18 7x9 PASS 3 (bot 06:45 x40): moves 20->21.   // 11-17 7x9 PASS 2 (bot 15:17 x40): moves 22->20.   // 11-17 7x9 PASS 1 (bots 14:21 + 14:51 x40; the 8x10 numbers live in tag checkpoint-2026-11-17-8x10-phone-pass): moves 15->22.   // 11-17 shape added for variety (Spencer: the same board every level "gets pretty stale") - bot to confirm.   // 11-16 SEEDED (reroll 1, bot 07:12 x100): 20->15 (96% -> 82% casual; 2 seeds both ~95% at 20)   // 11-04 pass 30 (bot 10:46 x40): gems 5->6 (83%, expert 95%; content not moves toward ~75%)   // 11-04 pass 29 (bot 10:06 x40): 22->20 (90% after ice 4->6; 75% quantile = 19)   // 11-04 pass 28 (bot 09:30 x40): ice 4->6 + moves 24->22 (95% / expert 100% / END-STALL 2.2 - fair now, too easy for the ~70% hard slot; content first, 2 moves)   // 11-04 pass 27b (bot 09:06): arch shape removed + hits 2,3 -> 2 (expert only 83%, END-STALL 8.5, 12 word swaps/turn: luck-decided; keep the lid as the structure)   // 11-04 pass 26 (bot 08:42 x40, layout pass): 23->24 moves (60%, target ~65-70)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): ring -> lid, crates 7 -> 6 (x2 = 12 = the whole lid), hits 1,2 -> 2,3 (93% vs ~70% target: hard by STRUCTURE - goals under a 2-3 layer roof)   // 11-04 pass 25 (bot 06:48 x40): 26->23 moves (overshot: L9 100%, L10 98%, L17 80% vs 65, L19 85% vs 70)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 21->26 moves, ice 6->4, gems 6->5, crateHits 2,3->1,2   // 10-30: was "legs" (goal dead 45%)                 // tightest ~65% (RM: won on the last move)   // 10-31 pass 11: 22->19 (bot w/ drags)   // 11-02 pass 17 CURVE: 19->12 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 12->14   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 14->15   // 11-03 multi-hit crates: "2,3"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 15->18   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 18->21
             /* 20 */ Make("Gold Rush",      bonus:true,           moves:GOLD_RUSH_MOVES, teach:"bonus"),     // no fail: preloaded specials, 3-letter swaps, climbing payout (10-30)
+            /* 21 */ Make("Night Owls",     ducks:5,              moves:30),   /* 11-24 pass 4 (Spencer "five owls is fine"): 7 -> 5, the middle five columns, no edge columns. Moves 40 -> 30 = a guess (his 7-owl runs: first five home in ~60% of the moves used). */   /* 11-24 pass 3: one owl per column, each over its own nest, all on the board from the start. Moves a guess until the bot runs. */   // 11-24 pass 2 (Spencer: "very easy to pass"; RM L451 = 12 birds, many on screen): 3 -> 6 owls, 3 on the board at a time (DUCKS_ON_BOARD), refills bring the rest at the top. Moves 26 -> 32 = still a guess until the bot runs.     // 11-24 TEST ROW (Spencer: "ducks should probably be owls"): the drop-to-bottom piece, first run since October - on 7x9 with tiles-stay. Moves are a guess, NOT bot-tuned.
         };
 
         /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
@@ -748,8 +750,8 @@ namespace WordDrop
                                how.Add(HandManager.GEMS_LOCKED
                                    ? "<b>Gems</b> can't be moved — make a word that uses a gem's letter to collect it. Rockets and bombs grab them too."
                                    : "<b>Gems</b> are collected when their letter is used in a word. Rockets and bombs grab them too."); }
-            if (ducks > 0)   { goals.Add($"Bring <b>{ducks} ducks</b> down");
-                               how.Add("<b>Ducks</b> drop when the letters under them clear. A duck is collected when it reaches the <b>bottom row</b>."); }
+            if (ducks > 0)   { goals.Add($"Bring <b>{ducks} owls</b> to their nests");
+                               how.Add("<b>Owls</b> drop when the letters under them clear. An owl is home when it lands in its <b>nest</b> under the board."); }
             if (themeN > 0)  { goals.Add($"Make <b>{themeN} {themeWord} words</b>");
                                how.Add($"Any word that names a <b>{themeWord}</b> counts, even short ones like {(r.Theme == "animals" ? "CAT" : r.Theme == "food" ? "PIE" : "SUN")}. Some are hiding <b>one swap</b> from complete."); }
             if (collectN > 0){ goals.Add($"Collect <b>{collectN} {L}'s</b>");
@@ -802,7 +804,7 @@ namespace WordDrop
             if (r.Gems > 0 && SurvivalManager.FullBoardActive)
                 sb.Append($"\n\n<b>Collect {r.Gems} gems!</b> Use a gem's letter in a word to collect it — rockets and bombs grab them too.");
             if (r.Ducks > 0 && SurvivalManager.FullBoardActive)
-                sb.Append($"\n\n<b>Bring {r.Ducks} ducks down!</b> Clear the letters under a duck and it drops. It's collected when it reaches the bottom row.");
+                sb.Append($"\n\n<b>Bring {r.Ducks} owls to their nests!</b> Clear the letters under an owl and it drops. It's home when it lands in its nest.");
             if (!string.IsNullOrEmpty(r.Theme) && r.ThemeCount > 0 && SurvivalManager.FullBoardActive)
                 sb.Append($"\n\n<b>Make {r.ThemeCount} {ThemeSingular(r.Theme).ToLowerInvariant()} words!</b> Any word that is a {ThemeSingular(r.Theme).ToLowerInvariant()} counts — look for ones that are one swap away.");
             if (r.CollectLetter != '\0' && r.CollectCount > 0 && SurvivalManager.FullBoardActive)

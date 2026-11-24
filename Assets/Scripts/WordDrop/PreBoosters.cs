@@ -248,7 +248,8 @@ namespace WordDrop
                     bg.color = n <= 0 ? new Color(0.72f, 0.74f, 0.78f, 1f) : sel ? new Color(0.78f, 1f, 0.78f, 1f) : Color.white;
                     ii.color = n <= 0 ? new Color(1f, 1f, 1f, 0.45f) : Color.white;
                     nt.text = sel && ci.sprite != null ? "" : n.ToString();
-                    nt.transform.localScale = Vector3.one * (n >= 10 ? 0.78f : 1f);   // two digits fit the disc
+                    nt.textWrappingMode = TMPro.TextWrappingModes.NoWrap;   // 11-24: "148" wrapped to 14 / 8 at the bigger size
+                    nt.transform.localScale = Vector3.one * (n >= 100 ? 0.62f : n >= 10 ? 0.78f : 1f);   // two digits fit the disc; three (playtest stock) shrink further
                     ci.enabled = sel && ci.sprite != null;
                     bi.enabled = !(sel && ci.sprite != null);   // 11-01 Spencer: checked -> the red badge goes, the check stands alone
                 };

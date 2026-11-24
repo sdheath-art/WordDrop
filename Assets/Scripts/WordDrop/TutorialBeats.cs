@@ -35,7 +35,7 @@ namespace WordDrop
         public static bool GEM_TIP_SPOTLIGHT = true;   // 11-23: the L1 "Use gem letters..." line dims the board and lights the gem tiles. false: plain line as before
         public static bool Done(string key) => PlayerPrefs.GetInt(PREF + key, 0) == 1;
         private static void MarkDone(string key) { PlayerPrefs.SetInt(PREF + key, 1); PlayerPrefs.Save(); }
-        public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "use", "move", "hint", "wild" };
+        public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "owl", "use", "move", "hint", "wild" };
         public static void ResetAll() { foreach (var k in KEYS) PlayerPrefs.DeleteKey(PREF + k); MechanicSplash.ResetAll(); BoosterIntro.ResetAll(); PlayerPrefs.Save();   /* 11-06: booster intros too - they never replayed after a reset */ WDLog.Log("[Tut] all beats + splashes reset"); }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -105,6 +105,7 @@ namespace WordDrop
                 case "swipe": BeatSwipe(); break;
                 case "crates": case "ice": BeatObstacle(key); break;
                 case "shelf": case "safe": BeatBigPiece(key); break;
+                case "owl": BeatOwl(); break;
                 case "rocket": case "bomb": case "disco": case "airplane": BeatPower(key); break;
                 default: WDLog.Log($"[Tut] beat '{key}' not built yet"); break;
             }
@@ -292,6 +293,7 @@ namespace WordDrop
             {
                 if (r.ShelfBooks > 0 && !Done("shelf")) return "shelf";
                 if (r.Safes > 0 && !Done("safe")) return "safe";
+                if (r.Ducks > 0 && !Done("owl")) return "owl";   // 11-24: the first owl (drop-to-bottom) level
             }
             return k;
         }
@@ -409,6 +411,33 @@ namespace WordDrop
             _tapCloseAfter = Time.unscaledTime + TIP_TAP_GUARD;
             MarkDone(key);
             WDLog.Log($"[Tut] beat '{key}' shown ({piece.Count} cells, {hits} hits)");
+        }
+
+        // ── L21 OWLS (11-24, Spencer: "do we need a tutorial beat for bringing them down to the bottom?" -> yes): show-and-tell like
+        // the bookshelf tip. One owl and the letters UNDER it (its way down) are lit, ONE line, no hand (a hand from the owl would
+        // read as "drag the owl", which is not allowed), nothing forced. Tap / any move / OWL_TIP_SECS closes it. Shown once. ──
+        public static float  OWL_TIP_SECS = 8f;
+        public static string OWL_TIP_TEXT = "Clear the letters under an owl to bring it down to its nest!";   // 11-24 Spencer: "bring it down to its nest or something like that"
+        private void BeatOwl()
+        {
+            var rules = RulesEngine.Instance; if (rules == null) return;
+            int cols = RulesEngine.COLS, rows = RulesEngine.ROWS;
+            Vector2Int best = new Vector2Int(-1, -1); float bestScore = float.MaxValue;
+            for (int x = 0; x < cols; x++) for (int y = 0; y < rows; y++)
+            {
+                var d = rules.GetCell(x, y);
+                if (d == null || !d.IsDropTarget) continue;
+                float score = Mathf.Abs(x - (cols - 1) * 0.5f) - y * 0.01f;   // the most central column; higher owl on a tie
+                if (score < bestScore) { bestScore = score; best = new Vector2Int(x, y); }
+            }
+            if (best.x < 0) { WDLog.Log("[Tut] owl beat: no owl on the board - skipped (not marked done)"); return; }
+            var window = new List<Vector2Int>();
+            for (int y = best.y; y >= 0; y--) if (!RulesEngine.IsVoid(best.x, y)) window.Add(new Vector2Int(best.x, y));
+            TutorialOverlay.Ensure().Show(window, OWL_TIP_TEXT, new Vector2Int(-1, -1), new Vector2Int(-1, -1));
+            _tipUntil = Time.unscaledTime + OWL_TIP_SECS;
+            _tapCloseAfter = Time.unscaledTime + TIP_TAP_GUARD;
+            MarkDone("owl");
+            WDLog.Log($"[Tut] beat 'owl' shown: owl at ({best.x},{best.y}), {window.Count} cells lit");
         }
 
         /// <summary>SwipeWordInput asks this while a beat is up: only the taught word's cells (either direction).</summary>

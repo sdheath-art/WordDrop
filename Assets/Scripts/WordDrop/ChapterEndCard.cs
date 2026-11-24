@@ -13,7 +13,7 @@ namespace WordDrop
     /// </summary>
     public static class ChapterEndCard
     {
-        public static int CONTENT_END_LEVEL = 20;
+        public static int CONTENT_END_LEVEL = 21;   // TEMP 11-24: 20 -> 21 so the owl test level (L21 "Night Owls") opens. Back to 20 before any tester build unless L21 ships.
         private static GameObject s_root;
 
         /// <summary>True when <paramref name="internalLevel"/> (the map's level index) is past the last finished level.</summary>

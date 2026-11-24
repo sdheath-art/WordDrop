@@ -2675,6 +2675,7 @@ namespace WordDrop
                 var flyTarget = CollectFlightTarget;
                 if (!isActiveAndEnabled || Camera.main == null || flyTarget == null || !flyTarget.gameObject.activeInHierarchy) { OnCollectLanded(); return; }
                 bool duck = LevelRules.HasDuckGoal && Tile.DuckSprite != null;
+                if (duck && OwlNests.ON && OwlNests.STAY_IN_NEST) { OnCollectLanded(); return; }   // 11-24: the owl drops into its nest and stays - no flight to the goal box, the count just ticks
                 bool gem = !duck && LevelRules.HasGemGoal && Tile.GemSprite != null;
                 Color acc = gem ? Tile.GEM_ACCENT : Tile.CollectAccent;
                 Color vg = new Color(acc.r * 2f + 0.2f, acc.g * 2f + 0.2f, acc.b * 2.2f + 0.2f, 1f);   // HDR glow in the collect colour

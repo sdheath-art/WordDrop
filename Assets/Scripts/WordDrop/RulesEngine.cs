@@ -2706,30 +2706,62 @@ namespace WordDrop
 
         // ── DUCKS (2026-10-22): bring-it-down goal. A duck is the old escort drop-target — a non-letter cell that falls with
         // gravity, survives every blast, can't be swapped, and is collected on the bottom row (SurvivalManager.TickDuckCollect). ──
-        public static int DUCKS_ON_BOARD = 3;   // at most this many on the board at once; refills bring the rest
+        public static int DUCKS_ON_BOARD = 7;   /* 11-24: 3 -> 7, every owl is on the board from the start (one per column, each over its own nest) */   // at most this many on the board at once; refills bring the rest
         public int CountDucks() { int n = 0; for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++) if (_board[x, y] != null && _board[x, y].IsDropTarget) n++; return n; }
         private static void MakeDuck(RulesCellData d)
         {
             d.Letter = '#'; d.IsStone = true; d.IsDropTarget = true; d.IsAnchored = false; d.IsFrozen = false;
             d.HasGem = false; d.IsRainGold = false; d.SpecialKind = SPECIAL_NONE; d.RequiredWordLength = 0;
         }
-        /// <summary>Ducks in different columns, in the middle band of the board — high enough to need real digging,
-        /// low enough that the first one arrives within a few moves.</summary>
+        /// <summary>Ducks (owls) in different columns, on the TOP row of each column (11-24 Spencer: "the owls do not start at the top
+        /// and you need to make a word before they appear"). The old version picked ONE random middle-band cell per column and gave up
+        /// if it was a planted seed-word cell - with ~49 of 63 cells planted, it usually placed NONE and the first refill brought them.
+        /// Pass 1 avoids planted cells; pass 2 takes the column anyway (the owl matters more than one seed word).</summary>
+        public static bool DUCKS_START_TOP = true;
+        // HOME COLUMNS + NESTS (11-24 Spencer: "they fall on their nests and stay in there and each column has an owl"): every owl has
+        // its OWN column with a nest under it (OwlNests). All owls are on the board from the start; an owl that reaches the bottom
+        // row drops into its nest and stays there. n owls on fewer columns are spread evenly (3 -> columns 1,3,5; 7 -> every column).
+        public static bool DUCK_FIXED_COLUMNS = true;
+        /// <summary>Columns whose owl is already home (live game only; the nest shows it). Reset when a level places its owls.</summary>
+        public static readonly HashSet<int> DuckColsHome = new HashSet<int>();
+        public static List<int> DuckHomeColumns(int owls)
+        {
+            var l = new List<int>(); int n = Mathf.Clamp(owls, 0, COLS);
+            for (int i = 0; i < n; i++)
+            {
+                // 11-24 (two recordings: the last owls, in the EDGE columns, took as long as the first five together - the square under
+                // an owl near the bottom can only be cleared by a sideways word through it, and at the edge that word must start there).
+                // Up to COLS-2 owls stay OFF the two edge columns; only a level with more owls than that uses them.
+                int inner = COLS - 2;
+                int c = n >= COLS ? i
+                      : n <= inner ? 1 + Mathf.Clamp(Mathf.RoundToInt((i + 0.5f) * inner / n - 0.5f), 0, inner - 1)
+                      : Mathf.Clamp(Mathf.RoundToInt((i + 0.5f) * COLS / n - 0.5f), 0, COLS - 1);
+                if (!IsVoid(c, 0) && !l.Contains(c)) l.Add(c);
+            }
+            return l;
+        }
         public int PlaceDucks(int count, HashSet<Vector2Int> keep)
         {
             var cols = new List<int>(); for (int c = 1; c < COLS - 1; c++) cols.Add(c);
             for (int i = cols.Count - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); int t = cols[i]; cols[i] = cols[j]; cols[j] = t; }
-            int placed = 0;
-            foreach (int c in cols)
-            {
-                if (placed >= count) break;
-                int y = SurvivalRng.Range(ROWS / 2 - 1, ROWS - 3);
-                var d = _board[c, y];
-                if (d == null || d.IsStone || keep.Contains(new Vector2Int(c, y))) continue;
-                if (IsVoid(c, 0)) continue;   // shaped board: ducks leave from row 0, so their column must reach it
-                MakeDuck(d); keep.Add(new Vector2Int(c, y)); placed++;
-                WDLog.Log($"[Duck] placed at ({c},{y})");
-            }
+            if (DUCK_FIXED_COLUMNS) { cols = DuckHomeColumns(count); if (!Simulating) DuckColsHome.Clear(); }   // home columns only: a nest waits under each
+            int placed = 0; var used = new HashSet<int>();
+            for (int pass = 0; pass < 2 && placed < count; pass++)
+                foreach (int c in cols)
+                {
+                    if (placed >= count) break;
+                    if (used.Contains(c)) continue;
+                    if (IsVoid(c, 0)) continue;   // shaped board: ducks leave from row 0, so their column must reach it
+                    int y = -1;
+                    if (DUCKS_START_TOP) { for (int yy = ROWS - 1; yy >= ROWS / 2; yy--) if (!IsVoid(c, yy)) { y = yy; break; } }
+                    else y = SurvivalRng.Range(ROWS / 2 - 1, ROWS - 3);
+                    if (y < 0) continue;
+                    var d = _board[c, y];
+                    if (d == null || d.IsStone || d.HasGem || d.IsFrozen || d.SpecialKind != SPECIAL_NONE) continue;
+                    if (pass == 0 && keep.Contains(new Vector2Int(c, y))) continue;
+                    MakeDuck(d); keep.Add(new Vector2Int(c, y)); used.Add(c); placed++;
+                    WDLog.Log($"[Duck] placed at ({c},{y})");
+                }
             return placed;
         }
         /// <summary>Bottom-row ducks that have landed (data side).</summary>
@@ -4672,8 +4704,13 @@ namespace WordDrop
             if (duckNeed > 0)
             {
                 var tops = new List<Vector2Int>();
-                foreach (var p in cells) if (p.y == ROWS - 1 && p.x > 0 && p.x < COLS - 1 && !gold.Contains(p) && !gemCells.Contains(p)) tops.Add(p);
+                foreach (var p in cells) if (p.y == ROWS - 1 && (DUCK_FIXED_COLUMNS || (p.x > 0 && p.x < COLS - 1)) && !gold.Contains(p) && !gemCells.Contains(p)) tops.Add(p);
                 for (int i = tops.Count - 1; i > 0; i--) { int j = SurvivalRng.Range(0, i + 1); var t = tops[i]; tops[i] = tops[j]; tops[j] = t; }
+                if (DUCK_FIXED_COLUMNS)
+                {   // an owl comes back in a HOME column that has no owl in it right now (its nest is waiting); never anywhere else
+                    var home = DuckHomeColumns(LevelRules.DuckGoalTarget);
+                    tops.RemoveAll(t => { if (!home.Contains(t.x) || (!Simulating && DuckColsHome.Contains(t.x))) return true; for (int y = 0; y < ROWS; y++) if (_board[t.x, y] != null && _board[t.x, y].IsDropTarget) return true; return false; });
+                }
                 for (int i = 0; i < tops.Count && duckCells.Count < duckNeed; i++) duckCells.Add(tops[i]);
             }
             foreach (var p in cells)

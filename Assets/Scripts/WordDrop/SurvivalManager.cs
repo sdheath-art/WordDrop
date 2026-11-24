@@ -1663,20 +1663,39 @@ namespace WordDrop
         private void LaunchLandedDucks(RulesEngine rules, GridManager grid)
         {
             var ducks = rules.DucksOnBottomRow();
+            // 11-24 (recording Movie_029: the owl sat on the bottom row ~0.25 s before dropping into its nest). The rules DATA only
+            // shows the owl on the bottom row once the whole fall has finished, so the hand-off waited for every other tile. With
+            // nests the hand-off reads the TILES instead: an owl tile whose destination is the bottom row goes the moment it gets there.
+            if (OwlNests.ON && OwlNests.STAY_IN_NEST)
+            {
+                ducks = null;
+                for (int c = 0; c < RulesEngine.COLS; c++)
+                {
+                    var ot = grid.GetTile(c, 0);
+                    if (ot != null && ot.IsDropTargetVisual && !_launchedDucks.Contains(ot)) (ducks ??= new List<Vector2Int>()).Add(new Vector2Int(c, 0));
+                }
+            }
             if (ducks == null) return;
             int q = 0;
             foreach (var p in ducks)
             {
                 var t = grid.GetTile(p.x, p.y);
-                if (t == null || _launchedDucks.Contains(t) || t.IsAnimating) continue;
+                if (t == null || _launchedDucks.Contains(t)) continue;
+                // 11-24 (Spencer: the owl "really slows when it hits the bottom of the board"): with nests the owl carries straight on
+                // into its nest the moment it ARRIVES on the bottom row - it no longer waits out the tile's landing squish first.
+                bool arrived = OwlNests.ON && OwlNests.STAY_IN_NEST
+                    && Mathf.Abs(t.transform.position.y - grid.CellToWorld(p.x, p.y).y) < grid.CellSize * 0.06f;
+                bool nests = OwlNests.ON && OwlNests.STAY_IN_NEST;
+                if (nests ? !arrived : t.IsAnimating) continue;   // nests: only once the tile is really AT the bottom row (it may not have started falling yet)
                 _launchedDucks.Add(t);
                 Vector3 w = grid.CellToWorld(p.x, p.y) + new Vector3(grid.BoardSlideOffsetX, 0f, 0f);
                 LevelRules.Collected++; LevelRules.CollectAwaitingFly++; LevelRules.CollectAwaitingSince = Time.unscaledTime;
                 HUDManager.Instance?.FlyCollectLetter(w, '\0');
-                GameParticles.Instance?.PlayShimmerBurst(w, 12);
+                if (!(OwlNests.ON && OwlNests.STAY_IN_NEST)) GameParticles.Instance?.PlayShimmerBurst(w, 12);   // nests: the sparkle is on the nest landing instead
                 GameAudio.Instance?.PlayDuckQuack(q++);
                 HapticsManager.Strong();
                 var sr = t.GetComponent<SpriteRenderer>(); if (sr != null) sr.enabled = false;   // the flight IS the duck now
+                OwlNests.Land(p.x, w);   // 11-24: it drops into the nest under its column and stays there
                 WDLog.Log($"[Duck] launched at ({p.x},0) -> {LevelRules.Collected} (board clears it when settled)");
             }
         }
@@ -1704,7 +1723,9 @@ namespace WordDrop
             MatchController.Instance?.BeginProcessing();
             try
             {
-                yield return new WaitForSeconds(DUCK_COLLECT_PAUSE);
+                // 11-24 Spencer: "it waits til it nests before the tile on the second to bottom row finally falls to take the empty
+                // place" - the pause was there so the old fly-up could read; with nests the owl has already left, so the column closes at once.
+                if (!(OwlNests.ON && OwlNests.STAY_IN_NEST)) yield return new WaitForSeconds(DUCK_COLLECT_PAUSE);
                 var before = BoosterManager.Instance.SnapshotOccupiedPublic();
                 int quackIdx = 0;
                 foreach (var p in ducks)
