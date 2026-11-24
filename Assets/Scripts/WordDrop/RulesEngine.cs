@@ -7023,6 +7023,8 @@ namespace WordDrop
             return outCells;
         }
 
+        /// <summary>Cells whose waiting words also go off with the next tap detonation (consumed by it).</summary>
+        public static readonly List<Vector2Int> TapAlsoCells = new List<Vector2Int>();
         public bool BeginTapDetonation(Vector2Int cell, int playerIndex)
         {
             if (!ArmedWebMode) return false;
@@ -7052,6 +7054,20 @@ namespace WordDrop
                             merged.Add(all[i]);
                     hits = merged;
                 }
+            }
+
+            // 11-24 (Spencer: "the axe should probably also set off the dynamite"): a booster that hit several power-ups sets them all
+            // off in the SAME step - the others' one-letter words ride along with the one that is tapped (HandManager.FireSpecialsTogether).
+            if (TapAlsoCells.Count > 0)
+            {
+                var merged = new List<PrimedWordRegistry.PrimedWord>(hits);
+                foreach (var ec in TapAlsoCells)
+                {
+                    var more = _primedRegistry.GetPrimedWordsContaining(ec);
+                    if (more != null) foreach (var w in more) if (!merged.Contains(w)) merged.Add(w);
+                }
+                TapAlsoCells.Clear();
+                hits = merged;
             }
 
             LastResolutionWasSwap    = true;   // player-initiated, like a swap
@@ -7100,6 +7116,15 @@ namespace WordDrop
         private bool         _tapDiag;
 
         // ── BeginCascadeAfterBoosterClear ────────────────────────────────────────────
+
+        /// <summary>11-24: a booster cleared these cells and a power-up it hit is about to fire BEFORE any fall (BoosterManager
+        /// FIRE_HIT_SPECIALS_FIRST). The same bookkeeping BeginCascadeAfterBoosterClear does for the cleared cells, without the
+        /// gravity: forget scored keys there and drop any waiting word that lost a letter. The power-up's own resolution does the fall.</summary>
+        public void NoteBoosterClearedBeforeFire(List<Vector2Int> clearedCells)
+        {
+            if (clearedCells != null && clearedCells.Count > 0) PurgeScoredKeysForCells(clearedCells);
+            RemoveInvalidPrimedWords();
+        }
 
         /// <summary>
         /// Booster-clear entry point. Caller (a booster) has already nulled the

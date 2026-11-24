@@ -344,6 +344,39 @@ namespace WordDrop
                         clearedCells.Add(cell);
                 }
             }
+            // 11-24 (Spencer: "the axe does not trigger boosters until the animation is done"). A power-up the booster hit used to
+            // wait for the booster's whole fall + cascade and then fire from wherever it had fallen to (~0.6 s late, log 10:29). Now it
+            // goes off FIRST, from where it stood, the moment the booster's hit is done: the cleared cells get their bookkeeping, the
+            // power-up fires through the normal double-tap path, and ITS resolution runs the one fall for everything (the booster's
+            // holes included). The booster's own cascade below then finds nothing left to do. FIRE_HIT_SPECIALS_FIRST = false: old order.
+            if (FIRE_HIT_SPECIALS_FIRST && _specialsToFire.Count > 0 && HandManager.Instance != null)
+            {
+                WDLog.Log($"[Booster] {_specialsToFire.Count} power-up(s) hit - firing BEFORE the fall ({clearedCells.Count} cell(s) cleared by the booster)");
+                rules.NoteBoosterClearedBeforeFire(clearedCells);
+                // all of them in ONE step (Spencer: "the axe should probably also set off the dynamite" - fired one after the other,
+                // the second waited ~1.9 s for the first one's whole resolution). Any that could not join fall through to the old queue.
+                {
+                    var hand0 = HandManager.Instance; var cellsNow = new List<Vector2Int>();
+                    foreach (var qt in _specialsToFire)
+                    {
+                        if (qt == null) continue;
+                        for (int c = 0; c < RulesEngine.COLS; c++) for (int r = 0; r < RulesEngine.ROWS; r++)
+                            if (grid.GetTile(c, r) == qt) { var qd = rules.GetCell(c, r); if (qd != null && qd.SpecialKind != RulesEngine.SPECIAL_NONE) cellsNow.Add(new Vector2Int(c, r)); }
+                    }
+                    float w0 = 0f;
+                    while ((hand0.IsTapDetonating || (MatchController.Instance != null && MatchController.Instance.IsProcessing)) && w0 < 15f) { w0 += Time.unscaledDeltaTime; yield return null; }
+                    if (cellsNow.Count > 0 && !SurvivalManager.AwaitingNextLevel && hand0.FireSpecialsTogether(cellsNow))
+                    {
+                        _specialsToFire.Clear();
+                        yield return null; while (hand0.IsTapDetonating) yield return null;
+                    }
+                }
+                yield return FireQueuedSpecials();
+                clearedCells.Clear();   // the board has moved on: work out again what (if anything) is still open
+                if (occupiedBefore != null)
+                    foreach (var cell in occupiedBefore)
+                        if (rules.GetCell(cell.x, cell.y) == null) clearedCells.Add(cell);
+            }
             WDLog.Log($"[BoosterDbg] Cascade snapshotBefore={occupiedBefore?.Count ?? 0} " +
                       $"clearedDiff={clearedCells.Count}");
 
@@ -408,6 +441,7 @@ namespace WordDrop
         // "same with all boosters really". A booster no longer smashes a special: Booster.TakeSpecials leaves it on the board and
         // queues its TILE here (it may fall in the cascade), and once the cascade settles each one still standing fires through
         // the double-tap path (HandManager.FireSpecialAt) - no move charged. One that a cascade blast already set off is skipped.
+        public static bool FIRE_HIT_SPECIALS_FIRST = true;
         private static readonly List<Tile> _specialsToFire = new List<Tile>();
         public static void QueueSpecialFire(Tile t) { if (t != null && !_specialsToFire.Contains(t)) _specialsToFire.Add(t); }
         private IEnumerator FireQueuedSpecials()

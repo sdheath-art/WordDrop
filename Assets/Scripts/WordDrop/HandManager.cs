@@ -2550,6 +2550,32 @@ namespace WordDrop
             return fired;
         }
 
+        /// <summary>11-24: fire several power-ups in ONE step (a booster hit them all). Each gets its one-letter word like
+        /// FireSpecialAt; the first is tapped and the rest ride along (RulesEngine.TapAlsoCells). False = nothing fired.</summary>
+        public bool FireSpecialsTogether(List<Vector2Int> cells)
+        {
+            var rules = RulesEngine.Instance;
+            if (rules == null || cells == null || cells.Count == 0 || _tapDetonating || (MatchController.Instance != null && MatchController.Instance.IsProcessing)) return false;
+            var ok = new List<Vector2Int>();
+            foreach (var cell in cells)
+            {
+                var data = rules.GetCell(cell.x, cell.y);
+                if (data == null || data.SpecialKind == RulesEngine.SPECIAL_NONE || ok.Contains(cell)) continue;
+                int id = rules.PrimedRegistry.AddPrimedWord(data.Letter.ToString(), new List<Vector2Int> { cell },
+                             MatchController.PLAYER_HUMAN, rules.GlobalTurn, rules.GlobalTurn + 999);
+                if (id < 0) continue;
+                WDLog.Log($"[Special] TEST fire {RulesEngine.SpecialName(data.SpecialKind)} at ({cell.x},{cell.y}){(ok.Count > 0 ? " (with the first)" : "")}");
+                ok.Add(cell);
+            }
+            if (ok.Count == 0) return false;
+            RulesEngine.TapAlsoCells.Clear();
+            for (int i = 1; i < ok.Count; i++) RulesEngine.TapAlsoCells.Add(ok[i]);
+            bool fired = TryTapDetonate(ok[0]);
+            if (!fired) RulesEngine.TapAlsoCells.Clear();
+            else TutorialBeats.OnSpecialFired(ok[0]);
+            return fired;
+        }
+
         private bool TryTapDetonate(Vector2Int cell)
         {
             if (_tapDetonating) return false;
