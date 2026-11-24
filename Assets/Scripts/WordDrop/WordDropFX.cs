@@ -1734,12 +1734,18 @@ namespace WordDrop
             }
         }
 
+        /// <summary>One-shot: where the next tome flight lands instead of its target's current cell (HandManager.TryFallDuringFlight).</summary>
+        public static Vector3? PlaneLandAt;
+        /// <summary>One-shot: flight time of the next tome flight (0 = AIRPLANE_FLIGHT).</summary>
+        public static float PlaneFlightSecs;
         private void PlayAirplaneFlight(RulesEngine.SpecialFire f, Vector3 origin, float cell, bool carryBomb = false)
         {
             // PAPER-PLANE GLIDE (2026-10-23 Spencer, mid-build: "it should probably have motion like a paper airplane might where
             // it glides"). TOSS up (quick), FLOAT over a high soft arc while it bobs and its nose rocks on the air (the wobble
             // dies away as it steadies), then tips the nose DOWN and glides in. Soft white wisps behind, not sparks.
             var grid = GridManager.Instance; if (grid == null) return;
+            float flightSecs = AIRPLANE_FLIGHT;   // 11-24: longer when the board falls during the flight (PlaneFlightSecs, one-shot)
+            if (PlaneFlightSecs > 0f && !carryBomb) { flightSecs = PlaneFlightSecs; PlaneFlightSecs = 0f; }
             if (GameAudio.Instance != null && GameAudio.Instance.HasKit("tome_flight")) GameAudio.Instance.PlayKit("tome_flight"); else GameAudio.Instance?.PlayWhooshFast();   // 11-07 pick: Book Page Brush Fast A6 (was silent)
             var plane = MakeIconSprite("AirplaneArt", carryBomb ? RulesEngine.SPECIAL_AIRPLANE : f.Kind, cell * 1.0f, 55);
             if (plane == null) return;
@@ -1748,6 +1754,10 @@ namespace WordDrop
             SpriteRenderer bomb = carryBomb ? MakeIconSprite("CarriedBomb", RulesEngine.SPECIAL_BOMB, cell * 0.85f, 54) : null;
             if (bomb != null) bomb.transform.position = origin + new Vector3(0f, -cell * 0.55f, 0.05f);   // hanging from the start (11-07: no first-frame pop)
             Vector3 to = grid.CellToWorld(f.Target.x, f.Target.y) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f);
+            if (PlaneLandAt.HasValue && !carryBomb)
+            {   // 11-24: the board falls during the flight - land where the target tile will have come to rest
+                to = PlaneLandAt.Value + new Vector3(grid.BoardSlideOffsetX, 0f, -0.3f); PlaneLandAt = null;
+            }
             {   // BOOKSHELF (11-03): land on the middle of the 2x2 shelf, not on whichever of its cells was picked
                 Tile tt = null; try { tt = grid.GetTile(f.Target.x, f.Target.y); } catch { }
                 if (tt != null && tt.ShelfPart > 0)
@@ -1791,7 +1801,7 @@ namespace WordDrop
                 shadow.sprite = plane.sprite; shadow.color = new Color(0.10f, 0.05f, 0.22f, 0f); shadow.sortingOrder = plane.sortingOrder - 1;
                 var sh = shadow.transform; sh.position = start; sh.localScale = tr.localScale;
                 Vector3 shOff = new Vector3(cell * 0.18f, -cell * 0.12f, 0.1f);
-                float tUp = AIRPLANE_TAKEOFF * 0.75f, tHover = AIRPLANE_TAKEOFF * 0.25f, tFly = AIRPLANE_FLIGHT * 0.78f, tDrop = AIRPLANE_FLIGHT * 0.22f;
+                float tUp = AIRPLANE_TAKEOFF * 0.75f, tHover = AIRPLANE_TAKEOFF * 0.25f, tFly = flightSecs * 0.78f, tDrop = flightSecs * 0.22f;
                 // lift
                 seq.Append(tr.DOMove(up, tUp).SetEase(Ease.OutCubic));
                 seq.Join(tr.DOScale(sUp, tUp).SetEase(Ease.OutBack, 1.6f));
@@ -1866,7 +1876,7 @@ namespace WordDrop
                     SpawnSpark(pos + back, back * 0.8f + (Vector3)Random.insideUnitCircle * cell * 0.2f,
                                cell * Random.Range(0.16f, 0.26f), Random.Range(0.3f, 0.5f), new Color(1.15f, 1.2f, 1.3f, 1f));
                 }
-            }, 1f, AIRPLANE_FLIGHT).SetEase(Ease.Linear));
+            }, 1f, flightSecs).SetEase(Ease.Linear));
             }
             // touch-down
             seq.AppendCallback(() =>

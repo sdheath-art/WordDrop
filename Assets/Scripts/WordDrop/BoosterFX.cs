@@ -319,6 +319,7 @@ namespace WordDrop
         //  4 AFTERGLOW (.3s): the bolt thins and flickers out, sparks drift, the dim lifts.
         public static bool  LIGHTNING = true;
         public static float LIGHTNING_PER_CELL = 0.018f;
+        public static float LIGHTNING_FALL_AFTER = 0.05f;   // seconds after the strike has crossed the row before the board is released
         public static float LIGHTNING_CHARGE = 0.45f;   // charge step length with the charge-up sound (was 0.22)
         public static readonly Color BOLT_CORE = new Color(2.6f, 2.8f, 3.2f, 1f), BOLT_GLOW = new Color(0.9f, 1.4f, 3.0f, 1f), BOLT_FRINGE = new Color(0.25f, 0.5f, 1f, 0.9f);
         public void LightningRow(int row, Action<int> onCell, Action onDone)
@@ -403,9 +404,18 @@ namespace WordDrop
             var forks = new List<SpriteRenderer>();
             for (int i = 0; i < 4; i++) { var f = BoltLayer("Fork" + i, BOLT_CORE, 63, true); forks.Add(f); }
             int next = 0; t = 0f; reroll = 0f; float strike = RulesEngine.COLS * LIGHTNING_PER_CELL, life = strike + 0.42f;
+            bool released = false;
             while (t < life)
             {
                 t += Time.unscaledDeltaTime;
+                // 11-24 (Spencer: the lightning "should also blow these things up immediately"): the row used to wait for the whole
+                // bolt to fade (0.42 s after the strike) before the board was released, so a power-up in the row went off late. Now
+                // the board is released LIGHTNING_FALL_AFTER after the head has crossed the row; the bolt fades over what follows.
+                if (!released && t >= strike + LIGHTNING_FALL_AFTER)
+                {
+                    while (next < RulesEngine.COLS) { onCell?.Invoke(next); next++; }
+                    released = true; Lock(false); onDone?.Invoke();
+                }
                 // reach: the bolt's head races across the row in `strike` seconds, then the full bolt holds and fades
                 float reachK = Mathf.Clamp01(t / Mathf.Max(0.01f, strike));
                 Vector3 head = Vector3.Lerp(a, b, reachK * reachK * (3f - 2f * reachK));
@@ -449,8 +459,7 @@ namespace WordDrop
             foreach (var f in forks) if (f != null) Destroy(f.gameObject);
             if (icon != null) Destroy(icon.gameObject);
             FX?.BoardDimLift(0.2f);
-            Lock(false);
-            onDone?.Invoke();
+            if (!released) { Lock(false); onDone?.Invoke(); }
         }
 
         // ── AXE (column clear, 2026-10-29) ───────────────────────────────────────────────────────────────────────────

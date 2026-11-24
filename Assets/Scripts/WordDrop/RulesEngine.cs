@@ -2169,6 +2169,7 @@ namespace WordDrop
         // full boards: 3+ letters 54% hit, 4+ letters 12%. So in full-board mode EVERY word is 4+ (FULL_MIN_LEN), swaps and
         // swipes included. FULL_SHORT_BY_SWAP = true brings back round 1 (3-letter words allowed when the swap makes them).
         public static bool ONE_SPECIAL_PER_STEP = true;   // 11-20: false = every word in an explosion can make its own power-up
+        public static bool NO_SPECIAL_WHEN_FIRING = true;   // 11-24: an explosion that sets off a power-up makes no new power-up. false = old rule
         public static int  FULL_MIN_LEN      = 4;
         public static bool FULL_SHORT_BY_SWAP = false;
         // Words the FALL makes must also be COMMON (Resources/common_words.txt = common-words sweep ∩ core, ~4.7k words).
@@ -8347,6 +8348,26 @@ namespace WordDrop
                     if (rank > bestRank) { bestRank = rank; onlySpecialFor = qw.Id; }
                 }
             }
+            // 11-24 A POWER-UP CANNOT MAKE A POWER-UP (Spencer: "i just had one bomb create another bomb"; MESH x GAME, GAME ran
+            // through a bomb and the CROSSING put a new bomb beside it). If any word popping in this step sets off a power-up,
+            // no word in the step makes one - the blast is the reward. Words still pop, score and count for goals. A later chain
+            // step is its own explosion. Not on the bonus level (payout tuned with the old rule).
+            if (NO_SPECIAL_WHEN_FIRING && SurvivalManager.FullBoardActive && SpecialTilesActive && !LevelRules.BonusLevelActive)
+            {
+                bool stepFires = false;
+                for (int i = 0; i < _stepPendingTriggers.Count && !stepFires; i++)
+                {
+                    var fw = _primedRegistry.GetById(_stepPendingTriggers[i]);
+                    if (fw?.Cells == null) continue;
+                    foreach (var fc in fw.Cells)
+                        if (InBounds(fc.x, fc.y) && _board[fc.x, fc.y] != null && _board[fc.x, fc.y].SpecialKind != SPECIAL_NONE) { stepFires = true; break; }
+                }
+                if (stepFires)
+                {
+                    onlySpecialFor = int.MinValue + 1;   // matches no word: every birth in this step is skipped below
+                    if (AirplanePending) { AirplanePending = false; if (!Simulating) WDLog.Log("[Airplane] not earned: this explosion set off a power-up"); }
+                }
+            }
             for (int i = 0; i < _stepPendingTriggers.Count; i++)
             {
                 int pid = _stepPendingTriggers[i];
@@ -8429,7 +8450,7 @@ namespace WordDrop
                     }
                 if (onlySpecialFor != int.MinValue && pw.Id != onlySpecialFor && specialKind != SPECIAL_NONE)
                 {
-                    if (!Simulating) WDLog.Log($"[Special] one per explosion: '{pw.Word}' would have made {SpecialName(specialKind)} - skipped");
+                    if (!Simulating) WDLog.Log($"[Special] {(onlySpecialFor == int.MinValue + 1 ? "explosion set off a power-up" : "one per explosion")}: '{pw.Word}' would have made {SpecialName(specialKind)} - skipped");
                     specialKind = SPECIAL_NONE; specialAt = new Vector2Int(-1, -1);
                 }
 

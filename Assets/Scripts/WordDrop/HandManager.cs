@@ -3974,17 +3974,21 @@ case RulesEngine.ResolutionPhase.Complete:
         public static bool  PRE_BURST         = true;
         public static float PRE_BURST_SECONDS = 0.12f;
         public static float PRE_BURST_SWELL   = 1.2f;
+        // 11-24 (Spencer, Movie_038: "there is still that open space before the letters fall"): a Flying Tome skips the swell beat, so
+        // its take-off hole lasts as long as a word pop (~0.34 s, was 0.48). Bombs/rockets in the same step still swell. false = old.
+        public static bool  TOME_NO_SWELL     = true;
         private IEnumerator PreBurstSpecials(GridManager grid, RulesEngine.StepResult step)
         {
             if (step != null && step.SpecialsFired != null && step.SpecialsFired.Count > 0)   // TEMP DIAG 11-19 [BombSync]
                 WDLog.Log($"[BombSync] t={Time.unscaledTime:F2} step fires {step.SpecialsFired.Count} power-up(s): {string.Join(" ", step.SpecialsFired.ConvertAll(x => $"kind{x.Kind}@({x.Cell.x},{x.Cell.y}) delay {x.Delay:F2}"))} | swell {(PRE_BURST && !BonusBlastRunning ? "yes" : BonusBlastRunning ? "NO (bonus blast)" : "NO (off)")}");
             if (!PRE_BURST || BonusBlastRunning || grid == null || step == null || step.SpecialsFired == null || step.SpecialsFired.Count == 0) yield break;
-            var swelling = new List<Tile>();
+            var swelling = new List<Tile>(); bool tomeSkipped = false;
             foreach (var f in step.SpecialsFired)
             {
                 var t = grid.GetTile(f.Cell.x, f.Cell.y);
                 if (t == null || swelling.Contains(t)) continue;
                 if (WaitForPlane(step, f) > 0f) continue;   // 11-19: it goes off when the tome lands - no early swell
+                if (TOME_NO_SWELL && f.Kind == RulesEngine.SPECIAL_AIRPLANE) { tomeSkipped = true; continue; }   // 11-24: a tome takes off at once
                 swelling.Add(t);
                 t.MarkAnimating(PRE_BURST_SECONDS + 0.1f);
                 t.LiftForFx(PRE_BURST_SECONDS + 0.3f);   // 11-18 Spencer (phone): "when it expands it expands behind the tiles" - the swell now draws OVER its neighbours (self-restoring)
@@ -3993,6 +3997,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 var sr = t.GetComponent<SpriteRenderer>();
                 if (sr != null) { sr.DOKill(); sr.color = Color.white; sr.DOColor(new Color(1.7f, 1.6f, 1.4f, 1f), PRE_BURST_SECONDS).SetUpdate(true); }
             }
+            if (swelling.Count == 0 && tomeSkipped) yield break;
             if (swelling.Count == 0) { WDLog.Log("[BombSync] no tile found to swell (power-up made and fired in one step?)"); yield break; }
             yield return new WaitForSecondsRealtime(PRE_BURST_SECONDS);
         }
@@ -4122,6 +4127,7 @@ case RulesEngine.ResolutionPhase.Complete:
                         for (int dx = 0; dx < 2; dx++) for (int dy = 0; dy < 2; dy++) _specialPopDelay[new Vector2Int(a.x + dx, a.y + dy)] = land;
                     }
             }
+            TryFallDuringFlight(grid, step);   // 11-24: a lone tome no longer freezes the board for its flight
             if (step.SpecialsFired != null && WordDropFX.Instance != null)
             {
                 int fi = 0;
@@ -4192,6 +4198,61 @@ case RulesEngine.ResolutionPhase.Complete:
         /// <summary>The longest combo wind-up among this step's specials (0 in the bonus blast, which stays one quick ripple).</summary>
         /// <summary>Seconds until a propeller (or plane+bomb combo) fired this step lands on <paramref name="cell"/>; 0 if none is
         /// flying there. Same timing as the target's pop in the special-pop schedule (windup + the plane's own delay + takeoff + flight).</summary>
+        // ── THE BOARD FALLS WHILE THE TOME FLIES (11-24, Spencer: "i want it to be like royal match"). The rules are untouched: the
+        // target is still cleared in this step. Only the picture changes - see GridManager "LATE HOLE". Applies when the step fired
+        // exactly ONE plain tome at a plain letter tile on a board with no crates / shelves / gaps (those keep the old hold for now).
+        // PLANE_FALL_DURING_FLIGHT = false: the whole board waits for the landing, as before. ──
+        public static bool PLANE_FALL_DURING_FLIGHT = true;
+        public static float PLANE_FALL_FLIGHT_SECS = 0.95f;   // flight time when the board falls during it (the normal flight is WordDropFX.AIRPLANE_FLIGHT 0.45)
+        private void TryFallDuringFlight(GridManager grid, RulesEngine.StepResult step)
+        {
+            if (!PLANE_FALL_DURING_FLIGHT || BonusBlastRunning || grid == null || step?.SpecialsFired == null || step.SpecialsFired.Count != 1) return;
+            var f = step.SpecialsFired[0];
+            if (f.Kind != RulesEngine.SPECIAL_AIRPLANE || f.Target == f.Cell || f.Target.x < 0) return;
+            if (step.ExplodedCells == null || !step.ExplodedCells.Contains(f.Target)) return;
+            if (step.ThawedCells != null && step.ThawedCells.Contains(f.Target)) return;
+            if (step.FormedWordCells != null && step.FormedWordCells.Contains(f.Target)) return;
+            if (step.PoppedWords != null) foreach (var pw in step.PoppedWords) if (pw.Value != null && pw.Value.Contains(f.Target)) return;
+            if (!_specialPopDelay.TryGetValue(f.Target, out float land) || land <= 0.05f) return;
+            if (RulesEngine.HasVoids) return;
+            var tt = grid.GetTile(f.Target.x, f.Target.y);
+            if (tt == null || tt.IsStone || tt.ShelfPart > 0 || tt.IsDropTargetVisual || tt.IsGem || tt.SpecialKind != RulesEngine.SPECIAL_NONE) return;
+            var gone = new HashSet<Vector2Int>(step.ExplodedCells);
+            int rowA = 0;
+            for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++)
+            {
+                var tl = grid.GetTile(x, y); if (tl == null) continue;
+                bool owl = tl.IsDropTargetVisual;
+                if ((tl.IsStone && !owl) || tl.ShelfPart > 0) return;                      // a crate / shelf / safe anywhere: falls can step sideways
+                if (x != f.Target.x || y >= f.Target.y) continue;
+                if (owl) return;                                                            // an owl UNDER the target may leave in this fall
+                if (!gone.Contains(new Vector2Int(x, y))) rowA++;                           // survivors under the target = the row it will rest on
+            }
+            var ghost = grid.BeginLateHole(f.Target.x, f.Target.y, rowA);
+            if (ghost == null) return;
+            _specialPopDelay.Remove(f.Target);   // its pop is no longer part of this step's wait
+            WordDropFX.PlaneLandAt = grid.CellToWorld(f.Target.x, rowA);   // the tome flies to where the tile WILL be
+            // 11-24 (capture 104915: the pop itself takes ~0.4 s before anything can fall, and the 0.45 s flight - cut short on 11-06
+            // BECAUSE the board froze for it - was nearly over by then, so it still read as "board waits for the tome"). The flight is
+            // no longer dead time, so it gets RM's leisurely length back: the board is visibly falling while the tome is in the air.
+            if (PLANE_FALL_FLIGHT_SECS > WordDropFX.AIRPLANE_FLIGHT)
+            {
+                land += PLANE_FALL_FLIGHT_SECS - WordDropFX.AIRPLANE_FLIGHT;
+                WordDropFX.PlaneFlightSecs = PLANE_FALL_FLIGHT_SECS;
+            }
+            StartCoroutine(LateHolePop(grid, ghost, land));
+        }
+        private System.Collections.IEnumerator LateHolePop(GridManager grid, Tile ghost, float land)
+        {
+            float t0 = Time.unscaledTime;
+            while (Time.unscaledTime - t0 < land) yield return null;
+            Coroutine co = (ghost != null && WordDropFX.Instance != null)
+                ? WordDropFX.Instance.PlayExplosion(new List<Tile> { ghost }, 0, 1, wordFlash: false, cascade: false) : null;
+            grid.LateHoleLanded();
+            if (co != null) yield return co;
+            grid.EndLateHole(ghost);
+        }
+
         /// <summary>11-19 (Spencer: "if a flying tome is flying towards a dynamite the dynamite blows up before it hits it"). The rules
         /// queue a power-up caught by another one with no delay, so a dynamite / bomb / rocket sitting on a flying tome's TARGET
         /// fired at the start of the step while the tome was still in the air. Seconds this power-up must wait for a tome that

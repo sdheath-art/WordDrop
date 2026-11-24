@@ -2609,6 +2609,75 @@ namespace WordDrop
         }
         public static bool IsFixedTile(Tile t) => t != null && (t.IsAnchored || (RulesEngine.FIXED_CRATES && SurvivalManager.FullBoardActive && t.IsStone && !t.IsDropTargetVisual));
 
+        // ── LATE HOLE (11-24, Spencer: the flying tome "holding the letters from falling until the animation is done" -> "i want it
+        // to be like royal match"). The rules clear the tome's target in the same step as the word, and the picture used to freeze
+        // the whole board for the flight (~0.6 s) before one fall. Now the picture plays that SAME fall in two parts, RM's way:
+        //   A) at once: everything falls as if the target were still standing. The target tile (a "ghost": off the grid arrays, so
+        //      this fall is planned on exactly the board the rules have) drops with its column to where it will rest, and the tiles
+        //      above it stop ONE ROW short of their final cells.
+        //   B) when the tome lands: the ghost pops and those tiles drop the last row (the column's last new letter comes in).
+        // The grid arrays hold the FINAL cells from the start of A, so the picture and the rules never disagree about who is where;
+        // ApplyGravity only returns after B, so no word is looked for on a half-fallen board.
+        // HandManager.TryFallDuringFlight decides when this applies (one plain tome, a plain letter target, no crates/shelves/gaps).
+        private class LateHole
+        {
+            public Tile Ghost; public int Col, Row0, RowA; public bool Landed;
+            public readonly List<KeyValuePair<Tile, Vector3>> Waiting = new List<KeyValuePair<Tile, Vector3>>();   // tile -> its final spot
+            public readonly List<Tile> Hidden = new List<Tile>();                                                   // new letters parked above the board
+            public readonly List<System.Action> AtLanding = new List<System.Action>();
+        }
+        public static float LATE_DROP_AFTER = 0.22f;   // seconds between the tome landing and the column above its target dropping
+        private LateHole _late;
+        private bool LateStaging => _late != null && !_late.Landed;
+        /// <summary>Take the tome's target tile off the grid (it stays on screen). <paramref name="rowA"/> = the row it will rest on
+        /// once the tiles under it have fallen. Null = not possible (then nothing changes).</summary>
+        public Tile BeginLateHole(int col, int row, int rowA)
+        {
+            if (_late != null || col < 0 || col >= COLS || row < 0 || row >= ROWS) return null;
+            var t = _tiles[col, row]; if (t == null) return null;
+            _tiles[col, row] = null; _cells[col, row] = null;
+            _late = new LateHole { Ghost = t, Col = col, Row0 = row, RowA = Mathf.Clamp(rowA, 0, row) };
+            WDLog.Log($"[Tome] the board falls during the flight: target ({col},{row}) will rest on row {_late.RowA}");
+            return t;
+        }
+        public void LateHoleLanded() { if (_late != null) _late.Landed = true; }
+        /// <summary>The ghost's pop has played: back to the pool. Also drops the late hole if no fall ever picked it up.</summary>
+        public void EndLateHole(Tile ghost)
+        {
+            if (ghost != null) ReturnTile(ghost);
+            if (_late != null && _late.Ghost == ghost && _late.Waiting.Count == 0 && _late.Hidden.Count == 0 && _late.AtLanding.Count == 0) _late = null;
+        }
+        /// <summary>Part B: the tome has landed (or 3 s passed) - the held tiles drop their last row. Returns when they have.</summary>
+        private IEnumerator LateHoleFinish()
+        {
+            var late = _late; if (late == null) yield break;
+            float w = 0f; while (!late.Landed && w < 3f) { w += Time.unscaledDeltaTime; yield return null; }
+            if (!late.Landed) WDLog.Log("[Tome] late hole: the landing never came - releasing the column");
+            // 11-24 (Spencer's recording Movie_037: the tome broke the tile under an owl "and the owl dropped very quickly"): the
+            // column used to drop on the very frame the tome landed, INTO the tile that was still bursting, so the owl seemed to
+            // snap down. A normal pop gets ~0.3 s before its fall; the landing gets a beat too - the tile breaks, THEN the column drops.
+            else { float h = 0f; while (h < LATE_DROP_AFTER) { h += Time.unscaledDeltaTime; yield return null; } }
+            if (_late == late) _late = null;
+            var moving = new List<Tile>();
+            foreach (var kv in late.Waiting)
+            {
+                var tile = kv.Key; if (tile == null) continue;
+                float d = Vector3.Distance(tile.transform.position, kv.Value);
+                if (d <= 0.02f) { tile.transform.position = kv.Value; continue; }
+                tile.AnimateGravityFall(kv.Value, d / FallSpeed, 0f);
+                if (late.Hidden.Contains(tile) && REFILL_CLIP) StartCoroutine(ClipWhileFalling(tile));
+                moving.Add(tile);
+            }
+            foreach (var act in late.AtLanding) act?.Invoke();
+            int safety = 0; bool any = true;
+            while (any && safety < 600)
+            {
+                safety++; any = false;
+                for (int i = 0; i < moving.Count; i++) if (moving[i] != null && moving[i].IsFalling) { any = true; break; }
+                if (any) { ClusterOutline.Instance?.Refresh(); yield return null; }
+            }
+        }
+
         /// <summary>11-24 OWLS FALL OUT (see RulesEngine.OwlsFallOutInData): take the owls the data has just sent home off the grid,
         /// BEFORE this fall is planned, and let each one fall on its own to the bottom row of its exit column and on into its nest.
         /// The column above it then falls all the way in the same pass.</summary>
@@ -2625,6 +2694,24 @@ namespace WordDrop
                 {   // the picture has no owl there (should not happen): still count it home so the level can finish
                     WDLog.Log($"[Owl] fall-out: NO owl tile at ({e.From.x},{e.From.y}) - sent home without the fall");
                     SurvivalManager.Instance?.OwlArrived(e.Col, target + new Vector3(_boardSlideOffsetX, 0f, 0f));
+                    continue;
+                }
+                if (LateStaging && e.From.x == _late.Col && e.Col == _late.Col && e.From.y > _late.Row0)
+                {   // a tome is flying to a tile UNDER this owl: it comes down with its column to just above that tile, and falls out
+                    // when the tome lands (part B of the late hole)
+                    int between = 0; for (int y = _late.Row0 + 1; y < e.From.y; y++) if (_tiles[e.From.x, y] != null) between++;
+                    _tiles[e.From.x, e.From.y] = null; _cells[e.From.x, e.From.y] = null;
+                    Vector3 wait = CellToWorld(e.Col, _late.RowA + 1 + between);
+                    float dw = Vector3.Distance(t.transform.position, wait);
+                    if (dw > 0.02f) t.AnimateGravityFall(wait, dw / FallSpeed, e.From.x * 0.045f);
+                    var ot = t; int oc = e.Col; Vector3 otarget = target;
+                    _late.AtLanding.Add(() =>
+                    {
+                        if (ot == null) { SurvivalManager.Instance?.OwlArrived(oc, otarget + new Vector3(_boardSlideOffsetX, 0f, 0f)); return; }
+                        float d2 = Vector3.Distance(ot.transform.position, otarget);
+                        if (d2 > 0.02f) ot.AnimateGravityFall(otarget, d2 / FallSpeed, 0f);
+                        StartCoroutine(OwlFallOutRoutine(ot, oc, otarget));
+                    });
                     continue;
                 }
                 _tiles[e.From.x, e.From.y] = null; _cells[e.From.x, e.From.y] = null;
@@ -2681,6 +2768,14 @@ namespace WordDrop
             if (FALL_ROUTES) foreach (var m in plan) if (m.path != null) for (int k = 1; k < m.path.Count; k++) if (m.path[k].x != m.path[k - 1].x) phased = true;
             if (FALL_ROUTES) foreach (var kv in _refillRoutes) for (int k = 1; k < kv.Value.Count; k++) if (kv.Value[k].x != kv.Value[k - 1].x) phased = true;
             _waveFalls.Clear(); _wavesOn = phased;
+            // LATE HOLE part A (see above): the ghost drops to its resting row; tiles that end at or above that row stop one row short
+            bool lateStage = LateStaging && !phased;
+            if (LateStaging && phased) WDLog.Log("[Tome] late hole: this fall has a diagonal step - the column is not staged");
+            if (lateStage && _late.Ghost != null)
+            {
+                Vector3 gp = CellToWorld(_late.Col, _late.RowA); float gd = Vector3.Distance(_late.Ghost.transform.position, gp);
+                if (gd > 0.02f) _late.Ghost.AnimateGravityFall(gp, levelUniform ? UNIFORM_FALL_DURATION : gd / FallSpeed, levelUniform ? 0f : _late.Col * STAGGER_PER_COL);
+            }
             var mTiles = new Tile[plan.Count]; var mCells = new CellData[plan.Count];
             for (int i = 0; i < plan.Count; i++)
             {
@@ -2696,6 +2791,11 @@ namespace WordDrop
                 tile.UpdateGridPosition(t.x, t.y);
 
                 Vector3 targetPos = CellToWorld(t.x, t.y);
+                if (lateStage && t.x == _late.Col && t.y >= _late.RowA)
+                {   // above the tome's target: one row short for now, the last row when the tome lands
+                    _late.Waiting.Add(new KeyValuePair<Tile, Vector3>(tile, targetPos));
+                    targetPos = CellToWorld(t.x, t.y + 1);
+                }
                 float   dist      = Vector3.Distance(tile.transform.position, targetPos);
                 if (dist > 0.02f)
                 {
@@ -2710,7 +2810,9 @@ namespace WordDrop
                 else tile.transform.position = targetPos;
             }
 
+            _lateStageRefill = lateStage;
             totalMoved += SpawnRefillTiles(animatingTiles);   // full board: new letters fall in with the rest
+            _lateStageRefill = false;
             if (_wavesOn) { _wavesOn = false; yield return StartCoroutine(PlayFallWaves()); }
 
             if (totalMoved > 0)
@@ -2753,6 +2855,8 @@ namespace WordDrop
 //                 WDLog.Log("[GridManager] ApplyGravity — no tiles needed to move.");
             }
         
+            if (_late != null) yield return LateHoleFinish();   // LATE HOLE part B: wait for the tome, then the held tiles drop the last row
+
             // Letters may have been pulled apart — drop any word that no longer exists
             // BEFORE retracing, so the outline never traces a word that just died.
             RulesEngine.Instance?.ValidatePrimedWords();
@@ -2766,6 +2870,7 @@ namespace WordDrop
         /// <summary>FULL BOARD (2026-10-21): make tiles for cells the data refilled during gravity (RulesEngine.FillTopsInData).
         /// Each column's new letters start stacked just above the board and fall the same distance, so the column comes
         /// down as one piece together with the tiles already falling. Adds them to <paramref name="animating"/>.</summary>
+        private bool _lateStageRefill;
         public int SpawnRefillTiles(List<Tile> animating)
         {
             if (!SurvivalManager.FullBoardActive) return 0;
@@ -2787,6 +2892,21 @@ namespace WordDrop
                     int voidTop = RulesEngine.HasVoids ? Mathf.Max(0, ROWS - 1 - RulesEngine.TopRealRow(col)) : 0;   // shaped board: start above the BOARD top, not inside a void corner
                     Vector3 start  = CellToWorld(col, row + newCount + voidTop); start.z = target.z;
                     tile.transform.position = start;
+                    bool lateTile = _lateStageRefill && _late != null && col == _late.Col;   // LATE HOLE: this column's new letters stop one row short too
+                    if (lateTile)
+                    {
+                        _late.Waiting.Add(new KeyValuePair<Tile, Vector3>(tile, target));
+                        if (row + 1 >= ROWS)
+                        {   // its waiting place is above the board: it stays out of sight up there and comes in when the tome lands
+                            _late.Hidden.Add(tile); if (REFILL_CLIP) SetRefillClip(tile, true);
+                            if (d.IsRainGold) { tile.SetRainGold(true); anyGold = true; }
+                            tile.SetGem(d.HasGem); if (!d.IsRainGold) tile.ForceRestingFace();
+                            if (d.IsDropTarget) tile.SetDropTargetVisual(true);
+                            spawned++;
+                            continue;
+                        }
+                        target = CellToWorld(col, row + 1);
+                    }
                     if (d.IsRainGold) { tile.SetRainGold(true); anyGold = true; }
                     // ALWAYS set the gem state, both ways (2026-10-23: "a bunch of letters just turned into gems" — a whole refilled
                     // row arrived gold). Recycled tiles can carry the gold face of a gem-armed word; SetGem(false) re-applies the
