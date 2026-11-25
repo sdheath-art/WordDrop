@@ -560,11 +560,20 @@ namespace WordDrop
         // machinery (only the word's own tiles answer, the hand traces it). CLAIM_STEP = false: the word just waits. ──
         public static bool CLAIM_STEP = true;
         private static string s_claimAfter, s_claimWord;
-        private static bool ClaimStepKey(string k) => k == "swap" || k == "gem" || IsPowerKey(k);
+        // 11-25 later (Spencer, playing it: after "Stuck? Follow the nudge!" it "should probably direct you to swipe that word as well"):
+        // the hint lesson and the wild lesson get the step too - a player following a nudge is the one least sure what to do next.
+        private static bool ClaimStepKey(string k) => k == "swap" || k == "gem" || k == "hint" || k == "wild" || IsPowerKey(k);
         /// <summary>HandManager: the swap that just resolved left a word waiting for a swipe.</summary>
         public static void OnLessonWordHeld(List<Vector2Int> cells, string word)
         {
-            if (s_claimAfter == null || Instance == null || cells == null || cells.Count < 2 || string.IsNullOrEmpty(word)) return;
+            if (Instance == null || cells == null || cells.Count < 2 || string.IsNullOrEmpty(word)) return;
+            // 11-25 RETURNING PLAYERS (testers who finished the lessons under the old rule, where a word popped by itself): none of
+            // the lesson slides will ever run for them again, so their first word would bump, wait, and look broken. The first
+            // word they make under the new rule gets the swipe step once ("Swipe WORD to claim it!"), on any level.
+            if (s_claimAfter == null && NEW_TUTORIAL && CLAIM_STEP && HandManager.CLAIM_MODE && !Done("claim") && Done("swap") && !s_active && !Pending
+                && Instance._tipUntil <= 0f && Instance._useUntil <= 0f && !BoosterIntro.Running && !BoosterIntro.Pending)
+            { s_claimAfter = "returning"; s_pendingSince = Time.unscaledTime; WDLog.Log("[Tut] returning player: first word under swipe-to-claim gets the swipe step"); }
+            if (s_claimAfter == null) return;
             Instance.StartCoroutine(Instance.ClaimBeat(cells, word));
         }
         /// <summary>HandManager: a lesson's swap resolved. If its word popped by itself (last move) the lesson simply carries on.</summary>

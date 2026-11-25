@@ -2226,6 +2226,9 @@ namespace WordDrop
         /// that ever broke mid-way can never soft-lock the level end.</summary>
         public static bool BonusBlastHoldsModal => BonusBlastRunning && Time.unscaledTime - s_bonusStartedAt < 25f;
 
+        public static bool  BONUS_MIX = true;
+        public static int   BONUS_ROCKETS_FIRST = 3;
+        public static float BONUS_BOMB_SHARE = 0.30f, BONUS_TOME_SHARE = 0.12f;
         public static bool DROP_ARMED_AT_WIN = false;   // 11-24: superseded the same day by POP_ARMED_AT_WIN (Spencer: "let it pop before bonus")
         public static bool POP_ARMED_AT_WIN = true;
         /// <summary>True while a word left lit at the win is popping, just before the bonus: its pop-up is allowed (the bonus hides them).</summary>
@@ -2409,7 +2412,17 @@ namespace WordDrop
                         }
                 if (free.Count == 0) break;
                 var c = free[Random.Range(0, free.Count)];
+                // 11-25 (Spencer: Royal Match "dont just place rockets for the bonus but other power ups too"): the first
+                // BONUS_ROCKETS_FIRST drops are rockets; after that each drop is a rocket, a bomb or a flying tome
+                // (BONUS_BOMB_SHARE / BONUS_TOME_SHARE), so a win with many moves left puts on a bigger show. No orbs (one would
+                // swallow the board). Show only: the coins are base + 3 per move left either way. BONUS_MIX = false: rockets only.
                 int kind = Random.value < 0.5f ? RulesEngine.SPECIAL_ROCKET_H : RulesEngine.SPECIAL_ROCKET_V;
+                if (BONUS_MIX && i >= BONUS_ROCKETS_FIRST)
+                {
+                    float roll = Random.value;
+                    if (roll < BONUS_TOME_SHARE) kind = RulesEngine.SPECIAL_AIRPLANE;
+                    else if (roll < BONUS_TOME_SHARE + BONUS_BOMB_SHARE) kind = RulesEngine.SPECIAL_BOMB;
+                }
                 rules.GetCell(c.x, c.y).SpecialKind = kind;   // claim the cell now so the next rocket picks another
                 grid?.GetTile(c.x, c.y)?.HideLetterForBonus();   // now, not on landing: state sync can show the icon mid-flight (2026-10-26)
                 placed++;
@@ -4832,7 +4845,6 @@ case RulesEngine.ResolutionPhase.Complete:
                 _popAliveFrame = Time.frameCount;
                 while (Time.unscaledTime < _popNotBefore) { yield return null; _popAliveFrame = Time.frameCount; }
                 var p = _popQueue[0]; _popQueue.RemoveAt(0);
-                WDLog.Log($"[WordPops] queue shows '{p.w}' at {p.at} gold={p.gold} | outline={(ClusterOutline.Instance != null)} bonusBlast={BonusBlastRunning} popupOn={ClusterOutline.PAYOUT_POPUP_ON} wordLabels={BonusPopup.WORD_INSTEAD_OF_SCORE} reducedMotion={UIAnimations.ReducedMotion} | left {_popQueue.Count}");   // TEMP DIAG 11-25: power-up word swiped, no pop-up seen
                 // 11-25 (Spencer: a swiped word with a tome in it "did not show a pop up"): a word that fires a power-up waits
                 // WORD_STAGGER_AFTER_BLAST for its text; when that word WON the level the bonus had started by then and the bonus
                 // turns pop-ups off. A pop-up queued before the bonus began is still shown.
