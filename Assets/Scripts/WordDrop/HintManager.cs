@@ -558,6 +558,14 @@ namespace WordDrop
                 if (SwipeStillThere(grid, _swipeCache, _swipeWord)) { ShowSwipeHint(grid, _swipeCache, _swipeWord); return; }
                 _swipeCache = null;
             }
+            // 11-25 SWIPE TO CLAIM: a word the player's own swap made and has not swiped yet comes before any other hint - it is
+            // free, and with no glow on it nothing else on the board says it is there.
+            if (!_swapOnly && HandManager.Instance != null && HandManager.Instance.TryGetWaitingWord(out var wtCells, out var wtWord))
+            {
+                _hintCache = null; _swipeCache = wtCells; _swipeWord = wtWord;
+                ShowSwipeHint(grid, wtCells, wtWord);
+                return;
+            }
             if (_hintCache == null && !_strongHint && !_swapOnly && SWIPE_HINTS && (_preferSwipeNext || !rules.FindSwapHint(false, out _, out _, out _))
                 && rules.FindSwipeHint(out var swCells, out var swWord))
             {

@@ -2084,7 +2084,7 @@ namespace WordDrop
         public static bool CLAIM_GLOW = false;   // 11-25 Spencer: "no glow, the bounce is fine" - bump + sound when the word forms, nothing marks it after
         public static Color CLAIM_GLOW_COLOR = new Color(1.45f, 1.2f, 0.55f, 1f);
         public static float CLAIM_GLOW_LO = 0.30f, CLAIM_GLOW_HI = 0.60f, CLAIM_GLOW_HZ = 0.8f;
-        public static bool ClaimModeOn => CLAIM_MODE && InstantPopMode && SurvivalManager.FullBoardActive && !LevelRules.BonusLevelActive && !TutorialBeats.BlocksInput;
+        public static bool ClaimModeOn => CLAIM_MODE && InstantPopMode && SurvivalManager.FullBoardActive && !LevelRules.BonusLevelActive && !TutorialBeats.BlocksClaimMode;
         private class WaitingWord { public string Word; public int Group; public List<Vector2Int> Cells; public List<Tile> Tiles; public List<char> Letters; }
         private readonly List<WaitingWord> _waiting = new List<WaitingWord>();
         private int _waitGroup;
@@ -2135,6 +2135,29 @@ namespace WordDrop
                     _waiting.RemoveAt(i); continue;
                 }
                 if (CLAIM_GLOW) foreach (var t in w.Tiles) t.SetBloomGlow(CLAIM_GLOW_COLOR, a, forceDesktop: true);
+            }
+        }
+        /// <summary>Hint: the longest word still waiting for its swipe (it is free, so it is always the best next move).</summary>
+        public bool TryGetWaitingWord(out List<Vector2Int> cells, out string word)
+        {
+            cells = null; word = null;
+            var grid = GridManager.Instance; if (grid == null || !ClaimModeOn) return false;
+            foreach (var w in _waiting)
+                if (WaitingStillThere(w, grid) && (word == null || w.Word.Length > word.Length)) { cells = new List<Vector2Int>(w.Cells); word = w.Word; }
+            return word != null;
+        }
+        /// <summary>LAST MOVE: every word still waiting goes too (11-25) - a word the player made is never lost to the move counter.</summary>
+        private void AddAllWaiting(System.Collections.Generic.List<RulesWordMatch> list, RulesEngine rules, GridManager grid)
+        {
+            foreach (var w in _waiting)
+            {
+                if (!WaitingStillThere(w, grid)) continue;
+                bool dup = false; foreach (var m in list) if (m?.Cells != null && m.Cells.Count == w.Cells.Count && new HashSet<Vector2Int>(m.Cells).SetEquals(w.Cells)) { dup = true; break; }
+                if (dup) continue;
+                var bm = rules.BuildExplicitMatch(w.Cells, out _);
+                if (bm == null) continue;
+                list.Add(bm);
+                WDLog.Log($"[Claim] last move: '{w.Word}' was still waiting - claimed for the player");
             }
         }
         /// <summary>The swiped word plus every waiting word that crosses it or came from the same swap - they pop as one.</summary>
@@ -3554,7 +3577,19 @@ case RulesEngine.ResolutionPhase.Complete:
             // swipe-to-claim prototype: formed, not popped. v2 (11-25): the swap costs its move as always and claiming is free;
             // on the LAST move the word pops by itself (old rule) so a winning word cannot be stranded behind the fail check.
             bool lastMove = SurvivalManager.Instance != null && SurvivalManager.Instance.CurrentStageMovesRemaining <= 1 && !_freeSwap;
-            if (ClaimModeOn && allNew.Count > 0 && !lastMove) { HoldForClaim(allNew, grid); allNew.Clear(); claimHeld = true; }
+            if (ClaimModeOn && allNew.Count > 0 && !lastMove)
+            {
+                RulesWordMatch lw = allNew[0]; foreach (var m in allNew) if (m?.Word != null && (lw?.Word == null || m.Word.Length > lw.Word.Length)) lw = m;
+                HoldForClaim(allNew, grid); allNew.Clear(); claimHeld = true;
+                if (lw?.Cells != null) TutorialBeats.OnLessonWordHeld(new List<Vector2Int>(lw.Cells), lw.Word);   // a lesson's swap: its next step is the swipe
+            }
+            else if (CLAIM_MODE && lastMove && _waiting.Count > 0 && ClaimModeOn && rules != null && grid != null) AddAllWaiting(allNew, rules, grid);
+            TutorialBeats.OnLessonSwapResolved(claimHeld);
+            if (allNew.Count == 0 && !claimHeld && rules != null)
+            {   // 11-25: the slide spelled a real 3-letter word and nothing happened - the short-word tip says why (first few times)
+                var sw = rules.ShortWordThrough(new Vector2Int(col1, row1)) ?? rules.ShortWordThrough(new Vector2Int(col2, row2));
+                if (sw != null) TutorialBeats.OnShortWord(sw);
+            }
             if (allNew.Count > 0)
             {
                 var registry = rules.PrimedRegistry;
@@ -3856,7 +3891,8 @@ case RulesEngine.ResolutionPhase.Complete:
 
             var one = new System.Collections.Generic.List<RulesWordMatch> { match };
             bool claimMode = ClaimModeOn;
-            bool paidFor = claimMode && AddWaitingPartners(one, match, rules, grid);   // crossing / same-swap words pop with it (bomb, tome); true = a word the player's own swap formed (its move is already paid)
+            bool paidFor = claimMode && AddWaitingPartners(one, match, rules, grid);
+            if (claimMode && !paidFor && SurvivalManager.Instance != null && SurvivalManager.Instance.CurrentStageMovesRemaining <= 1) AddAllWaiting(one, rules, grid);   // a found word on the last move: the waiting ones go with it   // crossing / same-swap words pop with it (bomb, tome); true = a word the player's own swap formed (its move is already paid)
             var justPrimedIds = PrimeAndPresentWords(one, rules, grid);
 
             // AddPrimedWord returns -1 when the registry refuses, and the extracted block adds

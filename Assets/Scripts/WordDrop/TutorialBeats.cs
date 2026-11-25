@@ -25,6 +25,8 @@ namespace WordDrop
 
         /// <summary>A forced beat is up: only the taught swap is allowed.</summary>
         public static bool BlocksInput => s_active;
+        /// <summary>Swipe-to-claim stands down while a lesson is up - except the lesson step that IS the claiming swipe.</summary>
+        public static bool BlocksClaimMode => s_active && s_key != "claim";
         private static bool s_active;
         private static Vector2Int s_allowA, s_allowB;
         private static string s_key;
@@ -35,7 +37,7 @@ namespace WordDrop
         public static bool GEM_TIP_SPOTLIGHT = true;   // 11-23: the L1 "Use gem letters..." line dims the board and lights the gem tiles. false: plain line as before
         public static bool Done(string key) => PlayerPrefs.GetInt(PREF + key, 0) == 1;
         private static void MarkDone(string key) { PlayerPrefs.SetInt(PREF + key, 1); PlayerPrefs.Save(); }
-        public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "owl", "use", "move", "hint", "wild" };
+        public static readonly string[] KEYS = { "swap", "gem", "swipe", "goals", "rocket", "bomb", "disco", "crates", "airplane", "ice", "theme", "boosters", "bonus", "shelf", "safe", "owl", "use", "move", "hint", "wild", "claim", "short_n" };
         public static void ResetAll() { foreach (var k in KEYS) PlayerPrefs.DeleteKey(PREF + k); MechanicSplash.ResetAll(); BoosterIntro.ResetAll(); PlayerPrefs.Save();   /* 11-06: booster intros too - they never replayed after a reset */ WDLog.Log("[Tut] all beats + splashes reset"); }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -275,7 +277,10 @@ namespace WordDrop
 
         // ── L2: SWIPE — words already on the board are claimed by swiping across them (2026-10-23 Spencer). The level build
         // planted one (RulesEngine.PlantSwipeWord); swaps are refused until it's swiped. ──
-        public static bool WantsSwipePlant(LevelRules r) => NEW_TUTORIAL && r.Teach == "swipe" && !Done("swipe");
+        // 11-25 (Spencer: "we probably dont need the swipe tutorial on the second level since we already taught swipe"): with swipe-to-claim on,
+        // level 1 teaches the swipe twice, so level 2 plants no word and shows no lesson. Auto-pop mode keeps it.
+        public static bool SwipeLessonOn => !HandManager.CLAIM_MODE;
+        public static bool WantsSwipePlant(LevelRules r) => NEW_TUTORIAL && SwipeLessonOn && r.Teach == "swipe" && !Done("swipe");
         /// <summary>11-02: lesson levels whose beat shows a swap get a planted teaching word (RulesEngine.PlantTeachSwap).</summary>
         public static bool WantsTeachPlant(LevelRules r) { string k = KeyFor(r); return NEW_TUTORIAL && (k == "swap" || k == "crates" || k == "ice" || (POWER_BEATS && IsPowerKey(k))) && !Done(k); }
         /// <summary>11-06 (L1-10 recording: crates appear on L3 and L5, the crate lesson was only on L6): a level whose own lesson
@@ -285,6 +290,7 @@ namespace WordDrop
         public static string KeyFor(LevelRules r)
         {
             string k = r.Teach;
+            if (k == "swipe" && !SwipeLessonOn) k = "";   // no level-2 swipe lesson in swipe-to-claim mode
             bool hasBeat = k == "swap" || k == "swipe" || k == "crates" || k == "ice" || (POWER_BEATS && IsPowerKey(k) && !Done(k));   // 11-17: a power-up level's own forced move comes first
             if (CRATES_ON_FIRST_CRATE_LEVEL && !hasBeat && LevelRules.HasCrateGoal && !Done("crates")) return "crates";
             // 11-06 Spencer: the first bookshelf / safe level gets one line (RM L13 cupboard: "Make matches next to a CUPBOARD to
@@ -440,10 +446,35 @@ namespace WordDrop
             WDLog.Log($"[Tut] beat 'owl' shown: owl at ({best.x},{best.y}), {window.Count} cells lit");
         }
 
+        // ── 11-25 SHORT WORD TIP (Spencer: with nothing popping by itself, spelling a 3-letter word and getting no answer "could be
+        // confusing"). Said at the moment it happens: the three tiles shake "no" and one line appears beside them. The first
+        // SHORT_TIP_MAX times only (pref tut2_short_n), never on a level that allows 3-letter words, never over another lesson.
+        // No dim, nothing forced; a tap, any move or SHORT_TIP_SECS closes it. SHORT_TIP = false: off. ──
+        public static bool   SHORT_TIP = true;
+        public static int    SHORT_TIP_MAX = 3;
+        public static float  SHORT_TIP_SECS = 3.5f;
+        public static string SHORT_TIP_TEXT = "Words need 4 or more letters!";
+        public static void OnShortWord(List<Vector2Int> cells)
+        {
+            if (!NEW_TUTORIAL || !SHORT_TIP || Instance == null || cells == null || cells.Count == 0) return;
+            if (s_active || Pending || s_claimAfter != null || Instance._tipUntil > 0f || Instance._useUntil > 0f) return;
+            if (!SurvivalManager.FullBoardActive || SurvivalManager.AwaitingNextLevel || BoosterIntro.Running || BoosterIntro.Pending) return;
+            int n = PlayerPrefs.GetInt(PREF + "short_n", 0);
+            if (n >= SHORT_TIP_MAX) return;
+            PlayerPrefs.SetInt(PREF + "short_n", n + 1); PlayerPrefs.Save();
+            var grid = GridManager.Instance;
+            if (grid != null) foreach (var c in cells) grid.GetTile(c.x, c.y)?.ShakeNo();
+            TutorialOverlay.AnchorNext = new List<Vector2Int>(cells);
+            TutorialOverlay.Ensure().Show(null, SHORT_TIP_TEXT, new Vector2Int(-1, -1), new Vector2Int(-1, -1));
+            Instance._tipUntil = Time.unscaledTime + SHORT_TIP_SECS;
+            Instance._tapCloseAfter = Time.unscaledTime + TIP_TAP_GUARD;
+            WDLog.Log($"[Tut] short-word tip {n + 1}/{SHORT_TIP_MAX} at ({cells[0].x},{cells[0].y})");
+        }
+
         /// <summary>SwipeWordInput asks this while a beat is up: only the taught word's cells (either direction).</summary>
         public static bool AllowSwipe(List<Vector2Int> path)
         {
-            if (!s_active || s_key != "swipe" || s_swipeCells == null || path == null || path.Count != s_swipeCells.Count) return false;
+            if (!s_active || (s_key != "swipe" && s_key != "claim") || s_swipeCells == null || path == null || path.Count != s_swipeCells.Count) return false;
             foreach (var c in path) if (!s_swipeCells.Contains(c)) return false;
             return true;
         }
@@ -452,6 +483,16 @@ namespace WordDrop
         public static void OnSwipeCommitted()
         {
             if (Instance != null && !s_active && Instance._tipUntil > 0f) { Instance.EndTip(); return; }   // a swipe clears a passive tip too
+            if (Instance != null && s_active && s_key == "claim")
+            {
+                s_active = false; s_key = null; s_swipeCells = null;
+                TutorialOverlay.Instance?.Hide();
+                MarkDone("claim");
+                WDLog.Log($"[Tut] beat 'claim' done (after '{s_claimAfter}')");
+                string after = s_claimAfter; s_claimAfter = null;
+                RunFollowUps(after);
+                return;
+            }
             if (Instance == null || !s_active || s_key != "swipe") return;
             s_active = false; s_key = null; s_swipeCells = null;
             TutorialOverlay.Instance?.Hide();
@@ -472,7 +513,7 @@ namespace WordDrop
         public static bool AllowsCell(Vector2Int c)
         {
             if (!s_active) return true;
-            if (s_key == "swipe") return s_swipeCells != null && s_swipeCells.Contains(c);
+            if (s_key == "swipe" || s_key == "claim") return s_swipeCells != null && s_swipeCells.Contains(c);
             return c == s_allowA || c == s_allowB;
         }
 
@@ -482,7 +523,7 @@ namespace WordDrop
         {
             into.Clear();
             if (!s_active) return false;
-            if (s_key == "swipe") { if (s_swipeCells == null || s_swipeCells.Count < 2) return false; into.AddRange(s_swipeCells); return true; }
+            if (s_key == "swipe" || s_key == "claim") { if (s_swipeCells == null || s_swipeCells.Count < 2) return false; into.AddRange(s_swipeCells); return true; }
             if (s_allowA.x < 0 || s_allowB.x < 0) return false;
             into.Add(s_allowA); into.Add(s_allowB); return true;
         }
@@ -507,6 +548,46 @@ namespace WordDrop
             MarkDone(key);
             OwlPortrait.Play(key == "swap" ? "proud" : "happy");   // 11-01: lesson done
             WDLog.Log($"[Tut] beat '{key}' done");
+            // 11-25 SWIPE TO CLAIM: the lesson's word does not pop - it waits. The next step is the swipe that claims it
+            // (OnLessonWordHeld shows it); whatever came next in the lesson runs after that swipe.
+            if (CLAIM_STEP && HandManager.CLAIM_MODE && ClaimStepKey(key)) { s_claimAfter = key; s_pendingSince = Time.unscaledTime; return; }
+            RunFollowUps(key);
+        }
+
+        // ── CLAIM STEP (11-25, swipe-to-claim is the default): after a lesson's slide spells its word, the word bumps and waits,
+        // and the player is shown the swipe - "Swipe WORD to claim it!" the first time, "Swipe WORD!" after. Runs after every
+        // lesson slide that makes a word (L1 word + gem word, rocket / bomb / orb / tome). Reuses the L2 swipe lesson's
+        // machinery (only the word's own tiles answer, the hand traces it). CLAIM_STEP = false: the word just waits. ──
+        public static bool CLAIM_STEP = true;
+        private static string s_claimAfter, s_claimWord;
+        private static bool ClaimStepKey(string k) => k == "swap" || k == "gem" || IsPowerKey(k);
+        /// <summary>HandManager: the swap that just resolved left a word waiting for a swipe.</summary>
+        public static void OnLessonWordHeld(List<Vector2Int> cells, string word)
+        {
+            if (s_claimAfter == null || Instance == null || cells == null || cells.Count < 2 || string.IsNullOrEmpty(word)) return;
+            Instance.StartCoroutine(Instance.ClaimBeat(cells, word));
+        }
+        /// <summary>HandManager: a lesson's swap resolved. If its word popped by itself (last move) the lesson simply carries on.</summary>
+        public static void OnLessonSwapResolved(bool held)
+        {
+            if (held || s_claimAfter == null || Instance == null) return;
+            string k = s_claimAfter; s_claimAfter = null; s_pendingSince = -1f;
+            RunFollowUps(k);
+        }
+        private IEnumerator ClaimBeat(List<Vector2Int> cells, string word)
+        {
+            yield return new WaitForSeconds(0.45f);   // let the bump land
+            s_pendingSince = -1f;
+            if (SurvivalManager.AwaitingNextLevel || s_active || s_claimAfter == null) yield break;
+            s_active = true; s_key = "claim"; s_allowA = s_allowB = new Vector2Int(-9, -9);   // every swap refused; only the word's tiles answer
+            s_swipeCells = new List<Vector2Int>(cells); s_claimWord = word.ToUpperInvariant();
+            HintManager.Instance?.ResetIdleTimer();
+            TutorialOverlay.Ensure().Show(cells, Done("claim") ? $"Swipe {s_claimWord}!" : $"Swipe {s_claimWord} to claim it!", cells[0], cells[cells.Count - 1], 0.25f * cells.Count);
+            WDLog.Log($"[Tut] beat 'claim' shows '{s_claimWord}' (after '{s_claimAfter}')");
+        }
+        private static void RunFollowUps(string key)
+        {
+            if (Instance == null || key == null) return;
             // 11-17: the FIRST power-up lesson (rocket) has a second step - how to fire one. Taught once; bomb / orb / tome just get made.
             if (key == "move") { Instance.StartCoroutine(Instance.AfterMoveBeat()); return; }   // 11-20: step 2 of the L1 lesson
             if (key == "rocket" && USE_BEAT && !Done("use")) Instance.StartCoroutine(Instance.UseBeat());
@@ -632,9 +713,9 @@ namespace WordDrop
             _watchAt = Time.unscaledTime + 0.5f;
             var rules = RulesEngine.Instance; if (rules == null || !BoardIdle()) return;
             bool ok = true;
-            if (s_key == "swipe")
+            if (s_key == "swipe" || s_key == "claim")
             {
-                string w = RulesEngine.TutorialSwipeWord; ok = s_swipeCells != null && w != null && s_swipeCells.Count == w.Length;
+                string w = s_key == "claim" ? s_claimWord : RulesEngine.TutorialSwipeWord; ok = s_swipeCells != null && w != null && s_swipeCells.Count == w.Length;
                 for (int i = 0; ok && i < s_swipeCells.Count; i++)
                 {
                     var d = rules.GetCell(s_swipeCells[i].x, s_swipeCells[i].y);
@@ -653,8 +734,10 @@ namespace WordDrop
             _goneFor = 0f;
             if (s_key == "use") { EndUse("its rocket is gone - let go"); return; }
             WDLog.Log($"[Tut] beat '{s_key}': its move is no longer on the board - lesson released (not marked done)");
+            string claimAfter = s_key == "claim" ? s_claimAfter : null; if (s_key == "claim") s_claimAfter = null;
             s_active = false; s_key = null; s_swipeCells = null;
             TutorialOverlay.Instance?.Hide();
+            if (claimAfter != null) RunFollowUps(claimAfter);   // the waiting word is gone: the rest of the lesson still runs
         }
 
         private void EndTip() { _tipUntil = -1f; _tapCloseAfter = -1f; if (!s_active) TutorialOverlay.Instance?.Hide(); }
@@ -675,7 +758,7 @@ namespace WordDrop
         public static void Cancel()
         {
             if (s_active) WDLog.Log($"[Tut] beat '{s_key}' cancelled (left the level) — will run again next time");
-            s_active = false; s_key = null; s_swipeCells = null;
+            s_active = false; s_key = null; s_swipeCells = null; s_claimAfter = null;
             if (Instance != null) { Instance._tipUntil = -1f; Instance._tapCloseAfter = -1f; Instance._useUntil = -1f; }
             s_pendingSince = -1f;
             TutorialOverlay.Instance?.Hide();

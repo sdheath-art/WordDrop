@@ -338,7 +338,11 @@ namespace WordDrop
                         WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word - treated as a swap ({_path[0].x},{_path[0].y})->({_path[1].x},{_path[1].y})");
                         hand.CommitDragSwap(_path[0], _path[1]);
                     }
-                    else WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word and its first swap makes nothing - let go");
+                    else
+                    {
+                        WDLog.Log($"[Swipe] {_path.Count}-cell trace is not a word and its first swap makes nothing - let go");
+                        if (_path.Count == 3 && rules.IsShortRealWord(_path)) TutorialBeats.OnShortWord(_path);   // 11-25: it IS a word, just too short - say so
+                    }
                     return;
                 }
             }
@@ -360,6 +364,7 @@ namespace WordDrop
             {
                 WDLog.Log($"[Swipe] too short — {_path.Count} cells, need {RulesEngine.SWIPE_MIN_LENGTH}");
                 GameAudio.Instance?.PlayButtonClick();
+                if (_path.Count == 3 && rules.IsShortRealWord(_path)) TutorialBeats.OnShortWord(_path);   // 11-25: a real 3-letter word - say why nothing happened
                 return;
             }
 

@@ -491,6 +491,11 @@ namespace WordDrop
                                   + (bot != null && !string.IsNullOrEmpty(bot.Status) ? $"  ({bot.Status})" : "");
                 if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), botLabel, _btnStyle) && bot != null && !bot.Running) bot.Run();
                 innerY += BTN_H + GAP;
+                // 11-25 (Spencer: should the end-of-level tome rescue go, now that swipe mode lets players clinch a stale board?): one switch
+                // for the bot comparison AND the live game. Off = an earned rocket / bomb stays what it is, however few goal pieces are left.
+                if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), RulesEngine.ENDGAME_AIRPLANE ? "END-OF-LEVEL TOME RESCUE: ON — tap for off" : "END-OF-LEVEL TOME RESCUE: OFF — tap for on", _btnStyle) && bot != null && !bot.Running)
+                { RulesEngine.ENDGAME_AIRPLANE = !RulesEngine.ENDGAME_AIRPLANE; WDLog.Log($"[Special] endgame tome rescue={RulesEngine.ENDGAME_AIRPLANE}"); }
+                innerY += BTN_H + GAP;
                 if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), BotPlaytester.CASUAL_FOCUSED ? "BOT CASUAL: GOAL-FOCUSED — tap for scattered" : "BOT CASUAL: SCATTERED — tap for goal-focused", _btnStyle) && bot != null && !bot.Running)
                     BotPlaytester.CASUAL_FOCUSED = !BotPlaytester.CASUAL_FOCUSED;
                 innerY += BTN_H + GAP;

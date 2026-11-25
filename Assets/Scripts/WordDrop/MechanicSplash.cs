@@ -70,7 +70,7 @@ namespace WordDrop
             {
                 case "bomb":     return new Recipe { title = "Bomb",     caption = "Cross two words",        effect = "Blasts the tiles around it!", rows = new[] { "BEAR" }, crossCol = 1, special = "special_bomb" };
                 case "disco":    return new Recipe { title = "Royal Orb",    caption = "Make a 6-letter word",   effect = "Clears every tile of one letter!", rows = new[] { "PLANET" }, crossCol = -1, special = "special_disco" };
-                case "airplane": return new Recipe { title = "Flying Tome",   /* 11-06 Spencer: "its no longer airplane" -> "lets call it flying tome" */ caption = "Make two words in one move", effect = "Flies to a goal and hits it!", rows = new[] { "CAT", "DOG" }, crossCol = -1, special = "special_airplane" };
+                case "airplane": return new Recipe { title = "Flying Tome",   /* 11-06 Spencer: "its no longer airplane" -> "lets call it flying tome" */ caption = "Make two words in one move", effect = "Flies to a goal and hits it!", rows = new[] { "FISH", "BIRD" }   /* 11-25: was CAT / DOG - three letters, which the game does not accept */, crossCol = -1, special = "special_airplane" };
                 default:         return new Recipe { title = "Rocket",   caption = "Make a 5-letter word",   effect = "Clears a whole row!", rows = new[] { "TRAIN" }, crossCol = -1, special = "special_rocket" };
             }
         }
@@ -129,10 +129,10 @@ namespace WordDrop
                 float x0 = RW * 0.5f - (w.Length - 1) * STEP * 0.5f;
                 for (int i = 0; i < w.Length; i++) tiles.Add(Tile(w[i], x0 + i * STEP, y, TS));
                 if (r.crossCol >= 0)
-                {   // a word crossing down through the shared letter: P(E)N
+                {   // a word crossing down through the shared letter: P(E)NS. 11-25 (Spencer: "PEN is a 3 letter word") - the game needs 4+ letters, so the example does too
                     float x = x0 + r.crossCol * STEP;
-                    tiles.Insert(0, Tile('P', x, y - STEP, TS)); tiles.Add(Tile('N', x, y + STEP, TS));
-                    top = Mathf.Min(top, y - STEP - TS * 0.5f); bottom = Mathf.Max(bottom, y + STEP + TS * 0.5f);
+                    tiles.Insert(0, Tile('P', x, y - STEP, TS)); tiles.Add(Tile('N', x, y + STEP, TS)); tiles.Add(Tile('S', x, y + STEP * 2f, TS));
+                    top = Mathf.Min(top, y - STEP - TS * 0.5f); bottom = Mathf.Max(bottom, y + STEP * 2f + TS * 0.5f);
                 }
             }
 

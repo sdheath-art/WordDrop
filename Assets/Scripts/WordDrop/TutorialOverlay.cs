@@ -77,6 +77,8 @@ namespace WordDrop
         /// One-shot: Show() clears it.</summary>
         public static bool HolesOnlyNext;
         public static bool CELLS_ONLY = true;
+        /// <summary>Set just before a bubble-only Show(null, ...): the tiles the bubble should sit beside. Used once.</summary>
+        public static List<Vector2Int> AnchorNext;
         private readonly List<SpriteRenderer> _fill = new List<SpriteRenderer>();   // extra dim inside the window (HolesOnlyNext)
         private int _fillUsed;
         // 11-23 (Spencer: "hug up to the corners of the piece itself rather than showing the square board around it"): each lit
@@ -421,6 +423,12 @@ namespace WordDrop
             {   // bubble only: anchor it to the middle of the board
                 Vector3 mid = grid.CellToWorld(RulesEngine.COLS / 2, RulesEngine.ROWS / 2);
                 minX = maxX = mid.x; minY = maxY = mid.y;
+                if (AnchorNext != null && AnchorNext.Count > 0)
+                {   // 11-25: no dim, but the bubble sits just above (or below) these tiles - the short-word tip points at its word
+                    minY = float.MaxValue; maxY = float.MinValue;
+                    foreach (var ac in AnchorNext) { float wy = grid.CellToWorld(ac.x, ac.y).y; minY = Mathf.Min(minY, wy - cs * 0.5f); maxY = Mathf.Max(maxY, wy + cs * 0.5f); }
+                }
+                AnchorNext = null;
             }
 
             // ── bubble: just above the window; below it if it would leave the board ──

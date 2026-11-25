@@ -2177,6 +2177,36 @@ namespace WordDrop
         // DEE, NAH. Words the player makes on purpose (swap / swipe) keep the full dictionary, so a real word like HONK
         // still counts when you go for it. Not a dictionary edit — a second, stricter list for automatic words only.
         public static bool FULL_FALL_COMMON_ONLY = true;
+        // ── 11-25 "Words need 4 or more letters!" tip: is this a real, everyday 3-letter word the player just spelled? ──
+        private bool ShortCellsSpell(List<Vector2Int> cells)
+        {
+            if (cells == null || cells.Count != 3) return false;
+            var sb = new System.Text.StringBuilder(3);
+            foreach (var p in cells)
+            {
+                if (!InBounds(p.x, p.y)) return false;
+                var d = _board[p.x, p.y];
+                if (d == null || d.IsStone || d.IsWild || d.SpecialKind != SPECIAL_NONE || !char.IsLetter(d.Letter)) return false;
+                sb.Append(char.ToUpperInvariant(d.Letter));   // the common-word list is upper case
+            }
+            string w = sb.ToString(); string rv = new string(new[] { w[2], w[1], w[0] });
+            return (IsCommonWord(w) && WordDictionary.IsValidWord(w)) || (IsCommonWord(rv) && WordDictionary.IsValidWord(rv));
+        }
+        /// <summary>The traced 3 tiles spell a common word (either way) on a level that needs 4+.</summary>
+        public bool IsShortRealWord(List<Vector2Int> cells) => SWIPE_MIN_LENGTH >= 4 && ShortCellsSpell(cells);
+        /// <summary>A common 3-letter word lying across or down through this cell (reading order), or null. Levels that need 4+ only.</summary>
+        public List<Vector2Int> ShortWordThrough(Vector2Int c)
+        {
+            if (SWIPE_MIN_LENGTH < 4) return null;
+            for (int o = 0; o < 3; o++)
+            {
+                var h = new List<Vector2Int> { new Vector2Int(c.x - o, c.y), new Vector2Int(c.x - o + 1, c.y), new Vector2Int(c.x - o + 2, c.y) };
+                if (ShortCellsSpell(h)) return h;
+                var v = new List<Vector2Int> { new Vector2Int(c.x, c.y + o), new Vector2Int(c.x, c.y + o - 1), new Vector2Int(c.x, c.y + o - 2) };
+                if (ShortCellsSpell(v)) return v;
+            }
+            return null;
+        }
         private static HashSet<string> s_commonWords;
         private static bool IsCommonWord(string w)
         {

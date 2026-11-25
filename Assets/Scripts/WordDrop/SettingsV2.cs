@@ -463,7 +463,9 @@ namespace WordDrop
             (string art, float w, float h, float cy, string a, string b, float ty)[] blocks =
             {
                 ("UI/Help/basics_slide", 512f, 512f, 180f, "Slide a letter to move it.", null, 326f),
-                ("UI/Help/basics_word", 1024f, 256f, 492f, "Line up 4 or more letters", "to spell a word.", 624f),
+                HandManager.CLAIM_MODE   // 11-25 swipe-to-claim: a word does nothing until it is swiped, so the card says so
+                    ? ("UI/Help/basics_word", 1024f, 256f, 492f, "Spell 4 or more letters,", "then swipe the word.", 624f)
+                    : ("UI/Help/basics_word", 1024f, 256f, 492f, "Line up 4 or more letters", "to spell a word.", 624f),
                 ("UI/Help/basics_goal", 1024f, 256f, 876f, "Finish the goal before", "your moves run out.", 1018f),
             };
             for (int i = 0; i < blocks.Length; i++)
