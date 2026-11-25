@@ -5674,6 +5674,7 @@ namespace WordDrop
         /// "gem beside a word" at (8,1),(0,1)). Genre rule (RM/RK): a special hits only its own area; "beside" is for matches.
         /// false = blast cells no longer seed that pass (a word's own letters still do). true = the old behaviour.</summary>
         public static bool SPECIAL_BLAST_HITS_NEIGHBOURS = false;
+        public static bool BLAST_HOME_IS_BLAST = true;   // 11-25: false = a lone power-up's own square breaks the blockers beside it (the leak left after 11-02)
         public static int  LONG_WORD_DIAGONAL = 0;   // 0 = off. 11-04 OFF (was 5): strict rules - a word hits only the 4 sides of its letters
         // 11-02 CRATE_DIAGONAL (Spencer: "whatever you think is right"): EVERY word breaks the crates it touches diagonally too
         // (8 sides, not 4). Bot 11:35: crate levels had no crate-touching word on 35-52% of turns and spent ~6.7 turns stuck on
@@ -8472,7 +8473,7 @@ namespace WordDrop
                 // ENDGAME AIRPLANE (2026-10-23, Spencer OK'd "lets try it"): with <= ENDGAME_PIECES goal pieces left, an earned
                 // rocket or bomb becomes an AIRPLANE — it flies to a remaining piece by itself (RM's propeller is its endgame tool).
                 // Discos stay discos. Replaces the visible re-letter rescue.
-                if (ENDGAME_AIRPLANE && SurvivalManager.FullBoardActive && specialKind != SPECIAL_NONE && specialKind != SPECIAL_DISCO && specialKind != SPECIAL_AIRPLANE
+                if (ENDGAME_AIRPLANE && LevelRules.RescueThisLevel && SurvivalManager.FullBoardActive && specialKind != SPECIAL_NONE && specialKind != SPECIAL_DISCO && specialKind != SPECIAL_AIRPLANE
                     && !HandManager.BonusBlastRunning && GoalPiecesLeft() is int gl && gl > 0 && (gl <= ENDGAME_PIECES || goalDeadSwap))
                 {
                     if (!Simulating) WDLog.Log($"[Special] {(goalDeadSwap ? "goal stranded" : "endgame")} ({gl} goal piece(s) left): {SpecialName(specialKind)} from '{pw.Word}' becomes an AIRPLANE");
@@ -9019,7 +9020,15 @@ namespace WordDrop
             // SPECIAL_BLAST_HITS_NEIGHBOURS (11-02: a rocket was hitting the goal pieces in the rows beside its line)
             HashSet<Vector2Int> blastOnly = null;
             if (!SPECIAL_BLAST_HITS_NEIGHBOURS)
+            {
                 foreach (var sf in specialsFired) if (sf.Cleared != null) foreach (var c in sf.Cleared) (blastOnly ??= new HashSet<Vector2Int>()).Add(c);
+                // 11-25 (Spencer: rockets "damaging adjacent tiles"; log L16: a double-tapped rocket at (2,2) broke the crate under it
+                // at (2,1)). A power-up fired on its own (double-tap, or caught in a blast) stood in for a one-letter "word", so its own
+                // square still broke the crates / shelves beside it. Its square is now part of the blast, not a word. A power-up
+                // set off by a real word keeps the word rule: that letter is in the word, and words break what they touch.
+                if (BLAST_HOME_IS_BLAST)
+                    foreach (var sf in specialsFired) if (string.IsNullOrEmpty(sf.Word) || sf.Word.Length <= 1) (blastOnly ??= new HashSet<Vector2Int>()).Add(sf.Cell);
+            }
             var currentSources = new List<Vector2Int>(allExplodedCells.Count);
             for (int i = 0; i < allExplodedCells.Count; i++)
                 if (blastOnly == null || !blastOnly.Contains(allExplodedCells[i])) currentSources.Add(allExplodedCells[i]);

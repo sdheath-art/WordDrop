@@ -129,7 +129,7 @@ namespace WordDrop
                   summary.AppendLine($"       casual board: {(tt > 0 ? (float)cs / tt : 0):F1} common-word swaps per turn, STALE (<{STALE_BELOW}) {(tt > 0 ? 100f * st / tt : 0):F0}% of turns, GOAL-DEAD {(tt > 0 ? 100f * gd / tt : 0):F0}% of turns END-STALL {(games > 0 ? (float)ed / games : 0):F1} turns/game stuck on the last {RulesEngine.ENDGAME_PIECES}, goal help {(games > 0 ? (float)rf / games : 0):F1}/game in {(games > 0 ? 100f * gw / games : 0):F0}% of games (board shuffles {(games > 0 ? (float)sh / games : 0):F1}/game), DRAGS {(games > 0 ? (float)dg / games : 0):F1}/game");  if (CLAIM_RULES) { int ho = 0, sk = 0, ig = 0; foreach (var r in byMode[1]) { ho += r.holds; sk += r.stacks; ig += r.ignored; } summary.AppendLine($"       casual claim play: held a word {(games > 0 ? (float)ho / games : 0):F1}/game, stacked claims {(games > 0 ? (float)sk / games : 0):F1}/game, words not noticed {(games > 0 ? (float)ig / games : 0):F1}/game"); } }
             }
             Destroy(simGO);
-            summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. Gem shortfall games: {LevelRules.SimGemShortfall} (should be 0). 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). 'near-miss' = casual games that run out with 1-{NEAR_MISS_PIECES} pieces left (Play On moments). Cascade cap {CapLabel}. Casual wastes {CASUAL_NOWORD_RATE:P0} of moves on no-word swaps (human-calibrated), sees common words only: {CASUAL_COMMON_ONLY}, fishing hint: {FISHING_HINT_MODEL}, endgame airplane: {RulesEngine.ENDGAME_AIRPLANE}, re-letter rescue: {RulesEngine.ENDGAME_RESCUE_ON}.");
+            summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. Gem shortfall games: {LevelRules.SimGemShortfall} (should be 0). 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). 'near-miss' = casual games that run out with 1-{NEAR_MISS_PIECES} pieces left (Play On moments). Cascade cap {CapLabel}. Casual wastes {CASUAL_NOWORD_RATE:P0} of moves on no-word swaps (human-calibrated), sees common words only: {CASUAL_COMMON_ONLY}, fishing hint: {FISHING_HINT_MODEL}, endgame airplane (master switch; levels 1-{LevelRules.RESCUE_LAST_LEVEL} only): {RulesEngine.ENDGAME_AIRPLANE}, re-letter rescue: {RulesEngine.ENDGAME_RESCUE_ON}.");
             try
             {
                 Directory.CreateDirectory(Folder);
@@ -171,7 +171,7 @@ namespace WordDrop
             var snap = LevelRules.TakeSimSnapshot();
             bool rngWasSeeded = SurvivalRng.IsSeeded; int rngSeed = SurvivalRng.CurrentSeed;
             var stats = StageStats.Save(); var planted = StageStats.SavePlanted();
-            bool wasMuted = WDLog.Muted;
+            bool wasMuted = WDLog.Muted; bool rescueWas = LevelRules.RescueThisLevel;
             // Play the REAL level ruleset even when launched from the menu: RulesEngine.ROWS is 5 outside survival/level mode,
             // and the refill plants / smart rain letters are survival-gated too (runs 1-2 played a 9x5 board — crates didn't fit).
             bool wasSurvival = SurvivalManager.IsSurvivalMode;
@@ -187,7 +187,7 @@ namespace WordDrop
             finally
             {
                 sim.FinalizeDrop();   // a game that ended mid-resolution must not leave the sim engine stuck
-                RulesEngine.Simulating = false; WDLog.Muted = wasMuted; RulesEngine.SimClaimRules = false;
+                RulesEngine.Simulating = false; WDLog.Muted = wasMuted; RulesEngine.SimClaimRules = false; LevelRules.RescueThisLevel = rescueWas;
                 SurvivalManager.IsSurvivalMode = wasSurvival;
                 LevelRules.RestoreSimSnapshot(snap);
                 StageStats.Load(stats, planted);
@@ -462,7 +462,8 @@ namespace WordDrop
         {
             if (words == null || words.Count == 0) return;
             RulesEngine.BeginPlayerMove();
-            RulesEngine.LastSwapCells = null;   // a swiped word has no swapped cell
+            // 11-25: NOT cleared - a claimed swap word keeps its swap's tiles (the live game does the same now), or the
+            // two-words-in-one-move tome is never born.
             var armed = new List<RulesWordMatch>();
             foreach (var m in words)
             {

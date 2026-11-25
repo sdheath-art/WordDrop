@@ -163,9 +163,17 @@ namespace WordDrop
             }
             return re.PlantTeachSwap(through: r.Teach == "ice" && !RulesEngine.ICE_ADJACENT_THAW);
         }
+        // ── END-OF-LEVEL TOME RESCUE, PER LEVEL (11-25, Spencer: "monetization relies on people needing more moves ... if you just
+        // give it to them then whats the point"). The rescue (an earned rocket / bomb becomes a flying tome when 3 or fewer goal
+        // pieces are left) removes the near-miss: bot, swipe mode, games ending 1-3 pieces short - gems/ice levels 2-5% with it,
+        // 15-28% without. Levels up to RESCUE_LAST_LEVEL are the on-ramp (keep players): rescue ON. After that the near-miss is
+        // the "Play On" moment: rescue OFF. RulesEngine.ENDGAME_AIRPLANE (FX switch) is still the master switch. ──
+        public static int  RESCUE_LAST_LEVEL = 16;
+        public static bool RescueThisLevel = true;
         public static int SetupSimLevel(RulesEngine sim, int stage, int internalStage)
         {
             var r = For(stage);
+            RescueThisLevel = stage <= RESCUE_LAST_LEVEL;
             sim.ClearBoard();
             RulesEngine.MIN_WORD_LENGTH = Mathf.Max(3, r.MinWordLength);
             RulesEngine.BranchPriming   = r.BranchPriming;
@@ -600,7 +608,7 @@ namespace WordDrop
         public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_MOVES = new System.Collections.Generic.Dictionary<int, int>
         {
             { 1, 27 }, { 2, 28 }, { 3, 39 }, { 4, 39 }, { 5, 33 }, { 6, 35 }, { 7, 50 }, { 8, 16 }, { 9, 22 }, { 10, 28 },
-            { 11, 19 }, { 12, 20 }, { 13, 33 }, { 14, 21 }, { 15, 33 }, { 16, 33 }, { 17, 41 }, { 18, 28 }, { 19, 46 },
+            { 11, 19 }, { 12, 20 }, { 13, 33 }, { 14, 21 }, { 15, 33 }, { 16, 33 }, { 17, 34 }, { 18, 22 }, { 19, 44 },   /* bot 11:39, rescue off on these: L17 80% at 34; L18 98% at 28 (p90 18) -> 22 as the short relief level between the two hard ones; L19 ~78-80% at 44 over two runs */   // L17 41 -> 35 (11-25): no rescue from L17 on; bot (goal-focused, rescue off) wins ~82% at 35, 78% at 46 on L19 with ~1 loss in 5 a near-miss
             { 21, 40 }, { 23, 42 },   // PROVISIONAL, 3 owls (run 09:18): casual bot p50 40 / 33, wins ~50% / ~75% here; owl levels are past the tester build's last level (20)
             { 22, 26 }, { 24, 33 }, { 25, 41 }, { 26, 44 },   // L26: bot 80% point after tomes learned to fly to grass (run 09:09)
         };
@@ -931,6 +939,8 @@ namespace WordDrop
 
             int stage = Mathf.Max(1, LevelMapPanel.RunLevel(internalStage));
             var r = For(stage);
+            RescueThisLevel = stage <= RESCUE_LAST_LEVEL;
+            WDLog.Log($"[LevelRules] end-of-level tome rescue {(RescueThisLevel && RulesEngine.ENDGAME_AIRPLANE ? "ON" : "OFF")} on level {stage}");
 
             // The next level is now genuinely starting — release the lock that has been
             // holding input and pinning the HUD since the previous level's target was met.

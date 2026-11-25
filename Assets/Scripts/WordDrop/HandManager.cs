@@ -2085,16 +2085,17 @@ namespace WordDrop
         public static Color CLAIM_GLOW_COLOR = new Color(1.45f, 1.2f, 0.55f, 1f);
         public static float CLAIM_GLOW_LO = 0.30f, CLAIM_GLOW_HI = 0.60f, CLAIM_GLOW_HZ = 0.8f;
         public static bool ClaimModeOn => CLAIM_MODE && InstantPopMode && SurvivalManager.FullBoardActive && !LevelRules.BonusLevelActive && !TutorialBeats.BlocksClaimMode;
-        private class WaitingWord { public string Word; public int Group; public List<Vector2Int> Cells; public List<Tile> Tiles; public List<char> Letters; }
+        private class WaitingWord { public Vector2Int[] Swap;   /* the two tiles of the swap that made it */ public string Word; public int Group; public List<Vector2Int> Cells; public List<Tile> Tiles; public List<char> Letters; }
         private readonly List<WaitingWord> _waiting = new List<WaitingWord>();
         private int _waitGroup;
-        private void HoldForClaim(System.Collections.Generic.List<RulesWordMatch> words, GridManager grid)
+        private Vector2Int[] _claimSwapCells;
+        private void HoldForClaim(System.Collections.Generic.List<RulesWordMatch> words, GridManager grid, Vector2Int[] swapCells = null)
         {
             _waitGroup++;
             foreach (var m in words)
             {
                 if (m == null || m.Cells == null || grid == null) continue;
-                var w = new WaitingWord { Word = m.Word, Group = _waitGroup, Cells = new List<Vector2Int>(m.Cells), Tiles = new List<Tile>(), Letters = new List<char>() };
+                var w = new WaitingWord { Swap = swapCells, Word = m.Word, Group = _waitGroup, Cells = new List<Vector2Int>(m.Cells), Tiles = new List<Tile>(), Letters = new List<char>() };
                 bool ok = true;
                 foreach (var c in m.Cells) { var t = grid.GetTile(c.x, c.y); if (t == null) { ok = false; break; } w.Tiles.Add(t); w.Letters.Add(t.Letter); }
                 if (!ok) continue;
@@ -2165,8 +2166,8 @@ namespace WordDrop
         {
             if (_waiting.Count == 0 || claimed == null || claimed.Cells == null) return false;
             var set = new HashSet<Vector2Int>(claimed.Cells);
-            int group = -1;
-            foreach (var w in _waiting) if (w.Cells.Count == set.Count && set.IsSupersetOf(w.Cells)) { group = w.Group; break; }
+            int group = -1; _claimSwapCells = null;
+            foreach (var w in _waiting) if (w.Cells.Count == set.Count && set.IsSupersetOf(w.Cells)) { group = w.Group; _claimSwapCells = w.Swap; break; }
             foreach (var w in _waiting)
             {
                 if (w.Cells.Count == set.Count && set.IsSupersetOf(w.Cells)) continue;   // the claimed word itself
@@ -3580,7 +3581,7 @@ case RulesEngine.ResolutionPhase.Complete:
             if (ClaimModeOn && allNew.Count > 0 && !lastMove)
             {
                 RulesWordMatch lw = allNew[0]; foreach (var m in allNew) if (m?.Word != null && (lw?.Word == null || m.Word.Length > lw.Word.Length)) lw = m;
-                HoldForClaim(allNew, grid); allNew.Clear(); claimHeld = true;
+                HoldForClaim(allNew, grid, new[] { new Vector2Int(col1, row1), new Vector2Int(col2, row2) }); allNew.Clear(); claimHeld = true;
                 if (lw?.Cells != null) TutorialBeats.OnLessonWordHeld(new List<Vector2Int>(lw.Cells), lw.Word);   // a lesson's swap: its next step is the swipe
             }
             else if (CLAIM_MODE && lastMove && _waiting.Count > 0 && ClaimModeOn && rules != null && grid != null) AddAllWaiting(allNew, rules, grid);
@@ -3892,6 +3893,10 @@ case RulesEngine.ResolutionPhase.Complete:
             var one = new System.Collections.Generic.List<RulesWordMatch> { match };
             bool claimMode = ClaimModeOn;
             bool paidFor = claimMode && AddWaitingPartners(one, match, rules, grid);
+            // 11-25: a word the player's own swap made keeps that swap's two tiles. Without them the "two words in one move"
+            // Flying Tome was never born in swipe mode (RulesEngine gives the tome to a swapped tile), and a power-up was born
+            // mid-word instead of on the tile the player moved. A word that was only FOUND still has none.
+            if (paidFor && _claimSwapCells != null) RulesEngine.LastSwapCells = _claimSwapCells;
             if (claimMode && !paidFor && SurvivalManager.Instance != null && SurvivalManager.Instance.CurrentStageMovesRemaining <= 1) AddAllWaiting(one, rules, grid);   // a found word on the last move: the waiting ones go with it   // crossing / same-swap words pop with it (bomb, tome); true = a word the player's own swap formed (its move is already paid)
             var justPrimedIds = PrimeAndPresentWords(one, rules, grid);
 
