@@ -21,12 +21,16 @@ public static class WordDropTestFlightPrep
         int n; if (!int.TryParse(PlayerSettings.iOS.buildNumber, out n)) n = 0;
         PlayerSettings.iOS.buildNumber = (n + 1).ToString();
         EditorUserBuildSettings.development = false;
+        // 11-25 (Apple's mail on build 9, ITMS-90068): from April 2027 an upload must target iOS 15.0 or later; the project said 13.0.
+        float minOs; if (!float.TryParse(PlayerSettings.iOS.targetOSVersionString, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out minOs) || minOs < 15f)
+            PlayerSettings.iOS.targetOSVersionString = "15.0";
         AssetDatabase.SaveAssets();
         string defs = PlayerSettings.GetScriptingDefineSymbols(UnityEditor.Build.NamedBuildTarget.iOS);
         bool playtest = defs.Contains("WORDROP_PLAYTEST");
         string msg = "Signing team: " + TEAM_ID + " (automatic)\n" +
                      "Version " + PlayerSettings.bundleVersion + ", build number " + PlayerSettings.iOS.buildNumber + " (was " + n + ")\n" +
                      "Development Build: OFF\n" +
+                     "Minimum iOS version: " + PlayerSettings.iOS.targetOSVersionString + "\n" +
                      "Playtest coins (WORDROP_PLAYTEST): " + (playtest ? "ON - right for testers, must be OFF for the store" : "OFF") + "\n\n" +
                      "Next: File > Build Settings > Build (iOS), then archive in Xcode.";
         Debug.Log("[TestFlightPrep] " + msg.Replace("\n", " | "));
