@@ -13,7 +13,7 @@ namespace WordDrop
     /// </summary>
     public static class ChapterEndCard
     {
-        public static int CONTENT_END_LEVEL = 26;   // 11-25 Spencer: levels 21-26 SHIP in tester build 8 (testers had finished 1-20; these give them new levels in swipe mode). Rough: owl levels 21 / 23 have placeholder counts, 26 is the grass test level.
+        public static int CONTENT_END_LEVEL = 26;   // 11-25 Spencer: levels 21-26 SHIP in tester build 9 (testers had finished 1-20; these give them new levels in swipe mode). Rough: owl levels 21 / 23 have placeholder counts, 26 is the grass test level.
         private static GameObject s_root;
 
         /// <summary>True when <paramref name="internalLevel"/> (the map's level index) is past the last finished level.</summary>
