@@ -376,6 +376,11 @@ namespace WordDrop
                         {
                             if (set.Contains(new Vector2Int(x, y)))
                             {
+                                // 11-25 (Spencer: the safe lesson "cutting off the safe"): a piece bigger than one tile (safe,
+                                // shelf) or bigger than a letter (crate) was seen through one rounded window per cell, which left
+                                // a dark cross over it. A blocker's cell is left fully open instead.
+                                var bd = RulesEngine.Instance != null ? RulesEngine.Instance.GetCell(x, y) : null;
+                                if (bd != null && (bd.IsStone || bd.ShelfPart > 0)) { x++; continue; }
                                 if (_holesUsed >= _holes.Count)
                                 {
                                     var hs = new GameObject("TutHole" + _holes.Count).AddComponent<SpriteRenderer>();

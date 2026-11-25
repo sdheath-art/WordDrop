@@ -53,6 +53,7 @@ namespace WordDrop
         public int    ShelfStyle;     // 11-03 BOOKSHELF art: 0 = rounded frame, 1 = ornate bookcase (a 2nd shelf gets the other)
         public int    Safes;          // 11-03 SAFE: safes on the floor (6 hits each); > 0 = an "Open N safes" goal
         public int    ShelfBooks;     // 11-03 BOOKSHELF: books on the level's shelf/shelves (RulesEngine.PlaceShelves); > 0 = a Books goal
+        public string CrateSkin;     // 11-24: "vase" = this level's crates are drawn as vases (Tile.CrateSkin); null = wooden crates
         public string CrateHits;     // 11-03 multi-hit crates: starting layers picked per crate from this list ("1,2,3"); null = all single-hit
         public string Shape;          // board shape (RulesEngine.SHAPES name: octagon, funnel, notches, split, sidenotch, hole, legs); null = rectangle (2026-10-28)
         public int    Grass, GrassSeeds; public string GrassLayout;   // squares of grass to MOW + their starting pattern (GrassSeeds unused since the flip) — 2026-10-23   // designed starting arrangement (RulesEngine.LayoutCells) — 2026-10-23 "bland and repetitive"
@@ -456,12 +457,12 @@ namespace WordDrop
         private static LevelRules Make(string name, int ice = 0, int minLen = 3, int cadence = 2,
                                        bool branch = false, bool fuse = false, bool gold = false,
                                        int fillRows = 5, float density = 0.92f, int crates = 0, char collect = '\0', int collectN = 0, int gems = 0, string theme = null, int themeN = 0, int ducks = 0,
-                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null, string shape = null, string crateHits = null, int shelfBooks = 0, int shelfStyle = 0, int safes = 0)
+                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null, string shape = null, string crateHits = null, int shelfBooks = 0, int shelfStyle = 0, int safes = 0, string crateSkin = null)
             => new LevelRules {
                 Name = name, IceCount = ice, MinWordLength = minLen, RiseCadence = cadence,
                 BranchPriming = branch, FuseOn = fuse, GoldTiles = gold,
                 FillRows = fillRows, Density = density, Crates = crates, CollectLetter = collect, CollectCount = collectN, Gems = gems, Theme = theme, ThemeCount = themeN, Ducks = ducks,
-                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout, Shape = shape, CrateHits = crateHits, ShelfBooks = shelfBooks, ShelfStyle = shelfStyle, Safes = safes };
+                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout, Shape = shape, CrateHits = crateHits, ShelfBooks = shelfBooks, ShelfStyle = shelfStyle, Safes = safes, CrateSkin = crateSkin };
 
         /// <summary>The authored opening. One named twist per stage — that is what makes a level
         /// feel designed instead of a number going up. Keep each stage to ONE new idea.</summary>
@@ -538,6 +539,21 @@ namespace WordDrop
             /* 19 */ Make("Gauntlet",       crates:6, ice:6, gems:6, moves:36, crateLayout:"lid", iceLayout:"spread", crateHits:"2", shape:"arch"),   // 11-20 pass 3 (one power-up per explosion, bot 09:50 x100): 33->36.   // 11-20 TILES STAY (bot 07:48 x100, casual): moves 21->33.   // 11-18 7x9 PASS 3 (bot 06:45 x40): moves 20->21.   // 11-17 7x9 PASS 2 (bot 15:17 x40): moves 22->20.   // 11-17 7x9 PASS 1 (bots 14:21 + 14:51 x40; the 8x10 numbers live in tag checkpoint-2026-11-17-8x10-phone-pass): moves 15->22.   // 11-17 shape added for variety (Spencer: the same board every level "gets pretty stale") - bot to confirm.   // 11-16 SEEDED (reroll 1, bot 07:12 x100): 20->15 (96% -> 82% casual; 2 seeds both ~95% at 20)   // 11-04 pass 30 (bot 10:46 x40): gems 5->6 (83%, expert 95%; content not moves toward ~75%)   // 11-04 pass 29 (bot 10:06 x40): 22->20 (90% after ice 4->6; 75% quantile = 19)   // 11-04 pass 28 (bot 09:30 x40): ice 4->6 + moves 24->22 (95% / expert 100% / END-STALL 2.2 - fair now, too easy for the ~70% hard slot; content first, 2 moves)   // 11-04 pass 27b (bot 09:06): arch shape removed + hits 2,3 -> 2 (expert only 83%, END-STALL 8.5, 12 word swaps/turn: luck-decided; keep the lid as the structure)   // 11-04 pass 26 (bot 08:42 x40, layout pass): 23->24 moves (60%, target ~65-70)   // 11-04 LAYOUT PASS (RM structure study; fixed crates; bot 08:03 END-STALL): ring -> lid, crates 7 -> 6 (x2 = 12 = the whole lid), hits 1,2 -> 2,3 (93% vs ~70% target: hard by STRUCTURE - goals under a 2-3 layer roof)   // 11-04 pass 25 (bot 06:48 x40): 26->23 moves (overshot: L9 100%, L10 98%, L17 80% vs 65, L19 85% vs 70)   // 11-04 pass 24 STRICT RULES (bot 04:22 x40, casual quantile): 21->26 moves, ice 6->4, gems 6->5, crateHits 2,3->1,2   // 10-30: was "legs" (goal dead 45%)                 // tightest ~65% (RM: won on the last move)   // 10-31 pass 11: 22->19 (bot w/ drags)   // 11-02 pass 17 CURVE: 19->12 (Spencer "the game is pretty easy now"; L11-13/15-16 ~88%, L14 ~80%, L17 ~65%, L18 relief, L19 ~75%; casual-bot quantiles, bot 13:36)   // 11-03 pass 18 (8x10, bot 11-02 20:24 casual quantile): 12->14   // 11-03 pass 19 (bot 07:08, 8x10 + bigger bombs): 14->15   // 11-03 multi-hit crates: "2,3"   // 11-03 pass 20 (wild power-ups + bot moves specials + multi-hit crates, bot 10:20): 15->18   // 11-03 pass 21 (bot 17:17, shelf/safe/upright rocket/graded crates): 18->21
             /* 20 */ Make("Gold Rush",      bonus:true,           moves:GOLD_RUSH_MOVES, teach:"bonus"),     // no fail: preloaded specials, 3-letter swaps, climbing payout (10-30)
             /* 21 */ Make("Night Owls",     ducks:5,              moves:30),   /* 11-24 pass 4 (Spencer "five owls is fine"): 7 -> 5, the middle five columns, no edge columns. Moves 40 -> 30 = a guess (his 7-owl runs: first five home in ~60% of the moves used). */   /* 11-24 pass 3: one owl per column, each over its own nest, all on the board from the start. Moves a guess until the bot runs. */   // 11-24 pass 2 (Spencer: "very easy to pass"; RM L451 = 12 birds, many on screen): 3 -> 6 owls, 3 on the board at a time (DUCKS_ON_BOARD), refills bring the rest at the top. Moves 26 -> 32 = still a guess until the bot runs.     // 11-24 TEST ROW (Spencer: "ducks should probably be owls"): the drop-to-bottom piece, first run since October - on 7x9 with tiles-stay. Moves are a guess, NOT bot-tuned.
+            // 11-24 OWL RUN 22-25 (level design is Claude's call; RM cadence: the new piece alone on the x1 level, then the SAME piece on new
+            // structure, one change per level). All UNTESTED, moves are guesses until the bot plays them. No gems with owls (they share
+            // LevelRules.Collected). Owls stay 5, columns 1-5.
+            // 11-24 pass 2 (Spencer: "just having a funnel board isnt really a big enough change"): the funnel-only level is CUT - its foot is
+            // exactly the five owl columns, so it played like L21. Everything moved up one; the funnel is now the ice level's board; L25 is
+            // the no-owl breather (RM L21-30: the new piece is in 7 of 10, with a run of levels without it).
+            // 11-24 pass 3 (Spencer, after playing L21 many times: "these kind of levels get a bit samey so i think we just pepper in the owls
+            // every now and again"). Owls are a GOAL TYPE, not a blocker: every owl level asks the same thing (clear columns), so they are
+            // spaced out - 21 (taught), 23 (reinforced once, with crates), then ~every third level. Held back for later owl slots:
+            // owls + ice on the funnel ("Cold Feathers", ducks:5, ice:6, shape funnel) and crate towers ("Roost Towers", ducks:5, crates:3 pillars 1,2).
+            /* 22 */ Make("Gem Cellar",     gems:9, crates:3,     moves:30, crateLayout:"lid", crateHits:"1,2", shape:"octagon"),   // no owls: gems under a row of crates on the octagon. 11-24: was the first VASE level - vases PARKED (Spencer: ChatGPT's vase art "is lacking pretty badly" next to a Royal Kingdom pot; "maybe we just leave out the vases for now"). To bring them back: crateSkin:"vase" + the two PNGs in Resources/Blockers.
+            /* 23 */ Make("Under the Roof", ducks:5, crates:2,    moves:34, crateLayout:"lid"),   // owls again, once, so the lesson sticks - now with 4 crates under four of them (col 5 open = one easy owl)
+            /* 24 */ Make("Cold Storage",   ice:10, gems:5, iceLayout:"spread", moves:26, shape:"arch"),   // no owls: two letter goals on the arch board
+            /* 25 */ Make("Safe House",     safes:1, crates:3,    moves:34, crateLayout:"band", crateHits:"2,3"),   // no owls: the safe behind a band of tough crates (L17's squeeze with the L18 safe)
+            /* 26 */ Make("Overgrown",      grass:28, grassLayout:"wall", moves:30),   // 11-24 TEST LEVEL for the grass art + the mowing goal (built 10-23, never played on 7x9 / tiles-stay): grass under the bottom four rows, the top five bare (Spencer: grass should not cover the whole board). Moves = a guess.
         };
 
         /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
@@ -575,7 +591,29 @@ namespace WordDrop
         // be the challenge, not the penalties stacked on it: such levels rise one move slower and get extra moves.
         public const int MIN4_EXTRA_MOVES = 4;
         public const int MIN4_EXTRA_CADENCE = 1;
-        public static int MovesForRules(int stage, LevelRules r) => r.Moves > 0 ? r.Moves : MovesFor(stage) + (r.MinWordLength >= 4 ? MIN4_EXTRA_MOVES : 0);
+        // ── SWIPE-TO-CLAIM MOVE COUNTS (11-25). The table's moves were bot-tuned for auto-pop, where one falling word per move
+        // pops for free. With the SWIPE TO CLAIM switch on nothing pops by itself, and the casual bot's win rate at the table's
+        // numbers fell from 87-97% to 57-87% (bot run 11-25 09:03, 60 games/level). These apply ONLY while the switch is on, so
+        // the live game is untouched. L1-4: the bot's 95% point (onboarding must be near-unfailable). L5-16 + L18: its 85% point.
+        // L17 / L19 (the hard levels): the count that gives the same win rate they had under auto-pop (79% / 82%).
+        // L22, L24, L25: 85% point. L21, L23 (owls) and L26 (grass): not set - they need more than moves (see session log). ──
+        public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_MOVES = new System.Collections.Generic.Dictionary<int, int>
+        {
+            { 1, 27 }, { 2, 28 }, { 3, 39 }, { 4, 39 }, { 5, 33 }, { 6, 35 }, { 7, 50 }, { 8, 16 }, { 9, 22 }, { 10, 28 },
+            { 11, 19 }, { 12, 20 }, { 13, 33 }, { 14, 21 }, { 15, 33 }, { 16, 33 }, { 17, 41 }, { 18, 28 }, { 19, 46 },
+            { 21, 40 }, { 23, 42 },   // PROVISIONAL, 3 owls (run 09:18): casual bot p50 40 / 33, wins ~50% / ~75% here; owl levels are past the tester build's last level (20)
+            { 22, 26 }, { 24, 33 }, { 25, 41 }, { 26, 44 },   // L26: bot 80% point after tomes learned to fly to grass (run 09:09)
+        };
+        // OWLS under swipe-to-claim (11-25): with 5 owls the casual bot needed 62 moves on L21 (13% win at 30, 16 of 60 games not
+        // done in 80) and 41 on L23; Spencer failed L21 three times and L23 twice. Owls only drop when the tiles under them clear,
+        // and the free falling-word pops were doing much of that. More moves alone would make a 60-move level, so the swipe mode
+        // sends 3 owls (columns 1, 3, 5) instead. Only while the switch is on.
+        public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_DUCKS = new System.Collections.Generic.Dictionary<int, int> { { 21, 3 }, { 23, 3 } };
+        public static int MovesForRules(int stage, LevelRules r)
+        {
+            if (HandManager.CLAIM_MODE && !r.Bonus && CLAIM_MOVES.TryGetValue(stage, out int cm)) return cm;
+            return r.Moves > 0 ? r.Moves : MovesFor(stage) + (r.MinWordLength >= 4 ? MIN4_EXTRA_MOVES : 0);
+        }
         public static int CadenceForRules(LevelRules r) => Mathf.Max(1, r.RiseCadence) + (r.MinWordLength >= 4 ? MIN4_EXTRA_CADENCE : 0);
 
         /// <summary>Cap on fresh-board fill density. 2026-10-20: at 0.90-0.96 the opening board was packed with
@@ -605,7 +643,12 @@ namespace WordDrop
         public static LevelRules For(int stage)
         {
             if (stage < 1) stage = 1;
-            if (stage <= TABLE.Length) return ScaleForBoard(TABLE[stage - 1]);
+            if (stage <= TABLE.Length)
+            {
+                var tr = ScaleForBoard(TABLE[stage - 1]);   // a struct: this is a copy, the table is untouched
+                if (HandManager.CLAIM_MODE && tr.Ducks > 0 && CLAIM_DUCKS.TryGetValue(stage, out int cd)) tr.Ducks = cd;
+                return tr;
+            }
 
             // Past the table: repeat the 5-beat shape with counts climbing. slot 4 = boss,
             // slot 0 = the valley right after it. Peaks AND valleys both trend up.
@@ -970,6 +1013,7 @@ namespace WordDrop
                     if (TutorialBeats.WantsSwipePlant(r)) { var sw = rules2.PlantSwipeWord(keep, out _); if (sw != null) foreach (var c in sw) keep.Add(c); }
                     int shortWords = rules2.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
                     RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
+                    Tile.CrateSkin = r.CrateSkin;   // 11-24 vases: set before the board's tiles are (re)built
                     RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.SafeHitsNow = RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? rules2.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF (11-03) first: crates must not land on its cells
                     int crates = r.Crates > 0 ? rules2.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
                     if (crates > 0) rules2.AssignCrateHits(r.CrateHits);   // 11-03 multi-hit crates

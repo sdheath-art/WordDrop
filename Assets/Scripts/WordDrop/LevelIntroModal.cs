@@ -1260,7 +1260,7 @@ namespace WordDrop
         private static Sprite GrassIcon()
         {
             if (s_grassIcon != null) return s_grassIcon;
-            var tex = Resources.Load<Texture2D>("Boosters/2leaf");
+            var tex = Resources.Load<Texture2D>("Blockers/grass") ?? Resources.Load<Texture2D>("Boosters/2leaf");   // 11-24: the grass tile art when it exists
             if (tex != null) s_grassIcon = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f);
             return s_grassIcon;
         }

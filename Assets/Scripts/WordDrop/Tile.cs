@@ -3695,8 +3695,26 @@ namespace WordDrop
         // MULTI-HIT CRATE (2026-11-03, Spencer's X-brace set): Blockers/crate_3 = full X, crate_2 = one diagonal plank, crate = bare slats
         // (the last layer - also every single-hit crate). Layers left mirror RulesCellData.CrateHP.
         private static readonly Sprite[] s_crateHP = new Sprite[4]; private static bool s_crateHPTried;
+        // 11-24 VASE (Spencer's emerald urn; a crate with a different look, "we can try it"): LevelRules.CrateSkin = "vase" draws every
+        // crate on that level as a vase - whole at 2+ layers, cracked on its last (Blockers/vase, vase_cracked; both 512, same
+        // placement, so the swap is in place). Rules, goals and counts are the crate's. null = wooden crates.
+        public static string CrateSkin;
+        public static bool VaseSkin => CrateSkin == "vase" && VaseSprite(false) != null;
+        private static Sprite s_vase, s_vaseCracked; private static bool s_vaseTried;
+        public static Sprite VaseSprite(bool cracked)
+        {
+            if (!s_vaseTried)
+            {
+                s_vaseTried = true;
+                var a = Resources.Load<Texture2D>("Blockers/vase"); var b = Resources.Load<Texture2D>("Blockers/vase_cracked");
+                if (a != null) s_vase = Sprite.Create(a, new Rect(0, 0, a.width, a.height), new Vector2(0.5f, 0.5f), a.width);
+                if (b != null) s_vaseCracked = Sprite.Create(b, new Rect(0, 0, b.width, b.height), new Vector2(0.5f, 0.5f), b.width);
+            }
+            return cracked ? (s_vaseCracked ?? s_vase) : s_vase;
+        }
         public static Sprite CrateSpriteFor(int hp)
         {
+            if (VaseSkin) return VaseSprite(hp <= 1 && VASE_CRACKS_ON_LAST);
             if (hp <= 1) return GetCrateSprite();
             if (!s_crateHPTried)
             {
@@ -3714,7 +3732,8 @@ namespace WordDrop
             if (_isStone) SetStoneVisual(true);
         }
         private bool _isCrateArt;
-        public static Sprite CrateSprite => GetCrateSprite();
+        public static bool VASE_CRACKS_ON_LAST = true;   // false = a vase never shows the cracked art
+        public static Sprite CrateSprite => VaseSkin ? VaseSprite(false) : GetCrateSprite();   // goal icon / level card
         private static Sprite GetCrateSprite()
         {
             if (s_crateTried) return s_crateSprite;

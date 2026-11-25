@@ -2522,9 +2522,23 @@ namespace WordDrop
         // of the screen. Fired at the moment the crate tile hides (all three hide sites in this file). ──
         public static int   CRATE_CHUNKS     = 7;
         public static float CRATE_GRAVITY    = 24f;   // in cells / s^2
-        private static Sprite[] s_crateChunks;
+        private static Sprite[] s_crateChunks, s_vaseChunks;
         private static Sprite[] CrateChunks()
         {
+            if (Tile.VaseSkin)   // 11-24: a vase breaks into pieces of the vase (rects inside its body, clear of the handles' holes)
+            {
+                if (s_vaseChunks != null) return s_vaseChunks;
+                var vt = Resources.Load<Texture2D>("Blockers/vase_cracked");
+                if (vt == null) { s_vaseChunks = new Sprite[0]; return s_vaseChunks; }
+                float vw = vt.width, vh = vt.height;
+                var vr = new[] {
+                    new Rect(vw*0.24f, vh*0.42f, vw*0.26f, vh*0.24f), new Rect(vw*0.50f, vh*0.44f, vw*0.26f, vh*0.22f),
+                    new Rect(vw*0.30f, vh*0.20f, vw*0.22f, vh*0.22f), new Rect(vw*0.50f, vh*0.18f, vw*0.20f, vh*0.24f),
+                    new Rect(vw*0.34f, vh*0.64f, vw*0.32f, vh*0.14f), new Rect(vw*0.26f, vh*0.82f, vw*0.48f, vh*0.12f) };
+                s_vaseChunks = new Sprite[vr.Length];
+                for (int k = 0; k < vr.Length; k++) s_vaseChunks[k] = Sprite.Create(vt, vr[k], new Vector2(0.5f, 0.5f), vw);
+                return s_vaseChunks;
+            }
             if (s_crateChunks != null) return s_crateChunks;
             var tex = Resources.Load<Texture2D>("Blockers/crate");
             if (tex == null) { s_crateChunks = new Sprite[0]; return s_crateChunks; }
@@ -2582,6 +2596,7 @@ namespace WordDrop
         public void PlayPlankOff(Tile t, int hpBefore)
         {
             if (t == null || hpBefore < 2) return;
+            if (Tile.VaseSkin) return;   // 11-24: a vase has no planks - the art swaps to the cracked vase
             if (!s_planksTried)
             {
                 s_planksTried = true; s_planks = new Sprite[2];

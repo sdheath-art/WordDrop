@@ -100,7 +100,11 @@ namespace WordDrop
                         WDLog.Log($"[NOTE-COVER] ({x},{y}) '{t.Letter}' gem tile: face enabled={main.enabled} order={main.sortingOrder} pos={t.transform.position} scale={t.transform.localScale}{cov}");
                     }
                     WDLog.Log($"[NOTE-TILE] ({x},{y}) '{t.Letter}' GEMFACE={gemFace} tint={(main != null ? main.color.ToString() : "-")} " +
-                              $"dataGem={(c != null && c.HasGem)} tileGem={t.IsGem} special={t.SpecialKind} {faceRep}{sb}");
+                              $"dataGem={(c != null && c.HasGem)} tileGem={t.IsGem} special={t.SpecialKind} {faceRep}{sb}" +
+                              // 11-24 (Spencer's screenshot: (3,0) 'E' drew only its shadow + letter, tint white): say WHY a face is not drawn
+                              (main == null ? " FACE=no renderer" : $" FACE on={main.enabled} sprite={(main.sprite != null ? "'" + main.sprite.name + "'" : "NULL")} order={main.sortingOrder} mask={main.maskInteraction} scale={t.transform.localScale.x:F2} z={t.transform.position.z:F2}"));
+                    if (main != null && !t.IsStone && (!main.enabled || main.sprite == null || main.color.a < 0.05f))
+                        WDLog.Log($"[NOTE-NOFACE] ({x},{y}) '{t.Letter}' draws NO FACE: enabled={main.enabled} sprite={(main.sprite != null ? main.sprite.name : "NULL")} alpha={main.color.a:F2}");
                     if (++n >= 40) return;
                 }
             if (n == 0) WDLog.Log("[NOTE-TILE] no odd tiles");

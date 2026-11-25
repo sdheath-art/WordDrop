@@ -1099,6 +1099,7 @@ namespace WordDrop
 
         private void Update()
         {
+            TickWaiting();   // swipe-to-claim prototype: glow on words waiting for a swipe
             if (_grid == null) return;
 
             // 2026-06-04 Spencer: live wild-shadow tuning — push the Inspector values to
@@ -2073,6 +2074,89 @@ namespace WordDrop
         public static bool MULTI_WORD_STAGGER = false;   // 2026-10-22 Spencer: default ALL AT ONCE
         public bool IsResolvingChain => _tapDetonating || _autoPopPending;
 
+        // ── SWIPE TO CLAIM prototype (11-25, tester: an accidental word popped and wrecked the 5-letter word she was building;
+        // third report of the early pop). OFF by default; FX menu row. When on: a word a swap FORMS does not pop - it lights up
+        // and waits, and the player swipes it to claim it. Every swap costs its move as always; claiming a word your swap formed
+        // is free (a word you only FOUND costs a move, as before). On the last move the word pops by itself. Words made by falling tiles never pop by themselves either (they do
+        // not light up - finding them is the skill). Crossing words / words from the same swap go together with one swipe, so
+        // bombs and tomes are still earned the same way. Lessons keep the old rule while a lesson is on screen. ──
+        public static bool CLAIM_MODE = true;    // 11-25 Spencer: "swipe on default" (two people who played both versions prefer it)
+        public static bool CLAIM_GLOW = false;   // 11-25 Spencer: "no glow, the bounce is fine" - bump + sound when the word forms, nothing marks it after
+        public static Color CLAIM_GLOW_COLOR = new Color(1.45f, 1.2f, 0.55f, 1f);
+        public static float CLAIM_GLOW_LO = 0.30f, CLAIM_GLOW_HI = 0.60f, CLAIM_GLOW_HZ = 0.8f;
+        public static bool ClaimModeOn => CLAIM_MODE && InstantPopMode && SurvivalManager.FullBoardActive && !LevelRules.BonusLevelActive && !TutorialBeats.BlocksInput;
+        private class WaitingWord { public string Word; public int Group; public List<Vector2Int> Cells; public List<Tile> Tiles; public List<char> Letters; }
+        private readonly List<WaitingWord> _waiting = new List<WaitingWord>();
+        private int _waitGroup;
+        private void HoldForClaim(System.Collections.Generic.List<RulesWordMatch> words, GridManager grid)
+        {
+            _waitGroup++;
+            foreach (var m in words)
+            {
+                if (m == null || m.Cells == null || grid == null) continue;
+                var w = new WaitingWord { Word = m.Word, Group = _waitGroup, Cells = new List<Vector2Int>(m.Cells), Tiles = new List<Tile>(), Letters = new List<char>() };
+                bool ok = true;
+                foreach (var c in m.Cells) { var t = grid.GetTile(c.x, c.y); if (t == null) { ok = false; break; } w.Tiles.Add(t); w.Letters.Add(t.Letter); }
+                if (!ok) continue;
+                _waiting.Add(w);
+                foreach (var t in w.Tiles) t.transform.DOPunchScale(Vector3.one * 0.08f, 0.2f, 4, 0.5f);
+                WDLog.Log($"[Claim] '{m.Word}' formed - waiting for a swipe ({_waiting.Count} waiting)");
+            }
+            HapticsManager.Light(); GameAudio.Instance?.PlayTilePrimed();
+        }
+        private bool WaitingStillThere(WaitingWord w, GridManager grid)
+        {
+            for (int i = 0; i < w.Cells.Count; i++)
+            {
+                var t = grid.GetTile(w.Cells[i].x, w.Cells[i].y);
+                if (t == null || t != w.Tiles[i] || t.Letter != w.Letters[i]) return false;
+            }
+            return true;
+        }
+        private void TickWaiting()
+        {
+            if (_waiting.Count == 0) return;
+            var grid = GridManager.Instance;
+            if (grid == null || !CLAIM_MODE || SurvivalManager.AwaitingNextLevel)
+            {
+                foreach (var w in _waiting) foreach (var t in w.Tiles) if (t != null && !t.HasPrimedGlow) t.ClearBloomGlow();
+                _waiting.Clear(); return;
+            }
+            float a = Mathf.Lerp(CLAIM_GLOW_LO, CLAIM_GLOW_HI, 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * CLAIM_GLOW_HZ * 2f * Mathf.PI));
+            for (int i = _waiting.Count - 1; i >= 0; i--)
+            {
+                var w = _waiting[i];
+                bool primed = false; foreach (var t in w.Tiles) if (t != null && t.HasPrimedGlow) { primed = true; break; }
+                if (primed) { _waiting.RemoveAt(i); continue; }   // claimed: the armed look owns the tiles now
+                if (!WaitingStillThere(w, grid))
+                {
+                    foreach (var t in w.Tiles) if (t != null && !t.HasPrimedGlow) t.ClearBloomGlow();
+                    WDLog.Log($"[Claim] '{w.Word}' broken up before it was claimed");
+                    _waiting.RemoveAt(i); continue;
+                }
+                if (CLAIM_GLOW) foreach (var t in w.Tiles) t.SetBloomGlow(CLAIM_GLOW_COLOR, a, forceDesktop: true);
+            }
+        }
+        /// <summary>The swiped word plus every waiting word that crosses it or came from the same swap - they pop as one.</summary>
+        private bool AddWaitingPartners(System.Collections.Generic.List<RulesWordMatch> list, RulesWordMatch claimed, RulesEngine rules, GridManager grid)
+        {
+            if (_waiting.Count == 0 || claimed == null || claimed.Cells == null) return false;
+            var set = new HashSet<Vector2Int>(claimed.Cells);
+            int group = -1;
+            foreach (var w in _waiting) if (w.Cells.Count == set.Count && set.IsSupersetOf(w.Cells)) { group = w.Group; break; }
+            foreach (var w in _waiting)
+            {
+                if (w.Cells.Count == set.Count && set.IsSupersetOf(w.Cells)) continue;   // the claimed word itself
+                if (w.Group != group && !set.Overlaps(w.Cells)) continue;
+                if (!WaitingStillThere(w, grid)) continue;
+                var m = rules.BuildExplicitMatch(w.Cells, out _);
+                if (m == null) continue;
+                list.Add(m);
+                WDLog.Log($"[Claim] '{w.Word}' goes with '{claimed.Word}'");
+            }
+            return group != -1;
+        }
+
         private void MaybeAutoPop()
         {
             if (!InstantPopMode || _tapDetonating || _autoPopPending || SurvivalManager.AwaitingNextLevel) return;
@@ -2823,6 +2907,7 @@ namespace WordDrop
                         yield return PreBurstSpecials(grid, step);   // the specials swell + flash, THEN blow (2026-10-22)
                         PopTiming("pre-burst done");
                         ApplySpecialStep(grid, step);   // special tiles born / fired this step (2026-10-21)
+                        if (LevelRules.HasGrassGoal && grid != null) grid.SyncGrass(RulesEngine.Instance);   // 11-24: the grass goes WITH the pop (it used to linger under the falling tiles until the end of the move)
                         // Drop the outline of EVERY cluster actually going up, not just the one
                         // the player tapped. When a resolution took out more than one cluster,
                         // the others' outline and payout badge hung over empty cells. Driving it
@@ -3465,6 +3550,11 @@ case RulesEngine.ResolutionPhase.Complete:
                 MatchController.Instance?.EndProcessing();
                 yield break;
             }
+            bool claimHeld = false;
+            // swipe-to-claim prototype: formed, not popped. v2 (11-25): the swap costs its move as always and claiming is free;
+            // on the LAST move the word pops by itself (old rule) so a winning word cannot be stranded behind the fail check.
+            bool lastMove = SurvivalManager.Instance != null && SurvivalManager.Instance.CurrentStageMovesRemaining <= 1 && !_freeSwap;
+            if (ClaimModeOn && allNew.Count > 0 && !lastMove) { HoldForClaim(allNew, grid); allNew.Clear(); claimHeld = true; }
             if (allNew.Count > 0)
             {
                 var registry = rules.PrimedRegistry;
@@ -3673,10 +3763,10 @@ case RulesEngine.ResolutionPhase.Complete:
             // is the whole point of the swap game) were FREE. Now it fires once per swap
             // regardless, which is what the comment always claimed.
             WDLog.Log($"[BoardSwapMove] swap resolved. formedWord={allNew.Count > 0} survival={SurvivalManager.IsSurvivalMode} editsCountAsMoves={(SurvivalManager.Instance != null ? SurvivalManager.Instance.EditsCountAsMoves.ToString() : "null")} → {((SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null && SurvivalManager.Instance.EditsCountAsMoves) ? "COUNTING" : "not counted")}");
-            NoWordStreak = allNew.Count > 0 ? 0 : NoWordStreak + 1;   // fishing detector (HintManager)
+            NoWordStreak = (allNew.Count > 0 || claimHeld) ? 0 : NoWordStreak + 1;   // fishing detector (HintManager)
             bool freeSwap = _freeSwap; _freeSwap = false;
             PlaythroughStats.StayRule = !BOUNCE_NO_WORD;
-            if (allNew.Count == 0 && !freeSwap) PlaythroughStats.NoWordMoves++;   // 11-20: a swap that stayed and made nothing (for tuning the tiles-stay budgets)
+            if (allNew.Count == 0 && !freeSwap && !claimHeld) PlaythroughStats.NoWordMoves++;   // 11-20: a swap that stayed and made nothing (for tuning the tiles-stay budgets)
             if (freeSwap) WDLog.Log("[FreeSwap] booster swap — no move spent");
             else if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                 && SurvivalManager.Instance.EditsCountAsMoves)
@@ -3765,6 +3855,8 @@ case RulesEngine.ResolutionPhase.Complete:
             if (MatchController.Instance != null) MatchController.Instance.BeginProcessing();
 
             var one = new System.Collections.Generic.List<RulesWordMatch> { match };
+            bool claimMode = ClaimModeOn;
+            bool paidFor = claimMode && AddWaitingPartners(one, match, rules, grid);   // crossing / same-swap words pop with it (bomb, tome); true = a word the player's own swap formed (its move is already paid)
             var justPrimedIds = PrimeAndPresentWords(one, rules, grid);
 
             // AddPrimedWord returns -1 when the registry refuses, and the extracted block adds
@@ -3774,7 +3866,7 @@ case RulesEngine.ResolutionPhase.Complete:
             foreach (int id in justPrimedIds) if (id >= 0) { armed = true; break; }
             // FOUND-IT (10-31, Spencer OK'd): a dragged word is the purest word-spot - it makes its special one size earlier
             // (RulesEngine.DRAG_SPECIAL_BONUS) and gets a bigger pop + its own sound (ClusterOutline / here).
-            if (armed && RulesEngine.DRAG_REWARD)
+            if (armed && RulesEngine.DRAG_REWARD && !claimMode)   // claim mode: every word is swiped, so the found-it bonus would be on all of them
             {
                 foreach (int id in justPrimedIds) if (id >= 0) RulesEngine.SwipedPrimedIds.Add(id);
                 RulesEngine.SwipedWords.Add(match.Word.ToUpperInvariant());
@@ -3795,7 +3887,8 @@ case RulesEngine.ResolutionPhase.Complete:
 
                 // A SWIPE COSTS A MOVE (Spencer 2026-10-19). Gated identically to the
                 // board-swap path so the two verbs cost the same thing.
-                if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
+                if (paidFor) WDLog.Log($"[Claim] '{match.Word}' claimed free - its swap already cost the move");
+                else if (SurvivalManager.IsSurvivalMode && SurvivalManager.Instance != null
                     && SurvivalManager.Instance.EditsCountAsMoves)
                     SurvivalManager.Instance.NotifyDropCommitted();
 
@@ -4648,7 +4741,7 @@ case RulesEngine.ResolutionPhase.Complete:
         public static bool  STAGGER_WORD_POPS = true;
         public static float WORD_STAGGER_GAP = 0.38f, WORD_STAGGER_AFTER_BLAST = 0.35f;   // seconds between words / after a power-up fires
         public static int   WORD_STAGGER_MAX = 4;                                        // more than this in one cluster: the last slot says "+N MORE"
-        private struct QueuedPop { public string w; public Vector3 at; public bool gold; public int len; public Sprite icon; }
+        private struct QueuedPop { public string w; public Vector3 at; public bool gold; public int len; public Sprite icon; public bool preBonus; }
         /// <summary>11-23: the picture of the goal piece a word hits (gem in it / ice in it / crate beside it), in the level's goal
         /// order; bookshelf and safe levels fall back to their own piece. null = no picture (the word still pops gold).</summary>
         private static Sprite GoalIconForWord(RulesEngine rules, List<Vector2Int> cells)
@@ -4688,7 +4781,7 @@ case RulesEngine.ResolutionPhase.Complete:
             // last ran; a stamp that has gone stale means it is dead: drop the stale words and start a fresh one.
             if (_popRun != null && Time.frameCount - _popAliveFrame > 3) { _popRun = null; _popQueue.Clear(); _popNotBefore = 0f; WDLog.Log("[WordPops] the pop-up queue had been stopped mid-run - restarted"); }
             if (_popQueue.Count >= 8) return;   // a runaway chain never stacks a minute of text
-            _popQueue.Add(new QueuedPop { w = w, at = at, gold = gold, len = len, icon = icon });
+            _popQueue.Add(new QueuedPop { w = w, at = at, gold = gold, len = len, icon = icon, preBonus = !BonusBlastRunning });
             if (_popRun == null) { _popAliveFrame = Time.frameCount; _popRun = StartCoroutine(RunWordPops()); }
         }
         private IEnumerator RunWordPops()
@@ -4698,10 +4791,16 @@ case RulesEngine.ResolutionPhase.Complete:
                 _popAliveFrame = Time.frameCount;
                 while (Time.unscaledTime < _popNotBefore) { yield return null; _popAliveFrame = Time.frameCount; }
                 var p = _popQueue[0]; _popQueue.RemoveAt(0);
-                if (ClusterOutline.Instance != null && !BonusBlastRunning)
+                WDLog.Log($"[WordPops] queue shows '{p.w}' at {p.at} gold={p.gold} | outline={(ClusterOutline.Instance != null)} bonusBlast={BonusBlastRunning} popupOn={ClusterOutline.PAYOUT_POPUP_ON} wordLabels={BonusPopup.WORD_INSTEAD_OF_SCORE} reducedMotion={UIAnimations.ReducedMotion} | left {_popQueue.Count}");   // TEMP DIAG 11-25: power-up word swiped, no pop-up seen
+                // 11-25 (Spencer: a swiped word with a tome in it "did not show a pop up"): a word that fires a power-up waits
+                // WORD_STAGGER_AFTER_BLAST for its text; when that word WON the level the bonus had started by then and the bonus
+                // turns pop-ups off. A pop-up queued before the bonus began is still shown.
+                if (ClusterOutline.Instance != null && (!BonusBlastRunning || p.preBonus))
                 {
                     BonusPopup.NextPopGold = p.gold; BonusPopup.NextPopLength = p.len; BonusPopup.NextPopIcon = p.gold ? p.icon : null;
+                    bool pre = BonusPrePop; if (BonusBlastRunning) BonusPrePop = true;
                     ClusterOutline.Instance.PopPayout(p.at, 0, false, 0f, -1, null, p.w);
+                    BonusPrePop = pre;
                 }
                 _popNotBefore = Time.unscaledTime + WORD_STAGGER_GAP;
             }

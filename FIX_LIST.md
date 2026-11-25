@@ -35,3 +35,8 @@ Started 2026-10-21 during Spencer's playtest. Add as we go; tick off when Spence
 ## 2026-11-24 (Spencer)
 - **Flying Tome (airplane power-up) holds the letters from falling until its flight animation is done.** Spencer: "these are things that need to get done at some point ... even if its risky". Same family as the owl hang fixed today (visual waits on an animation before gravity runs). Not investigated yet.
 - **Axe hitting a power-up: the power-up only fires after the chop AND its fall have finished** (Spencer 11-24: "the axe does not trigger boosters until the animation is done"). Log 10:29 run: `[Axe] Chopped column 3: 7 tiles` at frame 1925 (the power-up at (3,5) is left out of the cleared list), the cascade completes at 1961, and only then `[Booster] hit a AIRPLANE at (3,0) -> fires` at 1962 - i.e. it falls to the bottom first and goes off from there ~0.6 s late. Wanted: it fires the moment the blade reaches it, from where it was. Same family as the tome hold.
+
+## 2026-11-24 — vase piece (PARKED 11-24: art not good enough yet; code dormant, PNGs in ~/Documents/WordDrop_Art/vase_piece/parked_from_resources)
+- [ ] VASE LOOK: Spencer "something about it is bothering me and im not sure what it is but i guess its fine for now". Revisit with fresh eyes. Candidates: darker than every other piece (raw colour kept at his choice), seen slightly from above while other pieces are front-on, faint shadow, stretched art (x1.10 / x0.88), an urn in a library.
+- [ ] VASE SOUND: still the wooden crate break sound.
+- [ ] MISSING TILE FACE (13:42 screenshot, L22): a letter tile drew only its shadow + letter after a rocket+bomb combo. Not diagnosed; screenshot dump now logs the cause ([NOTE-NOFACE]).

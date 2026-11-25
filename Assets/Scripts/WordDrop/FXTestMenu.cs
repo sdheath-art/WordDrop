@@ -491,6 +491,9 @@ namespace WordDrop
                                   + (bot != null && !string.IsNullOrEmpty(bot.Status) ? $"  ({bot.Status})" : "");
                 if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), botLabel, _btnStyle) && bot != null && !bot.Running) bot.Run();
                 innerY += BTN_H + GAP;
+                if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), BotPlaytester.CASUAL_FOCUSED ? "BOT CASUAL: GOAL-FOCUSED — tap for scattered" : "BOT CASUAL: SCATTERED — tap for goal-focused", _btnStyle) && bot != null && !bot.Running)
+                    BotPlaytester.CASUAL_FOCUSED = !BotPlaytester.CASUAL_FOCUSED;
+                innerY += BTN_H + GAP;
                 // 11-20 TEMP: the casual bot plays like a lost player (see BotPlaytester.RANDOM_PLAYER). Turning it on fills in levels 1-7.
                 {
                     string[] rl = { "BOT PLAYER: normal", "BOT PLAYER: RANDOM moves only", "BOT PLAYER: RANDOM + follows nudges" };
@@ -510,6 +513,17 @@ namespace WordDrop
             // ── SCREENSHOT FOR CLAUDE (2026-10-23) — same as pressing F8: saves Screenshots/claude_latest.png ──
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "SCREENSHOT FOR CLAUDE (or press ` key)", _btnStyle))
                 ClaudeScreenshot.Instance?.Take();
+            innerY += BTN_H + GAP;
+
+            // ── SWIPE TO CLAIM prototype (11-25) ──
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), HandManager.CLAIM_MODE ? "SWIPE TO CLAIM: ON (words wait for a swipe) — tap for auto-pop" : "SWIPE TO CLAIM: OFF (words pop by themselves) — tap to try", _btnStyle))
+            { HandManager.CLAIM_MODE = !HandManager.CLAIM_MODE; WDLog.Log($"[Claim] mode={HandManager.CLAIM_MODE}"); }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), HandManager.CLAIM_GLOW ? "WAITING WORD GLOW: ON — tap for bump + sound only" : "WAITING WORD GLOW: OFF (bump + sound only) — tap for glow", _btnStyle))
+            { HandManager.CLAIM_GLOW = !HandManager.CLAIM_GLOW; WDLog.Log($"[Claim] glow={HandManager.CLAIM_GLOW}"); }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), RulesEngine.SWIPE_ALLOW_DIAGONAL ? "DIAGONAL SWIPES: ON — tap for off" : "DIAGONAL SWIPES: OFF — tap for on", _btnStyle))
+            { RulesEngine.SWIPE_ALLOW_DIAGONAL = !RulesEngine.SWIPE_ALLOW_DIAGONAL; WDLog.Log($"[Claim] diagonal={RulesEngine.SWIPE_ALLOW_DIAGONAL}"); }
             innerY += BTN_H + GAP;
 
             if (SHOW_LEGACY_TOOLS) {   // ── settled / not being tested (hidden 2026-10-29) ──

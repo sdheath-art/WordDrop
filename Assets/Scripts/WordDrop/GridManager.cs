@@ -352,6 +352,22 @@ namespace WordDrop
         // the board (children of the grid root — they slide with it), not to tiles. Synced from RulesEngine whenever visuals reconcile. ──
         public static Color GRASS_COLOR = new Color(0.36f, 0.72f, 0.24f, 1f);
         public static float GRASS_LEAF_SIZE = 0.34f;   // cells
+        // 11-24 GRASS ART (Spencer's lime grass tile, the small-blade version; Resources/Blockers/grass.png, 512): drawn UNDER the
+        // tile a little larger than the cell, so a leafy fringe shows round every piece. With the art the corner leaf is not needed
+        // (GRASS_CORNER_LEAF). No PNG = the old flat green patch + leaf.
+        public static float GRASS_ART_SCALE = 1.10f;   // x the cell
+        public static bool  GRASS_CORNER_LEAF = false;
+        public static int   GRASS_ART_ORDER = 4;   // board panel 0 < grid 1 < tile contact shadows 3 < GRASS ART 4 < tiles 5
+        public static float GRASS_MOW_FADE = 0.10f;   // seconds a mowed grass tile takes to fade out
+        private static Sprite s_grassArt; private static bool s_grassArtTried;
+        public static Sprite GrassArt()
+        {
+            if (s_grassArtTried) return s_grassArt;
+            s_grassArtTried = true;
+            var gt = Resources.Load<Texture2D>("Blockers/grass");
+            if (gt != null) s_grassArt = Sprite.Create(gt, new Rect(0, 0, gt.width, gt.height), new Vector2(0.5f, 0.5f), gt.width);
+            return s_grassArt;
+        }
         private GameObject[,] _grassPatch, _grassLeaf;
         private static Sprite s_grassPatch, s_grassLeaf;
         public void SyncGrass(RulesEngine rules)
@@ -367,7 +383,14 @@ namespace WordDrop
                     var go = _grassPatch[x, y];
                     if (!want)
                     {   // MOWED: the patch shrinks away and the leaf flips up and fades (a little "mow" beat)
-                        if (go != null) { var g0 = go; g0.transform.DOKill(); g0.transform.DOScale(Vector3.zero, 0.22f).SetEase(Ease.InBack).OnComplete(() => { if (g0 != null) Destroy(g0); }); _grassPatch[x, y] = null; }
+                        if (go != null)
+                        {   // 11-24 (Movie_043): the InBack shrink made a whole bright grass tile swell, then shrink, in the square the pop had just emptied.
+                            // With the art the patch just fades fast under the pop; the flat fallback patch keeps the old shrink.
+                            var g0 = go; g0.transform.DOKill(); var gsr = g0.GetComponent<SpriteRenderer>();
+                            if (GrassArt() != null && gsr != null) gsr.DOFade(0f, GRASS_MOW_FADE).SetUpdate(true).OnComplete(() => { if (g0 != null) Destroy(g0); });
+                            else g0.transform.DOScale(Vector3.zero, 0.22f).SetEase(Ease.InBack).OnComplete(() => { if (g0 != null) Destroy(g0); });
+                            _grassPatch[x, y] = null;
+                        }
                         var lf = _grassLeaf[x, y];
                         if (lf != null)
                         {
@@ -383,13 +406,24 @@ namespace WordDrop
                     if (go == null)
                     {
                         go = new GameObject($"Grass_{x}_{y}"); go.transform.SetParent(_gridRoot.transform, true);
-                        var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = s_grassPatch; sr.color = GRASS_COLOR; sr.sortingOrder = 2;   // grid 1 < GRASS 2 < tiles 5
-                        float w = CellSize * 1.02f, h = RowPitch * 1.02f;
-                        go.transform.localScale = new Vector3(w / s_grassPatch.bounds.size.x, h / s_grassPatch.bounds.size.y, 1f);
-                        go.transform.position = new Vector3(at.x + BoardSlideOffsetX, at.y, 0.05f);
+                        var art = GrassArt();
+                        var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = art ?? s_grassPatch; sr.color = art != null ? Color.white : GRASS_COLOR;
+                        // 11-24 (Spencer: "weird shifting going on behind the tiles where the grass is ... like something lighting up behind"):
+                        // each letter tile carries a soft contact shadow at order 3 (Tile.TILE_FORM_SHADOW_ORDER) that travels with it and
+                        // switches OFF whenever the tile is not showing its resting face (lit for a word, flashing, popping). At order 2 the
+                        // bright grass sat UNDER those shadows, so it darkened, slid and lit up with every fall and every word. The art now
+                        // draws ABOVE the shadows (4) and still under the tiles (5). The flat fallback patch stays at 2.
+                        sr.sortingOrder = art != null ? GRASS_ART_ORDER : 2;
+                        float w = CellSize * (art != null ? GRASS_ART_SCALE : 1.02f), h = RowPitch * (art != null ? GRASS_ART_SCALE : 1.02f);
+                        go.transform.localScale = new Vector3(w / sr.sprite.bounds.size.x, h / sr.sprite.bounds.size.y, 1f);
+                        // 11-24 (Spencer: "weird shifting going on behind the tiles where the grass is when its settling"): the art patches are
+                        // 10% larger than a cell, so neighbours OVERLAP - and every patch had the same sorting order and the same z, so which
+                        // one drew on top was a tie the renderer could break differently whenever the set of sprites changed (pops, new tiles,
+                        // debris). Each patch now has its own depth: lower rows in front, then left to right. The order can no longer flip.
+                        go.transform.position = new Vector3(at.x + BoardSlideOffsetX, at.y, 0.05f + y * 0.004f + x * 0.0004f);
                         go.transform.DOKill(); var s0 = go.transform.localScale; go.transform.localScale = s0 * 0.4f; go.transform.DOScale(s0, 0.3f).SetEase(Ease.OutBack, 2f);
                         _grassPatch[x, y] = go;
-                        if (s_grassLeaf != null)
+                        if (s_grassLeaf != null && (GRASS_CORNER_LEAF || art == null))
                         {
                             var lg = new GameObject($"GrassLeaf_{x}_{y}"); lg.transform.SetParent(_gridRoot.transform, true);
                             var lsr = lg.AddComponent<SpriteRenderer>(); lsr.sprite = s_grassLeaf; lsr.sortingOrder = 46;   // over the tiles (row bands top out ~37), under board FX (48)
@@ -2507,6 +2541,7 @@ namespace WordDrop
         public void RemoveTiles(List<Vector2Int> cells)
         {
             if (cells == null || cells.Count == 0) return;
+            if (LevelRules.HasGrassGoal && RulesEngine.Instance != null) SyncGrass(RulesEngine.Instance);   // 11-24: booster / other clears - mowed grass leaves with the tiles, not after the fall
 
             int removedCount = 0;
 

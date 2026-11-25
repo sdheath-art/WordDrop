@@ -2792,16 +2792,22 @@ namespace WordDrop
             // on the board, the plane hit a spare instead of the crate you needed.
             bool needIce = GoalOpen(LevelRules.GoalType.Ice), needCrates = GoalOpen(LevelRules.GoalType.Crates),
                  needGems = GoalOpen(LevelRules.GoalType.Gems), needCollect = GoalOpen(LevelRules.GoalType.Collect),
+                 needGrass = _grass != null && GoalOpen(LevelRules.GoalType.Grass),   // 11-25: a tome on a grass level went to a random letter
                  needDucks = GoalOpen(LevelRules.GoalType.Ducks), needBooks = GoalOpen(LevelRules.GoalType.Books), needSafes = GoalOpen(LevelRules.GoalType.Safes) || (LevelRules.BonusLevelActive && LevelRules.GOLD_RUSH_SAFES);   // BOOKSHELF / SAFE (11-03); Gold Rush safes too
             for (int x = 0; x < COLS; x++)
                 for (int y = 0; y < ROWS; y++)
                 {
                     var p = new Vector2Int(x, y); var d = _board[x, y];
-                    if (d == null || exploded.Contains(p) || area.Contains(p)) continue;
+                    if (d == null) continue;
+                    // 11-25 (Spencer: the tome "flew to the middle of the screen" instead of the last owl): an owl touching the tome sits
+                    // inside the tome's own blast, and everything in the blast was skipped BEFORE this check - so the owl was never
+                    // seen and the tome went to a random letter. A blast does not remove an owl, so it is always looked at.
                     if (d.IsDropTarget) { if (needDucks && y > 0 && y < lowDuck.y) lowDuck = p; continue; }
+                    if (exploded.Contains(p) || area.Contains(p)) continue;
                     bool isGoal = (d.IsFrozen && needIce) || (d.IsStone && d.TreasureHits == 0 && d.ShelfPart == 0 && needCrates) || (d.HasGem && needGems)
                                || (d.ShelfPart > 0 && (d.ShelfKind == 1 ? needSafes && d.ShelfBooks > 0 : needBooks))   // the propeller book homes on the bookshelf / safe (11-03 Spencer)
-                               || (needCollect && collect != '\0' && char.ToUpperInvariant(d.Letter) == collect && !d.IsStone);
+                               || (needCollect && collect != '\0' && char.ToUpperInvariant(d.Letter) == collect && !d.IsStone)
+                               || (needGrass && _grass[x, y] && !d.IsStone);
                     if (isGoal) goal.Add(p); else if (!d.IsStone) any.Add(p);
                 }
             if (goal.Count == 0 && lowDuck.x >= 0) { var under = new Vector2Int(lowDuck.x, lowDuck.y - 1); if (_board[under.x, under.y] != null && !area.Contains(under)) goal.Add(under); }
@@ -4657,6 +4663,7 @@ namespace WordDrop
         // which kills near-miss tension (and the Play On offer with it). Rule: after a move, at most CASCADE_FREE_PER_MOVE fall
         // words pop on their own — UNLESS a power-up fired that move (earned chaos stays). Words over the cap stay on the board,
         // not auto-firing, for the player to find and swipe. false = old behaviour. ──
+        public static bool SimClaimRules;   // 11-25: the bot is playing by the swipe-to-claim rules (no fall word pops by itself)
         public static bool CASCADE_CAP_ON = true;
         public static int  CASCADE_FREE_PER_MOVE = 1;
         public static bool CASCADE_LIFT_AFTER_SPECIAL = false;   // 2026-10-23: false = the cap holds even after a special fired
@@ -5602,13 +5609,15 @@ namespace WordDrop
             return false;
         }
         /// <summary>Cells within 2 of a remaining goal piece (gem, ice, crate, duck column) — where an endgame re-letter helps.</summary>
+        public HashSet<Vector2Int> GoalNeighbourhoodPublic() => GoalNeighbourhood();   // bot: a goal-focused player's setup swaps happen here
         private HashSet<Vector2Int> GoalNeighbourhood()
         {
             var set = new HashSet<Vector2Int>();
             for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
             {
                 var d = _board[x, y]; if (d == null) continue;
-                bool piece = (d.HasGem && LevelRules.HasGemGoal) || d.IsFrozen || (d.IsStone && d.TreasureHits == 0 && LevelRules.HasCrateGoal) || d.IsDropTarget;
+                bool piece = (d.HasGem && LevelRules.HasGemGoal) || d.IsFrozen || (d.IsStone && d.TreasureHits == 0 && LevelRules.HasCrateGoal) || d.IsDropTarget
+                          || (_grass != null && _grass[x, y] && LevelRules.HasGrassGoal);   // 11-25 grass
                 if (!piece) continue;
                 for (int dx = -2; dx <= 2; dx++) for (int dy = -2; dy <= 2; dy++) set.Add(new Vector2Int(x + dx, y + dy));
             }
@@ -7430,7 +7439,7 @@ namespace WordDrop
             if (FullBoardActive && CASCADE_CAP_ON && (_stepChainDepth > 0 || _boosterFallCascade) && (!SpecialFiredThisMove || !CASCADE_LIFT_AFTER_SPECIAL) && newWords.Count > 0)
             {
                 newWords.Sort((a, b) => b.Word.Length.CompareTo(a.Word.Length));   // the free one is the longest
-                int allow = Mathf.Max(0, CASCADE_FREE_PER_MOVE - CascadeFreeThisMove);
+                int allow = Mathf.Max(0, (((HandManager.ClaimModeOn && !Simulating) || (Simulating && SimClaimRules)) ? 0 : CASCADE_FREE_PER_MOVE) - CascadeFreeThisMove);   // swipe-to-claim prototype: no fall word pops by itself
                 for (int i = newWords.Count - 1; i >= allow; i--)
                 {
                     string key = newWords[i].Word + "|" + newWords[i].CellKey;
@@ -9198,7 +9207,14 @@ namespace WordDrop
             // Purge scored word keys AFTER all splash damage finalized
             PurgeScoredKeysForCells(allExplodedCells);
             PurgeStepScoredKeysForCells(allExplodedCells);
-            if (LevelRules.HasGrassGoal && !(SurvivalManager.AwaitingNextLevel && !Simulating)) MowGrass(allExplodedCells);
+            if (LevelRules.HasGrassGoal && !(SurvivalManager.AwaitingNextLevel && !Simulating))
+            {
+                MowGrass(allExplodedCells);
+                // 11-24 (Spencer: a word that makes a bomb "will remove the grass from all the letter tiles it effects cept the tile where
+                // the bomb is created"): the newborn power-up's tile survives, so it is not in the exploded list - but the word DID use
+                // that square. Same rule as the gem on a survivor tile (10-28: "since you already made a word with it, it should count").
+                if (specialsCreated.Count > 0) { var born = new List<Vector2Int>(); foreach (var sc in specialsCreated) born.Add(sc.Key); MowGrass(born); }
+            }
             // After the win (bonus blast) nothing counts toward the finished goals — and so nothing new is owed a HUD flight.
             if (SurvivalManager.AwaitingNextLevel && !Simulating) { preLetters = null; preGems = null; }
             if (preLetters != null)

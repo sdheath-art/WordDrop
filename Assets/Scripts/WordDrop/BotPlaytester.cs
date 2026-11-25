@@ -60,7 +60,7 @@ namespace WordDrop
         public void Run() { if (!Running) { s_only = null; StartCoroutine(RunRoutine(FIRST_LEVEL, LAST_LEVEL, TRIALS)); } }
         // SELECTED LEVELS (2026-10-30, Spencer: "one good thing is that we can iterate and tune very quickly"): run only the levels
         // that changed, with more games each (tighter numbers) - ~4 min instead of ~25. SELECTED = "11,17,19" style list.
-        public static string SELECTED = "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19"; public static int SELECTED_TRIALS = 100;   // 11-03: shelf + safe re-check (was "11,17,19")
+        public static string SELECTED = "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,26"; public static int SELECTED_TRIALS = 60;   // 11-03: shelf + safe re-check (was "11,17,19")
         private static System.Collections.Generic.HashSet<int> s_only;
         public void RunSelected()
         {
@@ -74,7 +74,7 @@ namespace WordDrop
         }
 
         public static int GOAL_HELP_DEAD_TURNS = 3;   // bot proxy for 'stuck' (the game uses misses / idle seconds)
-        private class GameResult { public string goals = ""; public bool won, error; public int remainingAtBudget = -1; public int drags, used, left, words, w4, w5, w6, specialsMade, specialsFired, goldRefunds, cascadeWords, noWordMoves, shuffles, refreshes, goalDeadTurns, endDeadTurns, turns, staleTurns, commonSum; public long points; }
+        private class GameResult { public string goals = ""; public bool won, error; public int remainingAtBudget = -1; public int drags, used, left, words, w4, w5, w6, specialsMade, specialsFired, goldRefunds, cascadeWords, noWordMoves, shuffles, refreshes, goalDeadTurns, endDeadTurns, turns, staleTurns, commonSum, holds, stacks, ignored, focusTurns, focusGoalTurns; public long points; }
 
         private IEnumerator RunRoutine(int first, int last, int trials)
         {
@@ -92,7 +92,8 @@ namespace WordDrop
 
             var csv = new StringBuilder("level,name,mode,trial,goals,finished,net_moves,budget,win_at_budget,moves_used,words,w4,w5,w6plus,cascade_words,no_word_moves,specials_made,specials_fired,gold_refunds,points\n");
             var summary = new StringBuilder();
-            summary.AppendLine($"BOT PLAYTEST {System.DateTime.Now:yyyy-MM-dd HH:mm}  levels {(s_only != null ? string.Join(",", s_only) : first + "-" + last)}  x{trials} games per bot  (EXPERT sees every word; CASUAL sees {CASUAL_SEES} per move)");
+            summary.AppendLine($"BOT PLAYTEST {System.DateTime.Now:yyyy-MM-dd HH:mm}  levels {(s_only != null ? string.Join(",", s_only) : first + "-" + last)}  x{trials} games per bot  (EXPERT sees every word; CASUAL sees {CASUAL_SEES} per move, {(CASUAL_FOCUSED ? "GOAL-FOCUSED: notices goal words first, fumbles near the goals" : "SCATTERED: notices words anywhere")})");
+            summary.AppendLine(CLAIM_RULES ? $"RULES: SWIPE TO CLAIM - no fall word pops by itself; a swap's word is claimed free; casual holds a word to cross it {CLAIM_HOLD_CASUAL:P0} of the time (expert always); a wasted swap's word is noticed {CLAIM_NOTICE:P0} of the time." : "RULES: AUTO-POP (the live game).");
             summary.AppendLine("Games play UNCAPPED; 'net' = moves to finish after gold refunds. win% = share of games finishing within today's budget.");
             summary.AppendLine("Suggested budget = the CASUAL bot's 95th-percentile net moves (~95% of casual players would finish).\n");
             summary.AppendLine("LVL  name                      budget | EXPERT win%  net p50/p90 | CASUAL win%  net p50/p90  left(wins)  near-miss | SUGGEST | goals");
@@ -125,7 +126,7 @@ namespace WordDrop
                 summary.AppendLine($"       fired per game (both bots): {FiredLabel(byMode[0].Count + byMode[1].Count)}");
                 { int tt = 0, st = 0; long cs = 0; foreach (var r in byMode[1]) { tt += r.turns; st += r.staleTurns; cs += r.commonSum; }
                   int gd = 0, rf = 0, sh = 0, gw = 0, ed = 0, dg = 0, games = byMode[1].Count; foreach (var r in byMode[1]) { dg += r.drags; gd += r.goalDeadTurns; rf += r.refreshes; sh += r.shuffles; ed += r.endDeadTurns; if (r.refreshes > 0) gw++; }
-                  summary.AppendLine($"       casual board: {(tt > 0 ? (float)cs / tt : 0):F1} common-word swaps per turn, STALE (<{STALE_BELOW}) {(tt > 0 ? 100f * st / tt : 0):F0}% of turns, GOAL-DEAD {(tt > 0 ? 100f * gd / tt : 0):F0}% of turns END-STALL {(games > 0 ? (float)ed / games : 0):F1} turns/game stuck on the last {RulesEngine.ENDGAME_PIECES}, goal help {(games > 0 ? (float)rf / games : 0):F1}/game in {(games > 0 ? 100f * gw / games : 0):F0}% of games (board shuffles {(games > 0 ? (float)sh / games : 0):F1}/game), DRAGS {(games > 0 ? (float)dg / games : 0):F1}/game"); }
+                  summary.AppendLine($"       casual board: {(tt > 0 ? (float)cs / tt : 0):F1} common-word swaps per turn, STALE (<{STALE_BELOW}) {(tt > 0 ? 100f * st / tt : 0):F0}% of turns, GOAL-DEAD {(tt > 0 ? 100f * gd / tt : 0):F0}% of turns END-STALL {(games > 0 ? (float)ed / games : 0):F1} turns/game stuck on the last {RulesEngine.ENDGAME_PIECES}, goal help {(games > 0 ? (float)rf / games : 0):F1}/game in {(games > 0 ? 100f * gw / games : 0):F0}% of games (board shuffles {(games > 0 ? (float)sh / games : 0):F1}/game), DRAGS {(games > 0 ? (float)dg / games : 0):F1}/game");  if (CLAIM_RULES) { int ho = 0, sk = 0, ig = 0; foreach (var r in byMode[1]) { ho += r.holds; sk += r.stacks; ig += r.ignored; } summary.AppendLine($"       casual claim play: held a word {(games > 0 ? (float)ho / games : 0):F1}/game, stacked claims {(games > 0 ? (float)sk / games : 0):F1}/game, words not noticed {(games > 0 ? (float)ig / games : 0):F1}/game"); } }
             }
             Destroy(simGO);
             summary.AppendLine($"\n{(Time.realtimeSinceStartup - t0):F0}s. Board {RulesEngine.COLS}x{s_rowsSeen}. Gem shortfall games: {LevelRules.SimGemShortfall} (should be 0). 'left(wins)' = casual moves left as % of budget on its wins (target 25-40% early). 'near-miss' = casual games that run out with 1-{NEAR_MISS_PIECES} pieces left (Play On moments). Cascade cap {CapLabel}. Casual wastes {CASUAL_NOWORD_RATE:P0} of moves on no-word swaps (human-calibrated), sees common words only: {CASUAL_COMMON_ONLY}, fishing hint: {FISHING_HINT_MODEL}, endgame airplane: {RulesEngine.ENDGAME_AIRPLANE}, re-letter rescue: {RulesEngine.ENDGAME_RESCUE_ON}.");
@@ -175,7 +176,7 @@ namespace WordDrop
             // and the refill plants / smart rain letters are survival-gated too (runs 1-2 played a 9x5 board — crates didn't fit).
             bool wasSurvival = SurvivalManager.IsSurvivalMode;
             SurvivalManager.IsSurvivalMode = true;
-            RulesEngine.Simulating = true; WDLog.Muted = true;
+            RulesEngine.Simulating = true; WDLog.Muted = true; RulesEngine.SimClaimRules = CLAIM_RULES;
             try { return PlayOne(sim, level, casual, out budget); }
             catch (System.Exception ex)
             {
@@ -186,7 +187,7 @@ namespace WordDrop
             finally
             {
                 sim.FinalizeDrop();   // a game that ended mid-resolution must not leave the sim engine stuck
-                RulesEngine.Simulating = false; WDLog.Muted = wasMuted;
+                RulesEngine.Simulating = false; WDLog.Muted = wasMuted; RulesEngine.SimClaimRules = false;
                 SurvivalManager.IsSurvivalMode = wasSurvival;
                 LevelRules.RestoreSimSnapshot(snap);
                 StageStats.Load(stats, planted);
@@ -208,9 +209,24 @@ namespace WordDrop
             int target = scoreLevel ? SurvivalManager.ComputeStageTarget(level) : 0;
             int left = UNCAPPED_MOVES;   // play to the finish; the report judges against the budget afterwards
             int guard = 0, missStreak = 0, bounces = 0, deadStreak = 0; bool hintNext = false;
+            bool claim = CLAIM_RULES, planned = false; List<RulesWordMatch> held = null; Vector2Int pa = default, pb = default;
             while (left > 0 && guard++ < 200)
             {
                 if (GoalsDone(sim, scoreLevel, res.points, target)) break;
+                if (claim && planned)
+                {   // the second half of a plan: the crossing swap, then one swipe takes the held word and the new one together
+                    planned = false;
+                    DoSwap(sim, pa, pb); left--; res.used++; missStreak = 0;
+                    var both = FindSwapWords(sim, pa, pb);
+                    if (both.Count > 0 && held != null && held.Count > 0) res.stacks++;
+                    if (held != null) foreach (var h in held) if (!both.Exists(q => q.Word == h.Word && q.CellKey == h.CellKey)) both.Add(h);
+                    held = null;
+                    ClaimWords(sim, both, res);
+                    left += ResolveEverything(sim, res);
+                    if (res.remainingAtBudget < 0 && res.used - res.goldRefunds >= budget)
+                        res.remainingAtBudget = GoalsDone(sim, scoreLevel, res.points, target) ? 0 : GoalPiecesLeft(sim);
+                    continue;
+                }
                 sim.TryStaleRescue(out _, out _, out _);   // the game re-letters a tile on a stale board (HintManager.StaleCheck)
                 // GOAL AREA DEAD (2026-10-30): goals remain but no common word reaches one -> the game re-deals the letters around the
                 // goals ("Fresh letters!"). Counted BEFORE the fix, so 'goal-dead %' says how often the board would have stalled.
@@ -240,7 +256,23 @@ namespace WordDrop
                 bool hinted = casual && FISHING_HINT_MODEL && (missStreak >= HintManager.FISHING_SWAPS || hintNext) && (!rnd || RANDOM_PLAYER == 2); hintNext = false;
                 if (hinted && sim.FindSwapHint(false, out var ha, out var hb, out _)) { cands.Clear(); cands.Add((ha, hb, 1)); }
                 else if (rnd || (casual && CASUAL_NOWORD_RATE > 0f && Random.value < CASUAL_NOWORD_RATE)) cands.Clear();
-                if (casual && cands.Count > CASUAL_SEES)
+                if (casual && CASUAL_FOCUSED && cands.Count > CASUAL_SEES)
+                {   // GOAL-FOCUSED (11-25): this player looks AROUND THE GOALS first - the words it notices are the goal words, and
+                    // only if there are fewer than it can take in does it notice others.
+                    var goalFirst = new List<(Vector2Int a, Vector2Int b, int score)>(); var rest = new List<(Vector2Int a, Vector2Int b, int score)>();
+                    foreach (var c in cands)
+                    {
+                        bool g = false;
+                        foreach (var w in sim.WordsIfSwapped(c.a, c.b)) if (w?.Cells != null && sim.WordCellsHitGoal(w.Cells, w.Word)) { g = true; break; }
+                        (g ? goalFirst : rest).Add(c);
+                    }
+                    void Mix(List<(Vector2Int a, Vector2Int b, int score)> l) { for (int i = l.Count - 1; i > 0; i--) { int j = Random.Range(0, i + 1); var t = l[i]; l[i] = l[j]; l[j] = t; } }
+                    Mix(goalFirst); Mix(rest);
+                    res.focusTurns++; if (goalFirst.Count > 0) res.focusGoalTurns++;
+                    cands.Clear(); cands.AddRange(goalFirst); cands.AddRange(rest);
+                    cands.RemoveRange(CASUAL_SEES, cands.Count - CASUAL_SEES);
+                }
+                else if (casual && cands.Count > CASUAL_SEES)
                 {   // a person spots a handful of the available words, not all of them — keep a random few
                     for (int i = 0; i < CASUAL_SEES; i++) { int j = Random.Range(i, cands.Count); var tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; }
                     cands.RemoveRange(CASUAL_SEES, cands.Count - CASUAL_SEES);
@@ -250,7 +282,7 @@ namespace WordDrop
                 if (BOT_DRAGS && !hinted && !rnd)
                 {
                     var drags = sim.EnumerateSwipeWords(casual && CASUAL_COMMON_ONLY);
-                    if (drags.Count > 0 && (!casual || Random.value < BOT_DRAG_SEE))
+                    if (drags.Count > 0 && (!casual || Random.value < (claim ? CLAIM_DRAG_SEE : BOT_DRAG_SEE)))
                     {
                         var pick = drags[0];
                         if (casual) pick = drags[Random.Range(0, drags.Count)];   // a person spots one, not the best
@@ -284,15 +316,27 @@ namespace WordDrop
                     if (++bounces > 400) break;   // safety: a board with nothing findable even after a shuffle
                     continue;
                 }
-                else if (!RandomLegalSwap(sim, out a, out b)) break;   // nothing movable at all
+                else if (!RandomLegalSwap(sim, out a, out b, casual && CASUAL_FOCUSED ? sim.GoalNeighbourhoodPublic() : null)) break;   // nothing movable at all
                 else res.noWordMoves++;
                 missStreak = cands.Count > 0 ? 0 : missStreak + 1;
 
                 RulesEngine.GoalDeadAtSwap = goalDead;   // stranded goal: a special this swap earns becomes an airplane (like the game)
+                bool wasted = cands.Count == 0;
                 DoSwap(sim, a, b);
                 left--; res.used++;
+                if (claim)
+                {
+                    var nw = FindSwapWords(sim, a, b);
+                    if (nw.Count > 0 && wasted && Random.value > CLAIM_NOTICE) { res.ignored += nw.Count; nw.Clear(); }   // not noticed: it stays on the board
+                    if (nw.Count > 0 && left > 0 && Random.value < (casual ? CLAIM_HOLD_CASUAL : CLAIM_HOLD_EXPERT) && FindCrossSwap(sim, nw, casual, out pa, out pb))
+                    { held = nw; planned = true; res.holds++; }   // hold it: next turn plays the crossing swap
+                    else { ClaimWords(sim, nw, res); left += ResolveEverything(sim, res); }
+                }
+                else
+                {
                 ArmSwapWords(sim, a, b, res);
                 left += ResolveEverything(sim, res);
+                }
                 if (res.remainingAtBudget < 0 && res.used - res.goldRefunds >= budget)
                     res.remainingAtBudget = GoalsDone(sim, scoreLevel, res.points, target) ? 0 : GoalPiecesLeft(sim);   // what the player would see as moves hit 0
             }
@@ -308,7 +352,7 @@ namespace WordDrop
             return $"rocket {(k[RulesEngine.SPECIAL_ROCKET_H] + k[RulesEngine.SPECIAL_ROCKET_V]) / g:F1}  bomb {k[RulesEngine.SPECIAL_BOMB] / g:F1}  disco {k[RulesEngine.SPECIAL_DISCO] / g:F1}  " +
                    $"TNT {k[RulesEngine.SPECIAL_TNT] / g:F1}  airplane {k[RulesEngine.SPECIAL_AIRPLANE] / g:F1}  combos {combos / g:F1}";
         }
-        private static string CapLabel => RulesEngine.CASCADE_CAP_ON ? $"ON ({RulesEngine.CASCADE_FREE_PER_MOVE} free fall word/move)" : "OFF";
+        private static string CapLabel => CLAIM_RULES ? "claim rules (0 free fall words/move)" : RulesEngine.CASCADE_CAP_ON ? $"ON ({RulesEngine.CASCADE_FREE_PER_MOVE} free fall word/move)" : "OFF";
 
         private static int GoalPiecesLeft(RulesEngine sim)
         {
@@ -320,6 +364,7 @@ namespace WordDrop
                     case LevelRules.GoalType.Ice:    n += sim.CountFrozenCells(); break;
                     case LevelRules.GoalType.Books:  n += sim.CountShelfBooks(); break;   // BOOKSHELF (11-03)
                     case LevelRules.GoalType.Safes:  n += sim.CountSafes(); break;        // SAFE (11-03)
+                    case LevelRules.GoalType.Grass:  n += sim.CountGrass(); break;
                     case LevelRules.GoalType.Theme:  n += Mathf.Max(0, g.Target - LevelRules.ThemeMade); break;
                     default:                         n += Mathf.Max(0, g.Target - LevelRules.Collected); break;
                 }
@@ -337,6 +382,7 @@ namespace WordDrop
                     case LevelRules.GoalType.Ice:    if (sim.CountFrozenCells() > 0) return false; break;
                     case LevelRules.GoalType.Books:  if (sim.CountShelfBooks() > 0) return false; break;   // BOOKSHELF (11-03)
                     case LevelRules.GoalType.Safes:  if (sim.CountSafes() > 0) return false; break;        // SAFE (11-03)
+                    case LevelRules.GoalType.Grass:  if (sim.CountGrass() > 0) return false; break;        // GRASS (11-25: fell through to the gem counter, so a grass level never finished)
                     case LevelRules.GoalType.Theme:  if (LevelRules.ThemeMade < g.Target) return false; break;
                     default:                         if (LevelRules.Collected < g.Target) return false; break;   // gems / collect / ducks
                 }
@@ -344,8 +390,20 @@ namespace WordDrop
             return true;
         }
 
-        private static bool RandomLegalSwap(RulesEngine sim, out Vector2Int a, out Vector2Int b)
+        /// <param name="near">goal-focused player: a wasted swap is a fumble NEAR the goals (both tiles inside this area) when one exists.</param>
+        private static bool RandomLegalSwap(RulesEngine sim, out Vector2Int a, out Vector2Int b, HashSet<Vector2Int> near = null)
         {
+            if (near != null && near.Count > 0)
+            {
+                var close = new List<(Vector2Int, Vector2Int)>();
+                foreach (var np in near)
+                {
+                    var na = sim.GetCell(np.x, np.y); if (!RulesEngine.IsBotMovable(na)) continue;
+                    foreach (var q in new[] { new Vector2Int(np.x + 1, np.y), new Vector2Int(np.x, np.y + 1) })
+                    { if (!near.Contains(q)) continue; var nb = sim.GetCell(q.x, q.y); if (RulesEngine.IsBotMovable(nb) && nb.Letter != na.Letter) close.Add((np, q)); }
+                }
+                if (close.Count > 0) { var pc = close[Random.Range(0, close.Count)]; a = pc.Item1; b = pc.Item2; return true; }
+            }
             var opts = new List<(Vector2Int, Vector2Int)>();
             for (int x = 0; x < RulesEngine.COLS; x++)
                 for (int y = 0; y < RulesEngine.ROWS; y++)
@@ -372,6 +430,78 @@ namespace WordDrop
             RulesEngine.ShortWordCells = RulesEngine.LastSwapCells;
         }
 
+        // ── SWIPE-TO-CLAIM RULES (11-25, Spencer: make the bot give "the most accurate numbers" for the new mode). The bot plays by
+        // them whenever the game's own SWIPE TO CLAIM switch is on. What changes, each copied from the live code:
+        //  * no fall word pops by itself (RulesEngine.SimClaimRules -> the cascade cap allows 0); it lies on the board and can be
+        //    dragged for a move like any found word;
+        //  * a swap's word is CLAIMED (armed as a swipe: no swapped cell, no found-it bonus) - at once, or HELD one turn while the
+        //    bot plays a second swap whose word crosses / extends it, then both are claimed together (the planner's bomb / long word);
+        //  * a word a wasted swap happens to form is only noticed some of the time.
+        // Rates are set from Spencer's own claim-mode session (11-25: 442 swaps, 333 words formed, 87 never claimed, 14 stacked).
+        public static bool  CLAIM_RULES => HandManager.CLAIM_MODE;
+        /// <summary>11-25 (Spencer: a bot that "concentrates on forming words around objectives"): the casual player looks at the goals
+        /// first - it notices goal words before any others, and its wasted swaps are fumbles near the goals, not anywhere on the
+        /// board. Same eyesight (CASUAL_SEES), same share of wasted moves. false = the scattered casual player (every run before
+        /// 11-25 09:30). FX Test Menu row "BOT CASUAL: ...".</summary>
+        public static bool  CASUAL_FOCUSED = true;
+        public static float CLAIM_HOLD_CASUAL = 0.08f, CLAIM_HOLD_EXPERT = 1f;   // 11-25 run 1: 0.25 stacked 1.4-1.8/game, Spencer ~0.45 -> 0.08. Expert: always LOOKS, but only holds when the crossing swap is also its best swap (always holding lost it L11)
+        public static float CLAIM_DRAG_SEE = 0.20f;   // casual notices a word lying on the board (run 1 at 0.35: 2.0-2.5 drags/game, Spencer ~1.3)
+        //   // chance the player looks for a crossing word before claiming
+        public static float CLAIM_NOTICE = 0.5f;                                 // chance a word made by a wasted swap is claimed at all
+        private static List<RulesWordMatch> FindSwapWords(RulesEngine sim, Vector2Int a, Vector2Int b)
+        {
+            var res = new List<RulesWordMatch>();
+            var found = sim.ScanSeedCellsPublic(new List<Vector2Int> { a, b });
+            if (found == null) return res;
+            foreach (var m in found)
+                if (m != null && m.Cells != null && !string.IsNullOrEmpty(m.Word) && !sim.IsClaimBlocked(m.Word + "|" + m.CellKey)) res.Add(m);
+            return res;
+        }
+        /// <summary>SwipeCommitSequence + AddWaitingPartners, data only: the words are armed together as one swipe.</summary>
+        private static void ClaimWords(RulesEngine sim, List<RulesWordMatch> words, GameResult res)
+        {
+            if (words == null || words.Count == 0) return;
+            RulesEngine.BeginPlayerMove();
+            RulesEngine.LastSwapCells = null;   // a swiped word has no swapped cell
+            var armed = new List<RulesWordMatch>();
+            foreach (var m in words)
+            {
+                string key = m.Word + "|" + m.CellKey;
+                if (sim.IsClaimBlocked(key)) continue;
+                bool whole = true; foreach (var c in m.Cells) if (sim.GetCell(c.x, c.y) == null) { whole = false; break; }
+                if (!whole) continue;
+                sim.RegisterScoredKey(key);
+                int turn = sim.GlobalTurn;
+                if (sim.PrimedRegistry.AddPrimedWord(m.Word, m.Cells, MatchController.PLAYER_HUMAN, turn, turn + sim.GetFuseLengthPublic(m.Word.Length),
+                        RulesEngine.CalculateWordScore(m.Word, m.WildLetterIndices), false, sim.HasHighValueLetter(m)) < 0) continue;
+                armed.Add(m); CountWord(res, m.Word, false);
+            }
+            RulesEngine.NoteSwapWords(armed);
+        }
+        /// <summary>A swap, away from the held word's own tiles, whose word shares a tile with it (crosses or extends it). Best score wins.</summary>
+        private static bool FindCrossSwap(RulesEngine sim, List<RulesWordMatch> held, bool casual, out Vector2Int a, out Vector2Int b)
+        {
+            a = b = default; int top = int.MinValue;
+            var cells = new HashSet<Vector2Int>(); foreach (var h in held) foreach (var c in h.Cells) cells.Add(c);
+            int best = int.MinValue;
+            foreach (var o in sim.EnumerateWordSwaps(casual && CASUAL_COMMON_ONLY))
+            {
+                if (o.score > top) top = o.score;
+                if (cells.Contains(o.a) || cells.Contains(o.b) || o.score <= best) continue;
+                bool cross = false;
+                foreach (var w in sim.WordsIfSwapped(o.a, o.b))
+                {
+                    if (w?.Cells == null) continue;
+                    bool inside = false, outside = false;
+                    foreach (var c in w.Cells) { if (cells.Contains(c)) inside = true; else outside = true; }
+                    if (inside && outside) { cross = true; break; }
+                }
+                if (cross) { best = o.score; a = o.a; b = o.b; }
+            }
+            if (!casual && best < top) return false;   // expert: holding is only worth it when the crossing swap is the move it would make anyway
+            return best > int.MinValue;
+        }
+
         public static bool  BOT_DRAGS = true;
         public static float BOT_DRAG_SEE = 0.35f;   // casual: share of turns it notices a word already on the board (players under-use drags)
         /// <summary>SwipeCommitSequence's data: the dragged word is armed (no swapped cell), with the found-it special bonus.</summary>
@@ -383,7 +513,7 @@ namespace WordDrop
             int turn = sim.GlobalTurn;
             int id = sim.PrimedRegistry.AddPrimedWord(m.Word, m.Cells, MatchController.PLAYER_HUMAN, turn, turn + sim.GetFuseLengthPublic(m.Word.Length),
                 RulesEngine.CalculateWordScore(m.Word, m.WildLetterIndices), false, sim.HasHighValueLetter(m));
-            if (id >= 0 && RulesEngine.DRAG_REWARD) RulesEngine.SwipedPrimedIds.Add(id);
+            if (id >= 0 && RulesEngine.DRAG_REWARD && !CLAIM_RULES) RulesEngine.SwipedPrimedIds.Add(id);   // claim mode: no found-it bonus (every word is swiped)
             CountWord(res, m.Word, false);
         }
 
