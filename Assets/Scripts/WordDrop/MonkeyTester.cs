@@ -54,6 +54,14 @@ namespace WordDrop
         public static int   MAX_SHOTS = 40;
         public static float REPORT_EVERY = 30f;
 
+        // PLAYER MODE (2026-11-26 Spencer: "is it possible for you to get the bot to play and you use the screen record function
+        // for sight?"). The same fake finger, but it PLAYS: does a lesson's taught move, swipes a word that is waiting to be
+        // claimed, else makes the game's own hint swap; on a card / the home screen it presses the forward button (Play, Continue,
+        // Next ...) and keeps off Close / Shop / Settings. One gesture every PLAYER_PACE seconds so frames show settled boards.
+        // Started by BotRemote ("watch=1" request line), which also saves the screenshots.
+        public static bool  PLAYER_MODE = false;
+        public static float PLAYER_PACE = 1.1f;
+        private string _playerButtons = "";
         public bool Running { get; private set; }
         public string Status { get; private set; } = "";
         public static string Folder => Path.Combine(Path.GetDirectoryName(Application.dataPath), "MonkeyReports");
@@ -239,6 +247,7 @@ namespace WordDrop
         /// <summary>Pause between gestures: mostly none (hammering), sometimes a breath so the board can settle and real play happens.</summary>
         private void ChooseGap(float now)
         {
+            if (PLAYER_MODE) { _gapFrames = 0; _gapUntil = now + PLAYER_PACE; return; }
             double r = _rng.NextDouble();
             if (r < 0.50) { _gapFrames = _rng.Next(0, 7); _gapUntil = 0f; }
             else if (r < 0.85) { _gapFrames = 0; _gapUntil = now + 0.1f + (float)_rng.NextDouble() * 0.5f; }
@@ -251,6 +260,7 @@ namespace WordDrop
         {
             bool board = BoardExists();
             bool covered = Covered(out _);
+            if (PLAYER_MODE) { PlanPlayerGesture(board, covered); return; }
             double r = _rng.NextDouble();
             // share of each gesture: board open vs a card / the home screen on top
             double real = covered ? 0.06 : 0.32, drag = covered ? 0.05 : 0.10, swipe = covered ? 0.04 : 0.08, cell = covered ? 0.04 : 0.10,
@@ -270,6 +280,69 @@ namespace WordDrop
             else { Mash(board); return; }
             // the chosen gesture had no target right now - press a button instead, or tap anywhere
             if (!ButtonTap()) AnywhereTap();
+        }
+
+        private static readonly string[] s_goNames = { "Play", "Continue", "Advance", "Confirm", "Next", "Claim", "Collect", "Start", "Retry", "Again", "Skip", "Ok", "OK" };
+        private static readonly string[] s_avoidNames = { "Close", "Settings", "Help", "Exit", "Ad", "Share", "Shop", "Buy", "Daily", "Menu", "Survival", "TileBag", "Shuffle", "Hint", "Tab", "Nav", "Profile", "Reset", "Booster", "Mallet", "Store", "Pack", "Coin" };
+        private void PlanPlayerGesture(bool board, bool covered)
+        {
+            if (board && !covered)
+            {
+                if (BoosterIntro.Running)
+                {   // the booster lesson: press the lit slot, then (once it is armed) a tile in the middle of the board
+                    var bmI = BoosterManager.Instance;
+                    if (bmI != null && bmI.AimMode)
+                    {
+                        var pc = new Vector2Int(RulesEngine.COLS / 2, Mathf.Max(1, RulesEngine.ROWS / 2));
+                        if (BoosterManager.TutorialAllowed != null) foreach (var c in BoosterManager.TutorialAllowed) { pc = c; break; }
+                        AddTap(CellScreen(pc.x, pc.y), 2); Note("PLAYER", $"booster lesson: tap tile ({pc.x},{pc.y})"); return;
+                    }
+                    if (BoosterIntro.StepSlot != null && ScreenPointOf(BoosterIntro.StepSlot, out var ps)) { AddTap(ps, 2); Note("PLAYER", "booster lesson: tap the lit slot " + BoosterIntro.StepSlot.name); return; }
+                }
+                if (TutorialBeats.BlocksInput)
+                {
+                    if (TutorialBeats.TaughtMove(_taught) && _taught.Count >= 2 && _taught[0] == _taught[_taught.Count - 1])
+                    { var p0 = CellScreen(_taught[0].x, _taught[0].y); AddTap(p0, 2); AddGap(5); AddTap(p0, 2); Note("PLAYER", $"double-tap ({_taught[0].x},{_taught[0].y})"); return; }
+                    if (TaughtMove()) return;
+                    if (_taught.Count == 1) { var p1 = CellScreen(_taught[0].x, _taught[0].y); AddTap(p1, 2); AddGap(4); AddTap(p1, 2); Note("PLAYER", $"double-tap ({_taught[0].x},{_taught[0].y})"); return; }
+                }
+                var hm = HandManager.Instance;
+                if (hm != null && hm.TryGetWaitingWord(out var cells, out var word) && cells != null && cells.Count >= 2)
+                {
+                    var a = cells[0]; var b = cells[cells.Count - 1];
+                    AddDrag(CellScreen(a.x, a.y), CellScreen(b.x, b.y), cells.Count * 5);
+                    Note("PLAYER", $"claim '{word}' ({a.x},{a.y})->({b.x},{b.y})");
+                    return;
+                }
+                Vector2Int sa, sb; List<Vector2Int> hc; bool found;
+                try { found = RulesEngine.Instance.FindSwapHint(false, out sa, out sb, out hc); } catch { found = false; sa = sb = default; }
+                if (found && sa.x >= 0 && sb.x >= 0)
+                {
+                    AddDrag(CellScreen(sa.x, sa.y), CellScreen(sb.x, sb.y), 8);
+                    Note("PLAYER", $"swap ({sa.x},{sa.y})->({sb.x},{sb.y})");
+                    return;
+                }
+                if (TutorialBeats.BlocksInput) { AddTap(new Vector3(Screen.width * 0.5f, Screen.height * 0.12f, 0f), 2); Note("PLAYER", "tap (lesson up, no taught move)"); return; }
+                Note("PLAYER", "no move found - waiting");
+                AddGap(30);
+                return;
+            }
+            // a card or the home screen: the forward button if there is one, never a way out / a shop
+            CollectButtons();
+            var sbn = new StringBuilder(); foreach (var t in _targets) sbn.Append(t.name).Append(' ');
+            if (sbn.ToString() != _playerButtons) { _playerButtons = sbn.ToString(); Note("PLAYER", "buttons on screen: " + _playerButtons); }
+            foreach (var go in s_goNames)
+                foreach (var t in _targets)
+                    if (t.name.IndexOf(go, StringComparison.Ordinal) >= 0) { AddTap(t.pos, 2); Note("PLAYER", "button " + t.name); return; }
+            var ok = new List<(Vector3 pos, string name)>();
+            foreach (var t in _targets)
+            {
+                bool bad = false; foreach (var av in s_avoidNames) if (t.name.IndexOf(av, StringComparison.Ordinal) >= 0) { bad = true; break; }
+                if (!bad) ok.Add(t);
+            }
+            if (ok.Count > 0) { var t = ok[_rng.Next(0, ok.Count)]; AddTap(t.pos, 2); Note("PLAYER", "button (unlisted) " + t.name); return; }
+            AddTap(new Vector3(Screen.width * 0.5f, Screen.height * 0.3f, 0f), 2);
+            Note("PLAYER", "tap to continue");
         }
 
         private bool BoardExists() => GridManager.Instance != null && RulesEngine.Instance != null && Camera.main != null

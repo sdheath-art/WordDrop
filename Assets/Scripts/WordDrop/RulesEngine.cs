@@ -2784,7 +2784,7 @@ namespace WordDrop
                     if (used.Contains(c)) continue;
                     if (IsVoid(c, 0)) continue;   // shaped board: ducks leave from row 0, so their column must reach it
                     int y = -1;
-                    if (DUCKS_START_TOP) { for (int yy = ROWS - 1; yy >= ROWS / 2; yy--) if (!IsVoid(c, yy)) { y = yy; break; } }
+                    if (DUCKS_START_TOP) { for (int yy = ROWS - 1 - Mathf.Clamp(LevelRules.OwlStartDrop, 0, ROWS / 2 - 1); yy >= ROWS / 2; yy--) if (!IsVoid(c, yy)) { y = yy; break; } }
                     else y = SurvivalRng.Range(ROWS / 2 - 1, ROWS - 3);
                     if (y < 0) continue;
                     var d = _board[c, y];

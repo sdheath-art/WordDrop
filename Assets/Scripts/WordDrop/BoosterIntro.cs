@@ -21,6 +21,7 @@ namespace WordDrop
         public static float STEP_TIMEOUT = 20f;
         public static BoosterIntro Instance { get; private set; }
         public static bool Running { get; private set; }
+        public static RectTransform StepSlot;
         /// <summary>11-06: a booster lesson is about to start this level (TutorialBeats waits for it).</summary>
         public static bool Pending { get; private set; }
         private const string PREF = "booster_intro_";
@@ -97,7 +98,7 @@ namespace WordDrop
             while (true)
             {
                 // STEP 1: tap the slot
-                var sr = SlotScreenRect(slot.SlotRect(id));
+                var sr = SlotScreenRect(slot.SlotRect(id)); StepSlot = slot.SlotRect(id);   // 11-26: read by the visible bot (MonkeyTester player mode)
                 string nm = (bm.GetBoosterById(id)?.DisplayName ?? id).ToUpperInvariant();
                 ShowStep(sr, null, null, $"Tap on {nm} to select it!", true);   // 11-06 RM: "Tap on ROYAL HAMMER to select it!"
                 ShowFree(sr);

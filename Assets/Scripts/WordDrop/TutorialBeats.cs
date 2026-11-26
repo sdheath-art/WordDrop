@@ -728,7 +728,9 @@ namespace WordDrop
                 for (int i = 0; ok && i < s_swipeCells.Count; i++)
                 {
                     var d = rules.GetCell(s_swipeCells[i].x, s_swipeCells[i].y);
-                    if (d == null || char.ToUpperInvariant(d.Letter) != w[i]) ok = false;
+                    // 11-26 (seen by the visible bot, twice): a power-up in the word is WILD - its tile has no matching letter, so the swipe
+                    // step after the wild lesson was released half a second after it showed. A power-up tile counts as a match.
+                    if (d == null || (d.SpecialKind == RulesEngine.SPECIAL_NONE && char.ToUpperInvariant(d.Letter) != w[i])) ok = false;
                 }
             }
             else if (s_key == "use")

@@ -169,11 +169,23 @@ namespace WordDrop
         // 15-28% without. Levels up to RESCUE_LAST_LEVEL are the on-ramp (keep players): rescue ON. After that the near-miss is
         // the "Play On" moment: rescue OFF. RulesEngine.ENDGAME_AIRPLANE (FX switch) is still the master switch. ──
         public static int  RESCUE_LAST_LEVEL = 16;
+        // 11-26 (Spencer: "i like it just off for the hard levels"): past the on-ramp the rescue is off ONLY on the levels listed
+        // here (the hard ones); ordinary levels keep it. Bot 11-26 with it off everywhere past 16: L22 / 24 / 26 won 72-82% with
+        // 9-13 turns stuck on the last pieces. Add each new hard level here.
+        public static readonly int[] RESCUE_OFF_LEVELS = { 17, 19 };
+        // OWL START HEIGHT (11-26, remote bot: L21 casual 42%, no owl-helping move on 69% of turns). Owls started on the TOP row;
+        // in swipe mode no falling word pops by itself, so every square under an owl has to be cleared by hand. OwlStartDrop =
+        // how many rows below the top the owls start on this level (0 = top). Swipe mode only. OWL_DROP_OVERRIDE >= 0 = bot sweeps.
+        public static int OwlStartDrop = 0;
+        public static int OWL_DROP_OVERRIDE = -1;
+        public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_OWL_DROP = new System.Collections.Generic.Dictionary<int, int> { { 21, 3 }, { 23, 3 } };   // sweep 11-26 x60 (3 is the most the board allows; n=120): L21 at 40 moves goal-focused 42% -> ~97%, scattered ~89%; drop 2 gave 90 / 73
+        public static int OwlDropFor(int stage) => OWL_DROP_OVERRIDE >= 0 ? OWL_DROP_OVERRIDE : (HandManager.CLAIM_MODE && CLAIM_OWL_DROP.TryGetValue(stage, out int d) ? d : 0);
+        public static bool RescueFor(int stage) => stage <= RESCUE_LAST_LEVEL || System.Array.IndexOf(RESCUE_OFF_LEVELS, stage) < 0;
         public static bool RescueThisLevel = true;
         public static int SetupSimLevel(RulesEngine sim, int stage, int internalStage)
         {
             var r = For(stage);
-            RescueThisLevel = stage <= RESCUE_LAST_LEVEL;
+            RescueThisLevel = RescueFor(stage); OwlStartDrop = OwlDropFor(stage);
             sim.ClearBoard();
             RulesEngine.MIN_WORD_LENGTH = Mathf.Max(3, r.MinWordLength);
             RulesEngine.BranchPriming   = r.BranchPriming;
@@ -608,9 +620,9 @@ namespace WordDrop
         public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_MOVES = new System.Collections.Generic.Dictionary<int, int>
         {
             { 1, 27 }, { 2, 28 }, { 3, 39 }, { 4, 39 }, { 5, 33 }, { 6, 35 }, { 7, 50 }, { 8, 16 }, { 9, 22 }, { 10, 28 },
-            { 11, 19 }, { 12, 20 }, { 13, 33 }, { 14, 21 }, { 15, 33 }, { 16, 33 }, { 17, 34 }, { 18, 22 }, { 19, 44 },   /* bot 11:39, rescue off on these: L17 80% at 34; L18 98% at 28 (p90 18) -> 22 as the short relief level between the two hard ones; L19 ~78-80% at 44 over two runs */   // L17 41 -> 35 (11-25): no rescue from L17 on; bot (goal-focused, rescue off) wins ~82% at 35, 78% at 46 on L19 with ~1 loss in 5 a near-miss
-            { 21, 40 }, { 23, 42 },   // PROVISIONAL, 3 owls (run 09:18): casual bot p50 40 / 33, wins ~50% / ~75% here; owl levels are past the tester build's last level (20)
-            { 22, 26 }, { 24, 33 }, { 25, 41 }, { 26, 44 },   // L26: bot 80% point after tomes learned to fly to grass (run 09:09)
+            { 11, 19 }, { 12, 20 }, { 13, 33 }, { 14, 24 }, { 15, 33 }, { 16, 33 }, { 17, 38 /* 11-26: 34 -> 38, scattered bot won 42% / 35% at 34 over two runs (p50 37-38) - too harsh even for a hard level */ }, { 18, 26 /* 11-26: 22 -> 26, scattered bot 70% at 22 (p90 27) */ }, { 19, 44 },   /* bot 11:39, rescue off on these: L17 80% at 34; L18 98% at 28 (p90 18) -> 22 as the short relief level between the two hard ones; L19 ~78-80% at 44 over two runs */   // L17 41 -> 35 (11-25): no rescue from L17 on; bot (goal-focused, rescue off) wins ~82% at 35, 78% at 46 on L19 with ~1 loss in 5 a near-miss
+            { 21, 40 }, { 23, 38 /* 11-26: 42 -> 38 with the owls starting 3 rows down (98 / 93% at 42, p90 29-38) */ },   // PROVISIONAL, 3 owls (run 09:18): casual bot p50 40 / 33, wins ~50% / ~75% here; owl levels are past the tester build's last level (20)
+            { 22, 26 }, { 24, 33 }, { 25, 41 }, { 26, 44 },   // L26: bot 80% point after tomes learned to fly to grass (run 09:09)   // 11-26 (remote bot x60): L14 21->24 (goal-focused 90% -> 97%, scattered 77%; Spencer failed it twice at 21). Trims of 6/7/9/13/25 to the goal-focused 95% point were TRIED and undone: the scattered player fell to 65-80% there.
         };
         // OWLS under swipe-to-claim (11-25): with 5 owls the casual bot needed 62 moves on L21 (13% win at 30, 16 of 60 games not
         // done in 80) and 41 on L23; Spencer failed L21 three times and L23 twice. Owls only drop when the tiles under them clear,
@@ -939,7 +951,7 @@ namespace WordDrop
 
             int stage = Mathf.Max(1, LevelMapPanel.RunLevel(internalStage));
             var r = For(stage);
-            RescueThisLevel = stage <= RESCUE_LAST_LEVEL;
+            RescueThisLevel = RescueFor(stage); OwlStartDrop = OwlDropFor(stage);
             WDLog.Log($"[LevelRules] end-of-level tome rescue {(RescueThisLevel && RulesEngine.ENDGAME_AIRPLANE ? "ON" : "OFF")} on level {stage}");
 
             // The next level is now genuinely starting — release the lock that has been
