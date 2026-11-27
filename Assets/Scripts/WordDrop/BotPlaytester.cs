@@ -216,7 +216,7 @@ namespace WordDrop
                 if (claim && planned)
                 {   // the second half of a plan: the crossing swap, then one swipe takes the held word and the new one together
                     planned = false;
-                    DoSwap(sim, pa, pb); left--; res.used++; missStreak = 0;
+                    DoSwap(sim, pa, pb); left--; res.used++; missStreak = 0; sim.TickInkPots(out _);
                     var both = FindSwapWords(sim, pa, pb);
                     if (both.Count > 0 && held != null && held.Count > 0) res.stacks++;
                     if (held != null) foreach (var h in held) if (!both.Exists(q => q.Word == h.Word && q.CellKey == h.CellKey)) both.Add(h);
@@ -292,7 +292,7 @@ namespace WordDrop
                         {
                             RulesEngine.GoalDeadAtSwap = goalDead;
                             DoDrag(sim, pick.m, res);
-                            left--; res.used++; res.drags++; missStreak = 0;
+                            left--; res.used++; res.drags++; missStreak = 0; sim.TickInkPots(out _);
                             left += ResolveEverything(sim, res);
                             if (res.remainingAtBudget < 0 && res.used - res.goldRefunds >= budget)
                                 res.remainingAtBudget = GoalsDone(sim, scoreLevel, res.points, target) ? 0 : GoalPiecesLeft(sim);
@@ -323,7 +323,7 @@ namespace WordDrop
                 RulesEngine.GoalDeadAtSwap = goalDead;   // stranded goal: a special this swap earns becomes an airplane (like the game)
                 bool wasted = cands.Count == 0;
                 DoSwap(sim, a, b);
-                left--; res.used++;
+                left--; res.used++; sim.TickInkPots(out _);   // 11-27 ink pots count the bot's moves too
                 if (claim)
                 {
                     var nw = FindSwapWords(sim, a, b);

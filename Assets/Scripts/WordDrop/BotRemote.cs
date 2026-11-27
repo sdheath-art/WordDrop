@@ -141,6 +141,37 @@ namespace WordDrop
                             }
                             catch (System.Exception ex) { log.AppendLine($"{name}: set '{one}' failed - {ex.Message}"); }
                         }
+                    // spec=34|Gems=6|Crates=7|CrateHits=2,3;35|Ducks=3 - reshape levels for this run and the ones after it: starts from the
+                    // level's table row (or the current override), sets LevelRules fields by name. spec=clear drops every override.
+                    // moves=34:40;35:38 sets swipe-mode budgets; owldrop=30:3 the owl start height. No recompile needed for any of it.
+                    if (kv.TryGetValue("spec", out var specs))
+                    {
+                        if (specs == "clear") LevelRules.OVERRIDES.Clear();
+                        else foreach (var one in specs.Split(';'))
+                        {
+                            var parts = one.Split('|');
+                            if (parts.Length < 1 || !int.TryParse(parts[0], out int lvS) || lvS < 1 || lvS > LevelRules.TableLength) { log.AppendLine($"{name}: spec '{one}' - bad level"); continue; }
+                            object box = LevelRules.OVERRIDES.TryGetValue(lvS, out var cur) ? cur : LevelRules.TableRow(lvS);
+                            for (int pi = 1; pi < parts.Length; pi++)
+                            {
+                                int eq = parts[pi].IndexOf('='); if (eq <= 0) continue;
+                                string fn = parts[pi].Substring(0, eq), fv = parts[pi].Substring(eq + 1).Replace('~', ';');   // 11-27: '~' = ';' inside a value (Spots=5,0~5,2)
+                                var fi = typeof(LevelRules).GetField(fn, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                if (fi == null) { log.AppendLine($"{name}: spec L{lvS} - no field '{fn}'"); continue; }
+                                try { fi.SetValue(box, fv == "null" ? null : System.Convert.ChangeType(fv, fi.FieldType, System.Globalization.CultureInfo.InvariantCulture)); }
+                                catch (System.Exception ex) { log.AppendLine($"{name}: spec L{lvS} {fn} - {ex.Message}"); }
+                            }
+                            LevelRules.OVERRIDES[lvS] = (LevelRules)box;
+                        }
+                    }
+                    foreach (var dk in new[] { "moves", "owldrop" })
+                        if (kv.TryGetValue(dk, out var dv))
+                            foreach (var one in dv.Split(';'))
+                            {
+                                var ab = one.Split(':');
+                                if (ab.Length == 2 && int.TryParse(ab[0], out int dl) && int.TryParse(ab[1], out int dn))
+                                { if (dk == "moves") LevelRules.CLAIM_MOVES[dl] = dn; else LevelRules.CLAIM_OWL_DROP[dl] = dn; }
+                            }
                     // prefs=tut2_claim:del;tut2_swap:1 - PlayerPrefs ints ("del" removes the key); fresh=1 = TUTORIAL RESET
                     if (kv.TryGetValue("fresh", out var fr) && fr != "0") TutorialBeats.ResetAll();
                     if (kv.TryGetValue("prefs", out var prefs))
@@ -172,7 +203,7 @@ namespace WordDrop
                         }
                         else if (level > 0) log.AppendLine($"{name}: no SurvivalManager yet - level jump skipped");
                         yield return new WaitForSecondsRealtime(1f);
-                        MonkeyTester.PLAYER_MODE = true; MonkeyTester.PLAY_BADLY = false; MonkeyTester.MINUTES = seconds / 60f + 2f;
+                        MonkeyTester.PLAYER_MODE = true; MonkeyTester.PLAY_BADLY = kv.TryGetValue("badly", out var bd) && bd != "0";   /* badly=1: it leaves itself a few moves on most levels, to see Out of Moves / Play On / lives */ MonkeyTester.MINUTES = seconds / 60f + 2f;
                         float keepStuck = MonkeyTester.STUCK_GIVE_UP_SECONDS; MonkeyTester.STUCK_GIVE_UP_SECONDS = 9999f;
                         mk.StartRun();
                         float w0 = Time.realtimeSinceStartup, nextShot = 0f; int shots = 0;
@@ -187,6 +218,9 @@ namespace WordDrop
                             yield return null;
                         }
                         if (mk.Running) mk.StopRun("watch time up");
+                        // let the last move finish on ITS level: a jump while a word was still resolving finished that word on the next
+                        // level's board (11-26: instant 'win' + orphan tiles on L34, stale goal ticks after it - harness artefact, not a game bug)
+                        yield return new WaitForSecondsRealtime(3.5f);
                         MonkeyTester.PLAYER_MODE = false; MonkeyTester.STUCK_GIVE_UP_SECONDS = keepStuck;
                         yield return null;
                         try

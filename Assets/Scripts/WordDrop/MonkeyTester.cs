@@ -284,8 +284,10 @@ namespace WordDrop
 
         private static readonly string[] s_goNames = { "Play", "Continue", "Advance", "Confirm", "Next", "Claim", "Collect", "Start", "Retry", "Again", "Skip", "Ok", "OK" };
         private static readonly string[] s_avoidNames = { "Close", "Settings", "Help", "Exit", "Ad", "Share", "Shop", "Buy", "Daily", "Menu", "Survival", "TileBag", "Shuffle", "Hint", "Tab", "Nav", "Profile", "Reset", "Booster", "Mallet", "Store", "Pack", "Coin" };
+        public static int CHEST_WAIT = 0;   // test only: gestures to wait before pressing the treasure chest (to film its idle animation)
         private void PlanPlayerGesture(bool board, bool covered)
         {
+            if (ChestRewardModal.Open) covered = true;   // 11-27: the treasure event owns the screen - press its buttons
             if (board && !covered)
             {
                 if (BoosterIntro.Running)
@@ -315,7 +317,10 @@ namespace WordDrop
                     return;
                 }
                 Vector2Int sa, sb; List<Vector2Int> hc; bool found;
-                try { found = RulesEngine.Instance.FindSwapHint(false, out sa, out sb, out hc); } catch { found = false; sa = sb = default; }
+                // 11-26 Spencer watching it: "its not really going for the objectives, its going for words" - the idle hint (best:false) is a
+                // random SHORTEST word with no credit for goals. 4 moves in 5 now use the strong finder (goals + power-ups, the Spyglass's).
+                bool seek = _rng.NextDouble() < 0.8;
+                try { found = RulesEngine.Instance.FindSwapHint(seek, out sa, out sb, out hc); } catch { found = false; sa = sb = default; }
                 if (found && sa.x >= 0 && sb.x >= 0)
                 {
                     AddDrag(CellScreen(sa.x, sa.y), CellScreen(sb.x, sb.y), 8);
@@ -333,7 +338,7 @@ namespace WordDrop
             if (sbn.ToString() != _playerButtons) { _playerButtons = sbn.ToString(); Note("PLAYER", "buttons on screen: " + _playerButtons); }
             foreach (var go in s_goNames)
                 foreach (var t in _targets)
-                    if (t.name.IndexOf(go, StringComparison.Ordinal) >= 0) { AddTap(t.pos, 2); Note("PLAYER", "button " + t.name); return; }
+                    if (t.name.IndexOf(go, StringComparison.Ordinal) >= 0) { if (t.name == "BtnClaimOpen" && CHEST_WAIT > 0) { CHEST_WAIT--; AddGap(20); return; } AddTap(t.pos, 2); Note("PLAYER", "button " + t.name); return; }
             var ok = new List<(Vector3 pos, string name)>();
             foreach (var t in _targets)
             {
@@ -869,9 +874,9 @@ namespace WordDrop
     public class MonkeyUIInput : BaseInput
     {
         public override Vector2 mousePosition => WDInput.mousePosition;
-        public override bool GetMouseButtonDown(int button) => WDInput.GetMouseButtonDown(button);
-        public override bool GetMouseButtonUp(int button) => WDInput.GetMouseButtonUp(button);
-        public override bool GetMouseButton(int button) => WDInput.GetMouseButton(button);
+        public override bool GetMouseButtonDown(int button) => WDInput.UiDown(button);
+        public override bool GetMouseButtonUp(int button) => WDInput.UiUp(button);
+        public override bool GetMouseButton(int button) => WDInput.UiHeld(button);
         public override bool mousePresent => true;
         public override bool touchSupported => false;
         public override int touchCount => 0;

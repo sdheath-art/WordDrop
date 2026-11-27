@@ -436,6 +436,16 @@ namespace WordDrop
                 }
         }
 
+        /// <summary>11-27 WALL: tell a wall tile which of its eight neighbours are wall too (it draws itself joined to them); hides the wall art on any other tile.</summary>
+        public static void ApplyWallVisual(Tile t, RulesCellData c)
+        {
+            if (t == null) return; var rules = RulesEngine.Instance;
+            if (c == null || rules == null || !c.IsStone || !RulesEngine.IsWall(c.CrateKind)) { t.SetWallMask(-1); return; }
+            int x = c.Col, y = c.Row, m = 0;
+            if (rules.IsWallAt(x, y + 1)) m |= 1; if (rules.IsWallAt(x, y - 1)) m |= 2; if (rules.IsWallAt(x - 1, y)) m |= 4; if (rules.IsWallAt(x + 1, y)) m |= 8;
+            if (rules.IsWallAt(x - 1, y + 1)) m |= 16; if (rules.IsWallAt(x + 1, y + 1)) m |= 32; if (rules.IsWallAt(x - 1, y - 1)) m |= 64; if (rules.IsWallAt(x + 1, y - 1)) m |= 128;
+            t.SetWallMask(m);
+        }
         public void ReconcileSpecialVisuals(RulesEngine rules)
         {
             if (rules == null) return;
@@ -450,6 +460,9 @@ namespace WordDrop
                 if (c == null) continue;
 
                 if (t.IsFrozen     != c.IsFrozen)     { t.SetFrozenVisual(c.IsFrozen);        fixes++; Report(col,row,t,"ice",      c.IsFrozen); }
+                if (t.IsInked      != c.Inked)        t.SetInkVisual(c.Inked);   // 11-27 ink (not a 'fix': the pot's burst sets it between syncs)
+                t.SetInkWarn(c.IsStone && RulesEngine.IsInkPot(c.CrateKind) && c.InkTimer <= 1);
+                if (c.IsStone && RulesEngine.IsWall(c.CrateKind)) ApplyWallVisual(t, c);
                 if (t.IsGem        != c.HasGem)       { t.SetGem(c.HasGem);                   fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' gem: visual={t.IsGem} data={c.HasGem} → corrected"); }
                 if (t.IsRainGold   != c.IsRainGold)   { t.SetRainGold(c.IsRainGold);          fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' rain-gold: visual={t.IsRainGold} data={c.IsRainGold} → corrected"); }
                 if (t.SpecialKind  != c.SpecialKind)  { t.SetSpecial(c.SpecialKind);          fixes++; WDLog.Log($"[StateSync] ({col},{row}) '{c.Letter}' special: visual={t.SpecialKind} data={c.SpecialKind} → corrected"); }
@@ -474,6 +487,7 @@ namespace WordDrop
                     t.ForceRestingFace(); fixes++;
                 }
                 if (t.TreasureHits != c.TreasureHits) { t.SetTreasureHits(c.TreasureHits);    fixes++; }   // treasure repaints after a hit
+                if (t.CrateKind    != c.CrateKind)    { t.SetCrateKind(c.CrateKind);          fixes++; }   // 11-27 egg / stone art
                 if (t.CrateHP      != c.CrateHP)      { t.SetCrateHP(c.CrateHP);              fixes++; }   // 11-03 multi-hit crate repaints after a hit
                 if (t.IsStone      != c.IsStone)      { t.SetStoneVisual(c.IsStone);          fixes++; Report(col,row,t,"stone",    c.IsStone); }
                 if (c.ShelfPart > 0 && (t.ShelfPart != c.ShelfPart || t.ShelfBooks != c.ShelfBooks || t.ShelfStyle != c.ShelfStyle || t.ShelfKind != c.ShelfKind)) { t.SetShelf(c.ShelfPart, c.ShelfBooks, c.ShelfStyle, c.ShelfKind); t.SetStoneVisual(true); fixes++; }   // BOOKSHELF (11-03)
@@ -2225,8 +2239,9 @@ namespace WordDrop
                     if (rulesCell.ShelfPart > 0) { tile.SetShelf(rulesCell.ShelfPart, rulesCell.ShelfBooks, rulesCell.ShelfStyle, rulesCell.ShelfKind); tile.SetStoneVisual(true); }   // BOOKSHELF (11-03): anchored, but not a vault
                     else if (rulesCell.IsAnchored) { tile.SetVaultRequirement(rulesCell.RequiredWordLength); tile.SetVaultVisual(true); } // anchored = treasure vault
                     else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                    else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetCrateHP(rulesCell.CrateHP); tile.SetStoneVisual(true); }
+                    else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetCrateKind(rulesCell.CrateKind); tile.SetCrateHP(rulesCell.CrateHP); tile.SetStoneVisual(true); ApplyWallVisual(tile, rulesCell); }
                     if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
+                    tile.SetInkVisual(rulesCell.Inked);   // 11-27 ink
                     if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                     if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
                     if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
@@ -2413,7 +2428,7 @@ namespace WordDrop
                         }
                         else if (rulesCell.IsStone && !visualTile.IsStone)
                         {
-                            visualTile.SetTreasureHits(rulesCell.TreasureHits); visualTile.SetCrateHP(rulesCell.CrateHP);
+                            visualTile.SetTreasureHits(rulesCell.TreasureHits); visualTile.SetCrateKind(rulesCell.CrateKind); visualTile.SetCrateHP(rulesCell.CrateHP); ApplyWallVisual(visualTile, rulesCell);
                             visualTile.SetStoneVisual(true);
                             fixed_count++;
                         }
@@ -2425,6 +2440,7 @@ namespace WordDrop
                         // ICE: frost overlay tracks RulesCellData.IsFrozen. Covers both freeze
                         // (objective spawn) and thaw (data cleared in DoExplode) — though thaw normally
                         // routes through GameVisualBridge's defrost VFX first; this is the safety sync.
+                        if (visualTile.IsInked != rulesCell.Inked) visualTile.SetInkVisual(rulesCell.Inked);   // 11-27 ink
                         if (visualTile.IsFrozen != rulesCell.IsFrozen)
                         {
                             visualTile.SetFrozenVisual(rulesCell.IsFrozen);
@@ -2446,8 +2462,9 @@ namespace WordDrop
                         if (rulesCell.ShelfPart > 0) { tile.SetShelf(rulesCell.ShelfPart, rulesCell.ShelfBooks, rulesCell.ShelfStyle, rulesCell.ShelfKind); tile.SetStoneVisual(true); }   // BOOKSHELF (11-03)
                         else if (rulesCell.IsAnchored) tile.SetVaultVisual(true);   // anchored = treasure vault (chest)
                         else if (rulesCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                        else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetCrateHP(rulesCell.CrateHP); tile.SetStoneVisual(true); }
+                        else if (rulesCell.IsStone || rulesCell.Letter == '#') { tile.SetTreasureHits(rulesCell.TreasureHits); tile.SetCrateKind(rulesCell.CrateKind); tile.SetCrateHP(rulesCell.CrateHP); tile.SetStoneVisual(true); ApplyWallVisual(tile, rulesCell); }
                         if (rulesCell.IsFrozen) tile.SetFrozenVisual(true);    // ICE: frost overlay (frozen tiles are normal letters)
+                        tile.SetInkVisual(rulesCell.Inked);   // 11-27 ink
                         if (rulesCell.IsSwapRefill) tile.SetSwapRefillVisual(true);
                         if (rulesCell.IsEditRefill) tile.SetEditRefillVisual(true);
                         if (rulesCell.IsWildRefill) tile.SetWildRefillVisual(true);
@@ -3460,7 +3477,7 @@ namespace WordDrop
                         tile.SetAnchored(anchored);
                         if (anchored) { tile.SetVaultRequirement(rockCell != null ? rockCell.RequiredWordLength : 0); tile.SetVaultVisual(true); } // anchored = treasure vault
                         else if (rockCell != null && rockCell.IsDropTarget) tile.SetDropTargetVisual(true); // HeroWord escort object — NOT a grey rock
-                        else          { tile.SetTreasureHits(rockCell != null ? rockCell.TreasureHits : 0); tile.SetCrateHP(rockCell != null ? rockCell.CrateHP : 0); tile.SetStoneVisual(true); }
+                        else          { tile.SetTreasureHits(rockCell != null ? rockCell.TreasureHits : 0); tile.SetCrateKind(rockCell != null ? rockCell.CrateKind : 0); tile.SetCrateHP(rockCell != null ? rockCell.CrateHP : 0); tile.SetStoneVisual(true); }
                     }
                     else if (letter == '\0' || letter == '#')
                     {

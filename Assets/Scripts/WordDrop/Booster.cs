@@ -101,7 +101,7 @@ namespace WordDrop
             {
                 if (!rules.PeelCrateLayer(c.x, c.y)) return false;
                 var t = grid != null ? grid.GetTile(c.x, c.y) : null; var d = rules.GetCell(c.x, c.y);
-                if (t != null && d != null) { WordDropFX.Instance?.PlayCrateDebris(t.transform.position); WordDropFX.Instance?.PlayPlankOff(t, d.CrateHP + 1); t.SetCrateHP(d.CrateHP); }
+                if (t != null && d != null) { WordDropFX.Instance?.PlayCrateDebris(t.transform.position, t.CrateKind); WordDropFX.Instance?.PlayPlankOff(t, d.CrateHP + 1); t.SetCrateHP(d.CrateHP); }
                 return true;
             });
         }
@@ -127,7 +127,7 @@ namespace WordDrop
         protected static void KnockCrate(Vector2Int c, Vector2Int hp, string sound = null)
         {
             var grid = GridManager.Instance; var t = grid != null ? grid.GetTile(c.x, c.y) : null; if (t == null) return;
-            WordDropFX.Instance?.PlayCrateDebris(t.transform.position);
+            WordDropFX.Instance?.PlayCrateDebris(t.transform.position, t.CrateKind);
             WordDropFX.Instance?.PlayPlankOff(t, hp.x);
             if (!t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.14f, 0.24f, 6, 0.6f);
             t.SetCrateHP(hp.y);

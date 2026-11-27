@@ -2523,6 +2523,46 @@ namespace WordDrop
         public static int   CRATE_CHUNKS     = 7;
         public static float CRATE_GRAVITY    = 24f;   // in cells / s^2
         private static Sprite[] s_crateChunks, s_vaseChunks;
+        private static readonly Sprite[][] s_kindChunks = new Sprite[5][];   // 0 plum tray rim, 1 egg, 2 stone, 3 navy tray rim, 4 ink pot
+        private static Sprite[] CrateChunks(int kind)
+        {
+            bool navyTray = RulesEngine.IsBookTray(kind) && Tile.NavyTrays;
+            if (RulesEngine.IsBookTray(kind)) kind = 0;   // slot 0 = the plum tray's rim pieces (same for every book colour)
+            if (navyTray)
+            {
+                if (s_kindChunks[3] != null) return s_kindChunks[3];
+                var nt = Resources.Load<Texture2D>("Blockers/booktray_navy_r_1");
+                if (nt != null)
+                {
+                    float nw = nt.width, nh = nt.height;
+                    var nr = new[] { new Rect(nw*0.06f, nh*0.86f, nw*0.36f, nh*0.10f), new Rect(nw*0.56f, nh*0.86f, nw*0.36f, nh*0.10f), new Rect(nw*0.03f, nh*0.30f, nw*0.11f, nh*0.36f),
+                                     new Rect(nw*0.86f, nh*0.30f, nw*0.11f, nh*0.36f), new Rect(nw*0.10f, nh*0.03f, nw*0.36f, nh*0.10f), new Rect(nw*0.54f, nh*0.03f, nw*0.36f, nh*0.10f) };
+                    var ns = new Sprite[nr.Length]; for (int k = 0; k < nr.Length; k++) ns[k] = Sprite.Create(nt, nr[k], new Vector2(0.5f, 0.5f), nw);
+                    s_kindChunks[3] = ns; return ns;
+                }
+            }
+            else if (RulesEngine.IsInkPot(kind)) kind = 4;
+            else if (kind != 1 && kind != 2) return CrateChunks();
+            if (s_kindChunks[kind] != null) return s_kindChunks[kind];
+            var kt = Resources.Load<Texture2D>(kind == 0 ? "Blockers/booktray_r_1" : kind == 1 ? "Blockers/egg" : kind == 4 ? "Blockers/inkpot" : "Blockers/stone");
+            if (kt == null) { s_kindChunks[kind] = CrateChunks(); return s_kindChunks[kind]; }
+            float kw = kt.width, kh = kt.height;
+            // 11-27 pieces of the egg's shell and band / of the stone's blocks (rects well inside the art)
+            var kr = kind == 0
+                ? new[] { new Rect(kw*0.06f, kh*0.86f, kw*0.36f, kh*0.10f), new Rect(kw*0.56f, kh*0.86f, kw*0.36f, kh*0.10f), new Rect(kw*0.03f, kh*0.30f, kw*0.11f, kh*0.36f),
+                          new Rect(kw*0.86f, kh*0.30f, kw*0.11f, kh*0.36f), new Rect(kw*0.10f, kh*0.03f, kw*0.36f, kh*0.10f), new Rect(kw*0.54f, kh*0.03f, kw*0.36f, kh*0.10f) }
+                : kind == 4   // pot: rim, body and foot pieces
+                ? new[] { new Rect(kw*0.28f, kh*0.74f, kw*0.44f, kh*0.14f), new Rect(kw*0.18f, kh*0.36f, kw*0.26f, kh*0.24f), new Rect(kw*0.56f, kh*0.36f, kw*0.26f, kh*0.24f),
+                          new Rect(kw*0.38f, kh*0.24f, kw*0.24f, kh*0.22f), new Rect(kw*0.24f, kh*0.06f, kw*0.26f, kh*0.10f), new Rect(kw*0.52f, kh*0.06f, kw*0.26f, kh*0.10f) }
+                : kind == 1
+                ? new[] { new Rect(kw*0.32f, kh*0.66f, kw*0.30f, kh*0.20f), new Rect(kw*0.24f, kh*0.46f, kw*0.24f, kh*0.20f), new Rect(kw*0.52f, kh*0.48f, kw*0.22f, kh*0.18f),
+                          new Rect(kw*0.22f, kh*0.24f, kw*0.26f, kh*0.16f), new Rect(kw*0.50f, kh*0.24f, kw*0.26f, kh*0.16f), new Rect(kw*0.34f, kh*0.08f, kw*0.30f, kh*0.14f) }
+                : new[] { new Rect(kw*0.10f, kh*0.58f, kw*0.34f, kh*0.26f), new Rect(kw*0.50f, kh*0.58f, kw*0.36f, kh*0.26f), new Rect(kw*0.10f, kh*0.14f, kw*0.30f, kh*0.30f),
+                          new Rect(kw*0.58f, kh*0.14f, kw*0.30f, kh*0.30f), new Rect(kw*0.30f, kh*0.40f, kw*0.26f, kh*0.20f), new Rect(kw*0.36f, kh*0.20f, kw*0.20f, kh*0.20f) };
+            var ks = new Sprite[kr.Length];
+            for (int k = 0; k < kr.Length; k++) ks[k] = Sprite.Create(kt, kr[k], new Vector2(0.5f, 0.5f), kw);
+            s_kindChunks[kind] = ks; return ks;
+        }
         private static Sprite[] CrateChunks()
         {
             if (Tile.VaseSkin)   // 11-24: a vase breaks into pieces of the vase (rects inside its body, clear of the handles' holes)
@@ -2584,7 +2624,10 @@ namespace WordDrop
                 TreasureFX.Open(t.transform.position, coins);   // (TreasureHits resets in ResetForPool)
                 return;
             }
-            PlayCrateDebris(t.transform.position);
+            if (RulesEngine.IsChest(t.CrateKind)) { ChestRewardModal.BoardChestOpened(t.transform.position, GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f); return; }   // 11-27: the chest leaps off the board and hovers (its event follows)
+            if (RulesEngine.IsInkPot(t.CrateKind)) PlayInkSplat(t.transform.position, 2.2f);   // 11-27: the pot goes out with a splash
+            if (RulesEngine.IsBookTray(t.CrateKind)) t.FlyTrayBooks(Mathf.Max(1, t.CrateHP));   // 11-27: the tray's last book(s) fly as it breaks
+            PlayCrateDebris(t.transform.position, t.CrateKind);
             GameAudio.Instance?.PlayCrateBreak();   // 2026-10-22 Spencer: crate SFX
         }
 
@@ -2596,6 +2639,7 @@ namespace WordDrop
         public void PlayPlankOff(Tile t, int hpBefore)
         {
             if (t == null || hpBefore < 2) return;
+            if (t.CrateKind != 0) return;   // 11-27: eggs / stones have no planks
             if (Tile.VaseSkin) return;   // 11-24: a vase has no planks - the art swaps to the cracked vase
             if (!s_planksTried)
             {
@@ -2631,9 +2675,62 @@ namespace WordDrop
             if (go != null) Destroy(go);
         }
 
-        public void PlayCrateDebris(Vector3 pos)
+        // ── INK BURST (11-27, Spencer: "a burst of ink that disappears and then you see the letters covered"). A dark splat blooms over
+        // the pot and the squares round it, hangs, and fades; the drips show on the inked letters as it clears. ──
+        private static Sprite s_inkSplat; private static bool s_inkSplatTried;
+        public static float INK_BURST_CELLS = 3.1f, INK_BURST_GROW = 0.16f, INK_BURST_HOLD = 0.16f, INK_BURST_FADE = 0.26f;
+        public void PlayInkBursts(List<Vector2Int> pots, List<Vector2Int> inked)
         {
-            var chunks = CrateChunks();
+            var grid = GridManager.Instance; if (grid == null || pots == null) return;
+            foreach (var p in pots) PlayInkSplat(grid.CellToWorld(p.x, p.y), INK_BURST_CELLS);
+            GameAudio.Instance?.PlayCrateKnock();
+            if (inked == null) return;
+            var cells = new List<Vector2Int>(inked);
+            DOVirtual.DelayedCall(INK_BURST_GROW + INK_BURST_HOLD * 0.5f, () =>
+            {
+                var rules = RulesEngine.Instance; var g = GridManager.Instance; if (rules == null || g == null) return;
+                foreach (var c in cells) { var d = rules.GetCell(c.x, c.y); Tile t = null; try { t = g.GetTile(c.x, c.y); } catch { } if (t != null && d != null && d.Inked) t.SetInkVisual(true); }
+            }, ignoreTimeScale: true);
+        }
+        // 11-27 PIGGY BANK smash: pieces cut from the pig art fly out and fall (the crate chunk fall, sized to the 2x2 piece)
+        private static Sprite[] s_pigChunks;
+        public void PlayPigSmash(Vector3 pos, float size)
+        {
+            if (s_pigChunks == null)
+            {
+                var t = Resources.Load<Texture2D>("Blockers/pig_cracked"); if (t == null) { s_pigChunks = new Sprite[0]; return; }
+                float w = t.width, h = t.height;
+                var rs = new[] { new Rect(w*0.10f, h*0.36f, w*0.28f, h*0.24f), new Rect(w*0.40f, h*0.56f, w*0.26f, h*0.22f), new Rect(w*0.62f, h*0.34f, w*0.24f, h*0.26f), new Rect(w*0.36f, h*0.26f, w*0.26f, h*0.24f),
+                                 new Rect(w*0.14f, h*0.60f, w*0.20f, h*0.18f), new Rect(w*0.58f, h*0.12f, w*0.20f, h*0.16f), new Rect(w*0.22f, h*0.10f, w*0.18f, h*0.16f), new Rect(w*0.80f, h*0.56f, w*0.14f, h*0.16f) };
+                s_pigChunks = new Sprite[rs.Length]; for (int k = 0; k < rs.Length; k++) s_pigChunks[k] = Sprite.Create(t, rs[k], new Vector2(0.5f, 0.5f), w);
+            }
+            if (s_pigChunks.Length == 0) return;
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
+            for (int k = 0; k < 12; k++)
+            {
+                var go = new GameObject("PigChunk"); var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = s_pigChunks[k % s_pigChunks.Length]; sr.sortingOrder = 46;
+                go.transform.position = pos + new Vector3(Random.Range(-0.35f, 0.35f) * size, Random.Range(-0.3f, 0.3f) * size, -0.8f);
+                go.transform.localScale = Vector3.one * size * Random.Range(0.9f, 1.1f); go.transform.rotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
+                StartCoroutine(CrateChunkFall(go.transform, sr, new Vector2(Random.Range(-3.4f, 3.4f), Random.Range(3.6f, 7.2f)) * cell, Random.Range(-620f, 620f), cell));
+            }
+        }
+        public void PlayInkSplat(Vector3 pos, float cells)
+        {
+            if (!s_inkSplatTried) { s_inkSplatTried = true; var t = Resources.Load<Texture2D>("Blockers/ink_splat"); if (t != null) s_inkSplat = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width); }
+            if (s_inkSplat == null) return;
+            float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
+            var go = new GameObject("InkSplat"); var sr = go.AddComponent<SpriteRenderer>(); sr.sprite = s_inkSplat; sr.sortingOrder = 46;
+            go.transform.position = pos + new Vector3(0f, 0f, -0.9f); go.transform.rotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
+            float full = cell * cells; go.transform.localScale = Vector3.one * full * 0.25f;
+            var seq = DOTween.Sequence().SetUpdate(true).SetTarget(go);
+            seq.Append(go.transform.DOScale(full, INK_BURST_GROW).SetEase(Ease.OutBack));
+            seq.AppendInterval(INK_BURST_HOLD);
+            seq.Append(sr.DOFade(0f, INK_BURST_FADE)); seq.Join(go.transform.DOScale(full * 1.08f, INK_BURST_FADE));
+            seq.OnComplete(() => { if (go != null) Destroy(go); });
+        }
+        public void PlayCrateDebris(Vector3 pos, int kind = 0)
+        {
+            var chunks = CrateChunks(kind);
             if (chunks.Length == 0) return;
             float cell = GridManager.Instance != null ? GridManager.Instance.CellSize : 0.9f;
             for (int k = 0; k < CRATE_CHUNKS; k++)

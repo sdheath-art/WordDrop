@@ -317,6 +317,23 @@ namespace WordDrop
             }
             innerY += BTN_H + GAP;
 
+            // 11-27 TREASURE CHEST (Spencer: "put the opening of a treasure chest in the fx test menu"): plays the whole chest event over
+            // whatever is on screen. The second / third buttons force a rare / epic card so those bursts can be seen.
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "TREASURE CHEST: open one", _btnStyle)) { _open = false; ChestRewardModal.DebugOpen(-1); }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), "Chest: put a CHEST LEVEL on (level 27)", _btnStyle))
+            {   // a board with one real chest to break: eggs + crates, the chest in the egg row
+                _open = false; var row = LevelRules.TableRow(27);
+                row.Name = "Chest Test"; row.Grass = 0; row.Crates = 15; row.CrateHits = "1"; row.StartTnt = 1;
+                row.CrateLayout = "@......./......./......./eeeGeee/#######/......./......./......./.......";
+                LevelRules.OVERRIDES[27] = row; LevelRules.ForceFreshBoardOnNextApply();
+                SurvivalManager.Instance?.DebugJumpToStage(27 + LevelMapPanel.TUTORIAL_LEVELS);
+            }
+            innerY += BTN_H + GAP;
+            if (GUI.Button(new Rect(0, innerY, (PANEL_W - 20) / 2 - 2, BTN_H), "Chest: with a RARE", _btnStyle)) { _open = false; ChestRewardModal.DebugOpen(1); }
+            if (GUI.Button(new Rect((PANEL_W - 20) / 2 + 2, innerY, (PANEL_W - 20) / 2 - 2, BTN_H), "Chest: with an EPIC", _btnStyle)) { _open = false; ChestRewardModal.DebugOpen(2); }
+            innerY += BTN_H + GAP;
+
             // TEST RULES (11-19, tester #3: "once you move a piece, it stays there"). Live switches so Spencer can compare in one
             // session. Defaults in HandManager are unchanged - these only last until play stops.
             if (GUI.Button(new Rect(0, innerY, PANEL_W - 20, BTN_H), $"RULE: tiles STAY where moved: {(HandManager.BOUNCE_NO_WORD ? "OFF (bounce back)" : "ON (costs a move)")}", _btnStyle))

@@ -1391,6 +1391,8 @@ namespace WordDrop
             _bonusLetterHidden = false;
             TreasureHits = 0;                       // a recycled tile must not stay a treasure
             CrateHP = 0;                            // ...or a multi-hit crate (11-03)
+            CrateKind = 0;                          // ...or an egg / stone (11-27)
+            if (_isInked) SetInkVisual(false); SetInkWarn(false); if (_wallMask >= 0) SetWallMask(-1);   // ...or inked / an ink pot about to burst
             ClearShelf();                           // ...or a bookshelf (11-03)
             if (_rotorGO != null) _rotorGO.SetActive(false);   // ...or keep a propeller (11-03)
             if (_hubGO != null) _hubGO.SetActive(false);
@@ -2929,7 +2931,20 @@ namespace WordDrop
             int lampsN = SAFE_LAMPS.GetLength(0), hits = Mathf.Max(1, RulesEngine.SafeHitsNow);
             return Mathf.Clamp(Mathf.RoundToInt((hits - hitsLeft) * (float)lampsN / hits), 0, lampsN);
         }
-        public static Sprite SafeSprite { get { LoadSafeArt(); return s_safeSprite; } }
+        // 11-27 PIGGY BANK: Blockers/pig + pig_cracked (1024 canvases like the safe). Cracked from half its hits onward.
+        private static Sprite s_pig, s_pigCracked; private static bool s_pigTried;
+        public static Sprite PigSprite(bool cracked)
+        {
+            if (!s_pigTried)
+            {
+                s_pigTried = true; var a = Resources.Load<Texture2D>("Blockers/pig"); var b = Resources.Load<Texture2D>("Blockers/pig_cracked");
+                if (a != null) s_pig = Sprite.Create(a, new Rect(0, 0, a.width, a.height), new Vector2(0.5f, 0.5f), a.width);
+                if (b != null) s_pigCracked = Sprite.Create(b, new Rect(0, 0, b.width, b.height), new Vector2(0.5f, 0.5f), b.width);
+            }
+            return cracked ? (s_pigCracked ?? s_pig) : s_pig;
+        }
+        public static bool PigNow => RulesEngine.SafeIsPig && PigSprite(false) != null;
+        public static Sprite SafeSprite { get { LoadSafeArt(); return PigNow ? PigSprite(false) : s_safeSprite; } }
         public static Sprite SafeOpenSprite { get { LoadSafeArt(); return s_safeOpenSprite; } }
         public static Sprite SafeEmptySprite { get { LoadSafeArt(); return s_safeEmpty; } }   // 11-03 blow-off: vault with no door
         public static Sprite SafeDoorSprite { get { LoadSafeArt(); return s_safeDoor; } }     // the door that flies off
@@ -3049,6 +3064,12 @@ namespace WordDrop
             if (ShelfKind == 1)
             {   // SAFE: the safe body + its lamps; a lamp is lit for every hit taken (ShelfBooks = hits LEFT)
                 LoadSafeArt();
+                if (PigNow)
+                {   // 11-27 piggy bank: whole, then cracked from half its hits on; no lamps
+                    _shelfSR.sprite = PigSprite(ShelfBooks * 2 <= Mathf.Max(1, RulesEngine.SafeHitsNow));
+                    for (int i = 0; i < _shelfBookSR.Length; i++) _shelfBookSR[i].gameObject.SetActive(false);
+                    return;
+                }
                 bool opened = ShelfBooks <= 0 && RulesEngine.SAFE_STAYS_OPEN && SafeEmptySprite != null;   // 11-04: the cracked safe stays, door gone, vault empty
                 _shelfSR.sprite = opened ? SafeEmptySprite : s_safeSprite;
                 int litN = opened ? 0 : SafeLampsLit(ShelfBooks);   // Gold Rush: 3 hits = 2 lamps each
@@ -3119,7 +3140,7 @@ namespace WordDrop
             // FULL BOARD CRATE (2026-10-21): crates are plain (falling) stones drawn with Spencer's crate art.
             // TREASURE (2026-10-27): a stone with TreasureHits > 0 draws its locked-treasure state instead (3 / 2 / 1 bands).
             var blockSprite = TreasureHits > 0 ? TreasureSprite(TreasureHits) : null;
-            if (blockSprite == null && SurvivalManager.FullBoardActive) blockSprite = CrateSpriteFor(CrateHP);   // 11-03: X / one plank / slats by layers left
+            if (blockSprite == null && SurvivalManager.FullBoardActive) blockSprite = CrateSpriteFor(CrateHP, CrateKind);   // 11-03: X / one plank / slats by layers left
             if (active && blockSprite != null && (SurvivalManager.FullBoardActive || TreasureHits > 0))
             {
                 FaceSprite = blockSprite; _spriteRenderer.color = Color.white;
@@ -3712,6 +3733,114 @@ namespace WordDrop
             }
             return cracked ? (s_vaseCracked ?? s_vase) : s_vase;
         }
+        // 11-27 CRATE KINDS (Spencer's art): 1 = egg (Blockers/egg), 2 = stone (Blockers/stone; Blockers/stone_cracked on its last
+        // layer when that art exists). Mirrors RulesCellData.CrateKind; 0 = the wooden crate / the level's vase skin.
+        public int CrateKind { get; private set; }
+        public void SetCrateKind(int k) { if (CrateKind == k) return; CrateKind = k; if (_isStone) SetStoneVisual(true); }
+        private static readonly Sprite[] s_kind = new Sprite[6]; private static bool s_kindTried;
+        public static Sprite CrateKindSprite(int kind, bool cracked)
+        {
+            if (!s_kindTried)
+            {
+                s_kindTried = true;
+                string[] names = { null, "Blockers/egg", "Blockers/stone", "Blockers/stone_cracked", "Blockers/inkpot", "Blockers/chest" };
+                for (int i = 1; i < names.Length; i++) { var t = Resources.Load<Texture2D>(names[i]); if (t != null) s_kind[i] = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width); }
+            }
+            if (kind == 1) return s_kind[1];
+            if (kind == 2) return cracked ? (s_kind[3] ?? s_kind[2]) : s_kind[2];
+            if (kind == 6) return s_kind[4];   // ink pot
+            if (kind == 8) return s_kind[5];   // treasure chest
+            return null;
+        }
+        // 11-27 INK: the drip overlay on an inked letter (Blockers/ink_drip, Spencer's ChatGPT ink cut off its tile) + the pot's warning wobble.
+        public bool IsInked => _isInked;
+        private bool _isInked, _inkWarn; private GameObject _inkGO; private SpriteRenderer _inkSR; private Tween _inkWarnTween;
+        private static Sprite s_inkSprite; private static bool s_inkTried;
+        public static float INK_SIZE = 1.06f, INK_Y = -0.07f;   // overlay width as a share of the tile's display size; lift as a share of it
+        public void SetInkVisual(bool on)
+        {
+            _isInked = on;
+            if (!on) { if (_inkGO != null) _inkGO.SetActive(false); return; }
+            if (!s_inkTried) { s_inkTried = true; var t = Resources.Load<Texture2D>("Blockers/ink_drip"); if (t != null) s_inkSprite = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width); }
+            if (s_inkSprite == null) return;
+            if (_inkGO == null)
+            {
+                _inkGO = new GameObject("TileInk"); _inkGO.transform.SetParent(transform, false);
+                _inkSR = _inkGO.AddComponent<SpriteRenderer>(); _inkSR.sprite = s_inkSprite; _inkGO.tag = "Untagged";
+            }
+            _inkGO.SetActive(true);
+            float displaySize = _cellSize * TILE_DISPLAY_RATIO, restX = Mathf.Max(0.01f, _restScale.x), fs = displaySize * INK_SIZE / restX;
+            _inkGO.transform.localScale = new Vector3(fs, fs, 1f);
+            _inkGO.transform.localPosition = new Vector3(0f, displaySize * INK_Y / restX, -0.14f);   // in front of the letter
+            _inkSR.sortingOrder = (_spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder) + 2;
+        }
+        public void SetInkWarn(bool on)
+        {
+            if (_inkWarn == on) return; _inkWarn = on;
+            if (_inkWarnTween != null) { _inkWarnTween.Kill(); _inkWarnTween = null; transform.localRotation = Quaternion.identity; }
+            if (on && isActiveAndEnabled) _inkWarnTween = transform.DOPunchRotation(new Vector3(0f, 0f, 10f), 0.7f, 9, 0.9f).SetLoops(-1, LoopType.Restart).SetUpdate(true);
+        }
+        // 11-27 WALL: drawn as four quarter sprites picked by which neighbours are also wall, so adjacent wall squares join into one
+        // solid shape with rounded outer AND inner corners. Atlas Blockers/wall_atlas (5 states x 4 quarters, 64 px each; made by
+        // ~/Documents/WordDrop_Art/wall_atlas.py <r,g,b> <out.png>): columns = outer corner / vertical neighbour only / horizontal
+        // neighbour only / both (inner corner) / all three (fill); rows = top-left, top-right, bottom-left, bottom-right.
+        private static Sprite s_wallBlank; private static Sprite[,] s_wallQ; private static bool s_wallTried;
+        public static Sprite WallBlankSprite { get { if (s_wallBlank == null) { var t = new Texture2D(4, 4, TextureFormat.RGBA32, false); var px = new Color32[16]; t.SetPixels32(px); t.Apply(); s_wallBlank = Sprite.Create(t, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f); } return s_wallBlank; } }
+        private SpriteRenderer[] _wallSR; private int _wallMask = -1;
+        /// <summary>mask bits: 1 up, 2 down, 4 left, 8 right, 16 up-left, 32 up-right, 64 down-left, 128 down-right (set = that neighbour is wall). -1 = not a wall.</summary>
+        public void SetWallMask(int mask)
+        {
+            if (mask < 0) { if (_wallSR != null) foreach (var w in _wallSR) if (w != null) w.gameObject.SetActive(false); _wallMask = -1; return; }
+            if (!s_wallTried)
+            {
+                s_wallTried = true; var t = Resources.Load<Texture2D>("Blockers/wall_atlas");
+                if (t != null) { s_wallQ = new Sprite[4, 5]; int q = t.height / 4; for (int r = 0; r < 4; r++) for (int s = 0; s < 5; s++) s_wallQ[r, s] = Sprite.Create(t, new Rect(s * q, (3 - r) * q, q, q), new Vector2(0.5f, 0.5f), q); }
+            }
+            if (s_wallQ == null) return;
+            if (_wallSR == null) { _wallSR = new SpriteRenderer[4]; for (int i = 0; i < 4; i++) { var go = new GameObject("WallQ" + i); go.transform.SetParent(transform, false); go.tag = "Untagged"; _wallSR[i] = go.AddComponent<SpriteRenderer>(); } }
+            _wallMask = mask;
+            bool U = (mask & 1) != 0, D = (mask & 2) != 0, L = (mask & 4) != 0, R = (mask & 8) != 0;
+            bool[] vert = { U, U, D, D }, horz = { L, R, L, R }, diag = { (mask & 16) != 0, (mask & 32) != 0, (mask & 64) != 0, (mask & 128) != 0 };
+            float restX = Mathf.Max(0.01f, Mathf.Abs(_restScale.x)), half = _cellSize * 0.5f, sc = half / restX, off = _cellSize * 0.25f / restX;
+            int order = _spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder;
+            for (int i = 0; i < 4; i++)
+            {
+                int state = !vert[i] && !horz[i] ? 0 : vert[i] && !horz[i] ? 1 : !vert[i] && horz[i] ? 2 : diag[i] ? 4 : 3;
+                var sr = _wallSR[i]; sr.sprite = s_wallQ[i, state]; sr.gameObject.SetActive(true); sr.sortingOrder = order;
+                if (_spriteRenderer != null) sr.sortingLayerID = _spriteRenderer.sortingLayerID;
+                sr.transform.localScale = new Vector3(sc * 1.004f, sc * 1.004f, 1f);   // a hair of overlap so no seam shows between quarters
+                sr.transform.localPosition = new Vector3((i % 2 == 0 ? -off : off), (i < 2 ? off : -off), -0.01f);
+            }
+        }
+        // 11-27 BOOK TRAY art: Blockers/booktray_{r|g|y}_{1|2|3} = the plum tray with that many books left (512 canvases, crate footprint).
+        // 11-27 (Spencer: "some levels i would like to have the navy bookcases too"): LevelRules.CrateSkin = "navy" draws that level's
+        // trays in the navy case (Blockers/booktray_navy_...). Per level, like the vase skin.
+        public static bool NavyTrays => CrateSkin == "navy";
+        private static readonly Sprite[,,] s_tray = new Sprite[2, 3, 4]; private static bool s_trayTried;
+        public static Sprite BookTraySprite(int kind, int books)
+        {
+            if (!s_trayTried)
+            {
+                s_trayTried = true; string[] col = { "r", "g", "y" };
+                for (int v = 0; v < 2; v++) for (int c = 0; c < 3; c++) for (int n = 1; n <= 3; n++)
+                { var t = Resources.Load<Texture2D>($"Blockers/booktray_{(v == 1 ? "navy_" : "")}{col[c]}_{n}"); if (t != null) s_tray[v, c, n] = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f), t.width); }
+            }
+            int ci = Mathf.Clamp(kind - 3, 0, 2), bi = Mathf.Clamp(books, 1, 3);
+            return (NavyTrays ? s_tray[1, ci, bi] : null) ?? s_tray[0, ci, bi];
+        }
+        /// <summary>A book leaves this tray for the Books goal (HUDManager.FlyBook - the badge ticks when it lands).</summary>
+        public void FlyTrayBooks(int n)
+        {
+            if (!RulesEngine.IsBookTray(CrateKind) || HUDManager.Instance == null) return;
+            var book = ShelfBookFlySprite(CrateKind == 3 ? 0 : CrateKind == 4 ? 3 : 4);   // the shelf's red / green / gold book
+            for (int i = 0; i < Mathf.Clamp(n, 1, RulesEngine.TRAY_BOOKS); i++) HUDManager.Instance.FlyBook(transform.position, book);
+        }
+        public static Sprite CrateSpriteFor(int hp, int kind)
+        {
+            if (RulesEngine.IsWall(kind)) return WallBlankSprite;   // the wall is drawn by its four joined quarters (SetWallMask)
+            var ks = RulesEngine.IsBookTray(kind) ? BookTraySprite(kind, hp) : kind != 0 ? CrateKindSprite(kind, hp <= 1) : null;
+            return ks ?? CrateSpriteFor(hp);
+        }
         public static Sprite CrateSpriteFor(int hp)
         {
             if (VaseSkin) return VaseSprite(hp <= 1 && VASE_CRACKS_ON_LAST);
@@ -3728,12 +3857,16 @@ namespace WordDrop
         public void SetCrateHP(int hp)
         {
             if (CrateHP == hp) return;
+            int oldHP = CrateHP;
             CrateHP = hp;
             if (_isStone) SetStoneVisual(true);
+            if (_isStone && RulesEngine.IsBookTray(CrateKind) && hp >= 1 && oldHP > hp) FlyTrayBooks(oldHP - hp);   // 11-27: the book that just left
         }
         private bool _isCrateArt;
         public static bool VASE_CRACKS_ON_LAST = true;   // false = a vase never shows the cracked art
-        public static Sprite CrateSprite => VaseSkin ? VaseSprite(false) : GetCrateSprite();   // goal icon / level card
+        /// <summary>11-27: when every crate-goal piece on the level is one kind (egg / stone / ink pot) the goal icon shows that piece. Set at level set-up.</summary>
+        public static int CrateGoalKind;
+        public static Sprite CrateSprite => VaseSkin ? VaseSprite(false) : (CrateGoalKind != 0 ? CrateKindSprite(CrateGoalKind, false) : null) ?? GetCrateSprite();   // goal icon / level card
         private static Sprite GetCrateSprite()
         {
             if (s_crateTried) return s_crateSprite;
@@ -5378,6 +5511,7 @@ namespace WordDrop
 
         private void SyncFrostOrder()
         {
+            if (_inkSR != null) _inkSR.sortingOrder = (_spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder) + 2;   // 11-27 ink rides the same row band
             if (_frostSR == null) return;
             int face = _spriteRenderer != null ? _spriteRenderer.sortingOrder : BaseSortingOrder;
             _frostSR.sortingOrder = face + 2;

@@ -19,11 +19,17 @@ namespace WordDrop
         /// down (true on the down frame too), up = released THIS frame.</summary>
         public static void SetFake(bool down, bool held, bool up, Vector3 screenPos) { s_down = down; s_held = held || down; s_up = up; s_pos = screenPos; }
 
-        public static bool GetMouseButtonDown(int b) => FakeActive ? (b == 0 && s_down) : Input.GetMouseButtonDown(b);
-        public static bool GetMouseButton(int b)     => FakeActive ? (b == 0 && s_held) : Input.GetMouseButton(b);
-        public static bool GetMouseButtonUp(int b)   => FakeActive ? (b == 0 && s_up)   : Input.GetMouseButtonUp(b);
+        /// <summary>11-27: true while a full-screen event (the treasure chest) owns the screen - the board sees no finger at all. UI buttons are unaffected (they go through the EventSystem).</summary>
+        public static bool Blocked;
+        public static bool GetMouseButtonDown(int b) => Blocked ? false : FakeActive ? (b == 0 && s_down) : Input.GetMouseButtonDown(b);
+        public static bool GetMouseButton(int b)     => Blocked ? false : FakeActive ? (b == 0 && s_held) : Input.GetMouseButton(b);
+        public static bool GetMouseButtonUp(int b)   => Blocked ? false : FakeActive ? (b == 0 && s_up)   : Input.GetMouseButtonUp(b);
+        // the UI's own view of the (fake) finger - never blocked, so buttons on a full-screen event still work for the test bot
+        public static bool UiDown(int b) => FakeActive ? (b == 0 && s_down) : Input.GetMouseButtonDown(b);
+        public static bool UiHeld(int b) => FakeActive ? (b == 0 && s_held) : Input.GetMouseButton(b);
+        public static bool UiUp(int b)   => FakeActive ? (b == 0 && s_up)   : Input.GetMouseButtonUp(b);
         public static Vector3 mousePosition          => FakeActive ? s_pos : Input.mousePosition;
-        public static int touchCount                 => FakeActive ? 0 : Input.touchCount;
+        public static int touchCount                 => Blocked || FakeActive ? 0 : Input.touchCount;
         public static Touch GetTouch(int i)          => Input.GetTouch(i);   // never reached while faking (touchCount is 0)
     }
 }

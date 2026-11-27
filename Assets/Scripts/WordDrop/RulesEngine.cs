@@ -917,6 +917,7 @@ namespace WordDrop
         /// then clear it. Boosters call this instead of ClearCell.</summary>
         public void ClearCellCountingGoals(int col, int row)
         {
+            if (IsWallAt(col, row)) return;   // 11-27: nothing clears a wall
             if (!InBounds(col, row)) return;
             var d = _board[col, row];
             if (d != null && !(SurvivalManager.AwaitingNextLevel && !Simulating))
@@ -935,6 +936,7 @@ namespace WordDrop
         public void ClearCell(int col, int row)
         {
             if (!InBounds(col, row)) return;
+            if (IsWallAt(col, row)) return;   // 11-27: nothing clears a wall (boosters included)
             _board[col, row] = null;
             _bonusCells[col, row] = false; // gold consumed with the cell
             _cyanCells[col, row]  = false; // cyan refill consumed too — parity with DoExplode
@@ -1145,7 +1147,7 @@ namespace WordDrop
         public int CountCrateCells()
         {
             int n = 0;
-            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) if (_board[c, r] != null && _board[c, r].IsStone && !_board[c, r].IsDropTarget && _board[c, r].TreasureHits == 0 && _board[c, r].ShelfPart == 0) n++;
+            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) if (_board[c, r] != null && _board[c, r].IsStone && !_board[c, r].IsDropTarget && _board[c, r].TreasureHits == 0 && _board[c, r].ShelfPart == 0 && !IsBookTray(_board[c, r].CrateKind) && !IsWall(_board[c, r].CrateKind) && !IsChest(_board[c, r].CrateKind)) n++;   // 11-27: book trays belong to the Books goal
             return n;
         }
         /// <summary>BOOKSHELF: books still on the board's shelves (the Books goal reads this).</summary>
@@ -1153,7 +1155,7 @@ namespace WordDrop
         {
             int n = 0;
             for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) if (_board[c, r] != null && _board[c, r].ShelfPart == 1 && _board[c, r].ShelfKind == 0) n += _board[c, r].ShelfBooks;
-            return n;
+            return n + CountTrayBooks();   // 11-27: + the books still in the one-tile trays
         }
         /// <summary>SAFE (11-03): safes still closed on the board (the Safes goal reads this).</summary>
         public int CountSafes()
@@ -2339,7 +2341,7 @@ namespace WordDrop
                     var d = _board[x, y];
                     if (d == null || (d.Letter == '\0' && !d.IsStone)) continue;
                     g[x, y] = d.IsStone ? '#' : char.ToUpperInvariant(d.Letter);   // crates/stones: occupied walls, never part of a word
-                    movable[x, y] = !d.IsFrozen && !d.IsStone && !d.IsWild && !d.IsDropTarget && !d.IsAnchored
+                    movable[x, y] = !d.IsFrozen && !d.Inked && !d.IsStone && !d.IsWild && !d.IsDropTarget && !d.IsAnchored
                                     && !(HandManager.GEMS_LOCKED && d.HasGem);   // smart refills must not plan a swap through a locked gem
                 }
         }
@@ -2521,6 +2523,12 @@ namespace WordDrop
             ["notches"]   = "###.###/###.###/#######/#######/.#####./#######/#######/###.###/###.###",
             ["hole"]      = "#######/#######/#######/#######/###.###/###.###/#######/#######/#######",
             ["arch"]      = "#######/#######/#######/#######/###.###/###.###/#######/#######/#######",
+            // 11-26 (Spencer: "can we throw in different board configurations as well" -> "sure"), levels 27-40. Rule kept from the
+            // 10-30 / 11-17 lessons: no lane narrower than 5 across more than one row, and nothing split down the middle.
+            ["hourglass"] = "#######/#######/.#####./..###../.#####./#######/#######/#######/#######",
+            ["cross"]     = "..###../..###../#######/#######/#######/#######/#######/..###../..###..",
+            ["staircase"] = "###..../####.../#####../######./#######/#######/#######/#######/#######",
+            ["bite"]      = "#######/#######/#######/#####../#####../#######/#######/#######/#######",
         };
         /// <summary>Install the void mask for <paramref name="name"/> (null/unknown/size mismatch = rectangle). Call before the
         /// board is filled. Logs [Shape].</summary>
@@ -2577,6 +2585,85 @@ namespace WordDrop
             return n;
         }
 
+        // 11-27 BOOK TRAY (Spencer: a one-tile "stack of like 3 books" in a little case, one colour per case; the one-tile spawner in
+        // place of Royal Match's mailbox). A crate KIND (3 red / 4 green / 5 gold books) that takes TRAY_BOOKS hits; each hit sends one
+        // book to the BOOKS goal (shared with the bookshelf). It is NOT counted by the Crates goal.
+        public const int TRAY_BOOKS = 3;
+        public static bool IsBookTray(int kind) => kind >= 3 && kind <= 5;
+        /// <summary>Free-form '@' mask characters: '#' crate (0), 'e' egg (1), 's' stone (2), 'r' / 'g' / 'y' book trays (3 / 4 / 5). -1 = not a piece.</summary>
+        public static int MaskKind(char ch) => ch == '#' ? 0 : ch == 'e' ? 1 : ch == 's' ? 2 : ch == 'r' ? 3 : ch == 'g' ? 4 : ch == 'y' ? 5 : ch == 'i' ? 6 : ch == 'W' ? 7 : ch == 'G' ? 8 : -1;
+        // 11-27 INK POT (Spencer's art; the first piece that acts against the player). A crate KIND (6, mask 'i') that takes INK_POT_HITS
+        // hits and counts in the Crates goal. Every INK_EVERY player moves it BURSTS: each plain letter touching it (4 sides) is INKED -
+        // it cannot be swapped until a word uses it. A word hitting the pot resets its countdown; breaking it cleans all the ink it spilled.
+        // 11-27 WALL (Spencer: "a tile that stretches across tiles as a solid thing forming a wall", unbreakable). A crate KIND (7, mask
+        // 'W'): a fixed piece (FIXED_CRATES) nothing can damage or clear, in no goal. Letters flow round it by the 11-04 diagonal slide.
+        // Drawn joined to its neighbours (Tile.SetWallMask + Blockers/wall_atlas).
+        // 11-27 TREASURE CHEST (Spencer's art, blue + gold; the reward piece - the gift box was "too generic"). A crate KIND (8, mask 'G'):
+        // one hit opens it and it turns into a POWER-UP on its own square (rocket or bomb). In no goal - a bonus worth going for.
+        public static bool IsChest(int kind) => kind == 8;
+        /// <summary>Chests opened in the live game whose reward card has not been shown yet (ChestRewardModal polls this once the board settles).</summary>
+        public static int ChestsPending;
+        public static bool IsWall(int kind) => kind == 7;
+        public bool IsWallAt(int x, int y) { var d = InBounds(x, y) ? _board[x, y] : null; return d != null && d.IsStone && d.ShelfPart == 0 && IsWall(d.CrateKind); }
+        public int CountChests() { int n = 0; for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++) { var d = _board[x, y]; if (d != null && d.IsStone && d.ShelfPart == 0 && IsChest(d.CrateKind)) n++; } return n; }
+        public int CountWalls() { int n = 0; for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++) if (IsWallAt(x, y)) n++; return n; }
+        public static int INK_EVERY = 4, INK_POT_HITS = 2;
+        public static bool IsInkPot(int kind) => kind == 6;
+        /// <summary>One player move has been spent: count every pot down and burst the ones at zero. Returns the pots that burst
+        /// (board cells) and fills <paramref name="inked"/> with the letters they inked; null when nothing burst.</summary>
+        public List<Vector2Int> TickInkPots(out List<Vector2Int> inked)
+        {
+            inked = null; List<Vector2Int> burst = null;
+            for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
+            {
+                var d = _board[x, y]; if (d == null || !d.IsStone || !IsInkPot(d.CrateKind) || d.ShelfPart != 0) continue;
+                if (--d.InkTimer > 0) continue;
+                d.InkTimer = INK_EVERY; (burst ??= new List<Vector2Int>()).Add(new Vector2Int(x, y));
+                for (int k = 0; k < 4; k++)
+                {
+                    int nx = x + (k == 0 ? 1 : k == 1 ? -1 : 0), ny = y + (k == 2 ? 1 : k == 3 ? -1 : 0);
+                    if (!InBounds(nx, ny)) continue; var n = _board[nx, ny];
+                    if (n == null || n.Inked || !char.IsLetter(n.Letter) || n.IsStone || n.IsFrozen || n.IsWild || n.IsDropTarget || n.IsAnchored || n.SpecialKind != SPECIAL_NONE) continue;
+                    n.Inked = true; n.InkId = d.InkId; (inked ??= new List<Vector2Int>()).Add(new Vector2Int(nx, ny));
+                }
+                if (!Simulating) WDLog.Log($"[Ink] pot ({x},{y}) burst");
+            }
+            return burst;
+        }
+        /// <summary>The pot with this id broke: every letter it inked is clean again.</summary>
+        private void CleanInk(int inkId)
+        {
+            for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++) { var d = _board[x, y]; if (d != null && d.Inked && (inkId <= 0 || d.InkId == inkId)) d.Inked = false; }
+        }
+        /// <summary>Pots within one move of bursting (the visual layer wobbles them).</summary>
+        public bool InkPotAboutToBurst(int x, int y) { var d = InBounds(x, y) ? _board[x, y] : null; return d != null && d.IsStone && IsInkPot(d.CrateKind) && d.InkTimer <= 1; }
+        /// <summary>The one kind every crate-goal piece on the board shares (0 crate, 1 egg, 2 stone, 6 ink pot), or 0 when they are mixed - picks the goal icon.</summary>
+        public int UniformCrateKind()
+        {
+            int kind = -1;
+            for (int x = 0; x < COLS; x++) for (int y = 0; y < ROWS; y++)
+            {
+                var d = _board[x, y]; if (d == null || !d.IsStone || d.IsDropTarget || d.TreasureHits != 0 || d.ShelfPart != 0 || IsBookTray(d.CrateKind) || IsWall(d.CrateKind) || IsChest(d.CrateKind)) continue;
+                if (kind < 0) kind = d.CrateKind; else if (kind != d.CrateKind) return 0;
+            }
+            return Mathf.Max(0, kind);
+        }
+        /// <summary>Planned counts from a free-form crate mask (the level card, before the board exists). The top row never holds a piece.</summary>
+        public static void MaskCounts(string layout, out int crates, out int trayBooks)
+        {
+            crates = 0; trayBooks = 0;
+            if (string.IsNullOrEmpty(layout) || layout[0] != '@') return;
+            var rowsM = layout.Substring(1).Split('/');
+            for (int ri = 1; ri < rowsM.Length && ri < ROWS; ri++)
+                for (int x = 0; x < rowsM[ri].Length && x < COLS; x++)
+                { int k = MaskKind(rowsM[ri][x]); if (k < 0 || IsWall(k) || IsChest(k)) continue; if (IsBookTray(k)) trayBooks += TRAY_BOOKS; else crates++; }
+        }
+        public int CountTrayBooks()
+        {
+            int n = 0;
+            for (int c = 0; c < COLS; c++) for (int r = 0; r < ROWS; r++) { var d = _board[c, r]; if (d != null && d.IsStone && d.ShelfPart == 0 && d.TreasureHits == 0 && IsBookTray(d.CrateKind)) n += Mathf.Max(1, d.CrateHP); }
+            return n;
+        }
         public static List<Vector2Int> LayoutCells(string pattern, bool forIce)
         {
             var list = new List<Vector2Int>();
@@ -2586,6 +2673,16 @@ namespace WordDrop
             int xMin = forIce ? 1 : 0, xMax = forIce ? COLS - 2 : COLS - 1, yMin = forIce ? 1 : 0;   // ice stays off the edges
             void Add(int x, int y) { var p = new Vector2Int(x, y); if (x >= xMin && x <= xMax && y >= yMin && y <= top && !list.Contains(p)) list.Add(p); }
             void Row(int y) { Add(cx, y); for (int d = 1; d <= COLS; d++) { Add(cx - d, y); Add(cx + d, y); } }   // centre-out
+            // FREE-FORM LAYOUT (11-26, Spencer on L39: "why could[n't] you have the crates surrounding the safe?"): "@" + a mask like the
+            // board shapes (top row first, rows split by '/', '#' = a cell) places crates / ice / grass on exactly those squares.
+            if (pattern[0] == '@')
+            {
+                var rowsM = pattern.Substring(1).Split('/');
+                for (int ri = 0; ri < rowsM.Length; ri++)
+                    for (int x = 0; x < rowsM[ri].Length && x < COLS; x++)
+                        if (MaskKind(rowsM[ri][x]) >= 0) Add(x, ROWS - 1 - ri);   // 11-27: 'e' = egg, 's' = stone (crate kinds)
+                return list;
+            }
             switch (pattern)
             {
                 case "wall":     for (int y = 0; y <= top; y++) Row(y); break;
@@ -2608,6 +2705,9 @@ namespace WordDrop
                 // PILLARS: two inner columns from the floor (cols 2 and COLS-3) - every crate touchable from BOTH sides, vertical rockets
                 // pay; replaces edge "columns" whose crates had one open face (L7 END-STALL 6.9).
                 case "pillars":  for (int y = 0; y <= top; y++) { Add(2, y); Add(COLS - 3, y); } break;
+                // TOWERS (11-26, L35): the odd columns from the floor - on 7 wide these are the owl home columns, so each owl has a
+                // crate tower between it and its nest.
+                case "towers":   for (int y = 0; y <= top; y++) for (int x = 1; x < COLS - 1; x += 2) Add(x, y); break;
                 // LID: a crate roof at row ROWS-4 (cols 1..COLS-2, centre-out), then a narrower row under it - the letter goals sit
                 // under it in the open middle (GOALS_CENTRAL). The edge columns stay open so letters keep flowing down past it (RM L8).
                 case "lid":      { int ly = ROWS - 4; for (int d = 0; d < cx - 1; d++) { Add(cx - 1 - d, ly); Add(cx + d, ly); }
@@ -2643,20 +2743,36 @@ namespace WordDrop
             if (!string.IsNullOrEmpty(CrateLayout))
             {
                 bool Free(Vector2Int q) { var dq = _board[q.x, q.y]; return dq != null && !dq.IsStone && !dq.IsFrozen && !dq.HasGem && dq.SpecialKind == SPECIAL_NONE; }
+                // 11-26 a free-form '@' layout is EXACT: its squares and nothing else - no mirrored twin, no random top-up below
+                // (first try on L39: the 12-crate ring came out as 20 crates, mirrored to 5 wide with letters sealed inside).
+                bool exact = CrateLayout[0] == '@'; if (exact) count = LayoutCells(CrateLayout, false).Count;
                 foreach (var p in LayoutCells(CrateLayout, false))
                 {
                     if (placed >= count) break;
                     if (!Free(p)) continue;
                     // 11-02 SYMMETRIC_LAYOUTS: a pattern cut off part-way left a lone crate on one side; place the mirror with it
                     var m = new Vector2Int(COLS - 1 - p.x, p.y);
-                    var put = (SYMMETRIC_LAYOUTS && m != p) ? (placed + 2 <= count && Free(m) ? new[] { p, m } : null) : new[] { p };
+                    var put = (SYMMETRIC_LAYOUTS && m != p && !exact) ? (placed + 2 <= count && Free(m) ? new[] { p, m } : null) : new[] { p };
                     if (put == null) continue;
                     foreach (var q in put)
                     {
                         var d = _board[q.x, q.y];
-                        d.IsStone = true; d.IsAnchored = false; d.RequiredWordLength = 0; d.IsFrozen = false;
+                        d.IsStone = true; d.IsAnchored = false; d.RequiredWordLength = 0; d.IsFrozen = false; d.CrateKind = 0;
                         keep.Add(q); placed++;
                     }
+                }
+                if (exact) count = placed;
+                if (exact)   // 11-27 crate kinds: the mask's 'e' squares are eggs, its 's' squares stones
+                {
+                    var rowsK = CrateLayout.Substring(1).Split('/');
+                    for (int ri = 0; ri < rowsK.Length; ri++)
+                        for (int x = 0; x < rowsK[ri].Length && x < COLS; x++)
+                        {
+                            char ch = rowsK[ri][x]; int y = ROWS - 1 - ri;
+                            if (MaskKind(ch) <= 0 || y < 0 || y >= ROWS) continue;
+                            var dk = _board[x, y];
+                            if (dk != null && dk.IsStone && keep.Contains(new Vector2Int(x, y))) dk.CrateKind = MaskKind(ch);
+                        }
                 }
                 if (!Simulating) WDLog.Log($"[Layout] crates '{CrateLayout}': {placed}/{count} placed by pattern — {RunCoverage():P0} of letters sit in a straight run of 4+ (words need one)");
             }
@@ -2834,7 +2950,7 @@ namespace WordDrop
                     // seen and the tome went to a random letter. A blast does not remove an owl, so it is always looked at.
                     if (d.IsDropTarget) { if (needDucks && y > 0 && y < lowDuck.y) lowDuck = p; continue; }
                     if (exploded.Contains(p) || area.Contains(p)) continue;
-                    bool isGoal = (d.IsFrozen && needIce) || (d.IsStone && d.TreasureHits == 0 && d.ShelfPart == 0 && needCrates) || (d.HasGem && needGems)
+                    bool isGoal = (d.IsFrozen && needIce) || (d.IsStone && d.TreasureHits == 0 && d.ShelfPart == 0 && !IsWall(d.CrateKind) && !IsChest(d.CrateKind) && (IsBookTray(d.CrateKind) ? needBooks : needCrates)) || (d.HasGem && needGems)
                                || (d.ShelfPart > 0 && (d.ShelfKind == 1 ? needSafes && d.ShelfBooks > 0 : needBooks))   // the propeller book homes on the bookshelf / safe (11-03 Spencer)
                                || (needCollect && collect != '\0' && char.ToUpperInvariant(d.Letter) == collect && !d.IsStone)
                                || (needGrass && _grass[x, y] && !d.IsStone);
@@ -4574,6 +4690,9 @@ namespace WordDrop
         /// <summary>11-04 (Spencer: "maybe just leave it open on the board when its cracked"): a safe's last hit no longer clears its
         /// 2x2 - it stays as the OPEN, empty vault (ShelfBooks 0), a fixed piece the letters flow around. false = it clears.</summary>
         public static bool SAFE_STAYS_OPEN = true;
+        /// <summary>11-27 PIGGY BANK (Spencer's art): this level's safes are drawn as piggy banks (LevelRules.SafeSkin = "pig"). Same hits, same
+        /// coins, same Safes goal - but a smashed pig is GONE (its four squares clear), where an opened safe stays as an empty vault.</summary>
+        public static bool SafeIsPig;
         public static bool DIAGONAL_SLIDE = true;
         public static bool SLIDE_PAST_SEALED = true;     // 11-17: a shaft with a sealed top cell still fills from the side lower down (false = the 11-04 rule)
         public static bool SLIDE_ONE_PER_SHAFT = true;   // 11-04: one slide per shaft per wave (stream), not the whole shaft at once
@@ -6219,11 +6338,11 @@ namespace WordDrop
             if (HintMovable(c)) return true;
             if (!BOT_MOVES_SPECIALS || !Simulating || c == null) return false;
             return c.SpecialKind != SPECIAL_NONE && !(HandManager.SPECIALS_LOCKED && c.SpecialKind == SPECIAL_TNT)
-                && !c.IsFrozen && !c.IsStone && !c.IsDropTarget && !c.IsAnchored && !c.HasGem;
+                && !c.IsFrozen && !c.Inked && !c.IsStone && !c.IsDropTarget && !c.IsAnchored && !c.HasGem;
         }
 
         private static bool HintMovable(RulesCellData c) =>
-            c != null && char.IsLetter(c.Letter) && !c.IsFrozen && !c.IsStone && !c.IsWild && !c.IsDropTarget && !c.IsAnchored
+            c != null && char.IsLetter(c.Letter) && !c.IsFrozen && !c.Inked && !c.IsStone && !c.IsWild && !c.IsDropTarget && !c.IsAnchored
             && c.SpecialKind == SPECIAL_NONE && !(HandManager.GEMS_LOCKED && c.HasGem);   // hints never suggest moving a locked gem
         private int HintWordScore(RulesWordMatch m, char collect)
         {
@@ -6246,7 +6365,7 @@ namespace WordDrop
                     if (k >= 4 && !(_board[q.x, q.y] != null && _board[q.x, q.y].IsStone && !_board[q.x, q.y].IsDropTarget)) continue;   // diagonals: crates only
                     if (!seen.Add(q)) continue;
                     var n = _board[q.x, q.y];
-                    if (n != null && n.IsStone && !n.IsDropTarget && n.ShelfPart == 0 && GoalOpen(LevelRules.GoalType.Crates)) s += 12;
+                    if (n != null && n.IsStone && !n.IsDropTarget && n.ShelfPart == 0 && !IsWall(n.CrateKind) && !IsChest(n.CrateKind) && GoalOpen(IsBookTray(n.CrateKind) ? LevelRules.GoalType.Books : LevelRules.GoalType.Crates)) s += 12;
                     if (n != null && n.ShelfPart > 0 && !(n.ShelfKind == 1 && n.ShelfBooks <= 0) && GoalOpen(n.ShelfKind == 1 ? LevelRules.GoalType.Safes : LevelRules.GoalType.Books)) s += 12;   // BOOKSHELF / SAFE beside the word - diagonals too (11-03: shelf cells are stones, so CRATE_DIAGONAL already lets a word hit them diagonally; the bot + hints didn't know)
                     // 11-02: ice (10-30) and gems (11-02) beside the word count too - otherwise hints, the goal-dead check and the
                     // tutorial's goal swap never knew a touching word reaches them
@@ -8112,14 +8231,26 @@ namespace WordDrop
         /// (or was already hit this step - one layer per crate per resolution, like Royal Match).</summary>
         private bool CrateHit(Vector2Int p, RulesCellData d)
         {
-            if (d.CrateHP <= 1) { _crateHitThisStep.Add(p); return true; }   // last layer: breaks
+            if (IsWall(d.CrateKind)) return false;   // 11-27: a wall takes no damage from anything
+            if (IsChest(d.CrateKind))
+            {   // 11-27: the chest opens and is gone like a one-hit crate; in the live game its prize is the pick-1-of-3 card (ChestRewardModal)
+                if (_crateHitThisStep.Add(p) && !Simulating) { ChestsPending++; WDLog.Log($"[Chest] ({p.x},{p.y}) opened"); }
+                return true;
+            }
+            if (IsInkPot(d.CrateKind)) { d.InkTimer = INK_EVERY; if (d.CrateHP <= 1) CleanInk(d.InkId); }   // 11-27: a hit resets the pot's countdown; breaking it cleans its ink
+            bool tray = IsBookTray(d.CrateKind) && !Simulating;   // 11-27: its book flies to the Books goal - the badge waits for it to land
+            if (d.CrateHP <= 1) { if (tray && _crateHitThisStep.Add(p)) { LevelRules.BooksAwaitingFly++; LevelRules.BooksAwaitingSince = Time.unscaledTime; } _crateHitThisStep.Add(p); return true; }   // last layer: breaks
             if (!_crateHitThisStep.Add(p)) return false;
             d.CrateHP--; _crateHitCells.Add(p);
+            if (tray) { LevelRules.BooksAwaitingFly++; LevelRules.BooksAwaitingSince = Time.unscaledTime; }
             if (!Simulating) WDLog.Log($"[Crate] ({p.x},{p.y}) lost a layer -> {d.CrateHP} left");
             return false;
         }
         // ── BOOKSHELF (2026-11-03) ──
         public static int SHELF_MAX_BOOKS = 6;   // books one shelf holds (the art has 6 slots)
+        /// <summary>11-26 exact spots for this level's shelves / safes, in piece order (shelves first): "x,y;x,y" = each piece's
+        /// bottom-left square. null / missing = the old floor positions. Set per level (LevelRules.Spots).</summary>
+        public static string ShelfSpotsNext;
         public static int ShelfStyleNext;        // set per level (LevelRules.ShelfStyle); a level's 2nd shelf gets the other style
         public static int SAFE_HITS = 6;         // 11-03 SAFE: hits to open (one lamp each - the art has 6)
         public static int SAFE_COINS = 10;
@@ -8144,7 +8275,7 @@ namespace WordDrop
                 else WDLog.Log($"[Safe] ({a.x},{a.y}) lamp lit -> {left} hit(s) to open");
             }
             if (left > 0) return false;
-            if (d.ShelfKind == 1 && SAFE_STAYS_OPEN) { if (!Simulating) WDLog.Log($"[Safe] ({a.x},{a.y}) OPENED - stays on the board"); return false; }
+            if (d.ShelfKind == 1 && SAFE_STAYS_OPEN && !SafeIsPig) { if (!Simulating) WDLog.Log($"[Safe] ({a.x},{a.y}) OPENED - stays on the board"); return false; }
             for (int i = 1; i <= 4; i++)
             {
                 var q = a + ShelfOffset(i);
@@ -8186,6 +8317,11 @@ namespace WordDrop
                 bool safe = s >= shelves;
                 int n = safe ? SafeHitsNow : Mathf.Min(SHELF_MAX_BOOKS, books - placed); if (n <= 0) continue;
                 var a = new Vector2Int(cols[s], 0);
+                if (!string.IsNullOrEmpty(ShelfSpotsNext))
+                {
+                    var sp = ShelfSpotsNext.Split(';');
+                    if (s < sp.Length) { var xy = sp[s].Split(','); if (xy.Length == 2 && int.TryParse(xy[0], out int sx) && int.TryParse(xy[1], out int sy)) a = new Vector2Int(sx, sy); }
+                }
                 bool ok = true;
                 for (int i = 1; i <= 4; i++) { var q = a + ShelfOffset(i); if (!InBounds(q.x, q.y) || IsVoid(q.x, q.y)) ok = false; }
                 if (!ok) { if (!Simulating) Debug.LogWarning($"[Shelf] no room at ({a.x},{a.y}) (board shape) - skipped"); continue; }
@@ -8222,6 +8358,8 @@ namespace WordDrop
                 int mx = COLS - 1 - x; var dm = _board[mx, y];
                 if (mx < x && dm != null && dm.IsStone && !dm.IsDropTarget && dm.TreasureHits == 0) { d.CrateHP = Mathf.Max(1, dm.CrateHP); }
                 else d.CrateHP = opts.Count == 0 ? 1 : opts[SurvivalRng.Range(0, opts.Count)];
+                if (d.CrateKind == 1) d.CrateHP = 1; else if (d.CrateKind == 2) d.CrateHP = 2; else if (IsBookTray(d.CrateKind)) d.CrateHP = TRAY_BOOKS;
+                else if (IsInkPot(d.CrateKind)) { d.CrateHP = INK_POT_HITS; d.InkTimer = INK_EVERY; d.InkId = 1000 + x * 16 + y; }   // 11-27 ink pot   // 11-27: an egg is one hit, a stone two - whatever the level's mix
                 n++; layers += d.CrateHP;
             }
             if (!Simulating && n > 0) WDLog.Log($"[Crate] {n} crate(s), {layers} layer(s) (mix '{mix}')");
@@ -9432,6 +9570,14 @@ namespace WordDrop
         /// TreasureHits 0): 0/1 = breaks on the next hit (today's crate), 2 = one plank left, 3 = full X. A word beside it, a special's
         /// blast or a booster each take ONE layer per resolution step; the crate goal counts it only when it is gone.</summary>
         public int CrateHP { get; set; }
+        /// <summary>11-27 CRATE KIND (Spencer's egg + stone art): 0 = wooden crate, 1 = EGG (always one hit), 2 = STONE (always two hits).
+        /// Same rules and goal count as a crate - only the art, the break chunks and the starting layers differ. Set by PlaceCrates from
+        /// a free-form '@' layout ('e' = egg, 's' = stone, '#' = crate).</summary>
+        /// <summary>11-27 INK: this letter was inked by an ink pot - it cannot be swapped until a word uses it (the cell is cleared with the word). InkId = the pot that did it.</summary>
+        public bool Inked { get; set; }
+        public int InkId { get; set; }      // ink pot: its id; inked letter: the pot that inked it
+        public int InkTimer { get; set; }   // ink pot: player moves until its next burst
+        public int CrateKind { get; set; }   // 6 = INK POT (RulesEngine.IsInkPot); 3 / 4 / 5 = BOOK TRAY with red / green / gold books (RulesEngine.IsBookTray)
         /// <summary>BOOKSHELF (2026-11-03, Spencer's library piece): a 2x2 ANCHORED blocker made of four stone cells sharing ShelfId.
         /// ShelfPart 0 = not a shelf; 1 = bottom-left (draws the whole shelf), 2 = bottom-right, 3 = top-left, 4 = top-right.
         /// ShelfBooks = books left (same on all four parts). Each word touching it / blast through it knocks ONE book per

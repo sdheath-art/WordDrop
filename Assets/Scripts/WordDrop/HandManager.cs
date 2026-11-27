@@ -1773,7 +1773,8 @@ namespace WordDrop
             if (rules == null || _grid == null) return false;
             var cell = rules.GetCell(col, row);
             if (cell == null) return false;
-            if (cell.IsStone || cell.IsFrozen) return false;
+            if (ChestRewardModal.Open) return false;
+            if (cell.IsStone || cell.IsFrozen || cell.Inked) return false;   // 11-27: an inked letter is stuck until a word uses it
             if (cell.IsAnchored || cell.IsDropTarget) return false;
             if (GEMS_LOCKED && cell.HasGem) return false;   // gems can't be picked up (2026-10-22)
             var t = _grid.GetTile(col, row);
@@ -1825,7 +1826,9 @@ namespace WordDrop
 
             // Cannot swap special tiles
             if (cell1.IsStone || cell2.IsStone) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: stone"); return false; }
-            if (cell1.IsFrozen || cell2.IsFrozen) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: ICE (frozen)"); return false; } // ice tiles locked until thawed (2026-06-15 Spencer)
+            if (cell1.IsFrozen || cell2.IsFrozen) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: ICE (frozen)"); return false; }
+            if (ChestRewardModal.Open) return false;   // 11-27: the board waits while the chest's reward card is up
+            if (cell1.Inked || cell2.Inked) { WDLog.Log($"[SwapBlocked] ({col1},{row1})<->({col2},{row2}) refused: INK"); return false; }   // 11-27 ink pot // ice tiles locked until thawed (2026-06-15 Spencer)
             // GEMS LOCKED (2026-10-22 Spencer: "you can basically just pivot them until they finally make a word"). Walking a gem
             // swap by swap until its letter lands in a word beat the goal's point — FIND a word through it. Gems fall, can be
             // swiped through, and are collected by any word using them; they just can't be moved by hand.
@@ -4446,7 +4449,7 @@ case RulesEngine.ResolutionPhase.Complete:
                 void Knock()
                 {
                     if (t == null) return;
-                    WordDropFX.Instance?.PlayCrateDebris(t.transform.position);
+                    if (!RulesEngine.IsBookTray(t.CrateKind)) WordDropFX.Instance?.PlayCrateDebris(t.transform.position, t.CrateKind);   // 11-27: a tray that stays only gives up a book
                     WordDropFX.Instance?.PlayPlankOff(t, before);   // 11-03: the plank that came off tumbles away
                     if (!t.IsAnimating) t.transform.DOPunchScale(Vector3.one * 0.12f, 0.22f, 6, 0.6f);   // knock (skipped mid-move so it can't fight a fall tween)
                     t.SetCrateHP(after);
@@ -4518,6 +4521,25 @@ case RulesEngine.ResolutionPhase.Complete:
         private void HitSafe(GridManager grid, Tile t, Vector2Int a, int left)
         {
             Vector3 anchor = grid.CellToWorld(a.x, a.y);
+            if (Tile.PigNow)
+            {   // 11-27 PIGGY BANK: a hit jolts it (and cracks it from half-way); the last hit smashes it - coins burst, pieces fly, it is gone
+                Vector3 mid = Tile.ShelfCentreWorld(anchor, grid.CellSize) + new Vector3(grid.BoardSlideOffsetX, 0f, -0.4f); float size = Tile.ShelfWorldSize(grid.CellSize);
+                if (left > 0)
+                {
+                    if (t != null) { t.SetShelf(1, left); t.PunchShelf(1.2f); }
+                    SafeSparks(mid, grid.CellSize, SAFE_HIT_SPARKS, 1f); GridManager.Instance?.ShakeBoard(SAFE_HIT_SHAKE, 0.12f); HapticsManager.Medium();
+                    GameAudio.Instance?.PlayCrateKnock(); GameAudio.Instance?.PlayCoinLand();
+                    return;
+                }
+                int pigCoins = RulesEngine.SAFE_COINS;
+                GridManager.Instance?.ShakeBoard(0.22f, 0.3f); HapticsManager.Strong();
+                WordDropFX.Instance?.PlayChestCoinBurst(mid, size); WordDropFX.Instance?.PlayPigSmash(mid, size); SafeSparks(mid, size * 0.5f, SAFE_OPEN_SPARKS, 1.4f);
+                if (GameAudio.Instance != null && GameAudio.Instance.HasKit("safe_open")) GameAudio.Instance.PlayKit("safe_open"); else GameAudio.Instance?.PlayCrateBreak();
+                CoinWallet.Add(pigCoins); SurvivalManager.PendingBonusCoins += pigCoins; LevelMapPanel.Instance?.AddPendingCoinReward(pigCoins);
+                HUDManager.Instance?.SpawnBonusCoins(new List<Vector3> { mid, mid + new Vector3(size * 0.2f, size * 0.1f, 0f), mid + new Vector3(-size * 0.2f, size * 0.08f, 0f) }, pigCoins);
+                WDLog.Log($"[Pig] smashed at ({a.x},{a.y}) -> +{pigCoins} coins");
+                return;
+            }
             if (left > 0)
             {
                 int lit = Tile.SafeLampsLit(left) - 1;   // the newest lamp (Gold Rush lights two per hit)

@@ -53,7 +53,11 @@ namespace WordDrop
         public int    ShelfStyle;     // 11-03 BOOKSHELF art: 0 = rounded frame, 1 = ornate bookcase (a 2nd shelf gets the other)
         public int    Safes;          // 11-03 SAFE: safes on the floor (6 hits each); > 0 = an "Open N safes" goal
         public int    ShelfBooks;     // 11-03 BOOKSHELF: books on the level's shelf/shelves (RulesEngine.PlaceShelves); > 0 = a Books goal
-        public string CrateSkin;     // 11-24: "vase" = this level's crates are drawn as vases (Tile.CrateSkin); null = wooden crates
+        public string SafeSkin;      // 11-27: "pig" = this level's safes are piggy banks (RulesEngine.SafeIsPig); null = safes
+        public int    StartTnt;      // 11-27: dynamite letters this level starts with (blocker-heavy boards open with 2-3, like Royal Match's pre-placed power-ups); 0 = the usual StartTntFor(stage)
+        public int    SafeHits;      // 11-26: words needed per safe on this level; 0 = RulesEngine.SAFE_HITS
+        public string Spots;         // 11-26: exact bottom-left squares for this level's shelves / safes ("x,y;x,y", shelves first); null = on the floor
+        public string CrateSkin;     // 11-24: "vase" = this level's crates are drawn as vases (Tile.CrateSkin); null = wooden crates. 11-27: "navy" = this level's BOOK TRAYS use the navy case (plum otherwise)
         public string CrateHits;     // 11-03 multi-hit crates: starting layers picked per crate from this list ("1,2,3"); null = all single-hit
         public string Shape;          // board shape (RulesEngine.SHAPES name: octagon, funnel, notches, split, sidenotch, hole, legs); null = rectangle (2026-10-28)
         public int    Grass, GrassSeeds; public string GrassLayout;   // squares of grass to MOW + their starting pattern (GrassSeeds unused since the flip) — 2026-10-23   // designed starting arrangement (RulesEngine.LayoutCells) — 2026-10-23 "bland and repetitive"
@@ -172,13 +176,13 @@ namespace WordDrop
         // 11-26 (Spencer: "i like it just off for the hard levels"): past the on-ramp the rescue is off ONLY on the levels listed
         // here (the hard ones); ordinary levels keep it. Bot 11-26 with it off everywhere past 16: L22 / 24 / 26 won 72-82% with
         // 9-13 turns stuck on the last pieces. Add each new hard level here.
-        public static readonly int[] RESCUE_OFF_LEVELS = { 17, 19 };
+        public static readonly int[] RESCUE_OFF_LEVELS = { 17, 19, 29, 34, 39 };
         // OWL START HEIGHT (11-26, remote bot: L21 casual 42%, no owl-helping move on 69% of turns). Owls started on the TOP row;
         // in swipe mode no falling word pops by itself, so every square under an owl has to be cleared by hand. OwlStartDrop =
         // how many rows below the top the owls start on this level (0 = top). Swipe mode only. OWL_DROP_OVERRIDE >= 0 = bot sweeps.
         public static int OwlStartDrop = 0;
         public static int OWL_DROP_OVERRIDE = -1;
-        public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_OWL_DROP = new System.Collections.Generic.Dictionary<int, int> { { 21, 3 }, { 23, 3 } };   // sweep 11-26 x60 (3 is the most the board allows; n=120): L21 at 40 moves goal-focused 42% -> ~97%, scattered ~89%; drop 2 gave 90 / 73
+        public static readonly System.Collections.Generic.Dictionary<int, int> CLAIM_OWL_DROP = new System.Collections.Generic.Dictionary<int, int> { { 21, 3 }, { 23, 3 }, { 30, 3 }, { 35, 3 }, { 38, 3 } };   // sweep 11-26 x60 (3 is the most the board allows; n=120): L21 at 40 moves goal-focused 42% -> ~97%, scattered ~89%; drop 2 gave 90 / 73
         public static int OwlDropFor(int stage) => OWL_DROP_OVERRIDE >= 0 ? OWL_DROP_OVERRIDE : (HandManager.CLAIM_MODE && CLAIM_OWL_DROP.TryGetValue(stage, out int d) ? d : 0);
         public static bool RescueFor(int stage) => stage <= RESCUE_LAST_LEVEL || System.Array.IndexOf(RESCUE_OFF_LEVELS, stage) < 0;
         public static bool RescueThisLevel = true;
@@ -210,17 +214,18 @@ namespace WordDrop
             for (int x = 0; x < RulesEngine.COLS; x++) for (int y = 0; y < RulesEngine.ROWS; y++) if (before[x, y] != after[x, y]) keep.Add(new Vector2Int(x, y));
             sim.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
             RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
-            RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.SafeHitsNow = RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? sim.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF first: crates must not land on its cells (mirrors Apply)
+            RulesEngine.SafeIsPig = r.SafeSkin == "pig"; RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.ShelfSpotsNext = r.Spots; RulesEngine.SafeHitsNow = r.SafeHits > 0 ? r.SafeHits : RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? sim.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF first: crates must not land on its cells (mirrors Apply)
             int crates = r.Crates > 0 ? sim.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
             if (crates > 0) sim.AssignCrateHits(r.CrateHits);   // 11-03 multi-hit crates (mirrors Apply)
             if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = sim.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
             else sim.ClearGrass();
-            sim.PlaceStartTnt(StartTntFor(stage), keep);
+            sim.PlaceStartTnt(r.StartTnt > 0 ? r.StartTnt : StartTntFor(stage), keep);
             if (!r.Bonus) sim.PlaceTreasures(stage, keep);   // TREASURE (bonus loot) - mirrors Apply
             int simGems = r.Gems > 0 ? sim.PlaceGems((RulesEngine.GEMS_FIXED ? r.Gems : Mathf.Min(r.Gems, RulesEngine.GEM_MIN_ON_BOARD + 2)), keep) : 0;
             // 11-17: mirrors Apply - a fixed-gem goal can never ask for more than were placed (the 7x9 survey: 0% on every 6+ gem level)
             if (RulesEngine.GEMS_FIXED && r.Gems > 0) foreach (var gg in Goals) if (gg.Type == GoalType.Gems && gg.Target > simGems) { SimGemShortfall++; gg.Target = simGems; }
             if (r.Ducks > 0) sim.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep);
+            { int tb = sim.CountTrayBooks(); if (tb > 0 || sim.CountWalls() > 0 || sim.CountChests() > 0) { crates = sim.CountCrateCells(); books += tb; } }   // 11-27 book trays: Books goal, not Crates
             CrateGoal = crates;
             if (crates > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Crates, Target = crates });
             if (books > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Books, Target = books });
@@ -477,12 +482,12 @@ namespace WordDrop
         private static LevelRules Make(string name, int ice = 0, int minLen = 3, int cadence = 2,
                                        bool branch = false, bool fuse = false, bool gold = false,
                                        int fillRows = 5, float density = 0.92f, int crates = 0, char collect = '\0', int collectN = 0, int gems = 0, string theme = null, int themeN = 0, int ducks = 0,
-                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null, string shape = null, string crateHits = null, int shelfBooks = 0, int shelfStyle = 0, int safes = 0, string crateSkin = null)
+                                       int moves = 0, bool bonus = false, string teach = null, string crateLayout = null, string iceLayout = null, int grass = 0, int grassSeeds = 3, string grassLayout = null, string shape = null, string crateHits = null, int shelfBooks = 0, int shelfStyle = 0, int safes = 0, string crateSkin = null, string spots = null, int safeHits = 0, int startTnt = 0, string safeSkin = null)
             => new LevelRules {
                 Name = name, IceCount = ice, MinWordLength = minLen, RiseCadence = cadence,
                 BranchPriming = branch, FuseOn = fuse, GoldTiles = gold,
                 FillRows = fillRows, Density = density, Crates = crates, CollectLetter = collect, CollectCount = collectN, Gems = gems, Theme = theme, ThemeCount = themeN, Ducks = ducks,
-                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout, Shape = shape, CrateHits = crateHits, ShelfBooks = shelfBooks, ShelfStyle = shelfStyle, Safes = safes, CrateSkin = crateSkin };
+                Moves = moves, Bonus = bonus, Teach = teach, CrateLayout = crateLayout, IceLayout = iceLayout, Grass = grass, GrassSeeds = grassSeeds, GrassLayout = grassLayout, Shape = shape, CrateHits = crateHits, ShelfBooks = shelfBooks, ShelfStyle = shelfStyle, Safes = safes, CrateSkin = crateSkin, Spots = spots, SafeHits = safeHits, StartTnt = startTnt, SafeSkin = safeSkin };
 
         /// <summary>The authored opening. One named twist per stage — that is what makes a level
         /// feel designed instead of a number going up. Keep each stage to ONE new idea.</summary>
@@ -574,6 +579,23 @@ namespace WordDrop
             /* 24 */ Make("Cold Storage",   ice:10, gems:5, iceLayout:"spread", moves:26, shape:"arch"),   // no owls: two letter goals on the arch board
             /* 25 */ Make("Safe House",     safes:1, crates:3,    moves:34, crateLayout:"band", crateHits:"2,3"),   // no owls: the safe behind a band of tough crates (L17's squeeze with the L18 safe)
             /* 26 */ Make("Overgrown",      grass:28, grassLayout:"wall", moves:30),   // 11-24 TEST LEVEL for the grass art + the mowing goal (built 10-23, never played on 7x9 / tiles-stay): grass under the bottom four rows, the top five bare (Spencer: grass should not cover the whole board). Moves = a guess.
+            // 11-26 LEVELS 27-40 (Spencer approved the one-line concepts + new board shapes: "sure"). One idea per level; table moves
+            // are placeholders - swipe mode reads CLAIM_MOVES (set from the remote bot). Hard = 29 / 34 / 39 (rescue off there).
+            // PASS 2 (bot 10:35-11:38 x60, pass 1: all winnable; 28 / 30 / 34 / 37 ran 37-52 moves, 32 + 38 stalled ~20 turns on the last pieces, owl levels had no owl-helping move on 50-67% of turns): goals cut, owls start 3 rows down on 30 / 35 / 38, Strongroom off the hourglass (-> bite), Thin Ice takes the hourglass, The Clearing back to a plain board.
+            /* 27 */ Make("Under the Boxes", grass:14, grassLayout:"wall", crates:5, crateLayout:"wall", crateHits:"1", moves:36),   // crates sit ON the lawn's bottom row: break the crate, then mow under it
+            /* 28 */ Make("Two Gardens",     grass:10, grassLayout:"columns", crates:4, crateLayout:"pillars", crateHits:"1,2", moves:38),   // a lawn down each side, tough crate pillars guarding the way in
+            /* 29 */ Make("The Hedge",       grass:10, grassLayout:"columns", moves:30, shape:"cross"),   // HARD: grass only in the two stub edge columns of the cross - aim rockets / tomes
+            /* 30 */ Make("Owl Meadow",      ducks:2, grass:7, grassLayout:"wall", moves:36),   // owls over a lawn: the mowing is what brings them down
+            /* 31 */ Make("Book Garden",     shelfBooks:6, grass:10, grassLayout:"band", moves:40),   // a shelf on the floor, a band of lawn across the middle
+            /* 32 */ Make("Strongroom",      safes:2, spots:"1,0;5,2", moves:44, shape:"bite", safeHits:4),   // 11-26 Spencer: the right safe sits up in the corner under the bite's notch (letters under it), the left one on the floor
+            /* 33 */ Make("Thin Ice",        ice:10, iceLayout:"checker", gems:6, moves:36, shape:"hourglass"),   // checkerboard ice + gems on the funnel
+            /* 34 */ Make("Sealed Row",      gems:5, crates:7, crateLayout:"lid", crateHits:"2", moves:40, shape:"staircase"),   // HARD: gems under a tough lid on the staircase; the TNT placement decides it
+            /* 35 */ Make("Roost Towers",    ducks:3, crates:6, crateLayout:"towers", crateHits:"1", moves:38),   // a crate tower between each owl and its nest
+            /* 36 */ Make("The Clearing",    grass:28, grassLayout:"wall", moves:46),   // the feel-good level: a huge lawn, generous moves, rockets mow rows
+            /* 37 */ Make("Bookends",        shelfBooks:8, moves:44, shape:"arch"),   // two shelves, one each side of the arch
+            /* 38 */ Make("Cold Feathers",   ducks:3, ice:4, iceLayout:"spread", moves:38, shape:"funnel"),   // owls + ice on the funnel (held back since 11-24)
+            /* 39 */ Make("The Keep",        safes:1, spots:"2,4", crates:12, crateLayout:"@......./......./.####../.#..#../.#..#../.####../......./......./.......", crateHits:"2", moves:44),   // HARD. 11-26 Spencer picked mock A: the safe mid-board with 12 crates all the way round it (was: safe on the floor, a crate ring round a letter, ice). Ice goal dropped: break in, crack the safe.
+            /* 40 */ Make("Harvest",         grass:21, grassLayout:"wall", gems:6, crates:5, crateLayout:"lid", crateHits:"1,2", moves:46, shape:"octagon"),   // chapter finale: lawn + gems + crates
         };
 
         /// <summary>BLAST-LIMIT PROTOTYPE switch (2026-10-20). True = each level gives a fixed number
@@ -589,7 +611,7 @@ namespace WordDrop
         public static int MovesFor(int stage) => 24 + (Mathf.Max(1, stage) - 1) / 3;
 
         public static bool HARD_BY_LIST = true;
-        public static readonly int[] HARD_LEVELS = { 14, 17, 19 };
+        public static readonly int[] HARD_LEVELS = { 14, 17, 19, 29, 34, 39 };
         /// <summary>Royal-Match-style base coins for clearing a level (2026-10-21): 10 normal, 20 hard, 30 boss.
         /// Boss = every 5th level from 10 (the table's BOSS rows and the procedural slot-4 boss). Hard = a 4+ letter
         /// minimum, heavy ice (8+), or a rise every move.</summary>
@@ -622,6 +644,9 @@ namespace WordDrop
             { 1, 27 }, { 2, 28 }, { 3, 39 }, { 4, 39 }, { 5, 33 }, { 6, 35 }, { 7, 50 }, { 8, 16 }, { 9, 22 }, { 10, 28 },
             { 11, 19 }, { 12, 20 }, { 13, 33 }, { 14, 24 }, { 15, 33 }, { 16, 33 }, { 17, 38 /* 11-26: 34 -> 38, scattered bot won 42% / 35% at 34 over two runs (p50 37-38) - too harsh even for a hard level */ }, { 18, 26 /* 11-26: 22 -> 26, scattered bot 70% at 22 (p90 27) */ }, { 19, 44 },   /* bot 11:39, rescue off on these: L17 80% at 34; L18 98% at 28 (p90 18) -> 22 as the short relief level between the two hard ones; L19 ~78-80% at 44 over two runs */   // L17 41 -> 35 (11-25): no rescue from L17 on; bot (goal-focused, rescue off) wins ~82% at 35, 78% at 46 on L19 with ~1 loss in 5 a near-miss
             { 21, 40 }, { 23, 38 /* 11-26: 42 -> 38 with the owls starting 3 rows down (98 / 93% at 42, p90 29-38) */ },   // PROVISIONAL, 3 owls (run 09:18): casual bot p50 40 / 33, wins ~50% / ~75% here; owl levels are past the tester build's last level (20)
+            // 11-26 L27-40, first counts (remote bot sweeps x60, goal-focused / scattered casual): ordinary levels aimed at ~85-92% blended,
+            // hard ones (29, 34, 39) at ~65-75%. PASS 3 choices: 28 grass 10, 30 two owls, 32 four words per safe, 34 gems 5 + 7 crates.
+            { 27, 34 }, { 28, 42 }, { 29, 30 }, { 30, 42 }, { 31, 40 }, { 32, 42 }, { 33, 42 }, { 34, 40 }, { 35, 38 }, { 36, 50 }, { 37, 46 }, { 38, 44 }, { 39, 44 }, { 40, 42 },
             { 22, 26 }, { 24, 33 }, { 25, 41 }, { 26, 44 },   // L26: bot 80% point after tomes learned to fly to grass (run 09:09)   // 11-26 (remote bot x60): L14 21->24 (goal-focused 90% -> 97%, scattered 77%; Spencer failed it twice at 21). Trims of 6/7/9/13/25 to the goal-focused 95% point were TRIED and undone: the scattered player fell to 65-80% there.
         };
         // OWLS under swipe-to-claim (11-25): with 5 owls the casual bot needed 62 moves on L21 (13% win at 30, 16 of 60 games not
@@ -660,12 +685,18 @@ namespace WordDrop
             return r;
         }
 
+        /// <summary>11-26 LEVEL OVERRIDES: level -> a replacement row, filled by the editor's BotRemote ("spec=" request lines) so a level
+        /// can be reshaped and re-run by the bots / the visible bot with NO recompile (each compile pops Unity windows that took the
+        /// mouse out of Spencer's other app). Empty in every build - nothing fills it outside the editor.</summary>
+        public static readonly System.Collections.Generic.Dictionary<int, LevelRules> OVERRIDES = new System.Collections.Generic.Dictionary<int, LevelRules>();
+        public static LevelRules TableRow(int stage) => TABLE[Mathf.Clamp(stage, 1, TABLE.Length) - 1];
+        public static int TableLength => TABLE.Length;
         public static LevelRules For(int stage)
         {
             if (stage < 1) stage = 1;
             if (stage <= TABLE.Length)
             {
-                var tr = ScaleForBoard(TABLE[stage - 1]);   // a struct: this is a copy, the table is untouched
+                var tr = ScaleForBoard(OVERRIDES.Count > 0 && OVERRIDES.TryGetValue(stage, out var ovr) ? ovr : TABLE[stage - 1]);   // a struct: this is a copy, the table is untouched
                 if (HandManager.CLAIM_MODE && tr.Ducks > 0 && CLAIM_DUCKS.TryGetValue(stage, out int cd)) tr.Ducks = cd;
                 return tr;
             }
@@ -756,9 +787,11 @@ namespace WordDrop
             if (!SurvivalManager.FullBoardActive) return list;
             var r = For(Mathf.Max(1, LevelMapPanel.RunLevel(internalStage)));
             void Add(GoalType t, int planned, char l = '\0') { if (planned > 0) list.Add(new GoalIconInfo { Type = t, Count = GoalCountFor(internalStage, t, planned), Letter = l }); }
+            RulesEngine.MaskCounts(r.Crates > 0 ? r.CrateLayout : null, out int maskCrates, out int trayBooks);   // 11-27: a free-form mask knows its own counts (book trays -> Books)
+            bool masked = r.Crates > 0 && !string.IsNullOrEmpty(r.CrateLayout) && r.CrateLayout[0] == '@';
             Add(GoalType.Safes, r.Safes);
-            Add(GoalType.Books, r.ShelfBooks);
-            Add(GoalType.Crates, r.Crates > 0 ? Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT) : 0);
+            Add(GoalType.Books, r.ShelfBooks + trayBooks);
+            Add(GoalType.Crates, masked ? maskCrates : r.Crates > 0 ? Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT) : 0);
             Add(GoalType.Ice, r.IceCount);
             Add(GoalType.Grass, r.Grass);
             Add(GoalType.Gems, r.Gems);
@@ -785,7 +818,9 @@ namespace WordDrop
                 return $"<b>Gold Rush!</b>\nYou can't lose this one. <b>{moves} moves</b>, 3-letter swaps count, and every letter you pop pays coins. <b>Fire specials</b> to raise the payout!";
             // Real counts once the level is installed (ice can place fewer than asked); planned counts before that.
             int GoalCount(GoalType t, int planned) => GoalCountFor(internalStage, t, planned);
-            int crates = r.Crates > 0 ? GoalCount(GoalType.Crates, Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT)) : 0;
+            RulesEngine.MaskCounts(r.Crates > 0 ? r.CrateLayout : null, out int maskCrates, out int trayBooks);   // 11-27 (see GoalIconsFor)
+            bool masked = r.Crates > 0 && !string.IsNullOrEmpty(r.CrateLayout) && r.CrateLayout[0] == '@';
+            int crates = masked ? (maskCrates > 0 ? GoalCount(GoalType.Crates, maskCrates) : 0) : r.Crates > 0 ? GoalCount(GoalType.Crates, Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT)) : 0;
             int ice    = r.IceCount > 0 ? GoalCount(GoalType.Ice, r.IceCount) : 0;
             int gems   = r.Gems > 0 ? GoalCount(GoalType.Gems, r.Gems) : 0;
             int ducks  = r.Ducks > 0 ? GoalCount(GoalType.Ducks, r.Ducks) : 0;
@@ -800,11 +835,13 @@ namespace WordDrop
             if (grassN > 0)  { goals.Add($"Mow <b>{grassN} grass</b>");
                                how.Add("<b>Grass</b> is mowed when a letter on it pops — words, rockets and bombs all mow it."); }
             int safesN = r.Safes > 0 ? GoalCount(GoalType.Safes, r.Safes) : 0;
-            if (safesN > 0)  { goals.Add(safesN == 1 ? "Crack open <b>the safe</b>" : $"Crack open <b>{safesN} safes</b>");
+            if (safesN > 0 && r.SafeSkin == "pig") { goals.Add(safesN == 1 ? "Smash <b>the piggy bank</b>" : $"Smash <b>{safesN} piggy banks</b>");
+                               how.Add("Each word <b>touching a piggy bank</b> cracks it. Break it open - and keep the coins inside!"); }
+            else if (safesN > 0)  { goals.Add(safesN == 1 ? "Crack open <b>the safe</b>" : $"Crack open <b>{safesN} safes</b>");
                                how.Add($"Each word <b>touching the safe</b> lights a lamp. Light all {RulesEngine.SAFE_HITS} to open it - and keep the coins inside!"); }
-            int booksN = r.ShelfBooks > 0 ? GoalCount(GoalType.Books, r.ShelfBooks) : 0;
-            if (booksN > 0)  { goals.Add($"Knock <b>{booksN} books</b> off the shelf");
-                               how.Add("Make a word <b>touching the bookshelf</b> to knock a book off. Rockets and bombs knock books off too."); }
+            int booksN = r.ShelfBooks + trayBooks > 0 ? GoalCount(GoalType.Books, r.ShelfBooks + trayBooks) : 0;
+            if (booksN > 0)  { goals.Add(r.ShelfBooks > 0 ? $"Knock <b>{booksN} books</b> off the shelf" : $"Collect <b>{booksN} books</b>");
+                               how.Add(r.ShelfBooks > 0 ? "Make a word <b>touching the bookshelf</b> to knock a book off. Rockets and bombs knock books off too." : "Make a word <b>touching a book tray</b> to take a book. Rockets and bombs take books too."); }
             if (crates > 0)  { goals.Add($"Break <b>{crates} crates</b>");
                                how.Add("<b>Crates</b> break when you make a word right next to them. Rockets and bombs smash them too."); }
             if (ice > 0)     { goals.Add($"Melt <b>{ice} ice</b>");
@@ -999,7 +1036,7 @@ namespace WordDrop
             if (isTransition && rules2 != null)
             {
                 CrateGoal = 0;
-                Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; BooksAwaitingFly = 0; GoalsStage = internalStage; GoldRushSafesPlaced = 0;   // 11-03: a new level never inherits Gold Rush's early end
+                RulesEngine.ChestsPending = 0; ChestRewardModal.ClearHover(); Goals.Clear(); Collected = 0; CollectAwaitingFly = 0; BooksAwaitingFly = 0; GoalsStage = internalStage; GoldRushSafesPlaced = 0;   // 11-03: a new level never inherits Gold Rush's early end
                 BonusLevelActive = SurvivalManager.FullBoardActive && r.Bonus;
                 ThemeMade = 0; ThemeAwaitingFly = 0; PendingThemeWords.Clear(); s_themeWords.Clear(); RulesEngine.ThemePlantPool = null;
                 if (SurvivalManager.FullBoardActive && !string.IsNullOrEmpty(r.Theme) && r.ThemeCount > 0)
@@ -1036,12 +1073,12 @@ namespace WordDrop
                     int shortWords = rules2.SeedShortWords(RulesEngine.FULL_START_SHORT_WORDS, keep);
                     RulesEngine.CrateLayout = r.CrateLayout; RulesEngine.IceLayout = r.IceLayout;
                     Tile.CrateSkin = r.CrateSkin;   // 11-24 vases: set before the board's tiles are (re)built
-                    RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.SafeHitsNow = RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? rules2.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF (11-03) first: crates must not land on its cells
+                    RulesEngine.SafeIsPig = r.SafeSkin == "pig"; RulesEngine.ShelfStyleNext = r.ShelfStyle; RulesEngine.ShelfSpotsNext = r.Spots; RulesEngine.SafeHitsNow = r.SafeHits > 0 ? r.SafeHits : RulesEngine.SAFE_HITS; int safes = 0; int books = (r.ShelfBooks > 0 || r.Safes > 0) ? rules2.PlaceShelves(r.ShelfBooks, keep, r.Safes, out safes) : 0;   // BOOKSHELF (11-03) first: crates must not land on its cells
                     int crates = r.Crates > 0 ? rules2.PlaceCrates(Mathf.RoundToInt(r.Crates * FULL_CRATE_MULT), keep) : 0;
                     if (crates > 0) rules2.AssignCrateHits(r.CrateHits);   // 11-03 multi-hit crates
                     if (r.Grass > 0 && RulesEngine.GRASS_ON) { int gp = rules2.PlaceGrass(r.Grass, r.GrassLayout); Goals.Add(new LevelGoal { Type = GoalType.Grass, Target = gp }); }
                     else rules2.ClearGrass();
-                    int tnt = rules2.PlaceStartTnt(StartTntFor(stage), keep);
+                    int tnt = rules2.PlaceStartTnt(r.StartTnt > 0 ? r.StartTnt : StartTntFor(stage), keep);
                     if (!r.Bonus) rules2.PlaceTreasures(stage, keep);   // TREASURE (2026-10-27): random bonus loot, never a goal
                     if (BonusLevelActive) LoadGoldRush(rules2, keep);   // GOLD RUSH (10-30): the bonus starts loaded with specials
                     WinStreak.Apply(rules2, keep);   // 2026-10-23: streak rockets / bombs / disco (live only — the bot's SetupSimLevel skips it)
@@ -1050,6 +1087,8 @@ namespace WordDrop
                     if (RulesEngine.GEMS_FIXED && r.Gems > 0)
                         foreach (var gg in Goals) if (gg.Type == GoalType.Gems && gg.Target > gemsPlaced) { WDLog.Log($"[Gems] only {gemsPlaced}/{gg.Target} placed — goal lowered"); gg.Target = gemsPlaced; }
                     int ducksPlaced = r.Ducks > 0 ? rules2.PlaceDucks(Mathf.Min(r.Ducks, RulesEngine.DUCKS_ON_BOARD), keep) : 0;
+                    { int tb = rules2.CountTrayBooks(); if (tb > 0 || rules2.CountWalls() > 0 || rules2.CountChests() > 0) { crates = rules2.CountCrateCells(); books += tb; } }   // 11-27 book trays: Books goal, not Crates
+                    Tile.CrateGoalKind = rules2.UniformCrateKind();   // 11-27: an all-egg / all-stone / all-pot level shows that piece as its goal icon
                     CrateGoal = crates; CrateGoalStage = internalStage;
                     if (crates > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Crates, Target = crates });
                     if (books > 0) Goals.Insert(0, new LevelGoal { Type = GoalType.Books, Target = books });

@@ -806,6 +806,8 @@ namespace WordDrop
             _movesPlayed++;
             _movesSinceLastRise = Mathf.Min(_movesSinceLastRise + 1, CurrentMovesPerRise);
             _currentStageMovesUsed++;
+            // 11-27 INK POTS: a spent move counts every pot down; the ones at zero burst and ink the letters beside them
+            if (FullBoardActive && RulesEngine.Instance != null) { var potsBurst = RulesEngine.Instance.TickInkPots(out var inkedCells); if (potsBurst != null) WordDropFX.Instance?.PlayInkBursts(potsBurst, inkedCells); }
             StageStats.MovesMade++;   // real moves made (moves_used no longer goes negative with gold refunds) — 2026-10-23
 
             // Snapshot the stages-cleared counter so we can detect whether
